@@ -1,12 +1,11 @@
 import { DomainError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
 import { GROUP_LICENCE, PACKAGES, type PackageTier } from '../billing/seats.ts';
-import { raiseOpeningCharge } from '../billing/collection.ts';
 import type { SubscriptionTier } from '../billing/subscription.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform, PlatformUser } from '../platform.ts';
 import { agreementInForce, agreementOf, chargeModeFor, setAgreement, type AgreementMode, type AgreementParty } from './agreement.ts';
-import { attachCompany, createGroup, grantGroupRole, groupBySlug, groupOf, groupRolesFor, requireGroupRole, type Group } from './directory.ts';
+import { attachCompany, createGroup, grantGroupRole, groupBySlug, groupOf, groupRolesFor, groups as allGroups, requireGroupRole, type Group } from './directory.ts';
 import { issuerProfile, legalReadiness } from './profile.ts';
 import { codeOf, slugOf } from '../identity/signup.ts';
 import { PLATFORM_TENANT_ID } from '../platform.ts';
@@ -240,7 +239,12 @@ export type AddCompanyInput = {
   code?: string;
   jurisdiction: string;
   currency: string;
-  package: PackageTier;
+  /**
+   * Ignored when given. A company of a group is on the group's package — the
+   * primary company's — and covered by that subscription; the field stays so
+   * a caller written against the earlier contract is not refused.
+   */
+  package?: PackageTier;
   /** One or more enterprise administrators for the new company. */
   administrators: Array<{ name: string; email: string }>;
 };
@@ -249,8 +253,10 @@ export type AddCompanyResult = {
   group: Group;
   company: { tenantId: string; name: string; code: string; slug: string };
   administrators: Array<{ id: string; name: string; email: string; existing: boolean }>;
-  /** The first month, owed before the company opens; absent on a free package. */
+  /** Always null now: a company of a group owes no first month of its own. Kept so the shape does not move under a caller. */
   openingCharge: { id: string; amountMinor: number; paymentReference: string } | null;
+  /** Whose subscription carries this company, and on which package. */
+  coveredBy: { tenantId: string; name: string; package: PackageTier; packageLabel: string };
   /** Administrators created in this act, for the invitation the route sends. */
   invited: PlatformUser[];
 };
@@ -310,13 +316,12 @@ function placeAdministrator(
 
 /**
  * A group administrator adds an organisation to the group: a new tenancy on
- * one of the self-serve paid packages, attached as a cost centre, with the
- * administrators named. The group licence caps the count (`attachCompany`
- * refuses the sixth). Nothing is free unless the package is: the company's
- * first month is charged and it waits for the payment like any signup —
- * the group sees what is owed on the directory, the company's administrator
- * sees it on ACU & Billing, and the operator can record a transfer against
- * the reference.
+ * the group's package — the primary company's — attached as a cost centre,
+ * covered by the primary's subscription, with the administrators named. The
+ * group licence caps the count (`attachCompany` refuses the sixth). The
+ * company opens at once and is billed nothing: the enterprise account carries
+ * the subscription and the package, and AI credit is a top-up on the
+ * company's own wallet.
  */
 export function addCompany(platform: Platform, actor: AuthContext, groupId: string, input: AddCompanyInput): AddCompanyResult {
   requireGroupRole(platform, actor, groupId, ['GROUP_ADMIN']);
@@ -325,22 +330,22 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
   if (displayName.length < 2) throw new ValidationError('The company needs a name', [{ field: 'displayName', message: 'required' }]);
   if (!JURISDICTIONS[input.jurisdiction]) throw new ValidationError(`${input.jurisdiction} is not a jurisdiction the platform holds rules for`, [{ field: 'jurisdiction', message: 'unknown' }]);
   if (!CURRENCIES[input.currency]) throw new ValidationError(`${input.currency} is not a currency the platform counts in`, [{ field: 'currency', message: 'unknown' }]);
-  if (!GROUP_COMPANY_PACKAGES.includes(input.package)) {
-    throw new DomainError(
-      'PACKAGE_NOT_SELF_SERVE',
-      `${PACKAGES[input.package]?.label ?? input.package} is provisioned with the platform operator, not from the group console`,
-    );
-  }
+  // The group's package: the primary company's, whatever the caller said. The
+  // customer's rule, stated more than once: the enterprise account carries the
+  // subscription and the package; the companies under it carry neither.
+  const primary = primaryCompanyOf(platform, group);
+  if (!primary) throw new DomainError('GROUP_HAS_NO_COMPANY', `${group.displayName} has no open company to carry the subscription`, 409);
+  const pkg = PACKAGES[primary.package];
   if (!input.administrators?.length) throw new ValidationError('Name at least one administrator for the company', [{ field: 'administrators', message: 'required' }]);
   // Every administrator takes a seat, and the package decides how many there
   // are. Checked before anything exists: a company created with one of its two
   // administrators and a seat refusal for the other is the half-made record
   // this act must never leave behind.
-  const seats = PACKAGES[input.package].includedSeats;
+  const seats = pkg.includedSeats;
   if (seats !== null && input.administrators.length > seats) {
     throw new DomainError(
       'SEAT_LIMIT_REACHED',
-      `The ${PACKAGES[input.package].label} package includes ${seats} seat${seats === 1 ? '' : 's'}; name ${seats === 1 ? 'one administrator' : `at most ${seats} administrators`} or choose a larger package`,
+      `${primary.name}'s ${pkg.label} package includes ${seats} seat${seats === 1 ? '' : 's'}, and every company of the group is on it; name ${seats === 1 ? 'one administrator' : `at most ${seats} administrators`}, or ask the operator to move the group to a larger package`,
       422,
     );
   }
@@ -365,25 +370,25 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
     legalName: displayName,
     jurisdiction: input.jurisdiction,
     defaultCurrency: input.currency,
-    tier: 'TEAM',
-    package: input.package,
+    tier: primary.tier,
+    package: primary.package,
     enterpriseName: displayName,
     trialGrant: false,
     // A company under a group opens at once. Its administrators pay nothing:
-    // the subscription is a line on the group's consolidated statement and the
-    // group settles it on its payment terms. It used to wait AWAITING_PAYMENT
-    // with its own administrators told to pay the first month — the rule the
-    // group exists to replace.
+    // the primary company's subscription covers it. It used to wait
+    // AWAITING_PAYMENT with its own administrators told to pay the first
+    // month — the rule the group exists to replace.
     opensOn: 'CREATION',
-    // Priced once it is a company of the group: the agreement's rate card
-    // applies to the first month like every month after it.
+    // No first month of its own: the grant below says who covers it, and the
+    // raise would only be written off again.
     deferOpeningCharge: true,
   });
   const tenantId = created.tenant.id;
   const agreement = agreementOf(platform, group.id);
   const mode = agreementInForce(agreement)?.mode ?? agreement?.versions[agreement.versions.length - 1]?.mode;
   group = attachCompany(platform, actor, group.id, { tenantId, code, chargeMode: mode ? chargeModeFor(mode) : 'INTERNAL' });
-  const opening = raiseOpeningCharge(platform, tenantId)?.charge;
+  // Covered by the primary's subscription, on the record with the reason.
+  coverCompany(platform, group, tenantId);
 
   const invited: PlatformUser[] = [];
   const administrators = input.administrators.map((person) => placeAdministrator(platform, group, tenantId, person, invited));
@@ -392,9 +397,78 @@ export function addCompany(platform: Platform, actor: AuthContext, groupId: stri
     group,
     company: { tenantId, name: displayName, code: centre.code, slug: centre.slug },
     administrators,
-    openingCharge: opening ? { id: opening.id, amountMinor: opening.amountMinor, paymentReference: paymentReferenceOf(opening.id) } : null,
+    openingCharge: null,
+    coveredBy: { tenantId: primary.tenantId, name: primary.name, package: primary.package, packageLabel: pkg.label },
     invited,
   };
+}
+
+/**
+ * The company whose subscription the group runs on: the first cost centre
+ * still open. For a group founded at signup or from an existing company that
+ * is the company that founded it — the enterprise account the customer means
+ * when they say "everything is on the enterprise administrator".
+ */
+export function primaryCompanyOf(platform: Platform, group: Group): { tenantId: string; name: string; package: PackageTier; tier: SubscriptionTier } | undefined {
+  for (const centre of group.costCentres) {
+    const tenant = platform.tenant(centre.tenantId);
+    if (tenant.closedAt || tenant.deletedAt) continue;
+    const subscription = platform.subscription(centre.tenantId);
+    return { tenantId: centre.tenantId, name: tenant.legalName, package: subscription.package, tier: subscription.tier };
+  }
+  return undefined;
+}
+
+const COVERED_BY = 'billing:group';
+
+/**
+ * Bring one company under the group's subscription: the primary company's
+ * package, granted free of charge because the primary's subscription covers it.
+ * Idempotent — a company already on that footing produces no event — and
+ * refused, not forced, where the primary's package cannot hold the people the
+ * company already has; the refusal is returned rather than thrown so a run
+ * over a whole estate names it and carries on.
+ */
+export function coverCompany(platform: Platform, group: Group, tenantId: string, now: Date = new Date()): { changed: boolean; refused?: string } {
+  const primary = primaryCompanyOf(platform, group);
+  if (!primary || primary.tenantId === tenantId) return { changed: false };
+  const tenant = platform.tenant(tenantId);
+  if (tenant.closedAt || tenant.deletedAt) return { changed: false };
+  const subscription = platform.subscription(tenantId);
+  if (subscription.package === primary.package && subscription.grantedFree === true && subscription.status !== 'AWAITING_PAYMENT') return { changed: false };
+  try {
+    platform.setSubscriptionPackage({
+      tenantId,
+      package: primary.package,
+      reason: `Company of ${group.displayName}: covered by ${primary.name}'s ${PACKAGES[primary.package].label} subscription, which the group pays. Nothing is billed to the company; AI credit is topped up on its own wallet. (${now.toISOString().slice(0, 10)})`,
+      decidedBy: COVERED_BY,
+      grantFree: true,
+    });
+    return { changed: true };
+  } catch (error) {
+    return { changed: false, refused: (error as Error).message };
+  }
+}
+
+/**
+ * Every group's companies, brought under the group's subscription.
+ *
+ * Run before each billing pass and once at boot, so a company created before
+ * this rule existed — waiting for a first month its own administrators were
+ * asked to pay — opens and is covered the next time the platform looks, with
+ * nothing anybody has to press. Reports what it changed and what it could not.
+ */
+export function coverGroupCompanies(platform: Platform, now: Date = new Date()): { covered: Array<{ groupId: string; tenantId: string }>; refused: Array<{ groupId: string; tenantId: string; because: string }> } {
+  const covered: Array<{ groupId: string; tenantId: string }> = [];
+  const refused: Array<{ groupId: string; tenantId: string; because: string }> = [];
+  for (const group of allGroups(platform)) {
+    for (const centre of group.costCentres) {
+      const outcome = coverCompany(platform, group, centre.tenantId, now);
+      if (outcome.changed) covered.push({ groupId: group.id, tenantId: centre.tenantId });
+      if (outcome.refused) refused.push({ groupId: group.id, tenantId: centre.tenantId, because: outcome.refused });
+    }
+  }
+  return { covered, refused };
 }
 
 /**

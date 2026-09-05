@@ -4,8 +4,8 @@ import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import * as collection from '../src/billing/collection.ts';
 import { config } from '../src/config.ts';
-import { groupDirectory, groupOf, groupRolesFor } from '../src/group/directory.ts';
-import { addCompany, foundGroup } from '../src/group/onboarding.ts';
+import { attachCompany, groupDirectory, groupOf, groupRolesFor } from '../src/group/directory.ts';
+import { addCompany, coverGroupCompanies, foundGroup } from '../src/group/onboarding.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { authOf } from '../src/seed.ts';
@@ -71,15 +71,50 @@ describe('founding a group from an existing company', () => {
     assert.equal(added.administrators.length, 2);
     assert.ok(added.administrators.every((person) => platform.user(person.id).roles.includes('ENTERPRISE_ADMIN')));
     assert.equal(groupDirectory(platform, groupId).companies.length, 2);
-    assert.ok(added.openingCharge, 'a paid package raises its first month, on the group’s statement');
-    assert.equal(platform.subscription(added.company.tenantId).status, 'ACTIVE', 'a company under a group opens at once; its administrators pay nothing');
-    // The period runs on the group's payment terms, not the platform's grace:
-    // a company stopped on day seven of a fourteen-day term would be stopped
-    // for a bill that was not yet late.
-    const charge = collection.chargesFor(platform, added.company.tenantId)[0]!;
+    // A company under a group opens at once, on the founding company's package,
+    // covered by its subscription: nothing is raised against it.
+    assert.equal(added.openingCharge, null);
+    assert.equal(added.coveredBy.tenantId, tenantId);
+    const company = platform.subscription(added.company.tenantId);
+    assert.equal(company.status, 'ACTIVE');
+    assert.equal(company.package, platform.subscription(tenantId).package);
+    assert.equal(company.grantedFree, true);
+    assert.equal(collection.chargesFor(platform, added.company.tenantId).length, 0);
+    assert.equal(collection.raiseCharge(platform, added.company.tenantId, new Date(Date.parse(company.renewsAt) + 86_400_000)), undefined, 'and nothing at renewal');
+    // The founding company's own periods run on the group's payment terms, not
+    // the platform's grace: a company stopped on day seven of a fourteen-day
+    // term would be stopped for a bill that was not yet late.
+    const primary = platform.subscription(tenantId);
+    const raised = collection.raiseCharge(platform, tenantId, new Date(Date.parse(primary.renewsAt) + 86_400_000));
+    assert.ok(raised && !raised.alreadyRaised);
     const termsDays = groupOf(platform, groupId).billing.termsDays;
     assert.ok(termsDays >= 14);
-    assert.equal(Math.round((Date.parse(charge.graceEndsAt) - Date.parse(charge.dueAt)) / 86_400_000), Math.max(termsDays, config.billing.subscriptionGraceDays));
+    assert.equal(Math.round((Date.parse(raised!.charge.graceEndsAt) - Date.parse(raised!.charge.dueAt)) / 86_400_000), Math.max(termsDays, config.billing.subscriptionGraceDays));
+  });
+
+  it('brings a company created before the rule under the group’s subscription on the next run', () => {
+    // As the live estate had it: a company created waiting for a first month
+    // its own administrators were asked to pay, on a package of its own.
+    const groupId = platform.tenant(tenantId).groupId!;
+    const legacy = platform.createTenant({ legalName: 'Legacy Sub Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'SOLO', package: 'SOLO', enterpriseName: 'Legacy Sub', trialGrant: false, opensOn: 'FIRST_PAYMENT' });
+    platform.createUser({ tenantId: legacy.tenant.id, name: 'Lea', email: 'lea@legacysub.example', roles: ['ENTERPRISE_ADMIN'] });
+    attachCompany(platform, authOf(platform, adminId), groupId, { tenantId: legacy.tenant.id, code: 'LEG' });
+    assert.equal(platform.subscription(legacy.tenant.id).status, 'AWAITING_PAYMENT');
+    assert.equal(collection.outstanding(platform, legacy.tenant.id).length, 1);
+
+    const outcome = coverGroupCompanies(platform);
+    assert.ok(outcome.covered.some((entry) => entry.tenantId === legacy.tenant.id), JSON.stringify(outcome));
+    const covered = platform.subscription(legacy.tenant.id);
+    assert.equal(covered.status, 'ACTIVE');
+    assert.equal(covered.package, platform.subscription(tenantId).package);
+    assert.equal(covered.grantedFree, true);
+    assert.equal(collection.outstanding(platform, legacy.tenant.id).length, 0, 'the first month it was asked for is written off');
+    assert.equal(platform.wallet(legacy.tenant.id).snapshot().balanceMinor, 0, 'nothing is credited: AI is a top-up');
+
+    // Idempotent: a second run changes nothing.
+    const again = coverGroupCompanies(platform);
+    assert.equal(again.covered.length, 0);
+    assert.equal(again.refused.length, 0);
   });
 
   it('gives a second group a distinct slug when two companies share a name', () => {

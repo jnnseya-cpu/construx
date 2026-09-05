@@ -6964,10 +6964,10 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/groups/:groupId/companies',
-    description: 'Add an organisation to the group: a new company on a paid package with the administrators named, each invited by email. The group licence caps the count (group admin)',
+    description: 'Add an organisation to the group: a new company on the group’s package, covered by the primary company’s subscription, with the administrators named and invited by email. The group licence caps the count (group admin)',
     schema: {
       type: 'object',
-      required: ['displayName', 'jurisdiction', 'currency', 'package', 'administrators'],
+      required: ['displayName', 'jurisdiction', 'currency', 'administrators'],
       properties: {
         displayName: { type: 'string', minLength: 2, maxLength: 200 },
         code: { type: 'string', minLength: 2, maxLength: 8 },
@@ -7003,7 +7003,7 @@ export const ROUTES: Route[] = [
           'invited you to',
           `${platform.user(actor.actorId).name} set up ${result.company.name} on CONSTRUX under ${groupName} and named you its administrator. ` +
             `Sign in at ${config.publicBaseUrl}/app with this email address — there is no password; a one-time code is emailed to you each time. ` +
-            `The company is open now. Nothing is billed to you: its subscription is on ${groupName}'s statement, and AI credit is bought by topping up its wallet.`,
+            `The company is open now on the ${result.coveredBy.packageLabel} package, covered by ${result.coveredBy.name}'s subscription. Nothing is billed to you; AI credit is bought by topping up the company's wallet.`,
           { tenantId: result.company.tenantId },
         );
         invitations.push({ email: person.email, notified });

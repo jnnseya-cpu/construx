@@ -740,6 +740,8 @@ export function groupDirectory(platform: Platform, groupId: string): {
     hardLimitMinor: number | null;
     /** A paid package whose first month has not been paid: the company exists and waits. */
     awaitingFirstPayment: boolean;
+    /** Covered by the group's subscription: the primary company's package, nothing billed to this one. */
+    coveredByGroup: boolean;
     /** Subscription periods charged and not yet paid, in the billing currency. */
     outstandingMinor: number;
     /** What a transfer against the oldest unpaid period quotes; null when nothing is owed. */
@@ -770,6 +772,9 @@ export function groupDirectory(platform: Platform, groupId: string): {
         walletAvailableMinor: wallet.availableMinor,
         hardLimitMinor: wallet.caps.monthlyMinor ?? null,
         awaitingFirstPayment: platform.subscription(centre.tenantId).status === 'AWAITING_PAYMENT',
+        // On the primary company's package, granted free because that
+        // subscription covers it: nothing is billed to this company.
+        coveredByGroup: platform.subscription(centre.tenantId).grantedFree === true,
         outstandingMinor: due.reduce((sum, charge) => sum + charge.amountMinor, 0),
         paymentReference: due[0] ? `CX-${due[0].id.slice(-8).toUpperCase()}` : null,
       };

@@ -122,7 +122,9 @@ export async function group(root) {
             html`${c.name}<div class="metric-sub">${c.jurisdiction}</div>`,
             c.awaitingFirstPayment
               ? html`${badge('awaiting first payment', 'warn')}<div class="metric-sub">${money(c.outstandingMinor, currency)} · quote ${c.paymentReference}</div>`
-              : badge(c.status.toLowerCase(), c.status === 'ACTIVE' ? 'ok' : 'bad'),
+              : html`${badge(c.status.toLowerCase(), c.status === 'ACTIVE' ? 'ok' : 'bad')}${
+                  c.coveredByGroup ? html`<div class="metric-sub">covered by the group's subscription</div>` : ''
+                }`,
             html`${c.entitlements.product.planLabel}<div class="metric-sub">${c.entitlements.product.status.toLowerCase()}</div>`,
             c.entitlements.modules.length ? html`${c.entitlements.modules.map((m) => badge(m.moduleKey, 'ok'))}` : html`<span class="metric-sub">none</span>`,
             html`${c.people}<div class="metric-sub">${c.administrators} admin${c.administrators === 1 ? '' : 's'}</div>`,
@@ -304,7 +306,7 @@ export async function group(root) {
     if (button.dataset.command === 'company') {
       const result = await command({
         title: 'Add a company to the group',
-        intent: `A new organisation under ${held.displayName}: its own tenancy, people, records and wallet, open at once. Its administrators pay nothing — the subscription is a line on the group's statement, settled by the group; they are invited by email and top up the company's own AI wallet. ${companies.length} of ${maxCompanies} companies used.`,
+        intent: `A new organisation under ${held.displayName}: its own tenancy, people, records and wallet, open at once, on the same package as ${companies[0]?.name ?? held.displayName} and covered by that subscription. Nothing is billed to the company or its administrators — they are invited by email and top up the company's own AI wallet. ${companies.length} of ${maxCompanies} companies used.`,
         path: `/v1/groups/${held.id}/companies`,
         submitLabel: 'Add the company',
         fields: [
@@ -312,7 +314,6 @@ export async function group(root) {
           { name: 'code', label: 'Cost centre code', placeholder: 'Derived from the name if left blank', required: false, hint: '2 to 8 letters or digits, unique in the group — JNNH, not the company name' },
           { name: 'jurisdiction', label: 'Jurisdiction', type: 'select', options: (directory.jurisdictions ?? []).map((j) => ({ value: j.code, label: j.name })), value: 'GB' },
           { name: 'currency', label: 'Currency', type: 'select', options: (directory.currencies ?? []).map((c) => ({ value: c.code, label: `${c.code} — ${c.name}` })), value: currency },
-          { name: 'package', label: 'Package', type: 'select', options: (directory.packages ?? []).map((p) => ({ value: p.package, label: `${p.label} — ${money(p.monthlyPriceMinor, 'GBP')} a month` })) },
           { name: 'admin1Name', label: 'First administrator — name', placeholder: 'Rowan Blake' },
           { name: 'admin1Email', label: 'First administrator — email', placeholder: 'rowan@company.com' },
           { name: 'admin2Name', label: 'Second administrator — name', placeholder: 'Optional', required: false, hint: 'Both name and email, or neither' },
@@ -325,7 +326,7 @@ export async function group(root) {
           // schema then says what is missing rather than the pair being
           // silently dropped.
           if (clean(values.admin2Email) || clean(values.admin2Name)) administrators.push({ name: clean(values.admin2Name), email: clean(values.admin2Email) });
-          const payload = { displayName: clean(values.displayName), jurisdiction: values.jurisdiction, currency: values.currency, package: values.package, administrators };
+          const payload = { displayName: clean(values.displayName), jurisdiction: values.jurisdiction, currency: values.currency, administrators };
           const code = clean(values.code).toUpperCase();
           if (code) payload.code = code;
           return payload;
@@ -333,7 +334,7 @@ export async function group(root) {
       });
       if (result) {
         const sent = (result.invitations ?? []).map((i) => `${i.email} · ${String(i.notified).toLowerCase()}`).join(', ');
-        toast(`${result.company.name} added and open`, result.openingCharge ? `First month ${money(result.openingCharge.amountMinor, currency)} on the group's statement · quote ${result.openingCharge.paymentReference}. Invitations: ${sent}` : `Invitations: ${sent}`, 'ok');
+        toast(`${result.company.name} added and open`, `${result.coveredBy ? `${result.coveredBy.packageLabel}, covered by ${result.coveredBy.name}'s subscription. ` : ''}Invitations: ${sent}`, 'ok');
         again();
       }
     }

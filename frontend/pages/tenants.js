@@ -40,6 +40,9 @@ const ROW_DOORS = {
  * can invite nobody and configure nothing, whatever it is paying.
  */
 
+/** Whether the private-module register shows revoked grants. Off until asked; a reload starts folded again. */
+let showRevoked = false;
+
 export async function tenants(root) {
   const [estate, vocab, register, refunds, groupsHeld, transfers, exceptions, engine] = await Promise.all([
     api.get('/v1/admin/tenants').catch((error) => ({ error })),
@@ -392,9 +395,16 @@ export async function tenants(root) {
               </div>`,
             )}
             <div style="padding:12px 0 0">
+              ${register.grants.some((grant) => grant.status !== 'ACTIVE')
+                ? html`<div class="metric-sub" style="padding:0 17px 8px">
+                    ${register.grants.filter((grant) => grant.status === 'ACTIVE').length} live grant${register.grants.filter((grant) => grant.status === 'ACTIVE').length === 1 ? '' : 's'} ·
+                    ${register.grants.filter((grant) => grant.status !== 'ACTIVE').length} revoked, kept for access review and hidden here —
+                    <button class="btn quiet sm" type="button" data-show-revoked>Show revoked</button>
+                  </div>`
+                : ''}
               ${table({
                 headers: ['Tenancy', 'Module', 'Status', 'Granted', 'Reason', 'Revoked', ''],
-                rows: register.grants.map((grant) => [
+                rows: register.grants.filter((grant) => grant.status === 'ACTIVE' || showRevoked).map((grant) => [
                   grant.legalName,
                   grant.moduleName,
                   badge(grant.status.toLowerCase(), grant.status === 'ACTIVE' ? 'ok' : 'warn'),
@@ -407,10 +417,11 @@ export async function tenants(root) {
                     ? html`<button class="btn quiet danger sm" data-module-decision="REVOKED" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Revoke</button>`
                     : html`<button class="btn quiet sm" data-module-decision="ACTIVE" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Grant again</button>`,
                 ]),
-                // Revoked grants stay on this table on purpose: "who had this,
-                // and between which dates" is what an access review asks, and a
-                // register showing only live grants cannot answer it.
-                empty: 'No module has been granted to anybody.',
+                // Revoked grants stay on the record on purpose: "who had this,
+                // and between which dates" is what an access review asks. They
+                // are folded away by default so the register reads as what is
+                // live, and shown on request.
+                empty: register.grants.length ? 'No module is live. Revoked grants are folded away above.' : 'No module has been granted to anybody.',
               })}
             </div>
           </div>`
@@ -488,6 +499,11 @@ export async function tenants(root) {
   );
 
   const again = () => tenants(root);
+
+  root.querySelector('[data-show-revoked]')?.addEventListener('click', () => {
+    showRevoked = !showRevoked;
+    again();
+  });
 
   // The engine's doors. Every command but one clicks the row control of the
   // same name, so the act is the one the operator would have pressed by hand.

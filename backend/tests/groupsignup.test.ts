@@ -191,12 +191,15 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
       assert.ok(admin, `${email} was not created in the new company`);
       assert.deepEqual(admin.roles, ['ENTERPRISE_ADMIN']);
     }
-    // Its own group membership; open at once, because a company under a group
-    // pays nothing itself — the first month is a line on the group's statement.
+    // Its own group membership; open at once, on the holding company's package
+    // and covered by its subscription — a company under a group pays nothing.
     assert.equal(platform.tenant(tenantId).groupId, groupId);
     assert.equal(platform.subscription(tenantId).status, 'ACTIVE');
-    assert.equal(added.body.openingCharge.amountMinor, PACKAGES.CORE_PROJECT.monthlyPriceMinor);
-    assert.equal(collection.outstanding(platform, tenantId).length, 1, 'the period is raised, for the group to settle');
+    assert.equal(platform.subscription(tenantId).package, platform.subscription(holdingTenantId).package);
+    assert.equal(platform.subscription(tenantId).grantedFree, true);
+    assert.equal(added.body.openingCharge, null, 'no first month of its own');
+    assert.equal((added.body.coveredBy as { tenantId: string }).tenantId, holdingTenantId);
+    assert.equal(collection.outstanding(platform, tenantId).length, 0);
     assert.equal(platform.wallet(tenantId).snapshot().balanceMinor, 0, 'a group company was credited before anything was paid');
 
     // And its administrator can start a sign-in.
@@ -234,23 +237,35 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
     assert.equal(refused.body.title, 'GROUP_ROLE_REQUIRED');
   });
 
-  it('refuses more administrators than the package seats, before anything is created', async () => {
-    const before = groupOfTenant(platform, holdingTenantId)!.costCentres.length;
-    const refused = await call('POST', `/v1/groups/${groupId}/companies`, founderToken, company('JNN Solo Ltd', [
+  it('puts the company on the holding company’s package whatever the request names', async () => {
+    // The group's package is the enterprise account's. A request naming Solo
+    // gets the holding company's Core Project, covered, with both seats held.
+    const added = await call('POST', `/v1/groups/${groupId}/companies`, founderToken, company('JNN Solo Ltd', [
       { name: 'One Person', email: 'one@jnnsolo.example' },
       { name: 'Two Person', email: 'two@jnnsolo.example' },
     ], { package: 'SOLO' }));
-    assert.equal(refused.status, 422, JSON.stringify(refused.body));
-    assert.equal(refused.body.title, 'SEAT_LIMIT_REACHED');
-    assert.equal(groupOfTenant(platform, holdingTenantId)!.costCentres.length, before, 'a refused company was attached anyway');
-    assert.equal(platform.userByEmail('one@jnnsolo.example'), undefined, 'a refused company left an administrator behind');
+    assert.equal(added.status, 201, JSON.stringify(added.body));
+    const tenantId = added.body.company.tenantId as string;
+    assert.equal(platform.subscription(tenantId).package, platform.subscription(holdingTenantId).package);
+    assert.equal(platform.subscription(tenantId).grantedFree, true);
+    assert.equal((added.body.coveredBy as { package: string }).package, platform.subscription(holdingTenantId).package);
   });
 
-  it('will not put a group company on the free trial or an operator-provisioned package', async () => {
-    for (const pkg of ['FREE_TRIAL', 'ENTERPRISE']) {
-      const refused = await call('POST', `/v1/groups/${groupId}/companies`, founderToken, company('Trial Farm Ltd', [{ name: 'T', email: 't@farm.example' }], { package: pkg }));
-      assert.equal(refused.status, 400, `${pkg}: ${JSON.stringify(refused.body)}`);
-    }
+  it('refuses more administrators than the group’s package seats, before anything is created', async () => {
+    // A group whose enterprise account is on Solo carries one seat per company.
+    const solo = await signUp({ email: 'owner@solo-group.example', organisationName: 'Solo Group Ltd', package: 'SOLO', structure: 'GROUP' });
+    const soloToken = await signIn('owner@solo-group.example');
+    const soloGroupId = solo.verified.group.id as string;
+    const before = groupOfTenant(platform, solo.tenantId)!.costCentres.length;
+    const refused = await call('POST', `/v1/groups/${soloGroupId}/companies`, soloToken, company('Solo Sub Ltd', [
+      { name: 'One Person', email: 'one@solosub.example' },
+      { name: 'Two Person', email: 'two@solosub.example' },
+    ]));
+    assert.equal(refused.status, 422, JSON.stringify(refused.body));
+    assert.equal(refused.body.title, 'SEAT_LIMIT_REACHED');
+    assert.match(String(refused.body.detail), /Solo Group Ltd's Solo package/);
+    assert.equal(groupOfTenant(platform, solo.tenantId)!.costCentres.length, before, 'a refused company was attached anyway');
+    assert.equal(platform.userByEmail('one@solosub.example'), undefined, 'a refused company left an administrator behind');
   });
 
   it('names a further administrator for one of its companies, once', async () => {
@@ -292,8 +307,9 @@ describe('JNN GLOBAL LTD signs up as a group of companies', () => {
     assert.equal(holding.outstandingMinor, 0);
     assert.equal(holding.paymentReference, null);
     // The companies the administrator added never waited: a company under a
-    // group is open from creation and its periods are the group's to pay.
+    // group is open from creation, on the holding company's package, covered.
     assert.equal(directory.body.companies.filter((c: { awaitingFirstPayment: boolean }) => c.awaitingFirstPayment).length, 0);
+    assert.equal(directory.body.companies.filter((c: { coveredByGroup: boolean }) => c.coveredByGroup).length, GROUP_LICENCE.maxCompanies - 1);
     assert.equal(directory.body.companies.length, GROUP_LICENCE.maxCompanies);
   });
 

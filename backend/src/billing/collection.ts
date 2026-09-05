@@ -531,11 +531,20 @@ export async function runCollection(platform: Platform, now = new Date()): Promi
 export function startCollectionSchedule(
   platform: Platform,
   onRun: (report: CollectionReport) => void = () => {},
+  /**
+   * Run before each pass: the reconciliations the pass depends on — a group's
+   * companies brought under the group's package before anything is raised
+   * against them. Passed in rather than imported, because the group module
+   * reaches this one for its charges and a cycle between the two would be the
+   * kind of import that works until the day it does not.
+   */
+  beforeRun: (platform: Platform, now: Date) => void = () => {},
 ): { stop: () => void } {
   if (!config.billing.collectionEnabled) return { stop: () => {} };
 
   const tick = async () => {
     try {
+      beforeRun(platform, new Date());
       const report = await runCollection(platform);
       if (report.raised > 0 || report.suspended > 0) onRun(report);
     } catch {

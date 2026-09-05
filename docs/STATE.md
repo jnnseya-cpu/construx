@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,985 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,986 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 304 TypeScript files, 198,400 lines |
 | Application | 77 ES modules, 45,450 lines (including a service worker) |
@@ -8317,12 +8317,12 @@ names the company rather than the actor's own. An address already in one of
 the group's companies becomes a second membership of the same identity; an
 address held outside the group is refused `EMAIL_IN_USE` before anything is
 created; the sixth company is refused `GROUP_FULL`. Each company is a
-tenancy like any other, and **open from creation**: its first month is raised
-at the group's price as a line on the group's statement, its wallet opens
-empty, and its administrators pay nothing themselves (see "Companies under a
-group never pay" below; this paragraph first said the company waited
-`AWAITING_PAYMENT` for its own administrators to pay, which was the rule the
-group exists to replace). `POST
+tenancy like any other, **open from creation, on the group's package and
+covered by the primary company's subscription**: nothing is raised against it,
+its wallet opens empty, and its administrators pay nothing (see "Companies
+under a group never pay" below; this paragraph first said the company chose a
+package and waited `AWAITING_PAYMENT` for its own administrators to pay, which
+was the rule the group exists to replace). `POST
 /v1/groups/:groupId/companies/:tenantId/administrators` (group admin) names a
 further administrator for one of the group's companies — a company outside
 the group reads as no company; somebody already there is refused rather than
@@ -11717,27 +11717,46 @@ comes from. `tests/freegrant.test.ts` drives a paid signup through the grant,
 the renewal that raises nothing, the customer's and the operator's reads, the
 top-up, a seat change and a restart, the no-op and the withdrawal.
 
-### Companies under a group never pay; the group does
+### Companies under a group never pay; the group's package is the enterprise account's
 
 Said by the customer, more than once: sub-enterprise administrators pay
-nothing; billing and the package are on the enterprise (group) account. A
-company added by the group administrator used to be created `AWAITING_PAYMENT`
-with an invitation telling its administrators the first month was due before
-it opened. Now it **opens at once**: `addCompany` creates it on creation, the
-first month is still raised at the group's agreed price after the company is
-attached — that is the line on the group's consolidated statement — and the
-invitation says the company is open, nothing is billed to them, AI credit is a
-top-up. A group company's periods run on the **group's payment terms**
-(`graceDaysFor` in `billing/collection.ts`: the larger of the platform grace
-and the group's `termsDays`), so a company is never stopped for a bill that was
-not yet late under the terms the group agreed. `GET /v1/billing/subscription`
-carries `billedTo` for a group company, and ACU & Billing says the period is on
-the group's statement, names who pays it, and offers no card button to the
-company. The Group screen's *Add a company* says the same. The group's own
-founding company is unchanged: it is the payer, and its exemption, where one is
-agreed, is the operator's free grant above. `groupsignup`, `groupfound` and
-`groupspec` tests assert the new rule; `groupfound` asserts the grace equals
-the group's terms.
+nothing; billing and the subscription package are on the enterprise (group)
+account, and every company is on the same package as the main administrator.
+This changes what GN-SPEC-TENANCY-001 §9 built — a subscription per company as
+a line on the statement — at the customer's direction, and the record of that
+decision is this paragraph. **The group's package is the primary company's**
+(`primaryCompanyOf`: the first open cost centre, which for a group founded at
+signup or from an existing company is the company that founded it). A company
+the group administrator adds is created on that package and that tier, opens
+at once, and is **covered** — `coverCompany` grants it free of charge with the
+reason on the record naming whose subscription carries it (`billing:group`
+decides, so the event's actor is the system). No first month is raised against
+it and none at renewal; the wallet opens empty and AI credit is a top-up. The
+form no longer offers a package; `package` in the request is accepted and
+ignored. The seat rule follows the group's package: a group on Solo carries one
+seat per company, and a second administrator is refused before anything is
+created, naming the enterprise account and its package.
+
+**Companies created before this rule are brought under it without anybody
+pressing anything.** `coverGroupCompanies` runs at boot and before every
+billing pass (`startCollectionSchedule`'s `beforeRun`, handed in from
+`main.ts` because the group module reaches the billing one for its charges):
+every company of every group not yet on the primary's package, free of charge
+and open is moved there, its unpaid periods written off, its
+`AWAITING_PAYMENT` ended. Idempotent; a company the primary's package cannot
+hold (more people than seats) is reported on stdout and left as it is. The
+directory carries `coveredByGroup` per company and the Group screen says
+"covered by the group's subscription" on the row.
+
+Still true: a group company's own periods, where any exist, run on the
+**group's payment terms** (`graceDaysFor` in `billing/collection.ts`: the larger
+of the platform grace and the group's `termsDays`); `GET /v1/billing/subscription`
+carries `billedTo` for a group company, and ACU & Billing names who pays and
+offers no card button. The primary company is the payer; its own exemption,
+where agreed, is the operator's free grant above. `groupsignup`, `groupfound`
+and `groupspec` assert the rule; `groupfound` drives a company created the old
+way through the reconciliation and asserts the renewal grace equals the
+group's terms.
 
 ### Two things the console said badly
 
@@ -11755,7 +11774,11 @@ server's memory for five minutes; a restart between *send* and *sign in* — a
 deploy, for instance — ends every code in flight, and the form then invited
 the person to retype a code that could never work again. The failure now says
 so and offers *Send a new code*, which restarts the challenge against the same
-address without leaving the page.
+address without leaving the page. **The private-module register folds revoked
+grants away.** Asked to clear a revoked grant from the register: the record is
+kept — "who had this, between which dates" is what an access review asks — but
+the table shows live grants by default with a count and *Show revoked* for the
+rest.
 
 ---
 

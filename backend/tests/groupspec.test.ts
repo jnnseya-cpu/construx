@@ -216,29 +216,35 @@ describe('§9.4 — rate cards are approved pricing, and they price the subscrip
     assert.equal(priced.amountMinor, Math.floor(PACKAGES.CORE_PROJECT.monthlyPriceMinor * 0.75));
   });
 
-  it('prices a new company’s first month, its allowance and the statement through the card', () => {
+  it('prices the holding company’s renewal through the card, and a new company is covered by it', () => {
+    // The card prices the subscription the group pays: the holding company's.
+    const holding = platform.subscription(holdingId);
+    const renewal = collection.raiseCharge(platform, holdingId, new Date(Date.parse(holding.renewsAt) + 86_400_000));
+    const expected = Math.floor(PACKAGES.CORE_PROJECT.monthlyPriceMinor * 0.75);
+    assert.ok(renewal && !renewal.alreadyRaised);
+    assert.equal(renewal!.charge.amountMinor, expected, 'the renewal is at the group’s approved price, not the list price');
+
+    // A company the administrator adds is on the holding company's package and
+    // covered by that subscription: open at once, nothing raised against it,
+    // its wallet empty until it tops up.
     const added = addCompany(platform, authOf(platform, admin.id), groupId, {
       displayName: 'Nseya Homes Ltd',
       jurisdiction: 'GB',
       currency: 'GBP',
-      package: 'CORE_PROJECT',
       administrators: [{ name: 'Rowan Blake', email: 'rowan@nseyahomes.example' }],
     });
     discountedId = added.company.tenantId;
-    const expected = Math.floor(PACKAGES.CORE_PROJECT.monthlyPriceMinor * 0.75);
-    assert.ok(added.openingCharge, 'no first month was charged');
-    assert.equal(added.openingCharge.amountMinor, expected, 'the first month is at the group’s approved price, not the list price');
-    // Open before the group has paid: the company's administrators owe nothing.
+    assert.equal(added.openingCharge, null);
+    assert.equal(added.coveredBy.tenantId, holdingId);
     assert.equal(platform.subscription(discountedId).status, 'ACTIVE');
-
-    platform.recordSubscriptionPayment({ tenantId: discountedId, chargeId: added.openingCharge.id, method: 'BANK_TRANSFER', reference: 'BACS-HOMES-1', recordedBy: operator.id });
-    assert.equal(platform.subscription(discountedId).status, 'ACTIVE');
-    assert.equal(platform.wallet(discountedId).snapshot().balanceMinor, Math.round(expected * 0.2), 'twenty per cent of what was paid, not of the list price');
+    assert.equal(platform.subscription(discountedId).package, 'CORE_PROJECT');
+    assert.equal(platform.subscription(discountedId).grantedFree, true);
+    assert.equal(platform.wallet(discountedId).snapshot().balanceMinor, 0);
 
     const month = new Date().toISOString().slice(0, 7);
     const section = groupStatement(platform, groupId, month).sections.find((entry) => entry.tenantId === discountedId)!;
     assert.equal(section.plan.listPriceMinor, PACKAGES.CORE_PROJECT.monthlyPriceMinor);
-    assert.equal(section.plan.chargedMinor, expected);
+    assert.equal(section.plan.chargedMinor, 0, 'covered: nothing is charged to the company on the statement');
   });
 
   it('charges list price on a card the agreement leaves undiscounted', () => {

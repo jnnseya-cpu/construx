@@ -2218,11 +2218,17 @@ export class Platform {
     const projectId = `${input.tenantId}-governance`;
     const decidedAt = new Date().toISOString();
 
+    // The operator by hand, or the platform itself: a group's companies are
+    // brought under the group's package by the billing run, and that decision
+    // is the system's, recorded as such.
+    const decidedActor = input.decidedBy.startsWith('billing:') ? ({ refType: 'System', refId: input.decidedBy } as const) : ({ refType: 'User', refId: input.decidedBy } as const);
+    const decidedSource = input.decidedBy.startsWith('billing:') ? ('SYSTEM' as const) : ('WEB' as const);
+
     this.ledger.commit({
       tenantId: input.tenantId,
       projectId,
-      actor: { refType: 'User', refId: input.decidedBy },
-      source: 'WEB',
+      actor: decidedActor,
+      source: decidedSource,
       correlationId: ulid(),
       eventType: 'EVIDENCE_REGISTERED',
       entity: { refType: 'EvidenceItem', refId: evidenceId },
@@ -2250,8 +2256,8 @@ export class Platform {
     this.ledger.commit({
       tenantId: input.tenantId,
       projectId,
-      actor: { refType: 'User', refId: input.decidedBy },
-      source: 'WEB',
+      actor: decidedActor,
+      source: decidedSource,
       correlationId: ulid(),
       eventType: 'SUBSCRIPTION_PACKAGE_CHANGED',
       entity: { refType: 'Subscription', refId: updated.id },

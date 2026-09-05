@@ -9,6 +9,7 @@ import { Pool } from './store/postgres.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { startCollectionSchedule } from './billing/collection.ts';
+import { coverGroupCompanies } from './group/onboarding.ts';
 import { startErasureSchedule } from './identity/erasure.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
@@ -455,17 +456,35 @@ const repairTimer = follower ? undefined : startRepair(platform);
  * staging box restored from a production journal, raises charges against real
  * tenancies — so arming it is a deliberate act on a deployment.
  */
+/**
+ * A group's companies are on the group's package and covered by its primary
+ * company's subscription. Reconciled at boot and before every billing pass,
+ * so a company created before that rule — waiting for a first month its own
+ * administrators were asked to pay — opens and is covered without anybody
+ * pressing anything. Said on stdout when it changes something.
+ */
+const coverGroups = (target: typeof platform): void => {
+  const outcome = coverGroupCompanies(target);
+  for (const entry of outcome.covered) process.stdout.write(`[group] ${entry.tenantId} brought under group ${entry.groupId}'s subscription\n`);
+  for (const entry of outcome.refused) process.stdout.write(`[group] ${entry.tenantId} could not be brought under group ${entry.groupId}'s package: ${entry.because}\n`);
+};
+if (!follower) coverGroups(platform);
+
 const collection = follower
   ? { stop: (): void => undefined }
-  : startCollectionSchedule(platform, (report) => {
-      process.stdout.write(
-        `[billing] ${report.raised} charge(s) raised, ${report.settled} settled, ${report.failed} unpaid, ` +
-          `${report.suspended} tenancy(ies) suspended\n`,
-      );
-      for (const stopped of report.suspendedTenants) {
-        process.stdout.write(`[billing] suspended ${stopped.tenantId}: ${stopped.because}\n`);
-      }
-    });
+  : startCollectionSchedule(
+      platform,
+      (report) => {
+        process.stdout.write(
+          `[billing] ${report.raised} charge(s) raised, ${report.settled} settled, ${report.failed} unpaid, ` +
+            `${report.suspended} tenancy(ies) suspended\n`,
+        );
+        for (const stopped of report.suspendedTenants) {
+          process.stdout.write(`[billing] suspended ${stopped.tenantId}: ${stopped.because}\n`);
+        }
+      },
+      coverGroups,
+    );
 
 /**
  * Erasures whose grace period has run out. Always on: an erasure that was
