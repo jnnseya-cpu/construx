@@ -3,7 +3,9 @@ import { rateLimiter } from './api/middleware.ts';
 import { SharedLimiter } from './api/sharedlimiter.ts';
 import { assertProductionSafety, config } from './config.ts';
 import { Journal, RecordJournal } from './goldenthread/journal.ts';
+import { PostgresLedgerStore, type StorePosition } from './goldenthread/pgstore.ts';
 import { WriterLock } from './goldenthread/writerlock.ts';
+import { Pool } from './store/postgres.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
 import { startCollectionSchedule } from './billing/collection.ts';
@@ -39,6 +41,56 @@ let durability = 'in memory only — every record is lost on restart';
 /** Held for as long as this process is the one extending the chain. */
 let writerLock: WriterLock | undefined;
 
+// --- The ledger store, where the deployment has a Postgres -----------------
+//
+// Probed before the journal is so much as read: a store that is configured and
+// cannot be reached, or a database without the store's schema, refuses to start
+// in the same breath as a claimed writer lock does. Booting anyway and shipping
+// nothing would be a deployment that believes its record is off the box.
+let ledgerStore: PostgresLedgerStore | undefined;
+let pool: Pool | undefined;
+if (config.ledger.postgresMode !== 'off') {
+  if (config.postgres.host === '') {
+    process.stderr.write(`\n[ledger-store] LEDGER_POSTGRES_MODE is "${config.ledger.postgresMode}" and POSTGRES_HOST is not set. Nothing to ship to.\n\n`);
+    process.exit(1);
+  }
+  if (config.ledger.journalPath === '') {
+    process.stderr.write(
+      '\n[ledger-store] LEDGER_POSTGRES_MODE needs LEDGER_JOURNAL_PATH. The journal is the write-ahead log the store ships ' +
+        'from; without it a commit would be acknowledged with no durable copy anywhere until the ship completed.\n\n',
+    );
+    process.exit(1);
+  }
+  pool = new Pool(
+    {
+      host: config.postgres.host,
+      port: config.postgres.port,
+      user: config.postgres.user,
+      password: config.postgres.password,
+      database: config.postgres.database,
+      tls: config.postgres.tls,
+      verifyCertificate: config.postgres.verifyCertificate,
+      applicationName: 'construx',
+      searchPath: config.postgres.searchPath,
+      connectTimeoutMs: config.postgres.connectTimeoutMs,
+      statementTimeoutMs: config.postgres.statementTimeoutMs,
+    },
+    config.postgres.poolSize,
+  );
+  ledgerStore = new PostgresLedgerStore(pool, config.ledger.postgresMode);
+  try {
+    const probe = await ledgerStore.probe();
+    const declared = await ledgerStore.declareEvidenceTypes();
+    process.stdout.write(
+      `[ledger-store] ${config.postgres.host}:${config.postgres.port}/${config.postgres.database} holds ${probe.stored} event${probe.stored === 1 ? '' : 's'} ` +
+        `across ${probe.tenancies} tenanc${probe.tenancies === 1 ? 'y' : 'ies'}; ${declared} evidence-requiring type${declared === 1 ? '' : 's'} newly declared\n`,
+    );
+  } catch (error) {
+    process.stderr.write(`\n[ledger-store] ${(error as Error).message}\n\n`);
+    process.exit(1);
+  }
+}
+
 if (config.ledger.journalPath !== '') {
   // Claimed before the file is read, let alone appended to.
   //
@@ -66,7 +118,55 @@ if (config.ledger.journalPath !== '') {
   }
 
   const journal = new Journal(config.ledger.journalPath, { fsync: config.ledger.fsync });
-  const { events, stats } = journal.read();
+  const { events: journalled, stats } = journal.read();
+
+  // Which copy this process comes up from.
+  //
+  // With no store, or in mirror mode, the journal — as every boot has. In
+  // primary mode, the database, unless this volume's journal runs past it: the
+  // tail a crash left unshipped is then the longer record, and the database is
+  // brought up to it. Either way the shorter copy has to be a prefix of the
+  // longer, event for event; two records that share a length and differ are
+  // two writers, and the boot refuses rather than picking one.
+  let events = journalled;
+  let restoredFrom: StorePosition['restoredFrom'] = journalled.length > 0 ? 'JOURNAL' : 'NOTHING';
+  let rewriteJournal = false;
+  if (ledgerStore && config.ledger.postgresMode === 'primary') {
+    let stored: typeof journalled;
+    try {
+      stored = await ledgerStore.load();
+    } catch (error) {
+      process.stderr.write(`\n[ledger-store] ${(error as Error).message}\n\n`);
+      process.exit(1);
+    }
+    const shorter = Math.min(stored.length, journalled.length);
+    for (let index = 0; index < shorter; index += 1) {
+      if (stored[index]!.eventId !== journalled[index]!.eventId) {
+        process.stderr.write(
+          `\n[ledger-store] the journal on this volume and the database diverge at event ${index + 1}: the journal holds ` +
+            `${journalled[index]!.eventId} and the database ${stored[index]!.eventId}. Two processes have extended this record. ` +
+            'Refusing to start rather than choosing one; see docs/RUNBOOK.md, "The journal and the store diverge".\n\n',
+        );
+        process.exit(1);
+      }
+    }
+    if (stored.length >= journalled.length) {
+      events = stored;
+      restoredFrom = stored.length > 0 ? 'POSTGRES' : 'NOTHING';
+      rewriteJournal = stored.length > journalled.length;
+      if (rewriteJournal) {
+        process.stdout.write(
+          `[ledger-store] the database holds ${stored.length} events and this volume's journal ${journalled.length}; the journal ` +
+            'is being rewritten from the database so a boot without the database can still replay.\n',
+        );
+      }
+    } else {
+      process.stdout.write(
+        `[ledger-store] this volume's journal holds ${journalled.length - stored.length} event${journalled.length - stored.length === 1 ? '' : 's'} ` +
+          'the database does not; they were committed and not shipped before the last stop, and will be shipped now.\n',
+      );
+    }
+  }
 
   if (stats.truncated) {
     // The process died between writing the last line and finishing it. That is
@@ -84,7 +184,7 @@ if (config.ledger.journalPath !== '') {
   // response: a platform that boots on a broken chain is one that will be asked
   // to prove something from it later.
   const { restored, entities, discrepancies } = platform.ledger.restore(events);
-  if (stats.truncated) journal.repair(events);
+  if (stats.truncated || rewriteJournal) journal.repair(events);
   for (const found of discrepancies) {
     // Said on the way up, every boot, until the record is examined. The chain
     // hash of this event verifies, so it is the event as written; what does
@@ -154,6 +254,22 @@ if (config.ledger.journalPath !== '') {
     `${brandings} branding${brandings === 1 ? '' : 's'}`;
   if (discrepancies.length > 0) durability += ` — ${discrepancies.length} STATE-HASH DISCREPANC${discrepancies.length === 1 ? 'Y' : 'IES'} (see stderr)`;
   if (!config.ledger.fsync) durability += ' (fsync OFF)';
+
+  // Attached after the journal, so the order of durability is the order it
+  // reads in: the volume first, the database behind it. Everything the journal
+  // holds beyond the database's position is queued before the first new commit.
+  if (ledgerStore) {
+    try {
+      const { queued } = ledgerStore.attach(platform.ledger, events, restoredFrom);
+      platform.ledgerStore = ledgerStore;
+      durability +=
+        ` · Postgres ${config.ledger.postgresMode}: came up from ${restoredFrom === 'POSTGRES' ? 'the database' : restoredFrom === 'JOURNAL' ? 'the journal' : 'nothing'}` +
+        (queued > 0 ? `, ${queued} event${queued === 1 ? '' : 's'} shipping now` : ', in step');
+    } catch (error) {
+      process.stderr.write(`\n[ledger-store] ${(error as Error).message}\n\n`);
+      process.exit(1);
+    }
+  }
 }
 
 /**
@@ -372,12 +488,25 @@ const shutdown = (signal: string): void => {
   watchTimer();
   stopConsistencySweep();
   server.close(() => {
-    platform.ledger.journal?.close();
-    // Released last, after the descriptor is closed. Releasing first would
-    // leave a window in which another process could claim the volume while
-    // this one still had the journal open.
-    writerLock?.release();
-    process.exit(0);
+    void (async () => {
+      // Whatever is still queued for Postgres gets a bounded chance to land.
+      // Not a condition of a clean stop: every one of those events is in the
+      // journal, and the next boot ships them. Said out loud where any remain.
+      if (ledgerStore) {
+        const pending = await ledgerStore.flush(5_000);
+        ledgerStore.close();
+        if (pending > 0) {
+          process.stderr.write(`[ledger-store] stopping with ${pending} event${pending === 1 ? '' : 's'} not yet in Postgres; they are in the journal and ship on the next boot.\n`);
+        }
+        await pool?.close().catch(() => undefined);
+      }
+      platform.ledger.journal?.close();
+      // Released last, after the descriptor is closed. Releasing first would
+      // leave a window in which another process could claim the volume while
+      // this one still had the journal open.
+      writerLock?.release();
+      process.exit(0);
+    })();
   });
 };
 

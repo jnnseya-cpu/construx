@@ -32,6 +32,21 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
+      # The ledger store and the wire client are tested against a real Postgres
+      # 16 for the same reason the limiter is tested against a real Redis: a
+      # client proved against a fake proves the fake. `deploy/postgres/
+      # client-check.sh` does this on a developer's machine; this is the same
+      # two test files against the same schema, on every push.
+      postgres:
+        image: postgres:16-alpine
+        ports: ['55433:5432']
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-real-credential
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +81,19 @@ jobs:
           fi
         env:
           TEST_REDIS_URL: redis://127.0.0.1:6399
+
+      # The schema applied as the cluster owner, the application role given a
+      # login for this run only, and the client's and the ledger store's live
+      # suites run as that role — so row-level security is exercised as the
+      # role that is actually subject to it, exactly as client-check.sh does.
+      - name: Apply the ledger schema and run the live Postgres suites
+        run: |
+          export PGPASSWORD=ci-only-not-a-real-credential
+          psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -p 55433 -U postgres -d postgres -f deploy/postgres/schema.sql
+          psql -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -p 55433 -U postgres -d postgres \
+            -c "ALTER ROLE construx_app LOGIN PASSWORD 'ci-only-not-a-real-credential'"
+          CONSTRUX_PG_LIVE=1 PGHOST=127.0.0.1 PGPORT=55433 PGDATABASE=postgres \
+            node --test backend/tests/postgres.live.test.ts backend/tests/pgstore.live.test.ts
 
       # Proves the container builds from a clean context and that the
       # .dockerignore has not started excluding something the image needs.

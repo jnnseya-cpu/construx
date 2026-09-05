@@ -77,6 +77,38 @@ export async function eventstore(root) {
           </div>`
         : ''}
 
+      <div class="card" style="margin-bottom:14px">
+        <h2>The record off this box</h2>
+        ${position.store
+          ? html`<div class="grid g4" style="margin:10px 0 12px">
+                <div>
+                  <h2>Postgres holds</h2>
+                  <div class="metric ${raw(position.store.agrees ? 'good' : position.store.halted ? 'bad' : 'warn')}">${position.store.stored.toLocaleString('en-GB')}</div>
+                  <div class="metric-sub">of ${position.store.ledgerEvents.toLocaleString('en-GB')} in the ledger · mode ${badge(position.store.mode, position.store.mode === 'primary' ? 'ok' : 'info')}</div>
+                </div>
+                <div>
+                  <h2>Waiting to ship</h2>
+                  <div class="metric ${raw(position.store.pending === 0 ? 'good' : 'warn')}">${position.store.pending.toLocaleString('en-GB')}</div>
+                  <div class="metric-sub">${position.store.shippedThisProcess.toLocaleString('en-GB')} shipped since this process started</div>
+                </div>
+                <div>
+                  <h2>Last shipped</h2>
+                  <div class="metric-sub" style="margin-top:8px">${position.store.lastShippedAt ? time(position.store.lastShippedAt) : 'nothing yet this process'}</div>
+                </div>
+                <div>
+                  <h2>Came up from</h2>
+                  <div class="metric-sub" style="margin-top:8px">${humanise(position.store.restoredFrom ?? 'NOTHING').toLowerCase()}</div>
+                </div>
+              </div>
+              <div class="notice ${raw(position.store.halted ? 'bad' : position.store.agrees ? 'ok' : 'warn')}"><div>${position.store.note}</div></div>`
+          : html`<p class="metric-sub" style="margin-top:8px">
+              No ledger store is configured, so the journal on this volume is the only durable copy of the record: recovery is
+              the backup of that file, and a new host starts from it. Setting <code>LEDGER_POSTGRES_MODE=mirror</code> with a
+              Postgres to hand ships every event there beside the journal; <code>primary</code> makes it the copy a new host
+              comes up from.
+            </p>`}
+      </div>
+
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card chart-card">
           <h2>Events written — last ${position.windowDays} days</h2>

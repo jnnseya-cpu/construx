@@ -92,9 +92,13 @@ echo "==> applying the schema"
 "$PGBIN/psql" -v ON_ERROR_STOP=1 -q -d postgres \
   -c "ALTER ROLE construx_app LOGIN PASSWORD '$PASSWORD'" >/dev/null
 
-echo "==> running the client against it"
+echo "==> running the client against it, then the ledger store"
 cd "$ROOT"
+# Two files, in this order: the client's own checks first, then the ledger
+# store shipping the whole demonstration record through the schema and
+# replaying it. The store's file needs the client to be right; running it
+# first would report a client fault as a store fault.
 CONSTRUX_PG_LIVE=1 \
 PGHOST=127.0.0.1 PGPORT="$PORT" \
 PGDATABASE=postgres PGPASSWORD="$PASSWORD" \
-  node --test backend/tests/postgres.live.test.ts
+  node --test backend/tests/postgres.live.test.ts backend/tests/pgstore.live.test.ts

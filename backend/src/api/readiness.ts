@@ -115,6 +115,30 @@ export function readiness(now = new Date()): Readiness {
       env: ['LEDGER_JOURNAL_PATH', 'LEDGER_JOURNAL_FSYNC'],
     },
     {
+      key: 'ledger.store',
+      label: 'Ledger store',
+      // Not critical: the journal on the volume is a complete, durable answer
+      // for one instance, and a deployment without Postgres is not degraded by
+      // not having it. What is critical is a store that is configured and
+      // cannot be reached, and that refuses boot rather than reporting here.
+      critical: false,
+      state:
+        config.ledger.postgresMode === 'off'
+          ? 'NOT_SET'
+          : config.postgres.host === ''
+            ? 'DEGRADED'
+            : 'CONFIGURED',
+      detail:
+        config.ledger.postgresMode === 'off'
+          ? 'The record lives in the journal on this volume alone. A new host starts from a backup of that file.'
+          : config.postgres.host === ''
+            ? `LEDGER_POSTGRES_MODE is "${config.ledger.postgresMode}" and POSTGRES_HOST is not set, so the store cannot be reached and the process will not have started.`
+            : config.ledger.postgresMode === 'primary'
+              ? `Every event is shipped to Postgres at ${config.postgres.host}, in order, and a new host replays from there. The journal is the local write-ahead log.`
+              : `Every event is shipped to Postgres at ${config.postgres.host} beside the journal, which is still what a restart replays. Switch to "primary" once the two agree.`,
+      env: ['LEDGER_POSTGRES_MODE', 'POSTGRES_HOST', 'POSTGRES_PASSWORD'],
+    },
+    {
       key: 'auth.secret',
       label: 'Session signing secret',
       critical: true,

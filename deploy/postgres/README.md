@@ -1,11 +1,26 @@
 # The Golden Thread in Postgres
 
-**What this is:** the schema, and a script that proves it enforces what it says.
+**What this is:** the schema, a script that proves it enforces what it says, and
+a second script that proves the platform's own zero-dependency client and its
+ledger store work against a real server.
 
-**What this is not:** a working persistence layer. The platform cannot speak to
-Postgres — a wire-protocol client is not written, and zero runtime dependencies
-is a settled decision, so `pg` is not going to be added. Nothing in this
-directory is loaded by the running platform.
+**What this is now used for.** With `LEDGER_POSTGRES_MODE` set, the running
+platform ships every Golden Thread event to a database carrying this schema and
+replays the record from it at boot (`backend/src/goldenthread/pgstore.ts`; the
+runbook's *The ledger store* says how to bring a deployment onto it). The
+platform speaks to Postgres through `backend/src/store/`, written here because
+zero runtime dependencies is a settled decision and `pg` was never going to be
+added. Apply this file to the database first; it is idempotent, and adds the
+store's columns and tables to a database that already holds the log.
+
+```
+./deploy/postgres/client-check.sh
+```
+
+stands up a throwaway cluster, applies the schema, and runs the client's own
+checks and then the ledger store's — the whole demonstration record shipped
+through the triggers and replayed into a ledger that has to match the writer on
+every chain head.
 
 ## Why it exists anyway
 

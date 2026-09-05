@@ -222,6 +222,20 @@ export const config = {
      * corrupt the chain by taking over from it.
      */
     writerHeartbeatSeconds: num('LEDGER_WRITER_HEARTBEAT_SECONDS', 10),
+    /**
+     * Whether the ledger is also kept in Postgres, and which copy a boot trusts.
+     *
+     * `off`: the journal alone, as every deployment has run. `mirror`: every
+     * event is shipped to Postgres beside the journal, and a restart still
+     * replays the journal — the mode a deployment runs in until the two are
+     * seen to agree. `primary`: a boot replays Postgres and ships the journal's
+     * unshipped tail; a new host with an empty volume comes up with the record.
+     * Anything else is treated as `off` and said so at boot.
+     */
+    postgresMode: ((): 'off' | 'mirror' | 'primary' => {
+      const value = str('LEDGER_POSTGRES_MODE', 'off').trim().toLowerCase();
+      return value === 'mirror' || value === 'primary' ? value : 'off';
+    })(),
   },
 
   /**
@@ -1412,6 +1426,17 @@ export function assertProductionSafety(): string[] {
     }
     if (!config.ledger.fsync) {
       warnings.push('LEDGER_JOURNAL_FSYNC is disabled — events may be acknowledged before reaching the disk');
+    }
+    if (config.ledger.postgresMode === 'off' && config.postgres.host !== '') {
+      warnings.push(
+        'POSTGRES_HOST is set and LEDGER_POSTGRES_MODE is off — the database is configured and the ledger is not being shipped to it',
+      );
+    }
+    {
+      const raw = (process.env.LEDGER_POSTGRES_MODE ?? '').trim().toLowerCase();
+      if (raw !== '' && raw !== 'off' && raw !== 'mirror' && raw !== 'primary') {
+        warnings.push(`LEDGER_POSTGRES_MODE is "${raw}", which is not off, mirror or primary — the ledger store is off`);
+      }
     }
     if (config.ai.mode !== 'production') {
       warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);

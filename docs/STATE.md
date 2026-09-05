@@ -15,9 +15,9 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,795 passing, 0 failing, 0 skipped, across 254 files · plus 18 against a live Postgres 16 |
+| Tests | 5,805 passing, 0 failing, 0 skipped, across 256 files · plus 24 against a live Postgres 16 (the client and the ledger store), now also run in CI |
 | Typecheck | clean |
-| Backend | 295 TypeScript files, 190,000 lines |
+| Backend | 296 TypeScript files, 190,700 lines |
 | Application | 77 ES modules, 43,500 lines (including a service worker) |
 | API routes | 1,058 — 725 writes, 333 reads (48 of them public) |
 | Event types | 712 Golden Thread (closed) · the communication catalogue is separate and closed |
@@ -8640,6 +8640,76 @@ the Documents screen and the row says *Read · 2 pages*; a scan says what was
 seen and, on this deployment with no provider that can see, why no
 transcription is offered.
 
+## The ledger in Postgres
+
+The schema had been verified against a live Postgres 16, the client too, and
+the sentence beside them read *the ledger has not moved*. The reason was
+structural: `commit()` is synchronous and called from several hundred places,
+the in-memory record answers every read, and rewriting the domain layer to
+await a round trip on every write would have bought latency and risk on the
+most dangerous file in the repository. `goldenthread/pgstore.ts` moves the
+record without moving the ledger. The journal on the volume stays the
+write-ahead log: a commit is on disk before it is acknowledged, exactly as
+before. Every committed event is then shipped to Postgres in commit order, one
+transaction each, behind the commit — through the schema's own triggers, so
+the database refuses an event that does not follow the head of its project's
+chain, and the record there cannot silently fork. A boot in `primary` mode
+replays the database, verifying every chain and state hash exactly as a
+journal replay does, ships whatever the journal holds beyond the database's
+position, and rewrites a shorter journal from the database; in `mirror` mode
+it replays the journal and brings the database up to date beside it, which is
+how a deployment proves the two agree before trusting the second. `off` is the
+default and is what every deployment has run.
+
+Two things the design had to get right. **Order:** the ledger's read order is
+`(timestamp, eventId)`, and an offline capture carries the device's timestamp,
+which can precede the event it chains from — replaying in read order would
+break the chain on exactly those records, so events carry the platform's commit
+ordinal (`sequence`) and replay in that. **Bytes:** the event is stored as the
+JSON line the journal writes (`body`), and replay parses that; the columns
+beside it are for querying. Reassembling an event from columns would be a
+second serialisation that had to agree byte for byte with the first for ever,
+and the chain hash is over those bytes. Both were found by running it: the
+first live boot shipped nothing, because the client rendered a JSON patch as a
+Postgres array literal and every event was refused with a data error and
+retried for ever. Data errors now halt rather than retry, and the first
+failure of a kind is logged.
+
+What is refused, by name: a database without the store's schema
+(`LEDGER_STORE_SCHEMA_MISSING`), a database whose record and position
+disagree, a gap in the sequence, a database holding more than the process
+does in mirror mode, and a journal that diverges from the database in primary
+mode — two processes extended the record, and the boot refuses to choose. A
+refused ship (the chain trigger, the tenant trigger, a data error) **halts**
+shipping with the reason on the Event Store screen and keeps every unshipped
+event in the journal; a database that is merely down grows a reported queue
+and is retried with backoff.
+
+Verified three ways. `pgstore.test.ts` runs the store's ordering, idempotence,
+retry, halt and replay against a stand-in that enforces the schema's rules.
+`pgstore.live.test.ts`, run by `deploy/postgres/client-check.sh`, ships the
+whole demonstration record — 706 events across two tenancies, 138
+evidence-requiring types declared to the database first — through a real
+Postgres 16 and replays it into a fresh ledger that matches the writer on
+every chain head and every state hash, under row-level security as the
+application role, and halts when an intruder moves a head. And the process
+itself was booted against a live cluster: `mirror` from a journal of 706
+events shipped them within two seconds; `primary` on an empty volume came up
+from the database with the same 529 entities and 14 users and wrote itself a
+journal.
+
+What this does not change, stated so it is not mistaken for more: one process
+extends the chain at a time, because two would each hold a different in-memory
+record; the writer lock is still load-bearing and the chain trigger is what
+catches its failure. Failover is a boot somebody starts on a new host, not one
+that happens. And the ACU wallet's ledger and the blog view counts are
+separate files by settled decision and are **not** in Postgres — a new host
+needs `LEDGER_JOURNAL_PATH.acu` copied from the old volume or every wallet
+starts at zero; the runbook says so. Readiness reports the store as a
+non-critical capability; the Event Store screen shows what Postgres holds
+against the ledger, what is waiting to ship, and why shipping stopped where it
+has.
+
 ## Reading an IFC, and telling two revisions apart
 
 A model's element count had been whatever the person ingesting it typed in,
@@ -8860,12 +8930,14 @@ parsing work, not wiring.
   one too (`deploy/postgres/client-check.sh`, 18 checks): a zero-dependency
   wire-protocol implementation doing SCRAM-SHA-256, parameterised statements,
   transaction-scoped tenancy under RLS, and the two-concurrent-writer race the
-  chain trigger exists to settle. What is **not** done is the migration itself:
-  `goldenthread/ledger.ts` still reads and writes the in-process journal, and
-  moving it is a separate, careful piece of work on the most dangerous file in
-  the repository. Until that lands the writer lock is still load-bearing, point-
-  in-time recovery is still the backup interval, and there is no automatic
-  failover
+  chain trigger exists to settle. The **ledger store** now ships the record to
+  Postgres and replays it from there — see *The ledger in Postgres* below — so
+  recovery is the ship lag rather than the backup interval and a new host comes
+  up from the database. What is **not** done is a second writer:
+  `goldenthread/ledger.ts` still answers every read from memory and one process
+  extends the chain at a time, so the writer lock is still load-bearing, the
+  database's chain trigger is what catches its failure, and failover is a boot
+  somebody starts rather than one that happens
 - **A metrics store and dashboards** — the *egress* is built. `ops/otlp.ts`
   ships counters, the latency histogram and the security stream to any OTLP
   collector over HTTP with the JSON encoding, on an interval, from a bounded
@@ -10044,13 +10116,15 @@ end is the one that is right.
   wrong: both carry a four-byte length and no data, so the size proves nothing
   and the *value* of that length is the whole distinction.
 
-**What this does not do.** The ledger has not moved. `goldenthread/ledger.ts`
-still reads and writes the in-process journal, and switching it is a separate,
-careful piece of work on the most dangerous file in the repository — not
-something to fold into the commit that introduced the client. Until that lands:
-the writer lock is still load-bearing rather than redundant, recovery is still
-bounded by the backup interval, and nothing fails over. Named here so the
-distance is not mistaken for zero.
+**What this did not do, and what has since been done.** When the client landed
+the ledger had not moved: `goldenthread/ledger.ts` read and wrote the in-process
+journal and nothing else, and switching it was left as a separate, careful
+piece of work. That work is `goldenthread/pgstore.ts` — see *The ledger in
+Postgres* — and it did not move the ledger in the sense first imagined: the
+in-memory record still answers every read and the journal is still the
+write-ahead log, and the database is the copy the record is shipped to and
+replayed from. What remains true is that one process extends the chain at a
+time.
 
 Statement caching and binary result format are both deliberately absent.
 Caching is how a pooled connection ends up holding a plan built for a different

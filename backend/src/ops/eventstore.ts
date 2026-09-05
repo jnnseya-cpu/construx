@@ -1,4 +1,5 @@
 import { EVENT_TYPES, isPlatformGovernanceEvent, lookupEventType, type EventGroup } from '../goldenthread/eventTypes.ts';
+import type { StorePosition } from '../goldenthread/pgstore.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -67,6 +68,12 @@ export type EventStorePosition = {
    * and vice versa is impossible — but it is the one number worth watching.
    */
   durability: { ledgerEvents: number; journalEvents: number; agrees: boolean; note: string };
+  /**
+   * The ledger store in Postgres, where one is configured: what it holds against
+   * what the ledger holds, and whether shipping has stopped. Absent means the
+   * journal on this volume is the only durable copy.
+   */
+  store: (StorePosition & { ledgerEvents: number; agrees: boolean; note: string }) | null;
   note: string;
 };
 
@@ -145,6 +152,26 @@ export function eventStorePosition(platform: Platform, windowDays = DEFAULT_WIND
   }
 
   const journal = platform.ledger.journal?.stats() ?? null;
+  const shipping = platform.ledgerStore?.position();
+  const store =
+    shipping === undefined
+      ? null
+      : {
+          ...shipping,
+          ledgerEvents: platform.ledger.size,
+          agrees: shipping.stored === platform.ledger.size && shipping.pending === 0 && !shipping.halted,
+          note: shipping.halted
+            ? `Shipping to Postgres has stopped: ${shipping.halted}`
+            : shipping.pending > 0
+              ? `${shipping.pending} event${shipping.pending === 1 ? '' : 's'} committed here and not yet in Postgres${
+                  shipping.lastError ? ` — the last attempt failed: ${shipping.lastError}` : ' — shipping is in progress'
+                }. Every one of them is in the journal on this volume.`
+              : shipping.mode === 'primary'
+                ? `Postgres holds every event the ledger holds. A new host replays from it; this process ${
+                    shipping.restoredFrom === 'POSTGRES' ? 'came up from it' : 'came up from the journal and brought it up to date'
+                  }.`
+                : 'Postgres holds every event the ledger holds, beside the journal a restart still replays. The two agree; LEDGER_POSTGRES_MODE=primary would make Postgres the copy a new host comes up from.',
+        };
 
   return {
     total: events.length,
@@ -175,6 +202,7 @@ export function eventStorePosition(platform: Platform, windowDays = DEFAULT_WIND
     authorship,
     evidence: { withEvidence, requiringEvidence },
     journal,
+    store,
     durability: journal
       ? {
           ledgerEvents: events.length,

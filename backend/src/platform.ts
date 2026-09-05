@@ -40,6 +40,7 @@ import { hashEvidence } from './core/canonical.ts';
 import { ulid } from './core/ids.ts';
 import type { EngineContext } from './engines/context.ts';
 import { GoldenThreadLedger } from './goldenthread/ledger.ts';
+import type { PostgresLedgerStore } from './goldenthread/pgstore.ts';
 import type { EventSource } from './goldenthread/types.ts';
 import { bindCredentialStores } from './identity/credentialstore.ts';
 import type { AuthContext } from './identity/auth.ts';
@@ -221,6 +222,13 @@ export class Platform {
    * is refused rather than done with a key nobody can verify against tomorrow.
    */
   readonly signing: SigningAuthority;
+  /**
+   * The ledger's store in Postgres, where the deployment has one. Attached by
+   * the process entry point after the record is restored, because the store
+   * follows the ledger rather than being part of it; absent means the journal
+   * on the volume is the only durable copy, and the event store screen says so.
+   */
+  ledgerStore: PostgresLedgerStore | undefined;
 
   readonly #wallets = new Map<string, ACUWallet>();
   /**

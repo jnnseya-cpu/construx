@@ -231,6 +231,67 @@ The errors are specific:
 | `JOURNAL_STATE_MISMATCH` | An event's recorded state hash disagrees with its own patch |
 | `Journal … is corrupt at line N` | Unparseable line that is *not* the last one — real corruption, not a torn write |
 
+### The ledger store: the record in Postgres
+
+Off by default. With `LEDGER_POSTGRES_MODE` set and the `POSTGRES_*` variables
+pointing at a database that has had `deploy/postgres/schema.sql` applied, every
+event the ledger commits is shipped to Postgres in commit order, one transaction
+each, behind the commit. The journal on the volume stays the write-ahead log in
+every mode: a commit is on the volume before it is acknowledged, and the
+database is brought up to date behind it. The lag is on the Event Store screen
+and in `/v1/admin/events` under `store`, never hidden.
+
+**Bringing a deployment onto it, in order.**
+
+1. Apply `deploy/postgres/schema.sql` to the database (idempotent; it adds the
+   store's columns and tables to a database already holding the log). Give
+   `construx_app` a login and set `POSTGRES_PASSWORD`. `POSTGRES_TLS=require`
+   unless the database is on loopback.
+2. Set `LEDGER_POSTGRES_MODE=mirror` and restart. Boot probes the database
+   before it reads the journal and refuses to start if the schema is missing or
+   the database is unreachable. The banner says `Postgres mirror: came up from
+   the journal, N events shipping now`; the Event Store screen shows the count
+   in Postgres climbing to the count in the ledger. Nothing about the restart
+   changes: it still replays the journal.
+3. When the screen says the two agree, set `LEDGER_POSTGRES_MODE=primary` and
+   restart. Boot now replays the **database**, ships whatever the journal holds
+   beyond it (the tail a crash left unshipped), and — on a host whose journal is
+   shorter than the database — rewrites the journal from the database so a boot
+   without the database can still replay.
+
+**Failover to a new host.** Give it an empty volume, the same `POSTGRES_*` and
+`LEDGER_POSTGRES_MODE=primary`, and start it. It replays the whole record from
+the database and writes itself a journal. Two things do **not** come from the
+database and must be copied from the old volume: `LEDGER_JOURNAL_PATH.acu`, the
+ACU wallet's own ledger (a separate double-entry ledger by a settled decision —
+without it every wallet starts at zero, which hands customers AI the platform has
+paid for), and the blog view counts. Stop the old process first; two processes
+extending the chain is the one thing this does not make safe, and the database
+will refuse the second's events rather than fork.
+
+**The ledger store halted.** The screen says *Shipping to Postgres has stopped*
+and the position carries `halted`. The database refused an event for a reason a
+retry cannot change — SQLSTATE 23xxx is the chain trigger or a unique index
+(another process has extended this chain in the database, or it has been
+edited), 42501 is the tenant trigger, 22xxx is a value a column would not take.
+Nothing is dropped: every unshipped event is in the journal. Find and stop the
+other writer, or restore the database from its own backup to the position the
+journal agrees with, then restart; the boot ships the tail.
+
+**The journal and the store diverge.** Boot in primary mode refuses with
+`the journal on this volume and the database diverge at event N`. The two
+records share a prefix and then differ, which means two processes extended the
+record separately. Decide which record is the true one — the one whose events
+were acknowledged to people — and either replace the journal with the database's
+(delete the journal, boot in primary) or replace the database's tail with the
+journal's (restore the database to a backup taken before event N, boot in
+mirror, which ships the journal forward). Do not edit either file.
+
+**Retries.** A database that is down does not stop the platform. Commits carry
+on into the journal, the queue grows, the screen shows it, and shipping resumes
+with backoff when the database answers. `[ledger-store] shipping failed and will
+be retried` is logged once per distinct failure.
+
 ### Secrets
 
 Injected as environment variables by the platform. Never in the image, never in
@@ -419,13 +480,18 @@ path, so an id in a URL cannot produce one series per project.
 
 Stated so it is not mistaken for an omission somebody can fix with a flag.
 
-- **No horizontal scale.** One process owns the journal file. Two containers
-  writing to one volume would interleave events and break the chain. Scaling
-  out needs the Postgres design in `docs/STATE.md`, not another replica.
-- **No automatic failover.** A single node with a volume. Recovery is restart
-  or restore, and both are manual.
-- **No point-in-time recovery beyond the backup interval.** Recovery granularity
-  is however often the files are copied.
+- **No horizontal scale.** One process extends the chain at a time, whether the
+  record is in the journal alone or shipped to Postgres as well: two processes
+  would each hold a different in-memory record. The ledger store makes the
+  record recoverable off the box and a new host able to come up from it; it
+  does not make two hosts able to write at once. The database's chain trigger
+  is what catches the second writer, by refusing it.
+- **No automatic failover.** A new host comes up from Postgres in `primary`
+  mode (see *The ledger store*), but somebody starts it, and the ACU wallet
+  file still has to be copied from the old volume.
+- **Point-in-time recovery is the ship lag, not the backup interval, once the
+  store is on.** Without it, recovery granularity is however often the files
+  are copied.
 - **No log shipping, metrics store or alerting.** The process writes structured
   JSON to stdout and exposes counters; nothing collects them yet.
 - **No CDN.** The frontend is served by the backend from one origin.

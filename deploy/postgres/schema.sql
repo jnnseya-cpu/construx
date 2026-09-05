@@ -273,6 +273,51 @@ CREATE OR REPLACE TRIGGER event_evidence_present
   FOR EACH ROW EXECUTE FUNCTION assert_evidence_present();
 
 -- --------------------------------------------------------------------------
+-- The ledger store: what the running platform adds to the log
+-- --------------------------------------------------------------------------
+--
+-- Written when `goldenthread/pgstore.ts` started shipping the in-process
+-- ledger here. Each is `IF NOT EXISTS`, so applying this file to a database
+-- that already carries the log adds the columns and tables without touching a
+-- row. Rows written before these existed carry NULL in the new columns and are
+-- not replayable — the store refuses a gap rather than skipping it.
+--
+--   sequence   The platform's commit ordinal: the position of the event in the
+--              journal, which is the order the chain was actually extended in.
+--              Replay is ORDER BY sequence, because (occurred_at, event_id) is
+--              the read order and an offline capture carries the device's
+--              timestamp, which can precede the event it chains from.
+--   body       The event exactly as the journal wrote it, one JSON document.
+--              Replay verifies every chain hash over the canonical body, and
+--              reassembling that body from columns is a second implementation
+--              of the same serialisation that would have to agree byte for
+--              byte for ever. The columns are for querying; the body is the
+--              record.
+
+ALTER TABLE event ADD COLUMN IF NOT EXISTS sequence bigint;
+ALTER TABLE event ADD COLUMN IF NOT EXISTS body     text;
+CREATE UNIQUE INDEX IF NOT EXISTS event_by_sequence ON event (sequence);
+
+-- Which tenancies hold events. Row-level security means a connection sees one
+-- tenancy at a time, and replay needs to know which tenancies to ask for; the
+-- ids alone are not delivery data, so this table has no policy.
+CREATE TABLE IF NOT EXISTS tenancy (
+  tenant_id       text        PRIMARY KEY,
+  first_sequence  bigint      NOT NULL,
+  first_seen      timestamptz NOT NULL DEFAULT now()
+);
+
+-- The highest commit ordinal the database holds, advanced in the same
+-- transaction as each event. A process coming up reads it once and ships
+-- everything its journal holds beyond it; a fresh host with an empty volume
+-- reads it and replays.
+CREATE TABLE IF NOT EXISTS ledger_position (
+  id          integer     PRIMARY KEY CHECK (id = 1),
+  sequence    bigint      NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- --------------------------------------------------------------------------
 -- Roles
 -- --------------------------------------------------------------------------
 --
@@ -306,6 +351,11 @@ $$;
 GRANT USAGE ON SCHEMA goldenthread TO construx_app;
 GRANT SELECT, INSERT ON event TO construx_app;
 GRANT SELECT, INSERT, UPDATE ON chain_head TO construx_app;
-GRANT SELECT ON event_type_requiring_evidence TO construx_app;
+-- INSERT as well as SELECT: the platform declares the catalogue's
+-- evidence-requiring types here at boot, so the database enforces the same
+-- list the application does. Nothing deletes from it.
+GRANT SELECT, INSERT ON event_type_requiring_evidence TO construx_app;
+GRANT SELECT, INSERT ON tenancy TO construx_app;
+GRANT SELECT, INSERT, UPDATE ON ledger_position TO construx_app;
 
 COMMIT;
