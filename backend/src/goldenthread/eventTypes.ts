@@ -1648,6 +1648,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // it, which made the console's top-up button a mint.
   def('TOPUP_REQUESTED', 'TopUpIntent', 'CREATE', 'AI_BILLING', { creates: true }),
   def('TOPUP_SETTLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
+  // A request that will never be paid: the tenancy it was raised on has been
+  // closed and its wallet emptied, so there is nothing a receipt could credit.
+  // Cancelled with the closure named, rather than left counted for ever as
+  // money the business is waiting for.
+  def('TOPUP_CANCELLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
   def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
 
   // --- Concept, stage 6 -----------------------------------------------------

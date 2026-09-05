@@ -1294,7 +1294,7 @@ export class Platform {
     actor: AuthContext,
     input: { tenantId: string; reason: string },
     now = new Date(),
-  ): { tenant: Tenant; deactivated: string[]; refund: RefundObligation | undefined } {
+  ): { tenant: Tenant; deactivated: string[]; refund: RefundObligation | undefined; cancelledTopUps: string[] } {
     const tenant = this.#tenants.get(input.tenantId);
     if (!tenant) throw new NotFoundError(`No tenant ${input.tenantId}`);
     if (!input.reason.trim() || input.reason.trim().length < 10) {
@@ -1383,6 +1383,34 @@ export class Platform {
       this.#wallets.get(tenant.id)?.closeOut('Wallet closed with the tenancy; nothing refundable remained');
     }
 
+    // Money asked for and never received. A top-up awaiting payment on a closed
+    // tenancy can never be credited — the wallet has just been closed — and
+    // left as it was it stayed on the Command Center for ever as money the
+    // business was waiting for. Cancelled with the closure named; the record of
+    // the request stays.
+    const cancelledTopUps: string[] = [];
+    for (const intent of this.topUpIntents(tenant.id)) {
+      if (intent.status !== 'AWAITING_PAYMENT') continue;
+      const cancelled: TopUpIntent = {
+        ...intent,
+        status: 'CANCELLED',
+        cancelledAt: closedAt,
+        cancelledReason: `Tenancy closed: ${input.reason}`,
+      };
+      this.#topUpIntents.set(cancelled.id, cancelled);
+      this.ledger.commit({
+        tenantId: tenant.id,
+        projectId: `${tenant.id}-governance`,
+        actor: { refType: 'User', refId: actor.actorId },
+        source: 'WEB',
+        correlationId: ulid(),
+        eventType: 'TOPUP_CANCELLED',
+        entity: { refType: 'TopUpIntent', refId: cancelled.id },
+        nextState: { ...cancelled },
+      });
+      cancelledTopUps.push(cancelled.id);
+    }
+
     const closed: Tenant = { ...tenant, closedAt, closedBy: actor.actorId, closureReason: input.reason };
     this.#tenants.set(tenant.id, closed);
     this.ledger.commit({
@@ -1393,10 +1421,16 @@ export class Platform {
       correlationId: ulid(),
       eventType: 'TENANT_CLOSED',
       entity: { refType: 'Tenant', refId: tenant.id },
-      nextState: { ...closed, identitiesDeactivated: deactivated.length, refundId: refund?.id ?? null, refundMinor: refund?.totalMinor ?? 0 },
+      nextState: {
+        ...closed,
+        identitiesDeactivated: deactivated.length,
+        refundId: refund?.id ?? null,
+        refundMinor: refund?.totalMinor ?? 0,
+        topUpsCancelled: cancelledTopUps.length,
+      },
     });
 
-    return { tenant: closed, deactivated, refund };
+    return { tenant: closed, deactivated, refund, cancelledTopUps };
   }
 
   /** Every refund obligation on the estate, unsettled first. */

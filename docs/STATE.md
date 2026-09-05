@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,843 passing, 0 failing, 0 skipped, across 257 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,844 passing, 0 failing, 0 skipped, across 257 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 298 TypeScript files, 192,500 lines |
 | Application | 77 ES modules, 43,900 lines (including a service worker) |
 | API routes | 1,064 — 730 writes, 334 reads (48 public across both) |
-| Event types | 715 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Event types | 716 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 330, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -8114,6 +8114,47 @@ customer can check against their statement. The Close button previews the
 count and the money before asking for the reason. `tenancyclosure.test.ts`
 holds the arithmetic, the cascade, the refusals, the settlement and the
 restart.
+
+### A closed tenancy is counted in nothing
+
+Asked for as: clear all the dummy data. The live Command Center read "1
+tenancy · 2 active identities", "£2.0K awaiting payment — 3 top-ups raised and
+unsettled", "AI is refused now — the wallet is empty" under *What lands next*,
+and a trial that would end — all of it one test signup, "Etablix", that
+somebody had used to try the product.
+
+Nothing is deleted; the record is append-only by a settled decision and this
+does not reopen it. What was wrong is that **closing** the tenancy — the act
+that already exists for exactly this — left it counted. `estateOverview` summed
+every customer tenancy whatever its state, so a closed one was still a tenancy,
+its deactivated people were still identities and its unpaid top-ups were still
+money the business was waiting for; `forecastPosition` still forecast its empty
+wallet and its trial ending; and nothing anywhere cancelled a top-up request
+when the tenancy that raised it closed, so "awaiting payment" would have read
+£2.0K for ever.
+
+Three changes. `Platform.closeTenant` now cancels every top-up still awaiting
+payment on the tenancy (`TOPUP_CANCELLED`, with the closure as the reason, the
+`CANCELLED` status the type always allowed and nothing ever set) and reports
+`topUpsCancelled` beside `identitiesDeactivated`. `estateOverview` takes
+`closed` on each tenancy, counts the closed ones once under `tenancies.closed`
+and reads every other figure over the open ones; the overview route, the estate
+report and the forecast pass or apply the same rule, and a request awaiting
+payment counts only from an open customer tenancy — so a request raised before
+this rule, on a tenancy closed before it, is not awaited either. The Command
+Center's tenancy tile says "N closed and counted in nothing here" when there
+are any, because the register still shows the row and the two must not read as
+a contradiction. `tenancyclosure.test.ts` raises a request before closing and
+holds the cancellation, the zeroed overview, the silent forecast, the register
+row and the restart.
+
+What closure does not clear, and should not: the trial credit the tenancy was
+given still counts against the month's trial budget, because it was given; and
+its `TENANT_CREATED`, its identities and its requests stay on the record,
+closed. A deployment that has only been tested and wants an empty record before
+its first customer follows *Clearing what testing left behind* in
+`docs/RUNBOOK.md`: the journal files are moved aside, not deleted, and boot
+seeds only what the environment names.
 
 ### Files without a second setting, and a term the pricing page made
 

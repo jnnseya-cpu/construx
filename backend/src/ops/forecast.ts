@@ -71,7 +71,11 @@ export function forecastPosition(platform: Platform, now = new Date()): Forecast
   // Customers only. The platform's own tenancy produced a CRITICAL "no
   // administrator" signal and a renewal on every deployment, and the
   // demonstration a renewal nobody will ever have a conversation about.
-  const tenants = platform.customerTenants();
+  //
+  // And open. A closed tenancy has no wallet to run out, no renewal to have a
+  // conversation about and no seat to fill; the only thing forecasting it
+  // achieved was a row on "What lands next" about a customer that had left.
+  const tenants = platform.customerTenants().filter((tenant) => tenant.closedAt === undefined);
   const signals: Signal[] = [];
   let renewalExposureMinor = 0;
 
@@ -245,12 +249,16 @@ export function forecastPosition(platform: Platform, now = new Date()): Forecast
     if (intent.status !== 'AWAITING_PAYMENT') continue;
     const age = daysBetween(new Date(intent.requestedAt), now);
     if (age < 3) continue;
+    // Only a request from an open customer tenancy is money anybody is waiting
+    // for. Closure cancels a tenancy's open requests, but a request raised
+    // before that rule existed can still be on the record as awaiting.
     const tenant = tenants.find((candidate) => candidate.id === intent.tenantId);
+    if (!tenant) continue;
     signals.push({
       id: `unsettled:${intent.id}`,
       severity: age >= 14 ? 'WARNING' : 'WATCH',
       tenantId: intent.tenantId,
-      legalName: tenant?.legalName ?? intent.tenantId,
+      legalName: tenant.legalName,
       headline: `A top-up has been awaiting payment for ${age} days`,
       basis: `${(intent.amountMinor / 100).toFixed(2)} raised ${intent.requestedAt} and never settled`,
       dueAt: null,

@@ -192,6 +192,10 @@ export async function admin(root) {
           tone: overview.tenancies.unreachable > 0 ? 'bad' : '',
           sub:
             `${overview.tenancies.active} active · ${overview.tenancies.onTrial} on trial · ${overview.tenancies.suspended} suspended` +
+            // Closed tenancies are counted in nothing above — not the total, not
+            // the identities, not the money awaited — and named here so the
+            // register's row for one is not a surprise.
+            (overview.tenancies.closed > 0 ? ` · ${overview.tenancies.closed} closed and counted in nothing here` : '') +
             (trialBudget
               ? ` · trial credit ${money(trialBudget.issuedMinor)} of ${money(trialBudget.budgetMinor)} given away this month` +
                 (trialBudget.remainingMinor === 0 ? ' — the allocation is spent; new signups open with an empty wallet' : '')

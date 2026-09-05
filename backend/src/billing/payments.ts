@@ -66,6 +66,9 @@ export type TopUpIntent = {
   status: 'AWAITING_PAYMENT' | 'SETTLED' | 'CANCELLED';
   /** Set when a receipt settles it. */
   receiptId?: string;
+  /** Set when the tenancy was closed with this request still unpaid. */
+  cancelledAt?: string;
+  cancelledReason?: string;
   /**
    * The rate quoted when this intent was created, for a rail that settles in
    * another currency.

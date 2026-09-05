@@ -59,10 +59,22 @@ export type RevenuePosition = {
 export type EstateOverview = {
   at: string;
   tenancies: {
+    /** Open tenancies. A closed one is counted under `closed` and nowhere else. */
     total: number;
     active: number;
     suspended: number;
     cancelled: number;
+    /**
+     * Tenancies the operator has closed.
+     *
+     * Kept out of every other figure here. A closed tenancy's identities are
+     * deactivated, its wallet is emptied and its subscription is cancelled, so
+     * counting it as a tenancy, its people as identities or its unpaid
+     * requests as money awaited reports a business one tenancy larger than the
+     * one that exists — which is exactly what the Command Center did the day
+     * after a test signup was closed.
+     */
+    closed: number;
     /**
      * Active tenancies still on the free trial tier.
      *
@@ -101,6 +113,8 @@ type TenancyInput = {
   /** Null where the package caps nothing. */
   seatsIncluded: number | null;
   identities: ReadonlyArray<{ status: 'ACTIVE' | 'SUSPENDED'; administrator: boolean }>;
+  /** Closed by the operator. Counted once, under `closed`, and in nothing else. */
+  closed?: boolean;
 };
 
 /** Days in the calendar month `at` falls in, UTC. */
@@ -123,8 +137,14 @@ export function estateOverview(
   const previousMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
   const windowStart = new Date(now.getTime() - 30 * 86_400_000).toISOString();
 
+  // Every figure below reads the open tenancies. The closed ones are counted
+  // once, as closed, so the screen can say they exist without adding them to
+  // anything.
+  const closed = input.tenancies.filter((tenancy) => tenancy.closed === true).length;
+  const tenancies = input.tenancies.filter((tenancy) => tenancy.closed !== true);
+
   const byTier = new Map<SubscriptionTier, number>();
-  for (const tenancy of input.tenancies) byTier.set(tenancy.tier, (byTier.get(tenancy.tier) ?? 0) + 1);
+  for (const tenancy of tenancies) byTier.set(tenancy.tier, (byTier.get(tenancy.tier) ?? 0) + 1);
 
   const byMethod = new Map<string, { method: string; amountMinor: number; receipts: number }>();
   for (const receipt of input.receipts) {
@@ -147,33 +167,34 @@ export function estateOverview(
   // A capped tier reports its cap; an uncapped one makes the estate total
   // meaningless, so the whole figure is withheld rather than reported as the sum
   // of the capped tiers alone — which would read as a low ceiling.
-  const uncapped = input.tenancies.some((tenancy) => tenancy.seatsIncluded === null);
+  const uncapped = tenancies.some((tenancy) => tenancy.seatsIncluded === null);
 
   return {
     at,
     tenancies: {
-      total: input.tenancies.length,
-      active: input.tenancies.filter((t) => t.status === 'ACTIVE').length,
-      suspended: input.tenancies.filter((t) => t.status === 'SUSPENDED').length,
-      cancelled: input.tenancies.filter((t) => t.status === 'CANCELLED').length,
-      onTrial: input.tenancies.filter((t) => t.status === 'ACTIVE' && t.tier === 'FREE_TRIAL').length,
+      total: tenancies.length,
+      active: tenancies.filter((t) => t.status === 'ACTIVE').length,
+      suspended: tenancies.filter((t) => t.status === 'SUSPENDED').length,
+      cancelled: tenancies.filter((t) => t.status === 'CANCELLED').length,
+      closed,
+      onTrial: tenancies.filter((t) => t.status === 'ACTIVE' && t.tier === 'FREE_TRIAL').length,
       // A tenancy nobody can administer cannot invite anybody, cannot be
       // configured and cannot be used, whatever it is paying. Onboarding now
       // creates the first administrator with the tenancy, so this should read
       // zero for ever — which is exactly why it is worth showing.
-      unreachable: input.tenancies.filter((t) => !t.identities.some((i) => i.administrator)).length,
-      newInWindow: input.tenancies.filter((t) => t.createdAt >= windowStart).length,
+      unreachable: tenancies.filter((t) => !t.identities.some((i) => i.administrator)).length,
+      newInWindow: tenancies.filter((t) => t.createdAt >= windowStart).length,
       byTier: [...byTier.entries()]
-        .map(([tier, tenancies]) => ({ tier, tenancies }))
+        .map(([tier, count]) => ({ tier, tenancies: count }))
         .sort((a, b) => b.tenancies - a.tenancies),
     },
     identities: {
-      total: input.tenancies.reduce((sum, t) => sum + t.identities.length, 0),
-      active: input.tenancies.reduce((sum, t) => sum + t.identities.filter((i) => i.status === 'ACTIVE').length, 0),
-      suspended: input.tenancies.reduce((sum, t) => sum + t.identities.filter((i) => i.status === 'SUSPENDED').length, 0),
+      total: tenancies.reduce((sum, t) => sum + t.identities.length, 0),
+      active: tenancies.reduce((sum, t) => sum + t.identities.filter((i) => i.status === 'ACTIVE').length, 0),
+      suspended: tenancies.reduce((sum, t) => sum + t.identities.filter((i) => i.status === 'SUSPENDED').length, 0),
       operators: input.operators,
-      seatsUsed: input.tenancies.reduce((sum, t) => sum + t.seatsUsed, 0),
-      seatsIncluded: uncapped ? null : input.tenancies.reduce((sum, t) => sum + (t.seatsIncluded ?? 0), 0),
+      seatsUsed: tenancies.reduce((sum, t) => sum + t.seatsUsed, 0),
+      seatsIncluded: uncapped ? null : tenancies.reduce((sum, t) => sum + (t.seatsIncluded ?? 0), 0),
     },
     revenue: {
       todayMinor: input.receipts

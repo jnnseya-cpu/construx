@@ -231,6 +231,53 @@ The errors are specific:
 | `JOURNAL_STATE_MISMATCH` | An event's recorded state hash disagrees with its own patch |
 | `Journal … is corrupt at line N` | Unparseable line that is *not* the last one — real corruption, not a torn write |
 
+### Clearing what testing left behind
+
+Two situations, two answers, and neither is "delete the events". The record
+is append-only by construction: nothing in the product removes an event, and
+nothing should.
+
+**A test tenancy on a deployment that is otherwise real.** Somebody signed up
+to try the product — a trial tenancy with a couple of identities, a few
+unsettled top-up requests, a trial grant — and the Command Center now reports
+it as the business. Close it from Tenants & Users (**Close** on its row,
+`POST /v1/admin/tenants/:tenantId/close`). Closure cancels the subscription,
+deactivates and schedules erasure for every identity, empties the wallet,
+raises whatever refund is owed (nothing, for a trial that paid nothing in), and
+**cancels every top-up still awaiting payment** (`TOPUP_CANCELLED`). From that
+moment the closed tenancy is counted in nothing on the Command Center — not the
+tenancy total, not the identities, not the money awaited, not "What lands
+next" — and its row stays on the register marked closed, which is where the
+record of it lives. The trial credit it was given still counts against the
+month's trial budget, because it was given.
+
+**Everything, before launch.** A deployment that has only ever been tested and
+is about to take its first customer should start from an empty record rather
+than a closed one. With the service stopped:
+
+```bash
+# Keep what was there. Moving, not deleting: the files are the record of the
+# testing, and a fresh start is not a reason to lose it.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+mv "$LEDGER_JOURNAL_PATH"        "$LEDGER_JOURNAL_PATH.pre-launch-$STAMP"
+mv "$LEDGER_JOURNAL_PATH.acu"    "$LEDGER_JOURNAL_PATH.acu.pre-launch-$STAMP"
+mv "$LEDGER_JOURNAL_PATH.views"  "$LEDGER_JOURNAL_PATH.views.pre-launch-$STAMP"   # if present
+```
+
+Then start the service. Boot finds no journal, writes a new one, and seeds only
+what the environment says to seed: the platform tenancy and the operator named
+by `PLATFORM_OPERATOR_EMAIL`, and the demonstration if `DEMO_TENANCY_ENABLED`
+is not `false`. Set it to `false` on a deployment that should show no
+demonstration at all. Every operator will need to enrol their authenticator
+again, because the enrolment is on the record that was moved aside.
+
+With `LEDGER_POSTGRES_MODE` set to `mirror` or `primary`, the database holds
+the same record and must start fresh too, or boot in `primary` mode will
+replay the testing back in: point `POSTGRES_DATABASE` at a new database with
+`deploy/postgres/schema.sql` applied, or restore the existing one from the
+backup taken before testing began. Site media under `SITE_MEDIA_PATH` is not
+part of the record and stays.
+
 ### The ledger store: the record in Postgres
 
 Off by default. With `LEDGER_POSTGRES_MODE` set and the `POSTGRES_*` variables

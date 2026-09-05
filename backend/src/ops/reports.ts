@@ -115,12 +115,18 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
         seatsUsed: subscription.assignedIdentities.length,
         seatsIncluded: TIERS[subscription.tier].includedIdentities,
         identities: platform.users(tenant.id).map((user) => ({ status: user.status, administrator: user.roles.includes('ENTERPRISE_ADMIN') })),
+        closed: tenant.closedAt !== undefined,
       };
     }),
     receipts: platform.customerReceipts(),
     awaitingPayment: platform
       .topUpIntents()
-      .filter((intent) => intent.status === 'AWAITING_PAYMENT' && platform.isCustomerTenant(intent.tenantId)),
+      .filter(
+        (intent) =>
+          intent.status === 'AWAITING_PAYMENT' &&
+          platform.isCustomerTenant(intent.tenantId) &&
+          platform.tenant(intent.tenantId).closedAt === undefined,
+      ),
     operators: platform.operators().length,
   });
 

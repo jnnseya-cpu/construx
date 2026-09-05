@@ -63,6 +63,10 @@ before(async () => {
   // The customer has paid £40 of AI credit in. The package's monthly AI
   // allowance is in the wallet too, and is not the customer's money.
   platform.wallet(tenantId).topUp(4_000, 'Card payment');
+  // And asked for £200 more that never arrived. A request is not money; it is
+  // what the Command Center shows as "awaiting payment" until it is settled —
+  // or, from now, until the tenancy that raised it is closed.
+  platform.requestTopUp({ tenantId, amountMinor: 20_000, requestedBy: adminId });
 
   server = createGateway(platform);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -144,6 +148,38 @@ describe('closing', () => {
     assert.equal(again.body.title, 'TENANT_ALREADY_CLOSED');
   });
 
+  it('cancels the top-up nobody will now pay, and the closed tenancy is counted in nothing on the estate', async () => {
+    // Seen on a live Command Center after a test signup was closed: still
+    // "1 tenancy", still "£2.0K awaiting payment" from its unsettled top-ups,
+    // still a row on "What lands next" about its empty wallet. A closed tenancy
+    // is on the register, and in no figure about the business.
+    const intents = platform.topUpIntents(tenantId);
+    assert.equal(intents.length, 1);
+    assert.equal(intents[0]!.status, 'CANCELLED');
+    assert.match(String(intents[0]!.cancelledReason), /Tenancy closed/);
+    assert.ok(platform.ledger.events().some((event) => event.eventType === 'TOPUP_CANCELLED'));
+
+    const overview = await send('GET', '/v1/admin/overview', operatorToken);
+    assert.equal(overview.status, 200);
+    const tenancies = overview.body.tenancies as Record<string, number>;
+    assert.equal(tenancies.total, 0, 'a closed tenancy is not a tenancy of the business');
+    assert.equal(tenancies.closed, 1, 'but it is said to exist');
+    const identities = overview.body.identities as Record<string, number>;
+    assert.equal(identities.total, 0, 'its deactivated people are not identities on the estate');
+    const awaiting = overview.body.awaitingPayment as Record<string, number>;
+    assert.equal(awaiting.count, 0);
+    assert.equal(awaiting.amountMinor, 0);
+
+    const forecast = await send('GET', '/v1/admin/forecast', operatorToken);
+    assert.equal(forecast.status, 200);
+    const signals = forecast.body.signals as Array<{ tenantId: string }>;
+    assert.equal(signals.filter((signal) => signal.tenantId === tenantId).length, 0, 'nothing lands next for a tenancy that has left');
+
+    // The register still carries it, closed — that is where the record lives.
+    const tenants = await send('GET', '/v1/admin/tenants', operatorToken);
+    assert.ok((tenants.body.tenants as Array<Record<string, unknown>>).some((row) => row.id === tenantId && row.closedAt));
+  });
+
   it('lists the refund as due, and the estate row says the tenancy is closed', async () => {
     const refunds = await send('GET', '/v1/admin/refunds', operatorToken);
     assert.equal(refunds.status, 200);
@@ -180,5 +216,6 @@ describe('closing', () => {
     assert.ok(rebuilt.tenant(tenantId).closedAt);
     assert.equal(rebuilt.refunds().length, 1);
     assert.equal(rebuilt.refunds()[0]!.status, 'SETTLED');
+    assert.equal(rebuilt.topUpIntents(tenantId)[0]!.status, 'CANCELLED', 'the cancellation is on the record, not in memory');
   });
 });

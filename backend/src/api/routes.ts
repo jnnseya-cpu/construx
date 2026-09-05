@@ -2262,12 +2262,20 @@ export const ROUTES: Route[] = [
               status: user.status,
               administrator: user.roles.includes('ENTERPRISE_ADMIN'),
             })),
+            closed: tenant.closedAt !== undefined,
           };
         }),
         receipts: platform.customerReceipts(),
+        // Open customers only. Closure now cancels a tenancy's unpaid requests,
+        // and a request raised before that rule is still not money awaited.
         awaitingPayment: platform
           .topUpIntents()
-          .filter((intent) => intent.status === 'AWAITING_PAYMENT' && platform.isCustomerTenant(intent.tenantId)),
+          .filter(
+            (intent) =>
+              intent.status === 'AWAITING_PAYMENT' &&
+              platform.isCustomerTenant(intent.tenantId) &&
+              platform.tenant(intent.tenantId).closedAt === undefined,
+          ),
         operators: platform.operators().length,
       });
     },
@@ -5409,6 +5417,7 @@ export const ROUTES: Route[] = [
         legalName: result.tenant.legalName,
         closedAt: result.tenant.closedAt,
         identitiesDeactivated: result.deactivated.length,
+        topUpsCancelled: result.cancelledTopUps.length,
         refund: result.refund ?? null,
       };
     },
