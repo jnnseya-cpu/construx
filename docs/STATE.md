@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,917 passing, 0 failing, 0 skipped, across 262 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,940 passing, 0 failing, 0 skipped, across 263 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 300 TypeScript files, 195,400 lines |
-| Application | 77 ES modules, 44,400 lines (including a service worker) |
-| API routes | 1,079 — 741 writes, 338 reads (49 public across both) |
-| Event types | 724 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 333, all classified for access |
+| Backend | 301 TypeScript files, 196,700 lines |
+| Application | 77 ES modules, 44,800 lines (including a service worker) |
+| API routes | 1,084 — 736 writes, 348 reads (49 public across both) |
+| Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -11390,6 +11390,103 @@ second: same surface, same wallet, same operator, refused to everybody else. Wha
 would not belong is a route spending a customer's ACUs with no project to quote
 against — which is the failure the check exists to prevent, and both files now
 say so.
+
+### The visibility engine: the site read as a whole, and the agent that keeps it moving
+
+Asked for as the *AI Visibility Engine*: a signal score, reach, a share kit per
+channel per post, auto-distribution, a generator, a marketing library, a daily
+release, a platform SEO sweep, recommendations, and a posts table with
+unpublish. `site/visibility.ts` is all of it, on the SEO & Content screen above
+the posts that were already there. Four rules shape it, and each is the reason a
+part of it looks the way it does.
+
+**Every check reads the real thing.** `seoSweep` renders every public page and
+every live post and reads their heads; parses the sitemap it would serve; reads
+`robots.txt`; stats the hero image on disk; reads the landing slots; computes
+the newest publication date; counts the glossary links the article linker would
+actually insert. Eleven checks — page metadata, sitemap, robots, social cards,
+structured data, hero imagery, freshness (≤14 days), topic coverage (n of 8),
+hreflang, keyword coverage, internal linking (≥2) — with weights that sum to a
+hundred and say what costs traffic. `signalScore` is that sum for the checks
+that pass, banded like the post score, and shown beside the failing checks,
+never instead of them. Running it on a fresh checkout found three real defects
+and fixed them: `/how-it-works` and `/exposure` descriptions over 160
+characters, the `/demo` title over 60, and every page missing `hreflang` —
+`en-GB` and `x-default` are now in the head of every page. The compiled
+engineering notes are counted in the linking check and named, not scored, the
+same rule the keyword check already kept for them; the glossary gained the
+phrases those notes and the composed posts actually use, each pointing at the
+page that genuinely covers it.
+
+**The template says only what the product already says.** `composePost` builds
+a post from `FEATURES` — the sentences the newsletter already sends about
+capabilities that exist and link to screens that serve them — around a topic
+and a keyword: an opening that carries the phrase, a section on where it goes
+wrong, the catalogue's own sentences under the feature's own title, a pull-quote,
+a close naming what a reader can verify without taking anybody's word. No
+figure, no customer, no claim the product does not publish about itself; the
+test checks the capability sentences against the catalogue verbatim. Every
+composed post passes the seven-check gate and carries at least two glossary
+links, and the title is fitted from a list of candidates or refused
+(`TITLE_UNFITTABLE`) rather than truncated. Its authorship is
+`MARKETING_AGENT` — *CONSTRUX Marketing Agent* on the byline — and it is the
+**one authorship that may publish without a person**, through the same
+`publishAs` gate a person's press goes through, because every sentence was a
+published sentence before the post existed. A *model's* prose still lands as a
+draft a person publishes: with a reasoning provider configured the generator
+button becomes *Generate a draft* and calls the existing drafting route, and the
+screen says so.
+
+**A channel is configured or it is absent — never pretended.** LinkedIn
+(`LINKEDIN_ACCESS_TOKEN` + `LINKEDIN_ORG_ID`, posting an article to the
+organisation through the Community Management API), X (`X_ACCESS_TOKEN`, a
+user-context token with `tweet.write`) and email (`SMTP_HOST` +
+`MARKETING_ANNOUNCE_TO`, one plain-text announcement to an address the operator
+owns — never the newsletter audience). `distributePost` skips an unconfigured
+channel and names the variable, skips a channel already sent to and names the
+network's id, sends once everywhere else, and records the outcome per channel
+as `SitePostDistribution` (`SITE_POST_DISTRIBUTED`): sent with the network's
+identifier, or failed with the network's own words. A refusal is on the record
+and is retried on the next press; a success is not repeated. The share kit
+(`shareKit`) is the same five channels the public share bar offers, with the
+composer link and suggested copy per channel, X's within its limit — for the
+channels no credential will ever cover.
+
+**Once a day means once a day.** `runDailyRelease` publishes the next uncovered
+topic, sends it to every configured channel, and writes a `MarketingRelease`
+keyed by UTC date (`MARKETING_RELEASE_RUN`). The button and the timer
+(`startMarketingSchedule`, hourly, armed by `MARKETING_RELEASE_ENABLED` at
+`MARKETING_RELEASE_HOUR_UTC`, acting as `marketing-scheduler` rather than as
+whoever last signed in) both ask the record first, so a restart inside the hour
+and a press after it produce one release. With every topic covered it publishes
+nothing and says so — it never re-sends an old post to fill the day.
+`generateLibrary` writes one post per topic that has none and skips the rest by
+keyword, so the second press writes nothing.
+
+**Recommendations propose; the operator presses.** Derived from the sweep, the
+reach and the record, each names what it costs and offers the door that fixes
+it — the library, the release, the generator, a distribute — or says the fix is
+outside the console. Reach is `views.ts` as it was: requests, not readers, with
+shares and clicks by channel, labelled that way.
+
+Routes, all operator-only: `GET /v1/site/visibility`, `POST
+/v1/site/posts/compose`, `POST /v1/site/marketing/library`, `POST
+/v1/site/marketing/release`, `POST /v1/site/posts/:postId/distribute`.
+Unpublish is the existing withdraw. `tests/visibility.test.ts` holds it: the
+composed post against the gate, the rendered page and the catalogue; the
+library once and not twice; the sweep on a fresh checkout (weak, and why) and
+after the library (strong, and the arithmetic); the draft the sitemap must not
+leak; LinkedIn accepting against a socket that answers like it, X refusing in
+its own words and the refusal recorded, the announcement arriving at a relay,
+nothing sent twice; the release once per day and the timer finding the record;
+the routes refused to a customer. Driven in Chromium against a booted server.
+
+**Not built, stated so it is not mistaken for missing by accident:** no ranking
+or search-volume data (the score says whether the site is complete and current,
+not where it ranks); no automatic re-sharing of old posts; no OAuth flow to
+obtain the LinkedIn or X token — each is issued in the network's developer
+console and set on the server; email goes to one operator-owned address, not to
+the consented newsletter audience, which keeps its weekly, per-person consent.
 
 ---
 

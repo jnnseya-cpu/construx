@@ -67,8 +67,14 @@ export type BlogPost = {
    * `AI_DRAFTED` is never removed by editing. A person who rewrites every
    * sentence of a model's draft has still started from one, and the record says
    * so — the alternative is a field that means "nobody has admitted it yet".
+   *
+   * `MARKETING_AGENT` is prose composed by `site/visibility.ts` from the
+   * feature catalogue — sentences the platform already publishes about itself,
+   * assembled by a template, with no model involved. It is the one authorship
+   * that may be published without a person pressing the button, because every
+   * claim in it was already a published claim before the post existed.
    */
-  authorship: 'HUMAN' | 'AI_DRAFTED';
+  authorship: 'HUMAN' | 'AI_DRAFTED' | 'MARKETING_AGENT';
   /** Present only for an AI draft. Which provider and model class produced it. */
   provider?: string;
   modelClass?: string;
@@ -297,6 +303,19 @@ function slugTaken(platform: Platform, slug: string, exceptId?: string): boolean
   return posts(platform).some((post) => post.slug === slug && post.id !== exceptId);
 }
 
+/**
+ * A slug for a new post, resolved against everything already at an address.
+ *
+ * A collision is resolved rather than refused, as the drafting command does:
+ * the post is worth keeping and the slug is editable before publication. An
+ * empty result is the caller's to refuse with its own reason.
+ */
+export function uniqueSlug(platform: Platform, title: string): string {
+  const slug = slugify(title);
+  if (slug.length === 0) return '';
+  return slugTaken(platform, slug) ? `${slug}-${ulid().slice(-6).toLowerCase()}` : slug;
+}
+
 function requirePost(platform: Platform, postId: string): BlogPost {
   const found = posts(platform).find((post) => post.id === postId);
   if (!found) throw new DomainError('POST_NOT_FOUND', `No post ${postId}`, 404);
@@ -317,10 +336,28 @@ function commit(
   actorId: string,
   { eventType, post }: { eventType: string; post: BlogPost },
 ): void {
+  commitPost(platform, { refType: 'User', refId: actorId }, { eventType, post });
+}
+
+/** Who is acting on a post: a person from the console, or the marketing agent's scheduler. */
+export type PostActor = { refType: 'User' | 'System'; refId: string };
+
+/**
+ * The same commit, for a caller that is not a signed-in person.
+ *
+ * The daily release runs from a timer with no session behind it, and its posts
+ * are recorded as the system's rather than borrowed from whichever operator
+ * last signed in — an actor on the chain is a statement about who did it.
+ */
+export function commitPost(
+  platform: Platform,
+  actor: PostActor,
+  { eventType, post }: { eventType: string; post: BlogPost },
+): void {
   platform.ledger.commit({
     tenantId: PLATFORM_TENANT_ID,
     projectId: BLOG_PROJECT_ID,
-    actor: { refType: 'User', refId: actorId },
+    actor,
     source: 'SYSTEM',
     correlationId: post.id,
     eventType,
@@ -654,6 +691,17 @@ export function revisePost(
  * standard instead.
  */
 export function publishPost(ctx: EngineContext, platform: Platform, postId: string): { post: BlogPost; seo: SeoFinding[] } {
+  return publishAs(platform, { refType: 'User', refId: ctx.auth.actorId }, postId);
+}
+
+/**
+ * The publish gate itself, for a named actor.
+ *
+ * One gate for both doors: a person on the console and the marketing agent's
+ * release go through the same checks and the same refusals, so a template can
+ * never publish what a person could not. Only the actor recorded differs.
+ */
+export function publishAs(platform: Platform, actor: PostActor, postId: string): { post: BlogPost; seo: SeoFinding[] } {
   const existing = requirePost(platform, postId);
   if (existing.status === 'PUBLISHED') throw new DomainError('ALREADY_PUBLISHED', 'This post is already live.', 409);
 
@@ -676,10 +724,10 @@ export function publishPost(ctx: EngineContext, platform: Platform, postId: stri
     ...existing,
     status: 'PUBLISHED',
     publishedAt: new Date().toISOString(),
-    publishedBy: ctx.auth.actorId,
+    publishedBy: actor.refId,
   };
 
-  commit(platform, ctx.auth.actorId, { eventType: 'SITE_POST_PUBLISHED', post });
+  commitPost(platform, actor, { eventType: 'SITE_POST_PUBLISHED', post });
   return { post, seo };
 }
 

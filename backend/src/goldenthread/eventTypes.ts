@@ -1075,6 +1075,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SITE_POST_REVISED', 'SitePost', 'UPDATE', 'GOVERNANCE'),
   def('SITE_POST_PUBLISHED', 'SitePost', 'APPROVE', 'GOVERNANCE'),
   def('SITE_POST_WITHDRAWN', 'SitePost', 'UPDATE', 'GOVERNANCE'),
+  // A published post sent to one outside channel — LinkedIn, X or the
+  // announcement address — with the network's answer on the record, sent or
+  // refused. One record per post per channel, which is what makes a second
+  // send a skip rather than a repeat.
+  def('SITE_POST_DISTRIBUTED', 'SitePostDistribution', 'CREATE', 'GOVERNANCE', { creates: true }),
+  // The marketing agent's daily release: what it published, where it sent it,
+  // and what it found nothing to do about. One per UTC day, by construction.
+  def('MARKETING_RELEASE_RUN', 'MarketingRelease', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
   // A message the relay accepted and a downstream server bounced later. The
   // platform reads no mailbox, so the bounce arrives by an operator or a relay

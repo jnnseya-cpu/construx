@@ -13,6 +13,7 @@ import { startErasureSchedule } from './identity/erasure.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
 import { rehydrateKeys } from './developer/keys.ts';
 import { attachViewJournal, viewJournalPath } from './site/views.ts';
+import { startMarketingSchedule } from './site/visibility.ts';
 import { startAssurance } from './ops/assurance.ts';
 import { startConsistencySweep, stopConsistencySweep } from './ops/consistencysweep.ts';
 import { armRepair, startRepair } from './ops/repair.ts';
@@ -485,6 +486,16 @@ const newsletter = follower
       );
     });
 
+/**
+ * The marketing agent's daily release. Off unless armed, like the newsletter,
+ * and for the same reason; once a day by construction when it is.
+ */
+const marketing = follower
+  ? { stop: (): void => undefined }
+  : startMarketingSchedule(platform, (release) => {
+      process.stdout.write(`[marketing] release ${release.day}: ${release.note}\n`);
+    });
+
 process.stdout.write(
   [
     '',
@@ -527,6 +538,11 @@ process.stdout.write(
         ? `weekly, day ${config.newsletter.sendDayUtc} at ${config.newsletter.sendHourUtc}:00 UTC via ${config.smtp.host || 'no SMTP host — will record, not send'}`
         : 'disabled (set NEWSLETTER_ENABLED=true to arm the weekly send)'
     }
+  Marketing    ${
+      config.marketing.releaseEnabled
+        ? `daily release at ${config.marketing.releaseHourUtc}:00 UTC`
+        : 'daily release disabled (set MARKETING_RELEASE_ENABLED=true to arm it; the button on SEO & Content still works)'
+    }
   Billing      ${
       config.billing.collectionEnabled
         ? `hourly collection, ${config.billing.subscriptionGraceDays}-day grace, then the tenancy stops`
@@ -547,6 +563,7 @@ process.stdout.write(
 const shutdown = (signal: string): void => {
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
+  marketing.stop();
   collection.stop();
   erasures.stop();
   outboxTimer();

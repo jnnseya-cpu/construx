@@ -165,6 +165,24 @@ export const LINK_GLOSSARY: ReadonlyArray<{ term: string; path: string }> = [
   { term: 'pay-less notice', path: '/exposure' },
   { term: 'payment notice', path: '/exposure' },
   { term: 'construction act', path: '/exposure' },
+  // Phrases the engineering notes and the composed posts actually use, each
+  // pointing at the page that genuinely covers it: the stage strip on How it
+  // works names hold points and inspection and test plans and describes clause
+  // extraction; the verify page is about the content hash; the industries page
+  // holds currency per jurisdiction; the developers page describes the tokens.
+  { term: 'inspection and test plan', path: '/how-it-works' },
+  // The about page's whole argument is what adjudication teaches.
+  { term: 'adjudication', path: '/about' },
+  { term: 'adjudicator', path: '/about' },
+  { term: 'demonstration project', path: '/demo' },
+  { term: 'payment certificate', path: '/exposure' },
+  { term: 'event catalogue', path: '/how-it-works' },
+  { term: 'content hash', path: '/verify-document' },
+  { term: 'access token', path: '/developers' },
+  { term: 'hash-chained', path: '/how-it-works' },
+  { term: 'hold point', path: '/how-it-works' },
+  { term: 'specification', path: '/how-it-works' },
+  { term: 'currency', path: '/industries' },
   { term: 'civil infrastructure', path: '/industries' },
   { term: 'water treatment', path: '/industries' },
   { term: 'industries', path: '/industries' },

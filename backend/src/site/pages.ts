@@ -225,7 +225,7 @@ export function howItWorks(): string {
     {
       title: 'How it works',
       description:
-        'Every state change is an event on an append-only hash chain. Replay reconstructs the project from the log alone and produces a root hash anybody holding the same log can recompute.',
+        'Every state change is an event on an append-only hash chain. Replay rebuilds the project from the log alone and gives a root hash anyone can recompute.',
       path: '/how-it-works',
     },
     `${pageHead({
@@ -1522,7 +1522,7 @@ export function demo(input: DemoInput): string {
 
   return page(
     {
-      title: 'Try CONSTRUX — instant demo accounts, or book 20 minutes',
+      title: 'Try CONSTRUX: instant demo, or book 20 minutes',
       description:
         'Walk through a seeded infrastructure programme carried from concept to operations, start from an empty workspace, or book a twenty-minute guided session.',
       path: '/demo',
@@ -1753,8 +1753,8 @@ export function exposure(position?: ExposurePosition): string {
     {
       title: 'What the payment notice regime puts at stake',
       description:
-        'Arithmetic on your own turnover: how many payment windows you run a year, what passes through one, and what a ' +
-        'single missed pay less notice is worth under s.111 of the Construction Act.',
+        'Arithmetic on your own turnover: the payment windows you run a year, what passes through one, and what one ' +
+        'missed pay less notice is worth under s.111.',
       path: '/exposure',
     },
     `${pageHead({

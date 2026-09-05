@@ -6,7 +6,7 @@ import { badge, html, money, raw, render, table, time, toast, track } from '../l
 import { draw } from '../app.js';
 
 /**
- * SEO and content.
+ * SEO and content — the AI visibility engine.
  *
  * Six posts lived as a hard-coded array, so publishing a seventh meant editing
  * TypeScript and redeploying — and in practice nobody did, which is how a
@@ -29,6 +29,16 @@ import { draw } from '../app.js';
  * counts, one person reading twice counts twice, and nobody is identified. The
  * label says "requests" everywhere it appears, because a number that is honest
  * about what it measures is worth more than a bigger one nobody can defend.
+ *
+ * Above the posts sits the site read as a whole: a sweep of eleven things a
+ * crawler, a link preview and a search result actually look for, read off the
+ * rendered pages; the reach the pages have had; the channels a post can be
+ * sent to and which are configured; the eight topics the site should cover
+ * and which do; the daily release and what it did; and what the marketing
+ * agent recommends doing next. The generator composes a post from the feature
+ * catalogue — sentences the product already publishes about itself — and may
+ * publish it on the spot; with a reasoning provider configured it asks for an
+ * original draft instead, which a person publishes.
  */
 
 const COMMANDS = {
@@ -54,6 +64,61 @@ const COMMANDS = {
       },
       { name: 'tag', label: 'Tag', required: false, hint: 'Industry, Engineering, Company. Defaults to Industry.' },
     ],
+  }),
+  generate: () => ({
+    title: 'Generate & publish',
+    intent:
+      'The marketing agent composes a post from the feature catalogue — sentences the product already publishes about ' +
+      'itself — around your topic and keywords, runs every check, and publishes where all of them pass. It invents no ' +
+      'figure and no claim. Where a check fails it stays a draft and the check is named.',
+    path: '/v1/site/posts/compose',
+    submitLabel: 'Generate & publish',
+    fields: [
+      { name: 'topic', label: 'Topic', hint: 'What the post is about, in a phrase. It becomes the title where it fits between 25 and 60 characters.' },
+      {
+        name: 'keywords',
+        label: 'Keywords',
+        hint: 'Comma-separated, up to five. The first is the phrase the checks enforce in the title and the opening.',
+      },
+      { name: 'tag', label: 'Tag', required: false, hint: 'Defaults to Marketing.' },
+      {
+        name: 'publish',
+        label: 'Publish',
+        type: 'select',
+        options: [
+          { value: 'true', label: 'Publish now where every check passes' },
+          { value: 'false', label: 'Leave it as a draft for me to read first' },
+        ],
+      },
+    ],
+    transform: ({ keywords, publish, tag, ...rest }) => ({
+      ...rest,
+      ...(tag ? { tag } : {}),
+      publish: publish !== 'false',
+      keywords: String(keywords ?? '')
+        .split(',')
+        .map((keyword) => keyword.trim())
+        .filter(Boolean),
+    }),
+  }),
+  library: () => ({
+    title: 'Generate marketing library',
+    intent:
+      'One published post per topic that has none — eight topics, each with the phrase a buyer would type. A topic ' +
+      'already on the record, published or in draft, is skipped and named, so pressing this twice writes nothing twice.',
+    path: '/v1/site/marketing/library',
+    submitLabel: 'Generate the library',
+    fields: [],
+  }),
+  release: () => ({
+    title: "Run today's release",
+    intent:
+      'Publishes the next uncovered topic and sends it to every configured channel, then writes down what it did. ' +
+      'Once per UTC day: if today’s release has already run, this returns it rather than running again. With every ' +
+      'topic covered it publishes nothing and says so — it never re-sends an old post to fill the day.',
+    path: '/v1/site/marketing/release',
+    submitLabel: 'Run the release',
+    fields: [],
   }),
   fund: () => ({
     title: 'Fund the platform wallet',
@@ -116,12 +181,40 @@ const COMMANDS = {
 const STATUS_TONE = { PUBLISHED: 'ok', DRAFT: 'info', WITHDRAWN: 'muted' };
 const BAND_TONE = { STRONG: 'ok', WORKABLE: 'warn', WEAK: 'bad' };
 const SEVERITY_TONE = { HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
+const AUTHOR_LABEL = { HUMAN: 'written by a person', AI_DRAFTED: 'drafted by a model', MARKETING_AGENT: 'composed by the marketing agent' };
 
 /** Held outside `blog()` so an audit survives the redraw that follows a publish. */
 let lastAudit = null;
 
+/** The generator door: the template when no provider is configured, the reasoning engine when one is. */
+function generatorSpec(visibility) {
+  if (visibility?.generator?.mode === 'AI') {
+    const spec = COMMANDS.draft();
+    spec.title = 'Generate a draft';
+    spec.intent = `${visibility.generator.note} ${spec.intent}`;
+    return spec;
+  }
+  return COMMANDS.generate();
+}
+
+/** Say what a compose actually did, because "Generate & publish" can legitimately stop at "generate". */
+function reportCompose(result) {
+  if (!result || !result.outcome) return;
+  if (result.outcome === 'PUBLISHED') toast('Published', `/blog/${result.post.slug} is live and in the sitemap.`, 'ok');
+  else if (result.outcome === 'DRAFT') toast('Drafted', `/blog/${result.post.slug} is a draft. Publish it from the list below.`, 'ok');
+  else toast('Held by its checks', `${result.held.length} check${result.held.length === 1 ? '' : 's'} failing — it stays a draft. ${result.held[0] ?? ''}`, 'err');
+}
+
+function reportRelease(release) {
+  if (!release) return;
+  toast(release.alreadyRun ? `Today's release already ran` : 'Release complete', release.note, release.alreadyRun ? 'err' : 'ok');
+}
+
 export async function blog(root) {
-  const position = await api.get('/v1/site/posts').catch((error) => ({ error }));
+  const [position, visibility] = await Promise.all([
+    api.get('/v1/site/posts').catch((error) => ({ error })),
+    api.get('/v1/site/visibility').catch((error) => ({ error })),
+  ]);
 
   if (position.error) {
     render(root, html`${head({ title: 'SEO & content' })}${refusal('The blog', position.error)}`);
@@ -134,14 +227,26 @@ export async function blog(root) {
   const views = position.views ?? { total: 0, bySlug: [], daily: [], durable: false, note: '' };
   const wallet = position.wallet ?? null;
 
+  const vis = visibility.error ? null : visibility;
+  const signal = vis?.signal ?? null;
+  const channels = vis?.channels ?? [];
+  const configured = channels.filter((channel) => channel.configured);
+  const topics = vis?.topics ?? [];
+  const covered = topics.filter((topic) => topic.covered).length;
+  const byPostId = new Map((vis?.posts ?? []).map((entry) => [entry.id, entry]));
+  const generatorLabel = vis?.generator?.mode === 'AI' ? 'Generate a draft' : 'Generate & publish';
+
   render(
     root,
     html`
       ${head({
         title: 'SEO & content',
-        intent: `${position.summary} A model may draft; only a person publishes, and a post is refused publication while any check is failing.`,
+        intent: `${position.summary} A model may draft; only a person publishes, and a post is refused publication while any check is failing. The marketing agent composes from the feature catalogue and may publish what it composes.`,
         actions: commandBar([
-          { id: 'draft', label: 'Ask for a draft', permitted: true, tone: 'primary' },
+          { id: 'generate', label: generatorLabel, permitted: true, tone: 'primary' },
+          { id: 'library', label: 'Generate marketing library', permitted: true },
+          { id: 'release', label: "Run today's release", permitted: true },
+          { id: 'draft', label: 'Ask for a draft', permitted: true },
           { id: 'write', label: 'Write one yourself', permitted: true },
           { id: 'audit', label: 'Audit the blog', permitted: true },
           { id: 'fund', label: 'Fund the platform wallet', permitted: true },
@@ -154,9 +259,43 @@ export async function blog(root) {
               <b>The platform wallet holds ${money(wallet.availableMinor)}, so a draft and an audit are held.</b><br />
               Both spend the platform’s own ACU wallet rather than a customer’s, and it starts empty: nothing spends
               without credit behind it. Press <b>Fund the platform wallet</b> to record a payment received into the
-              company’s own account; the quote on each action then clears on its own.
+              company’s own account; the quote on each action then clears on its own. The generator, the library and
+              the release compose from the catalogue and spend nothing.
             </div>
           </div>`
+        : ''}
+
+      ${visibility.error ? refusal('The visibility position', visibility.error) : ''}
+
+      ${vis
+        ? html`<section class="grid g4" style="margin-bottom:14px">
+            <div class="card">
+              <h2>Signal score</h2>
+              <div class="metric ${raw(signal.band === 'STRONG' ? 'good' : signal.band === 'WORKABLE' ? 'warn' : 'bad')}">${signal.score}</div>
+              <div class="metric-sub">${signal.passing} of ${signal.total} sweep checks passing · ${signal.band.toLowerCase()}</div>
+            </div>
+            <div class="card">
+              <h2>Reach</h2>
+              <div class="metric">${(vis.reach.requests ?? 0).toLocaleString('en-GB')}</div>
+              <div class="metric-sub">page requests, ${(vis.reach.last30 ?? 0).toLocaleString('en-GB')} in the last ${vis.reach.windowDays} days · requests, not readers</div>
+            </div>
+            <div class="card">
+              <h2>Shares · clicks</h2>
+              <div class="metric">${vis.reach.shares} · ${vis.reach.clicks}</div>
+              <div class="metric-sub">
+                ${Object.keys(vis.reach.byChannel ?? {}).length > 0
+                  ? Object.entries(vis.reach.byChannel).map(([channel, count]) => `${channel} ${count}`).join(' · ')
+                  : 'no share-bar or call-to-action press reported yet'}
+              </div>
+            </div>
+            <div class="card ${raw(covered < topics.length ? 'warn' : '')}">
+              <h2>Topics covered</h2>
+              <div class="metric ${raw(covered === topics.length ? 'good' : 'warn')}">${covered}/${topics.length}</div>
+              <div class="metric-sub">
+                ${configured.length} of ${channels.length} channels configured${configured.length > 0 ? `: ${configured.map((channel) => channel.label).join(', ')}` : ''}
+              </div>
+            </div>
+          </section>`
         : ''}
 
       <section class="grid g4" style="margin-bottom:14px">
@@ -194,6 +333,126 @@ export async function blog(root) {
           <div class="metric-sub">drafts that cannot be published until every check passes</div>
         </div>
       </section>
+
+      ${vis && vis.recommendations.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>What the agent recommends</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              Derived from the sweep, the reach and the record — no model, no invented figure. Each one names what it
+              costs and offers the door that fixes it. It proposes; you press.
+            </div>
+            <div class="split-list">
+              ${vis.recommendations.map(
+                (item) => html`<div class="row" style="align-items:flex-start;gap:14px">
+                  <span class="lbl" style="flex:1 1 0;min-width:0">
+                    ${badge(item.priority.toLowerCase(), SEVERITY_TONE[item.priority] ?? 'info')} <b>${item.title}</b><br />
+                    <span class="metric-sub">${item.detail}</span>
+                  </span>
+                  ${item.action
+                    ? html`<span class="val"><button class="btn quiet sm" data-act="${item.action.command}" data-post="${item.action.postId ?? ''}">${item.action.label}</button></span>`
+                    : ''}
+                </div>`,
+              )}
+            </div>
+          </div>`
+        : ''}
+
+      ${vis
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Platform SEO sweep ${badge(`${signal.score} / 100`, BAND_TONE[signal.band] ?? 'neutral')}</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              ${signal.summary} Every check reads the rendered site — the page heads, the sitemap it would serve, the
+              image on disk — not a setting that says it is on. The weights say what costs traffic.
+            </div>
+            ${raw(
+              table({
+                headers: ['Check', 'Verdict', 'Weight', 'Detail'],
+                align: ['', '', 'num', ''],
+                rows: vis.sweep.map((finding) => [
+                  html`<b>${finding.check}</b>`,
+                  finding.ok ? badge('ok', 'ok') : badge('fix', 'bad'),
+                  String(finding.weight),
+                  finding.detail,
+                ]),
+              }),
+            )}
+          </div>`
+        : ''}
+
+      ${vis
+        ? html`<div class="grid g-2-1" style="margin-bottom:14px">
+            <div class="card">
+              <h2>Distribution channels</h2>
+              <div class="metric-sub" style="margin:8px 0 12px">
+                A channel sends only when its credential is set on the server. Nothing here pretends: an unconfigured
+                channel names the variable it is missing, and a send the network refused is on the record as refused.
+                ${vis.generator.note}
+              </div>
+              ${raw(
+                table({
+                  headers: ['Channel', 'State', 'Sends to', 'To configure'],
+                  rows: channels.map((channel) => [
+                    html`<b>${channel.label}</b>`,
+                    channel.configured ? badge('configured', 'ok') : badge('not configured', 'neutral'),
+                    channel.target,
+                    channel.missing.length > 0 ? html`<code>${channel.missing.join(', ')}</code>` : 'set',
+                  ]),
+                }),
+              )}
+            </div>
+            <div class="card">
+              <h2>Daily release</h2>
+              <div class="metric-sub" style="margin:8px 0 12px">
+                ${vis.releases.schedule.enabled
+                  ? `Armed: runs at ${String(vis.releases.schedule.hourUtc).padStart(2, '0')}:00 UTC every day.`
+                  : 'Timer not armed on this deployment (MARKETING_RELEASE_ENABLED). The button above runs it by hand, once per day.'}
+              </div>
+              ${vis.releases.today
+                ? html`<div class="notice ${raw(vis.releases.today.published ? 'ok' : 'info')}" style="margin-bottom:10px">
+                    <div>
+                      <b>Today (${vis.releases.today.day}) — ran ${time(vis.releases.today.ranAt)} by ${vis.releases.today.trigger.toLowerCase()}.</b><br />
+                      ${vis.releases.today.note}
+                    </div>
+                  </div>`
+                : html`<div class="notice info" style="margin-bottom:10px"><div>Today's release has not run yet.</div></div>`}
+              <div class="split-list">
+                ${vis.releases.recent.map(
+                  (release) => html`<div class="row" style="align-items:flex-start">
+                    <span class="lbl" style="flex:1 1 0;min-width:0">
+                      <b>${release.day}</b> · ${release.trigger.toLowerCase()}<br />
+                      <span class="metric-sub">${release.note}</span>
+                    </span>
+                    <span class="val">${release.published ? badge('published', 'ok') : badge('nothing new', 'neutral')}</span>
+                  </div>`,
+                )}
+              </div>
+              ${vis.releases.recent.length === 0 ? html`<div class="metric-sub">No release has run yet.</div>` : ''}
+            </div>
+          </div>`
+        : ''}
+
+      ${vis
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Topic coverage ${badge(`${covered} of ${topics.length}`, covered === topics.length ? 'ok' : 'warn')}</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              The eight things a buyer searches for. A topic counts as covered when a <i>published</i> post carries its
+              phrase — a draft is not on the internet. <b>Generate marketing library</b> writes one post for every topic
+              that has none.
+            </div>
+            ${raw(
+              table({
+                headers: ['Topic', 'Found by', 'Filed under', 'State', 'Post'],
+                rows: topics.map((topic) => [
+                  html`<b>${topic.title}</b>`,
+                  html`<code>${topic.keyword}</code>`,
+                  topic.tag,
+                  topic.covered ? badge('covered', 'ok') : topic.post ? badge(topic.post.status.toLowerCase(), 'info') : badge('uncovered', 'warn'),
+                  topic.post ? html`<code>/blog/${topic.post.slug}</code>` : '—',
+                ]),
+              }),
+            )}
+          </div>`
+        : ''}
 
       <div class="notice info" style="margin-bottom:14px">
         <div>
@@ -288,21 +547,63 @@ export async function blog(root) {
           </div>`
         : ''}
 
-      ${posts.map(
-        (post) => html`
-          <section class="card">
+      ${posts.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Posts</h2>
+            <div class="metric-sub" style="margin:8px 0 12px">
+              Every post on the record. Unpublish takes a live page down and keeps the record; Distribute sends a live
+              post to the configured channels; the share kit is on each post below.
+            </div>
+            ${raw(
+              table({
+                headers: ['Title', 'State', 'Filed under', 'By', 'Score', 'Requests', 'Shares', 'Sent to', ''],
+                align: ['', '', '', '', 'num', 'num', 'num', '', ''],
+                rows: posts.map((post) => {
+                  const extra = byPostId.get(post.id);
+                  const sentTo = (extra?.distributions ?? []).filter((entry) => entry.status === 'SENT').map((entry) => entry.channel);
+                  return [
+                    html`<button class="btn quiet sm" data-jump="${post.id}" style="text-align:left"><b>${post.title || '(untitled)'}</b></button><br /><code>/blog/${post.slug}</code>`,
+                    badge(String(post.status).toLowerCase(), STATUS_TONE[post.status] ?? 'neutral'),
+                    post.tag,
+                    AUTHOR_LABEL[post.authorship] ?? post.authorship,
+                    String(post.score.score),
+                    String(post.views ?? 0),
+                    String(extra?.shares ?? 0),
+                    sentTo.length > 0 ? sentTo.join(', ') : '—',
+                    html`<span class="actions">
+                      ${post.status === 'PUBLISHED'
+                        ? html`<button class="btn quiet sm" data-distribute="${post.id}">Distribute</button>
+                            <button class="btn quiet sm" data-withdraw="${post.id}">Unpublish</button>`
+                        : ''}
+                      ${post.status === 'DRAFT' && post.publishable ? html`<button class="btn quiet sm" data-publish="${post.id}">Publish</button>` : ''}
+                    </span>`,
+                  ];
+                }),
+              }),
+            )}
+          </div>`
+        : ''}
+
+      ${posts.map((post) => {
+        const extra = byPostId.get(post.id);
+        return html`
+          <section class="card" id="post-${post.id}">
             <h3>
               ${post.title || '(untitled)'}
               ${badge(String(post.status).toLowerCase(), STATUS_TONE[post.status] ?? 'neutral')}
               ${badge(`score ${post.score.score}`, BAND_TONE[post.score.band] ?? 'neutral')}
               ${post.authorship === 'AI_DRAFTED'
                 ? badge(`drafted by ${String(post.provider ?? 'a model').toLowerCase()}`, 'ai')
-                : badge('written by a person', 'neutral')}
+                : post.authorship === 'MARKETING_AGENT'
+                  ? badge('composed by the marketing agent', 'ai')
+                  : badge('written by a person', 'neutral')}
             </h3>
             <p class="metric-sub">
               <code>/blog/${post.slug}</code> ·
               ${post.status === 'PUBLISHED' ? `published ${time(post.publishedAt)}` : `drafted ${time(post.draftedAt)}`}
               ${post.status === 'PUBLISHED' ? ` · ${post.views} page request${post.views === 1 ? '' : 's'}` : ''}
+              ${extra && post.status === 'PUBLISHED' ? ` · ${extra.shares} share${extra.shares === 1 ? '' : 's'} · ${extra.clicks} click${extra.clicks === 1 ? '' : 's'}` : ''}
+              ${extra ? ` · ${extra.linked} link${extra.linked === 1 ? '' : 's'} into the site` : ''}
               ${post.withdrawnReason ? ` · withdrawn: ${post.withdrawnReason}` : ''}
             </p>
             <p>${post.standfirst}</p>
@@ -331,6 +632,32 @@ export async function blog(root) {
               }),
             )}
 
+            ${extra && post.status === 'PUBLISHED'
+              ? html`<details style="margin-top:10px">
+                  <summary class="metric-sub"><b>Share kit</b> — what to paste where, per channel</summary>
+                  ${raw(
+                    table({
+                      headers: ['Channel', 'Suggested text', 'Open'],
+                      rows: extra.kit.map((entry) => [
+                        html`<b>${entry.label}</b>`,
+                        html`<span style="white-space:pre-wrap;font-size:12px">${entry.text}</span>`,
+                        html`<a class="btn quiet sm" href="${entry.url}" target="_blank" rel="noreferrer">${entry.channel === 'copy' ? 'Address' : 'Composer'}</a>`,
+                      ]),
+                    }),
+                  )}
+                  ${extra.distributions.length > 0
+                    ? html`<div class="metric-sub" style="margin-top:8px">
+                        <b>Sent from here.</b>
+                        ${extra.distributions.map(
+                          (entry) => html`<div>
+                            · ${entry.channel} ${badge(entry.status.toLowerCase(), entry.status === 'SENT' ? 'ok' : 'bad')} ${time(entry.at)} — ${entry.detail}
+                          </div>`,
+                        )}
+                      </div>`
+                    : html`<div class="metric-sub" style="margin-top:8px">Not sent from here to any channel yet.</div>`}
+                </details>`
+              : ''}
+
             <div class="actions" style="margin-top:10px">
               ${post.status === 'DRAFT'
                 ? html`<button
@@ -345,22 +672,111 @@ export async function blog(root) {
                 : ''}
               ${post.status === 'PUBLISHED'
                 ? html`<a class="btn quiet" href="/blog/${post.slug}" target="_blank" rel="noreferrer">View it live</a>
-                    <button class="btn quiet" data-withdraw="${post.id}">Take it down</button>`
+                    <button class="btn quiet" data-distribute="${post.id}">Distribute</button>
+                    <button class="btn quiet" data-withdraw="${post.id}">Unpublish</button>`
                 : ''}
             </div>
           </section>
-        `,
-      )}
+        `;
+      })}
 
       ${posts.length === 0
         ? html`<div class="empty">
             <b>Nothing has been drafted yet.</b>The ${position.fixed ?? 0} posts in the build are still on the site;
             this is where the next one gets written. They are not scored — they predate these checks and carry no
-            keyword, and rewriting them as records would gain nothing and lose their history.
+            keyword, and rewriting them as records would gain nothing and lose their history. Press
+            <b>Generate marketing library</b> to cover every topic, or <b>${generatorLabel}</b> for one of your own.
+          </div>`
+        : ''}
+
+      ${vis
+        ? html`<div class="metric-sub" style="margin-top:14px">
+            <b>What this screen is not.</b>
+            ${vis.limits.map((limit) => html`<div>· ${limit}</div>`)}
           </div>`
         : ''}
     `,
   );
+
+  const runCommand = async (id, postId) => {
+    if (id === 'generate') {
+      const result = await command(generatorSpec(vis));
+      if (result) {
+        reportCompose(result);
+        await draw();
+      }
+      return;
+    }
+    if (id === 'library') {
+      const result = await command(COMMANDS.library());
+      if (result) {
+        toast(
+          'Library generated',
+          `${result.created.length} post${result.created.length === 1 ? '' : 's'} composed, ${result.skipped.length} topic${result.skipped.length === 1 ? '' : 's'} already on the record.`,
+          'ok',
+        );
+        await draw();
+      }
+      return;
+    }
+    if (id === 'release') {
+      const result = await command(COMMANDS.release());
+      if (result) {
+        reportRelease(result);
+        await draw();
+      }
+      return;
+    }
+    if (id === 'distribute') {
+      await distribute(postId);
+      return;
+    }
+    if (id === 'configure') {
+      toast('Channels', 'Set the variables named under Distribution channels on the server and restart. Nothing is sent until then.', 'err');
+      return;
+    }
+    const spec = COMMANDS[id]?.();
+    if (spec && (await command(spec))) await draw();
+  };
+
+  const distribute = async (postId) => {
+    if (!postId) return;
+    if (configured.length === 0) {
+      toast('No channel is configured', `Set ${channels.map((channel) => channel.missing.join(' and ')).join('; or ')} on the server first.`, 'err');
+      return;
+    }
+    // Hoisted rather than interpolated inline, for the same reason the publish
+    // door is: the console-forms invariant reads the literal path.
+    const result = await command({
+      title: 'Distribute this post',
+      intent:
+        'Sends the post to each channel you pick, using its own share text. A channel already sent to is skipped, and a ' +
+        'refusal is recorded with the network’s own answer. Leave the list empty to send to every configured channel.',
+      path: `/v1/site/posts/${postId}/distribute`,
+      submitLabel: 'Send',
+      fields: [
+        {
+          name: 'channels',
+          label: 'Channels',
+          type: 'multiselect',
+          required: false,
+          options: configured.map((channel) => ({ value: channel.id, label: `${channel.label} → ${channel.target}` })),
+          hint: 'Only configured channels are offered.',
+        },
+      ],
+      transform: ({ channels: chosen }) => (Array.isArray(chosen) && chosen.length > 0 ? { channels: chosen } : {}),
+    });
+    if (result) {
+      const sent = result.sent?.length ?? 0;
+      const failed = result.failed?.length ?? 0;
+      toast(
+        sent > 0 ? 'Sent' : failed > 0 ? 'Refused' : 'Nothing sent',
+        `${sent} sent, ${failed} refused, ${result.skipped?.length ?? 0} skipped.${failed > 0 ? ` ${result.failed[0].detail}` : ''}`,
+        failed > 0 && sent === 0 ? 'err' : 'ok',
+      );
+      await draw();
+    }
+  };
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
@@ -401,9 +817,26 @@ export async function blog(root) {
       return;
     }
 
-    const spec = COMMANDS[button.dataset.command]?.();
-    if (spec && (await command(spec))) await draw();
+    await runCommand(button.dataset.command);
   });
+
+  // A recommendation's own door: the same commands the bar offers, pressed
+  // from the line that explains why.
+  for (const button of root.querySelectorAll('[data-act]')) {
+    button.addEventListener('click', () => void runCommand(button.getAttribute('data-act'), button.getAttribute('data-post') || undefined));
+  }
+
+  for (const button of root.querySelectorAll('[data-distribute]')) {
+    button.addEventListener('click', () => void distribute(button.getAttribute('data-distribute')));
+  }
+
+  // From the table row to the post's own card. A button rather than a hash
+  // link, because a hash in the address is something the app's router reads.
+  for (const button of root.querySelectorAll('[data-jump]')) {
+    button.addEventListener('click', () => {
+      root.querySelector(`#post-${CSS.escape(button.getAttribute('data-jump'))}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 
   // Take a proposal straight into a draft, with the model's own reasoning as the
   // angle. The person still edits and still publishes.
@@ -442,10 +875,10 @@ export async function blog(root) {
     button.addEventListener('click', async () => {
       const postId = button.getAttribute('data-withdraw');
       const ok = await command({
-        title: 'Take this post down',
-        intent: 'The URL stops answering. The record stays, because a page that was live is a thing that happened.',
+        title: 'Unpublish this post',
+        intent: 'The URL stops answering and it leaves the sitemap. The record stays, because a page that was live is a thing that happened.',
         path: `/v1/site/posts/${postId}/withdraw`,
-        submitLabel: 'Withdraw',
+        submitLabel: 'Unpublish',
         fields: [{ name: 'reason', label: 'Why', hint: 'At least ten characters. Somebody will ask later.' }],
       });
       if (ok) await draw();

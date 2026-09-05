@@ -627,6 +627,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // own, and carrying no personal data — the prose is written for strangers to
   // read, which is the opposite of everything else in this block.
   SitePost: { area: 'PLATFORM_ADMINISTRATION' },
+  // Where a post was sent and what the network said, and the daily release
+  // that sent it. Operator-layer like the post; no personal data — the
+  // announcement address is the operator's own list, configured, not a person.
+  SitePostDistribution: { area: 'PLATFORM_ADMINISTRATION' },
+  MarketingRelease: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NewsletterSuppression: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   // A support request. Classified under ENTERPRISE_STRUCTURE rather than

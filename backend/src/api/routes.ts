@@ -259,6 +259,7 @@ import * as ingestion from '../evidence/pipeline.ts';
 import * as plant from '../domain/plant.ts';
 import * as siteMedia from '../site/media.ts';
 import * as blog from '../site/blog.ts';
+import * as visibility from '../site/visibility.ts';
 import * as conflicts from '../field/conflicts.ts';
 import * as outbox from '../notifications/outbox.ts';
 import * as aievaluation from '../ai/evaluation.ts';
@@ -21543,6 +21544,78 @@ export const ROUTES: Route[] = [
       operatorOnly(ctx, 'withdraw a blog post');
       const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
       return { post: blog.withdrawPost(context, platform, ctx.params.postId as string, body<{ reason: string }>(ctx).reason) };
+    },
+  },
+
+  // --- The visibility engine -------------------------------------------------
+  //
+  // The site read as a whole, and the marketing agent that acts on it. Every
+  // check below reads the rendered site, not a setting; every send goes to a
+  // configured channel or is named as unconfigured; the release runs once a
+  // day by construction. Operator-only, like the blog it extends.
+  {
+    method: 'GET',
+    pattern: '/v1/site/visibility',
+    readOnly: true,
+    description: 'The public site from outside: the SEO sweep, its signal score, reach, channels, topics, releases and what to do next',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the visibility position');
+      return visibility.visibilityPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/compose',
+    description: 'Compose a post from the feature catalogue for a topic and its keywords, and publish it where every check passes',
+    schema: {
+      type: 'object',
+      required: ['topic', 'keywords'],
+      properties: {
+        topic: stringField,
+        keywords: { type: 'array', minItems: 1, maxItems: 5, items: stringField },
+        tag: { type: 'string' },
+        publish: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'compose a blog post');
+      return visibility.composePost(platform, { refType: 'User', refId: auth(ctx).actorId }, body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/marketing/library',
+    description: 'One published post per topic that has none. A topic already on the record is skipped',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'generate the marketing library');
+      return visibility.generateLibrary(platform, { refType: 'User', refId: auth(ctx).actorId });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/marketing/release',
+    description: "Run today's marketing release now. Once per UTC day: a second press returns the release already made",
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'run the marketing release');
+      return visibility.runDailyRelease(platform, { refType: 'User', refId: auth(ctx).actorId }, { trigger: 'OPERATOR' });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/site/posts/:postId/distribute',
+    description: 'Send a live post to the configured channels. Unconfigured and already-sent channels are skipped and named',
+    schema: {
+      type: 'object',
+      properties: { channels: { type: 'array', items: { type: 'string', enum: ['linkedin', 'x', 'email'] } } },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'distribute a blog post');
+      const { channels } = body<{ channels?: visibility.DistributionChannel[] }>(ctx);
+      return visibility.distributePost(platform, { refType: 'User', refId: auth(ctx).actorId }, ctx.params.postId as string, channels);
     },
   },
 

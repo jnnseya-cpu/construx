@@ -1309,6 +1309,28 @@ export const config = {
     throttleMs: num('NEWSLETTER_THROTTLE_MS', 120),
   },
 
+  /**
+   * The marketing agent: the daily release and where a published post is sent.
+   *
+   * Every channel is off until its credential is set, and the SEO & Content
+   * screen says which variable is missing rather than showing a channel that
+   * looks live and is not. The release timer is a deliberate act on one
+   * deployment for the same reason the newsletter's is: a marketing agent that
+   * armed itself at boot would publish from a laptop and a CI run.
+   */
+  marketing: {
+    releaseEnabled: bool('MARKETING_RELEASE_ENABLED', false),
+    /** UTC hour the daily release runs. Once a day, idempotent by date. */
+    releaseHourUtc: num('MARKETING_RELEASE_HOUR_UTC', 8),
+    /** A LinkedIn Community Management API token with `w_organization_social`, and the organisation it posts as. */
+    linkedinAccessToken: str('LINKEDIN_ACCESS_TOKEN', ''),
+    linkedinOrgId: str('LINKEDIN_ORG_ID', ''),
+    /** An X API OAuth 2.0 user-context token with `tweet.write`. An app-only bearer token cannot post. */
+    xAccessToken: str('X_ACCESS_TOKEN', ''),
+    /** Where the email announcement of a published post goes — a list or team address the operator controls. */
+    announceTo: str('MARKETING_ANNOUNCE_TO', ''),
+  },
+
   smtp: {
     host: str('SMTP_HOST', ''),
     port: num('SMTP_PORT', 587),
@@ -1513,6 +1535,12 @@ export function assertProductionSafety(): string[] {
     }
     if (config.newsletter.enabled && !config.smtp.host) {
       warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
+    }
+    if (config.marketing.releaseEnabled && !config.marketing.linkedinAccessToken && !config.marketing.xAccessToken && !config.marketing.announceTo) {
+      warnings.push('MARKETING_RELEASE_ENABLED is on with no distribution channel configured — the daily release will publish and tell nobody');
+    }
+    if (config.marketing.linkedinAccessToken !== '' && config.marketing.linkedinOrgId === '') {
+      warnings.push('LINKEDIN_ACCESS_TOKEN is set without LINKEDIN_ORG_ID — LinkedIn has no organisation to post as');
     }
     if (config.newsletter.enabled && config.publicBaseUrl.startsWith('http://')) {
       // Unsubscribe links carry a signed token. Over http they are readable in

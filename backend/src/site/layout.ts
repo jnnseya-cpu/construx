@@ -108,6 +108,8 @@ function head(meta: PageMeta): string {
 <title>${title}</title>
 <meta name="description" content="${esc(meta.description)}">
 <link rel="canonical" href="${esc(url)}">
+<link rel="alternate" hreflang="en-GB" href="${esc(url)}">
+<link rel="alternate" hreflang="x-default" href="${esc(url)}">
 <meta property="og:type" content="${meta.type ?? 'website'}">
 <meta property="og:site_name" content="CONSTRUX">
 <meta property="og:url" content="${esc(url)}">
