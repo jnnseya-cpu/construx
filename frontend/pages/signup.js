@@ -232,6 +232,11 @@ function wire(packages, structures) {
       package: packageSelect.value,
       structure: structureSelect.value,
     };
+    // A referral code from the link they arrived on (`?ref=CODE`). Fixed on
+    // the tenancy at creation and never editable afterwards, which is what
+    // makes the growth programme's attribution a fact rather than a claim.
+    const referral = new URLSearchParams(location.search).get('ref')?.trim();
+    if (referral) input.referralCode = referral.slice(0, 32);
 
     try {
       const receipt = await api.post('/v1/signup', input, { anonymous: true });

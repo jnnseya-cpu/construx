@@ -170,7 +170,8 @@ import { approveDocument, createDraft, documentOf, documentsOf, generateRevision
 import { legalReadiness, verifyIssuerProfile } from '../group/profile.ts';
 import { createReportingGrant, grantsGiven, groupReports, readGroupReport, REPORT_METRICS, revokeReportingGrant, runGroupReport } from '../group/reporting.ts';
 import { approveTransferCase, cancelTransferCase, executeTransferCase, openTransferCase, reviewTransferCase, scheduleTransferCase, transferCases, transferCasesFor } from '../group/transfer.ts';
-import { addCompany, appointAdministrator, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
+import { addCompany, appointAdministrator, foundGroup, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
+import * as growthEngine from '../growth/engine.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -2857,6 +2858,28 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       growth.recordPayout(platform, auth(ctx), ctx.params.partnerId ?? '', body<{ amountMinor: number; reference: string; note?: string }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/growth/position',
+    readOnly: true,
+    description: 'The programme read as a whole: the sweep and its health score, results by month, each partner’s kit, and what to do next (platform operator only)',
+    handler: (platform, ctx) => growthEngine.growthPosition(platform, auth(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/growth/:partnerId/statement',
+    readOnly: true,
+    binary: true,
+    description: 'One partner’s statement as CSV: every receipt their earnings rest on, what was earned, paid and is owed (platform operator only)',
+    handler: (platform, ctx) => {
+      const { partner, csv } = growthEngine.partnerStatementFor(platform, auth(ctx), ctx.params.partnerId ?? '');
+      return {
+        bytes: Buffer.from(csv, 'utf8'),
+        contentType: 'text/csv; charset=utf-8',
+        filename: `${partner.code.toLowerCase()}-statement.csv`,
+      };
+    },
   },
   {
     method: 'GET',
@@ -6918,6 +6941,20 @@ export const ROUTES: Route[] = [
   // up to what the licence covers. Each company is a tenancy like any other:
   // its first month is charged, it waits for the payment, and the group sees
   // what is owed on its directory.
+  // A company that signed up as one company and grew: its administrator founds
+  // the group from it, here, without the operator. The same act the group
+  // signup performs at verification, run later.
+  {
+    method: 'POST',
+    pattern: '/v1/groups',
+    description: 'Found a group from this company: it becomes the first of up to the licence’s count, and you its administrator (company administrator)',
+    schema: {
+      type: 'object',
+      properties: { displayName: { type: 'string', minLength: 2, maxLength: 200 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => foundGroup(platform, auth(ctx), body<{ displayName?: string }>(ctx)),
+  },
   {
     method: 'POST',
     pattern: '/v1/groups/:groupId/companies',

@@ -105,12 +105,12 @@ export type AccountStructure = 'COMPANY' | 'GROUP';
 export const ACCOUNT_STRUCTURES: readonly AccountStructure[] = ['COMPANY', 'GROUP'];
 
 /** The same slug rule the group directory applies, so a name maps to one slug everywhere. */
-function slugOf(name: string): string {
+export function slugOf(name: string): string {
   return name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'group';
 }
 
 /** A cost centre code for the founding company: its first letters, 'CO' where a name has none. */
-function codeOf(name: string): string {
+export function codeOf(name: string): string {
   return name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'CO';
 }
 

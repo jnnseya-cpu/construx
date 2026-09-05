@@ -936,11 +936,14 @@ export function growth(): string {
       <li><b>Customer data never leaves.</b> No case study quotes a real project's figures without the asset owner's written agreement, and the export redaction rules apply to anything we are given.</li>
     </ul>
 
-    <h2>What is not built yet</h2>
+    <h2>What is built, and what is not</h2>
     <p class="callout">
-      The referral credit above is a stated commercial intent, not a shipped mechanism — there is no self-serve referral
-      code in the product today and it is applied by hand. It is written here as the policy rather than as a feature so
-      that nobody signs up expecting a dashboard that does not exist.
+      Partner and creator codes are a shipped mechanism: a link to the signup form carrying <code>?ref=CODE</code>
+      fixes the code on the account it creates, and what that account goes on to pay is what a partner's share or a
+      creator's bounty is computed from — settled receipts, never signups. The customer referral credit above is still
+      a stated commercial intent applied by hand: there is no self-serve customer-to-customer credit in the product
+      today, and it is written here as policy rather than as a feature so that nobody signs up expecting a dashboard
+      that does not exist.
     </p>
   </div>
 </section>

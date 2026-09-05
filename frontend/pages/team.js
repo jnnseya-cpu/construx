@@ -107,6 +107,18 @@ export async function team(root) {
               permitted: admin && Boolean(state.me?.group),
               reason: !state.me?.group ? 'Memberships across companies are a group feature; this company is not in a group.' : 'Only an enterprise admin may add people',
             },
+            // A company that signed up as one company and now has others: the
+            // door to becoming a group is here, where its administrator already
+            // is, rather than on a Group screen the menu does not yet show.
+            state.me?.group
+              ? null
+              : {
+                  id: 'found',
+                  label: 'Found a group from this company',
+                  tone: '',
+                  permitted: admin,
+                  reason: 'Only an enterprise admin may found a group',
+                },
           ]))}
         </div>
       </div>
@@ -447,6 +459,24 @@ export async function team(root) {
       if (result) draw();
       return;
     }
+    if (button.dataset.command === 'found') {
+        const result = await command({
+          title: 'Found a group from this company',
+          intent:
+            'This company becomes the first of a group of up to five, and you its group administrator. Nothing about the ' +
+            'company changes — its people, records, wallet and subscription are as they were. The Group screen then appears, ' +
+            'where you add the other companies, each with the administrators you name, and grant group roles to others.',
+          path: '/v1/groups',
+          submitLabel: 'Found the group',
+          fields: [{ name: 'displayName', label: 'Group name', required: false, hint: 'Defaults to this company’s name — “JNN GLOBAL LTD” founds a group called JNN GLOBAL LTD.' }],
+          transform: (v) => (v.displayName ? { displayName: v.displayName } : {}),
+        });
+        if (result) {
+          toast(`${result.group.displayName} founded`, `${result.company.name} is its first company (cost centre ${result.company.code}); ${result.maxCompanies} companies may be held. Open Group to add the next.`, 'ok');
+          await refresh();
+        }
+        return;
+      }
     if (button.dataset.command === 'report') {
         await api.download('/v1/team/report', {});
         toast('User report', 'Downloaded as a spreadsheet.', 'ok');

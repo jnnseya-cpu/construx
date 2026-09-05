@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,952 passing, 0 failing, 0 skipped, across 264 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,967 passing, 0 failing, 0 skipped, across 266 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 302 TypeScript files, 197,200 lines |
-| Application | 77 ES modules, 45,000 lines (including a service worker) |
-| API routes | 1,086 — 736 writes, 350 reads (49 public across both) |
+| Backend | 303 TypeScript files, 197,800 lines |
+| Application | 77 ES modules, 45,200 lines (including a service worker) |
+| API routes | 1,090 — 737 writes, 353 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -11561,6 +11561,75 @@ reading a bounce mailbox (a bounce reaches the record when somebody records it,
 as before); a DNS lookup of SPF and DMARC (the alignment check compares the
 sender domain to the site's, which is what alignment turns on, and does not
 query the zone).
+
+### The growth engine: whether a code can attribute, whether it earns, and who is owed
+
+Asked for as "the growth partner programme screen, the same way".
+`growth/partners.ts` records agreements and walks receipts one partner at a
+time; `growth/engine.ts` stands back from it and reads the programme whole, on
+both halves of the screen — Growth partner programme and Influencers share it.
+
+**The sweep reads the served form, the route table, the page, the agreements
+and the receipts.** Eleven checks weighted to a hundred: the referral link
+works end to end (the served `signup.js` reads `?ref=` and the signup route
+accepts `referralCode`); the public `/growth` page names the mechanism and
+links to the form; somebody is enrolled; no tenancy arrived on a code nobody
+holds; no active code has gone thirty days with nothing attributed; at least a
+quarter of referred tenancies have paid; no bounty exceeds the cheapest paid
+month (a conversion must never pay out more than arrives); nobody has been paid
+more than earned; nothing owed rests on a receipt older than thirty days; every
+active agreement has a reachable address; something attributed arrived inside
+ninety days. Running it found a real defect: **the signup form never sent the
+code.** The route accepted `referralCode` and the tests drove it, but the served
+form built its payload without reading `?ref=`, so every partner link on the
+live site attributed nobody. It reads the query string now, and the check that
+found it stays in the sweep so it cannot come back quietly. The public page's
+"not built" callout now says what is built — partner and creator codes — and
+what still is not: the customer-to-customer credit.
+
+**Results by month** come from the receipts: attributed revenue, what those
+receipts earned, how many, by the month the money arrived — a line the screen
+draws. **The kit** is what a partner pastes: the referral link, one link per
+paid package, and email and LinkedIn copy that says what the product does with
+no figure the platform does not measure and the relationship disclosed — the
+rule the public page holds creators to, applied to the copy the operator hands
+out. **The statement** (`GET /v1/admin/growth/:partnerId/statement`, CSV) is
+every receipt a partner's earnings rest on — tenancy, date, reference, method,
+receipt, earned — with earned, paid and owed and every payout recorded, so
+paying somebody starts from a document rather than a figure.
+
+**Recommendations propose; the operator presses.** A code that arrived and
+nobody holds offers *Enrol with that exact code*, and enrolling under it
+attributes the tenancy from the record, because attribution was never a claim.
+An earning overdue offers *Record a payout* for that partner; an idle code
+opens that partner's kit; nobody enrolled offers to enrol. Once per door.
+
+**Not built:** click counting on referral links (a click is not a signup and
+the platform records what a signup carried); a self-serve partner portal (the
+kit and the statement are handed over by the operator); any guess at
+attribution for a customer who typed the address by hand.
+
+### A company that signed up as one company founds its group itself
+
+Reported as: "I have already signed up but it looks like a normal enterprise
+admin." A tenancy created before the group structure existed, or that chose
+*One company* and grew, had no Group screen and no way to add a second
+organisation short of asking the operator. `foundGroup` in
+`group/onboarding.ts` is the act the group signup performs at verification, run
+later by the company's own administrator: the group is created and named after
+the company (or as named, with a distinct slug where two share a name), the
+company becomes its first cost centre, and the administrator who pressed the
+button holds GROUP_ADMIN. Nothing about the company changes. Refused for a
+company already in a group — moving between groups is a reviewed transfer, not
+a button — and for the platform's own tenancy. `POST /v1/groups`, for an
+ENTERPRISE_ADMIN or OWNER; the door is *Found a group from this company* on
+Team & Access, where the administrator already is and while the menu does not
+yet show Group, and on the Group screen's empty state. `tests/groupfound.test.ts`:
+refused to a viewer, founded once and not twice, the next company added with
+two administrators straight after, a distinct slug for a twin name, and the
+person's own read carrying GROUP_ADMIN through the gateway. Driven in Chromium
+as a seeded enterprise administrator: no Group in the menu, the door on Team &
+Access, Group in the menu after, 1 of 5 companies with *Add a company*.
 
 ---
 

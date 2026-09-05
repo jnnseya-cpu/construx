@@ -8,6 +8,57 @@ import type { Platform, PlatformUser } from '../platform.ts';
 import { agreementInForce, agreementOf, chargeModeFor, setAgreement, type AgreementMode, type AgreementParty } from './agreement.ts';
 import { attachCompany, createGroup, grantGroupRole, groupBySlug, groupOf, groupRolesFor, requireGroupRole, type Group } from './directory.ts';
 import { issuerProfile, legalReadiness } from './profile.ts';
+import { codeOf, slugOf } from '../identity/signup.ts';
+import { PLATFORM_TENANT_ID } from '../platform.ts';
+
+/**
+ * Found a group from a company that already exists.
+ *
+ * The signup form offers "a group of companies", but a company that signed up
+ * before that choice existed — or chose "one company" and grew — arrived as a
+ * plain tenancy with no Group screen and no way to add a second organisation.
+ * This is the same act the group signup performs at verification, run later by
+ * the company's own administrator: the group is created and named after the
+ * company (or as named), the company becomes its first cost centre, and the
+ * administrator who pressed the button holds GROUP_ADMIN. Nothing about the
+ * company changes — its people, records, wallet and subscription are as they
+ * were; it has simply become the first of up to the licence's count.
+ *
+ * Refused for a company already in a group (a company belongs to one group,
+ * and moving between them is a reviewed transfer, not a button), and for the
+ * platform's own tenancy.
+ */
+export function foundGroup(
+  platform: Platform,
+  actor: AuthContext,
+  input: { displayName?: string } = {},
+): { group: Group; company: { tenantId: string; name: string; code: string }; maxCompanies: number } {
+  if (!actor.roles.includes('ENTERPRISE_ADMIN') && !actor.roles.includes('OWNER')) {
+    throw new DomainError('ADMINISTRATOR_REQUIRED', 'Only the company’s administrator may found a group from it.', 403);
+  }
+  if (actor.tenantId === PLATFORM_TENANT_ID) {
+    throw new DomainError('NOT_A_COMPANY', 'The platform’s own tenancy is not a company and cannot found a group.', 422);
+  }
+  const tenant = platform.tenant(actor.tenantId);
+  if (tenant.groupId) {
+    const held = groupOf(platform, tenant.groupId);
+    throw new DomainError('ALREADY_IN_GROUP', `${tenant.legalName} is already a company of ${held.displayName}. A company belongs to one group; moving between groups is a reviewed transfer.`, 409);
+  }
+  if (tenant.closedAt) throw new DomainError('COMPANY_CLOSED', `${tenant.legalName} is closed.`, 409);
+
+  const displayName = (input.displayName?.trim() || tenant.legalName).slice(0, 200);
+  if (displayName.length < 2) throw new ValidationError('A group needs a name of at least two characters', [{ field: 'displayName', message: 'too short' }]);
+
+  let candidate = displayName;
+  for (let n = 2; groupBySlug(platform, slugOf(candidate)); n++) candidate = `${displayName} ${n}`;
+  const group = createGroup(platform, actor, { displayName, slug: slugOf(candidate), currency: tenant.defaultCurrency });
+  const code = codeOf(tenant.legalName);
+  const attached = attachCompany(platform, actor, group.id, { tenantId: tenant.id, code });
+  const user = platform.user(actor.actorId);
+  grantGroupRole(platform, actor, group.id, { email: user.email, role: 'GROUP_ADMIN' });
+
+  return { group: groupOf(platform, attached.id), company: { tenantId: tenant.id, name: tenant.legalName, code }, maxCompanies: GROUP_LICENCE.maxCompanies };
+}
 
 /**
  * Group onboarding as one idempotent act (enterprise specification §15.1,

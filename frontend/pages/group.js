@@ -22,11 +22,36 @@ export async function group(root) {
   const me = await api.get('/v1/users/me').catch(() => null);
   const held = me?.group;
   if (!held) {
+    const admin = (state.session?.user?.roles ?? []).some((role) => role === 'ENTERPRISE_ADMIN' || role === 'OWNER');
     render(
       root,
-      html`<div class="view-head"><div><h1>Group</h1><p>This company is not part of a group.</p></div></div>
-        ${notice('A group is founded at signup — choose “a group of companies” on the form — or set up by the platform operator: one licence agreement, one statement, several companies. Ask the operator to bring this company into one.', 'info')}`,
+      html`<div class="view-head">
+          <div><h1>Group</h1><p>This company is not part of a group.</p></div>
+          ${admin ? html`<div class="actions cmd-bar"><button class="btn" data-command="found">Found a group from this company</button></div>` : ''}
+        </div>
+        ${notice(
+          admin
+            ? 'A group is one licence agreement, one statement, several companies — up to five. Found one from this company and it becomes the first; you add the others afterwards, each with the administrators you name. Or ask the platform operator to bring this company into an existing group.'
+            : 'A group is founded at signup — choose “a group of companies” on the form — by the company’s administrator from this screen, or set up by the platform operator: one licence agreement, one statement, several companies.',
+          'info',
+        )}`,
     );
+    root.querySelector('[data-command="found"]')?.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Found a group from this company',
+        intent:
+          'This company becomes the first of a group of up to five, and you its group administrator. Nothing about the ' +
+          'company changes — its people, records, wallet and subscription are as they were.',
+        path: '/v1/groups',
+        submitLabel: 'Found the group',
+        fields: [{ name: 'displayName', label: 'Group name', required: false, hint: 'Defaults to this company’s name.' }],
+        transform: (v) => (v.displayName ? { displayName: v.displayName } : {}),
+      });
+      if (result) {
+        toast(`${result.group.displayName} founded`, `${result.company.name} is its first company. Add the next with “Add a company”.`, 'ok');
+        await group(root);
+      }
+    });
     return;
   }
   if (held.roles.length === 0) {
