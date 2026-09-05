@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 5,988 passing, 0 failing, 0 skipped, across 268 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 5,996 passing, 0 failing, 0 skipped, across 269 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 304 TypeScript files, 198,400 lines |
-| Application | 77 ES modules, 45,450 lines (including a service worker) |
-| API routes | 1,090 — 737 writes, 353 reads (49 public across both) |
+| Backend | 305 TypeScript files, 198,950 lines |
+| Application | 78 ES modules, 45,840 lines (including a service worker) |
+| API routes | 1,094 — 740 writes, 354 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -11803,6 +11803,66 @@ grants away.** Asked to clear a revoked grant from the register: the record is
 kept — "who had this, between which dates" is what an access review asks — but
 the table shows live grants by default with a count and *Show revoked* for the
 rest.
+
+### The activation popup, and the payment method it puts on the record
+
+Asked for as the popup every paid account sees once subscribed: *Activate
+<company>'s subscription — your enterprise is live; pay your first month
+upfront, then it renews each month until you cancel*, the plan and its price,
+then *How will you pay, going forward?* — Direct Debit (BACS), recommended, or
+a recurring card — and the sentence the person ticks: *I authorise CONSTRUX to
+collect £X today and the same amount each month by direct debit, until I
+cancel. I confirm I'm authorised to set up payments for <company>.* Built as
+`frontend/lib/activation.js`, opened from `app.js` on every draw for somebody
+who can act on billing (`BILLING_ACU` `U`) whose account has a subscription to
+activate and no method authorised; *Later* puts it away for the browser
+session and it returns at the next sign-in. The same popup opens from *Choose
+how to pay* / *Change payment method* on ACU & Billing, whose **Payment
+method** card shows the method in force, who authorised it, when, the monthly
+amount and the exact words, with *Cancel the mandate* beside it.
+
+The record is `backend/src/billing/mandate.ts`. `GET /v1/billing/mandate` is
+the **activation position**: whether anything is to be collected (`required`,
+with the reason when not — a cancelled subscription, a company covered by its
+group, a package granted free, a package that costs nothing), the company, the
+package and its monthly price, the first period owed with its `CX-` reference,
+which **rails** the deployment can take, the mandate in force and the
+authorisation wording for each method. `POST /v1/billing/mandate` records the
+authorisation (`PAYMENT_MANDATE_AUTHORISED`, entity `PaymentMandate`,
+`COMMERCIAL_L3`): the wording is composed on the server from the method, the
+company on the record and the price on the record — never taken from the
+request — so what is stored is what was shown; `authorised: false` is refused
+(`AUTHORISATION_REQUIRED`), an account with nothing to collect is refused
+(`NOTHING_TO_COLLECT`, 409), and a mandate already in force is cancelled as
+superseded so there is one at a time. `POST /v1/billing/mandate/cancel` ends
+it with the reason (`PAYMENT_MANDATE_CANCELLED`). The primary company of a
+group is the account that holds the subscription, so a free grant on it reads
+as the operator's grant, not as coverage; a company it covers is what reads as
+covered. `paymentmandate.test.ts` covers the position, both methods, the
+refusals, supersession, cancellation and who never sees the popup.
+
+**What is not built, stated so the popup cannot imply it.** No Direct Debit
+rail exists and no card is held, so nothing is collected against the mandate
+yet: the position's `rails` says `directDebit: false`, `card` only where
+Stripe is configured, `bankTransfer: true`. After the authorisation the popup
+hands the first month to what the deployment can take — a recurring card on a
+Stripe deployment goes straight to the existing card checkout for the first
+period; otherwise the closing step says the first month is paid by transfer
+against the reference and the authorisation is on the record for collection
+from the day the rail is live. The brand in the sentence is CONSTRUX; the
+requested text named VERYX, which is not this platform's name. `attemptCollection`
+still answers "no payment method is held"; connecting a Direct Debit or
+card-on-file rail to collect against the mandate is the remaining work.
+
+**The group statement stopped counting money nobody owed.** *One section per
+cost centre* showed a covered company's written-off first month as *Plan
+charged £100.00* and its line item at the list price, and the group total
+added the two together. `groupStatement` now takes the charge for the period,
+prefers one that is not written off, counts a written-off charge as nothing
+charged and marks the plan `covered`; `tenantSubscriptionItems` prices a
+granted-free subscription at nothing with the reason in the price version; the
+Group screen's cells say *covered by the group's subscription* and *written
+off* rather than a figure.
 
 ---
 

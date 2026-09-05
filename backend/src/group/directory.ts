@@ -610,7 +610,7 @@ function monthWindow(month: string): { from: string; to: string } {
 }
 
 export type StatementSection = CompanyUsage & {
-  plan: { package: string; label: string; listPriceMinor: number; chargedMinor: number; chargeStatus: string | null };
+  plan: { package: string; label: string; listPriceMinor: number; chargedMinor: number; chargeStatus: string | null; covered: boolean };
   acuBilledMinor: number;
   invoiced: boolean;
   totalMinor: number;
@@ -649,8 +649,13 @@ export function groupStatement(platform: Platform, groupId: string, month: strin
     const usage = companyUsage(platform, group, centre, windowFrom, windowTo);
     const subscription = platform.subscription(centre.tenantId);
     const pkg = PACKAGES[subscription.package];
-    const charge = chargesFor(platform, centre.tenantId).find((candidate) => candidate.periodStart.slice(0, 7) === month);
-    const chargedMinor = charge?.amountMinor ?? 0;
+    // The period's charge, preferring one that still counts: a period written
+    // off — a company brought under the group's subscription after its first
+    // month was raised — is not money the group owes, and the statement said
+    // it was.
+    const periodCharges = chargesFor(platform, centre.tenantId).filter((candidate) => candidate.periodStart.slice(0, 7) === month);
+    const charge = periodCharges.find((candidate) => candidate.status !== 'WRITTEN_OFF') ?? periodCharges[0];
+    const chargedMinor = charge && charge.status !== 'WRITTEN_OFF' ? charge.amountMinor : 0;
     const invoiced = centre.chargeMode !== 'INTERNAL';
     const totalMinor = (charge ? chargedMinor : 0) + usage.meters.acu.billedMinor;
     const partial = windowFrom !== from || windowTo !== to;
@@ -662,6 +667,9 @@ export function groupStatement(platform: Platform, groupId: string, month: strin
         listPriceMinor: pkg.monthlyPriceMinor,
         chargedMinor,
         chargeStatus: charge?.status ?? null,
+        // Granted free: covered by the group's subscription, or exempt by the
+        // operator's decision. Nothing is charged for it, whatever the list says.
+        covered: subscription.grantedFree === true,
       },
       acuBilledMinor: usage.meters.acu.billedMinor,
       invoiced,

@@ -40,6 +40,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // credits — a payment record names an amount and a bank reference, which is
   // commercial-in-confidence for the same reasons the balance is.
   TopUpIntent: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  PaymentMandate: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentReceipt: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentReversal: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentException: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },

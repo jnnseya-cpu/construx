@@ -259,8 +259,10 @@ export function tenantSubscriptionItems(platform: Platform, tenantId: string): {
       kind: 'PRODUCT',
       label: pkg.label,
       billingUnit: 'SUITE_MONTH',
-      priceMinor: pkg.monthlyPriceMinor,
-      priceVersion: `construx-catalogue-v1:${subscription.package}`,
+      // What this subscription is charged: nothing when the package is granted
+      // free — covered by the group's subscription, or exempt by the operator.
+      priceMinor: subscription.grantedFree ? 0 : pkg.monthlyPriceMinor,
+      priceVersion: subscription.grantedFree ? `construx-catalogue-v1:${subscription.package} — granted free of charge; list ${pkg.monthlyPriceMinor}` : `construx-catalogue-v1:${subscription.package}`,
       seats: { included: pkg.includedSeats, used: subscription.assignedIdentities.length },
       start: subscription.startedAt,
       end: null,

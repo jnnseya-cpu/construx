@@ -173,6 +173,7 @@ import { approveTransferCase, cancelTransferCase, executeTransferCase, openTrans
 import { addCompany, appointAdministrator, foundGroup, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
 import * as growthEngine from '../growth/engine.ts';
 import * as estateEngine from '../billing/estateengine.ts';
+import * as mandate from '../billing/mandate.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
 import * as claims from '../engines/claims.ts';
@@ -20441,6 +20442,46 @@ export const ROUTES: Route[] = [
           allowancePercent: config.billing.subscriptionAcuAllocationPercent,
         },
       };
+    },
+  },
+  // --- Activation: how the account agrees to be collected from ----------------
+  {
+    method: 'GET',
+    pattern: '/v1/billing/mandate',
+    readOnly: true,
+    description: 'Whether this account has a subscription to activate, the first month owed, which rails the deployment can take, the payment method authorised, and the authorisation wording',
+    handler: (platform, ctx) => mandate.activationPosition(platform, authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/mandate',
+    description: 'Authorise how the subscription is collected going forward — Direct Debit or a recurring card — with the sentence agreed on the record. Supersedes the one in force',
+    schema: {
+      type: 'object',
+      required: ['method', 'authorised'],
+      properties: {
+        method: { type: 'string', enum: ['DIRECT_DEBIT', 'RECURRING_CARD'] },
+        // The tick. Sent as the boolean it is; the platform refuses false
+        // rather than recording a mandate nobody agreed to.
+        authorised: { type: 'boolean' },
+        companyName: { type: 'string', minLength: 2, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      const held = mandate.authoriseMandate(platform, actor, body<{ method: mandate.MandateMethod; authorised: boolean; companyName?: string }>(ctx));
+      return { mandate: held, activation: mandate.activationPosition(platform, actor.tenantId) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/mandate/cancel',
+    description: 'Cancel the payment method authorised for this account, with the reason on the record',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
+      return mandate.cancelMandate(platform, actor, body<{ reason: string }>(ctx).reason);
     },
   },
   {

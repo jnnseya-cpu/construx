@@ -1,6 +1,7 @@
 import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEnrolmentGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { wireDrill } from './lib/drill.js';
+import { maybeShowActivation } from './lib/activation.js';
 import { armInstallPrompt } from './lib/install.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
@@ -1298,6 +1299,11 @@ async function draw() {
     );
     bindSignOut();
     void api.hydrateImages(document.querySelector('.topbar'));
+    // A paying account with no payment method authorised is asked, once per
+    // session, how it will pay going forward. Never an operator, and never a
+    // company covered by its group — the position says so and the popup stays
+    // shut.
+    if (!isOperator()) void maybeShowActivation({ can });
     // Bound after the second render, which is the one that has the project list
     // to build the picker from. The first render happens before `loadContext`
     // and shows the skeleton.

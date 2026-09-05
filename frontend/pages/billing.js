@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { showActivation } from '../lib/activation.js';
 import { command } from '../lib/command.js';
 import { badge, exact, html, humanise, money, pct, positionReport, raw, render, table, toast, track } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
@@ -40,6 +41,9 @@ export async function billing(root) {
   const subscription = await api.get('/v1/billing/subscription').catch(() => null);
   const dueCharges = (subscription?.charges ?? []).filter((charge) => charge.status === 'DUE');
   const awaitingFirst = subscription?.subscription?.status === 'AWAITING_PAYMENT';
+  // How the account agreed to be collected from, going forward — and whether
+  // it has anything to activate at all.
+  const activation = await api.get('/v1/billing/mandate').catch(() => null);
 
   /** Bytes, at the scale a person reads them. */
   const gb = (bytes) => {
@@ -71,6 +75,32 @@ export async function billing(root) {
         </div>
       </div>
 
+      ${
+        activation && activation.required
+          ? html`<div class="card" style="margin-bottom:14px" data-payment-method>
+              <h2>Payment method</h2>
+              ${activation.mandate
+                ? html`<div class="metric-sub" style="margin:6px 0 10px">
+                      <b>${activation.mandate.method === 'DIRECT_DEBIT' ? 'Direct Debit (BACS)' : 'Recurring card'}</b> · authorised by
+                      ${activation.mandate.authorisedByName} on ${activation.mandate.authorisedAt.slice(0, 10)} · ${exact(activation.mandate.amountMinor)} a month
+                      <br /><span style="font-style:italic">${activation.mandate.wording}</span>
+                      ${activation.rails.directDebit || (activation.mandate.method === 'RECURRING_CARD' && activation.rails.card)
+                        ? ''
+                        : html`<br />Collection by this method is not yet connected on this deployment: each period is paid by bank transfer against its reference, or by card where offered, until it is.`}
+                    </div>`
+                : html`<div class="metric-sub" style="margin:6px 0 10px">
+                      No payment method is authorised yet. ${activation.packageLabel} is ${exact(activation.monthlyPriceMinor)} a month, collected today and each
+                      month until cancelled.
+                    </div>`}
+              ${can('BILLING_ACU', 'U')
+                ? html`<div class="actions">
+                    <button class="btn ${raw(activation.mandate ? 'quiet' : 'primary')}" data-activate>${activation.mandate ? 'Change payment method' : 'Choose how to pay'}</button>
+                    ${activation.mandate ? html`<button class="btn quiet danger" data-cancel-mandate>Cancel the mandate</button>` : ''}
+                  </div>`
+                : ''}
+            </div>`
+          : ''
+      }
       ${
         wallet.sharedFrom
           ? html`<div class="notice ok" style="margin-bottom:14px">
@@ -555,6 +585,23 @@ export async function billing(root) {
       }
     });
   }
+
+  root.querySelector('[data-activate]')?.addEventListener('click', async () => {
+    const held = await showActivation(activation);
+    if (held) await billing(root);
+  });
+
+  root.querySelector('[data-cancel-mandate]')?.addEventListener('click', async () => {
+    const result = await command({
+      title: 'Cancel the payment method',
+      intent:
+        'Collection stops at the end of the paid month. The subscription itself stays as it is until you cancel it or a charge falls due unpaid.',
+      path: '/v1/billing/mandate/cancel',
+      submitLabel: 'Cancel the mandate',
+      fields: [{ name: 'reason', label: 'Why', type: 'textarea' }],
+    });
+    if (result) await billing(root);
+  });
 
   document.getElementById('caps')?.addEventListener('click', async () => {
     // A cap is a governance decision, so the reason is part of the command

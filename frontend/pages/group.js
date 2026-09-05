@@ -188,8 +188,10 @@ export async function group(root) {
                   rows: [
                     ...(statement?.sections ?? []).map((s) => [
                       html`<b>${s.code}</b> ${s.name}<div class="metric-sub">${humanise(s.chargeMode)} · ${humanise(s.rateCard)}</div>`,
-                      html`${s.plan.label}<div class="metric-sub">list ${money(s.plan.listPriceMinor, currency)}</div>`,
-                      html`${money(s.plan.chargedMinor, currency)}${s.plan.chargeStatus ? html`<div class="metric-sub">${s.plan.chargeStatus.toLowerCase()}</div>` : html`<div class="metric-sub">not raised</div>`}`,
+                      html`${s.plan.label}<div class="metric-sub">${s.plan.covered ? 'covered · list ' : 'list '}${money(s.plan.listPriceMinor, currency)}</div>`,
+                      html`${money(s.plan.chargedMinor, currency)}<div class="metric-sub">${
+                        s.plan.covered ? 'covered by the group’s subscription' : s.plan.chargeStatus ? s.plan.chargeStatus.toLowerCase().replace('_', ' ') : 'not raised'
+                      }</div>`,
                       s.meters.seat.active,
                       money(s.acuBilledMinor, currency),
                       s.meters.document,
@@ -232,7 +234,9 @@ export async function group(root) {
               rows: billing.subscriptions.map((s) => [
                 html`<b>${s.code}</b> ${s.name}`,
                 html`${humanise(s.package.toLowerCase())}<div class="metric-sub">${s.state.toLowerCase()} · renews ${date(s.renewsAt)}</div>`,
-                html`${s.items.map((item) => html`<div>${item.code}<span class="metric-sub"> · ${item.kind === 'PRODUCT' ? money(item.priceMinor, s.currency) + ' / month' : 'restricted grant, not priced'}</span></div>`)}`,
+                html`${s.items.map((item) => html`<div>${item.code}<span class="metric-sub"> · ${
+                  item.kind !== 'PRODUCT' ? 'restricted grant, not priced' : item.priceMinor === 0 ? 'covered by the group’s subscription' : money(item.priceMinor, s.currency) + ' / month'
+                }</span></div>`)}`,
                 html`${s.seatsUsed}${s.seatLimit === null ? '' : html`<span class="metric-sub"> / ${s.seatLimit}</span>`}`,
                 s.currency,
                 humanise(s.chargeMode.toLowerCase()),
