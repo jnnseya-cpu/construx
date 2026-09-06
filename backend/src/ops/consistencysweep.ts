@@ -105,6 +105,11 @@ export async function sweepChainBreaks(platform: Platform): Promise<SweepOutcome
   };
 
   for (const { projectId, tenantId } of customerProjects(platform)) {
+    // Between projects, let a request through. Each project's check is
+    // synchronous over its whole chain, and the sweep runs on the thread that
+    // serves everybody; without this, an hour's sweep over every customer was
+    // one stall as long as all of them together.
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const tenant = platform.tenants().find((candidate) => candidate.id === tenantId);
     if (!tenant) continue;
     if (tenant.closedAt) {

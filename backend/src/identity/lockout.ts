@@ -148,3 +148,21 @@ export function lockedSubjects(now = Date.now()): Array<{ subject: string; retry
 export function reset(): void {
   subjects.clear();
 }
+
+/**
+ * Drop subjects whose window and lock have both passed. An entry per identity
+ * that ever failed a sign-in, kept for ever, is the same slow growth as every
+ * other operational map here; a subject past its window reads as free anyway.
+ */
+export function pruneExpired(now = Date.now()): number {
+  let dropped = 0;
+  for (const [subject, record] of subjects) {
+    const lockOver = record.lockedUntil === undefined || record.lockedUntil <= now;
+    const windowOver = now - record.windowFrom > windowMs();
+    if (lockOver && windowOver) {
+      subjects.delete(subject);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}

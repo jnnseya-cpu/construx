@@ -193,29 +193,57 @@ runs, and every deploy looks like a crash.
 
 ### Backup
 
-The record is two append-only files. Backing up is copying them.
+The record is four append-only files and two directories, all under `/data`:
+
+| Path | What it is | Without it |
+|---|---|---|
+| `ledger.jsonl` | The hash chain — every governed event | There is no record |
+| `ledger.jsonl.acu` | The ACU wallets: every grant, hold and charge | Wallets forget their debits and customers get AI the platform already paid for |
+| `ledger.jsonl.views` | Blog page views | Counters restart at zero |
+| `ledger.jsonl.revoked` | Sessions revoked before they expired | Every revoked refresh token works again for the rest of its seven days |
+| `evidence/` | The files the chain's hashes point at | A record that proves documents nobody holds any more |
+| `site-media/` | The landing page's own pictures | The public site loses its images |
+
+`deploy/autodeploy.sh` takes all six from the running container before every
+deploy, as one set stamped with the time, and keeps the newest
+`CONSTRUX_BACKUP_KEEP` sets (default 14) on the host. It used to copy the
+first two only, for ever, into a directory nothing pruned — on the same disk
+the journal needed.
 
 ```bash
-# From the host, against the running container.
-docker exec construx sh -c 'cat /data/ledger.jsonl' > ledger-$(date -u +%Y%m%dT%H%M%SZ).jsonl
-docker exec construx sh -c 'cat /data/ledger.jsonl.acu' > acu-$(date -u +%Y%m%dT%H%M%SZ).jsonl
+# The same set by hand, from the host, against the running container.
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+docker exec construx sh -c 'cat /data/ledger.jsonl' > ledger-$STAMP.jsonl
+for SIDE in acu views revoked; do docker exec construx sh -c "cat /data/ledger.jsonl.$SIDE" > $SIDE-$STAMP.jsonl; done
+docker exec construx sh -c 'cd /data && tar cf - evidence site-media' > files-$STAMP.tar
 ```
 
-Because the files are append-only, a copy taken while the service is running is
-a valid prefix of the record: it may miss events written during the copy and
-cannot contain a half-written earlier one. A torn final line in a backup is
-handled on load exactly as a torn line from a crash.
+Because the journal files are append-only, a copy taken while the service is
+running is a valid prefix of the record: it may miss events written during the
+copy and cannot contain a half-written earlier one. A torn final line in a
+backup is handled on load exactly as a torn line from a crash.
 
-Copy `.acu` **with** the ledger, always. Restoring one without the other gives a
-complete project record whose wallets have forgotten their debits — which hands
-customers AI the platform has already paid a provider for.
+**A copy on the same host is not a backup.** It survives a bad deploy and
+nothing else. Ship every set off the box — an S3-compatible bucket, another
+machine, a cloud drive — on a schedule, and keep the retention there longer
+than here. Nothing in this repository does that for you yet.
 
 ### Restore
 
 1. Stop the service.
-2. Put both files on the volume at `LEDGER_JOURNAL_PATH` and
-   `LEDGER_JOURNAL_PATH.acu`.
+2. Put the four files on the volume at `LEDGER_JOURNAL_PATH`,
+   `LEDGER_JOURNAL_PATH.acu`, `.views` and `.revoked`, and unpack the tar into
+   `EVIDENCE_STORE_PATH` and `SITE_MEDIA_PATH`.
 3. Start it.
+
+**Drill it before you need it.** `deploy/restore-drill.sh` takes a backup set,
+boots a second container from the live image against a throwaway volume on a
+port of its own, waits for `/readyz`, reads how many events replayed, and
+removes everything it made. The live container is never touched. Run it after
+the first backup and then on a calendar; a set that does not restore is a
+finding, and the drill is where it should be found. The script was written
+against this compose deployment and has not been run in the build sandbox,
+which has no Docker: the first run on the host is the first drill.
 
 Boot verifies as it replays: every chain hash recomputed from its predecessor,
 every state hash from the applied patch. **A journal that has been altered
@@ -573,8 +601,15 @@ Stated so it is not mistaken for an omission somebody can fix with a flag.
 - **Point-in-time recovery is the ship lag, not the backup interval, once the
   store is on.** Without it, recovery granularity is however often the files
   are copied.
-- **No log shipping, metrics store or alerting.** The process writes structured
-  JSON to stdout and exposes counters; nothing collects them yet.
+- **No log shipping or metrics store.** The process writes structured JSON to
+  stdout and exposes counters; an OTLP collector receives them only where
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and the last 5,000 request logs are all
+  the process keeps. Alerting exists — eight watch rules, told to the operators
+  through the outbox and, where `OPS_ALERT_WEBHOOK_URL` is set, posted as JSON
+  to a channel that is not the mail relay being watched. What does not exist is
+  a monitor *outside* this process: a dead process alerts nobody. Point an
+  external uptime check at `/readyz`, which answers 503 when the process cannot
+  extend the record.
 - **No CDN.** The frontend is served by the backend from one origin.
 
 None of these are hard to add, and none of them are claimed.

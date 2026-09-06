@@ -171,8 +171,11 @@ mechanism rather than inventing a parallel one.
 Stated so it is not mistaken for compliance. These follow from
 `docs/STATE.md`'s "what is not built":
 
-- **Database safety** — there is no database. The ledger is in-process.
-  Postgres with RLS and append-only rules is designed for, not implemented.
+- **Database safety** — the ledger is in-process with a journal on one volume.
+  Postgres with RLS and append-only rules is built behind
+  `LEDGER_POSTGRES_MODE` (mirror, primary, follower) and verified against a
+  live Postgres 16 in CI, and is `off` by default; one process still extends
+  the chain at a time, and failover is a promotion somebody starts.
 - **Deployment reproducibility** — no Terraform, gateway or infrastructure
   topology exists.
 - **Caching and performance tuning** — no measured bottleneck exists to tune

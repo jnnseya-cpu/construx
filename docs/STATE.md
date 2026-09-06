@@ -15,9 +15,9 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,009 passing, 0 failing, 0 skipped, across 271 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,020 passing, 0 failing, 0 skipped, across 273 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 305 TypeScript files, 199,200 lines |
+| Backend | 307 TypeScript files, 199950 lines |
 | Application | 78 ES modules, 45,920 lines (including a service worker) |
 | API routes | 1,096 — 742 writes, 354 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
@@ -11924,6 +11924,109 @@ project row of Enterprise & Portfolio, shown only to a role that may approve
 the act. `structuredelete.test.ts` covers the authority, the reason, the
 listing, the kept record, the refused command, both refusals and the
 portfolio's order of operations; both were driven in Chromium.
+
+### Week-one hardening, from the deep dive
+
+An audit of what breaks, is lost or does not scale in the first week real
+customers use the platform found the known limits documented rather than
+gated. What could be closed in code was, in one pass; what needs a provider,
+a host or a person is listed at the end.
+
+**The process refuses two states it must never run in.** A production boot
+with the published development signing secret, or with no journal path,
+printed a warning and served traffic; anybody holding this repository could
+mint a session for any role, and the record would be lost on the first
+restart. `main.ts` now exits with `[boot refused]` naming the variable. Only
+those two: everything else stays on the readiness screen for a person to
+decide, so a missing marketing key can never take the site down.
+
+**The readiness probe can say no.** `/readyz` answered `ok` for as long as the
+process was listening, so the container health check could only ever fail on a
+refused socket. `Platform.liveness()` now judges the invariants that stop the
+record being extended — shutting down, the journal refused its last append
+(`Journal.lastError`), under 256 MB free on the journal volume — and the probe
+answers 503 `NOT_READY` with the reasons. Configuration gaps are not liveness:
+they stay on `/v1/admin/readiness`. Shutdown marks the platform unready first,
+so the proxy stops sending work before the listener closes.
+
+**Sessions revoked stay revoked across a restart.** The revoked-token set was
+process memory, so every deploy honoured every revoked refresh token again for
+the rest of its seven days. Revocations are written through to
+`<journal>.revoked` — a fourth file beside the chain, the wallets and the
+views, for the same reason the wallet is separate: a refresh rotation revokes
+a token every quarter of an hour per person — read back at boot, and pruned
+of expired ids. Each revocation carries the expiry of the longest-lived token
+holding the id, so the file holds exactly what still matters.
+
+**The free-trial count survives a restart.** It lived in `signup.ts` and was
+cleared on every boot, so each deploy re-opened a fresh grant for every domain
+that had already taken one: a money leak an automated signup could farm on a
+schedule. The count moved to `identity/trials.ts` and `Platform.rehydrate`
+rebuilds it from the trial grants on the wallets, keyed on the founding
+administrator's address.
+
+**Every operational map is swept.** One-time codes, second-factor challenges,
+passkey ceremonies, authenticator enrolments, step-ups, failed sign-ins, rate
+buckets, idempotent replies and pending registrations were each dropped only
+when the same key was looked up again; a key never looked up again was kept
+for the life of the process. `ops/hygiene.ts` runs one pass over all of them
+every five minutes and reports what it dropped.
+
+**The process handles what would have killed it.** An unhandled rejection or
+an uncaught exception now logs with what is known and exits deliberately
+through the shutdown path rather than dying mid-write. The gateway sets its
+own timeouts (30 s headers, 120 s request, 65 s keep-alive) instead of Node's
+five minutes, so a slow client cannot hold the upload ceiling of buffered body
+for five minutes on the one process that serves everybody. The chain assurance
+and consistency sweeps yield to the event loop between projects instead of
+replaying five projects back to back on the request thread.
+
+**Reads are indexed.** `list`, `listByTenant` and `events` allocated an array
+of every entity or event on the platform and filtered it, on every call, from
+hundreds of call sites — latency that grew with the whole platform's history
+rather than the caller's project. The ledger keeps secondary indexes by
+`(projectId, refType)`, `(tenantId, refType)`, project and tenancy,
+maintained at the two places a record is set; the scoped reads walk their
+bucket. `entitiesOfType`, the boot-only read, still scans.
+
+**Alerts have a second channel and two more rules.** Every alert went through
+the outbox and the relay it was monitoring, so a relay outage took its own
+alert down with it. `OPS_ALERT_WEBHOOK_URL` receives every alert and
+resolution as JSON with a Slack-readable `text` line; the outcome of the last
+post is on the watch position. `disk_space` fires below
+`OPS_WATCH_DISK_FREE_MB` on the journal volume and `journal_size` above
+`OPS_WATCH_JOURNAL_MAX_MB`, because a full volume is a journal refusing its
+next append and the journal's size is the length of every future boot. The
+outbox now retries ten times over about seventeen hours rather than five over
+sixteen minutes, so a notice outlives an ordinary relay outage.
+
+**The backup takes the whole record and prunes itself.** The deploy script
+copied the chain and the wallet file only, for ever, into a directory nothing
+pruned on the same disk the journal needed. It now takes all four journal
+files plus the evidence store and site media as one stamped set, keeps the
+newest `CONSTRUX_BACKUP_KEEP` sets, and `deploy/restore-drill.sh` boots a
+throwaway container from a set on its own port and volume and reads the
+replay count, without touching the live one. The drill has not been run here:
+the build sandbox has no Docker, and the runbook says the first run on the
+host is the first drill. A copy on the same host is still not a backup, and
+the runbook says that too.
+
+**Readiness names what it missed.** `EVIDENCE_MASTER_KEY` is a critical
+capability now (it appeared nowhere, so a deployment holding every customer's
+photographs in the clear reported no blocker) and the boot warns about it;
+`DEMO_TENANCY_ENABLED` in production is listed and warned about; the trusted
+proxy range becomes critical the moment a proxy is declared in
+`TLS_TERMINATION`.
+
+**Not closed here, and why.** Journal snapshots so boot replays only the tail,
+and streaming asynchronous evidence I/O, are rewrites of the two most
+load-bearing paths and need a staging soak, not a pass. Per-purpose secrets
+with a key id, so the signing secret can rotate without invalidating export
+tags already handed to third parties, is a design change to every token the
+platform issues. Lockouts and challenges in Redis, an off-host backup
+schedule, an external uptime monitor and a named on-call are a host, a
+service and a person respectively. `hardening.test.ts` and
+`alerting.test.ts` cover the rest.
 
 ---
 

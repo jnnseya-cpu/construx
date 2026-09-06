@@ -193,6 +193,23 @@ class RateLimiter {
   reset(): void {
     this.#buckets.clear();
   }
+
+  /**
+   * Drop buckets that have refilled completely. One entry per distinct client
+   * address, kept for the life of the process, is a map that only grows; a
+   * bucket idle for longer than its window would be full on its next use, so
+   * forgetting it changes nothing the client can observe.
+   */
+  prune(now = Date.now(), idleMs = config.rateLimit.windowSeconds * 2_000): number {
+    let dropped = 0;
+    for (const [key, bucket] of this.#buckets) {
+      if (now - bucket.lastRefill > idleMs) {
+        this.#buckets.delete(key);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
 }
 
 export const rateLimiter = new RateLimiter();
@@ -382,6 +399,22 @@ export function validateRequest(ctx: RequestContext, schema: Schema | undefined,
 
 const idempotencyCache = new Map<string, { status: number; body: unknown; storedAt: number }>();
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Drop replies past their day. The TTL was only ever checked on a read of the
+ * same key, so a reply never asked for again was held for the life of the
+ * process — every command the console ever sent, for ever. Swept on a timer.
+ */
+export function pruneIdempotency(now = Date.now()): number {
+  let dropped = 0;
+  for (const [key, cached] of idempotencyCache) {
+    if (now - cached.storedAt > IDEMPOTENCY_TTL_MS) {
+      idempotencyCache.delete(key);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}
 
 /**
  * The cache key for a replayed request.

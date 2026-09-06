@@ -516,6 +516,16 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
 export function startGateway(platform: Platform, port = config.port): Promise<Server> {
   const server = createGateway(platform);
+  // Nothing was set, so Node's defaults applied: five minutes for a request
+  // and a minute for its headers. A slow client could hold a connection — and
+  // on an upload route, up to the evidence ceiling of buffered body — for five
+  // minutes each, on the one process that serves everybody. Headers are small
+  // and arrive at once; a body has the upload ceiling to justify its time; and
+  // keep-alive sits just above the usual reverse-proxy idle timeout so the
+  // proxy closes first and never reuses a socket this process has dropped.
+  server.headersTimeout = 30_000;
+  server.requestTimeout = 120_000;
+  server.keepAliveTimeout = 65_000;
   return new Promise((resolve) => {
     server.listen(port, () => resolve(server));
   });

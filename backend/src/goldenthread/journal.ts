@@ -130,9 +130,26 @@ export class Journal {
     // A single write of a single line. Node writes it in one syscall for any
     // realistic event size, so a concurrent reader sees whole lines.
     const line = `${JSON.stringify(event)}\n`;
-    writeSync(this.#fd!, line);
-    if (this.#fsync) fsyncSync(this.#fd!);
+    try {
+      writeSync(this.#fd!, line);
+      if (this.#fsync) fsyncSync(this.#fd!);
+    } catch (error) {
+      // Remembered as well as thrown. The throw refuses this commit, which is
+      // right; the memory is what lets the readiness probe say the volume is
+      // refusing writes, so the deployment is seen as unready rather than
+      // answering every command with a 500 while its health check says fine.
+      this.#lastError = { at: new Date().toISOString(), message: error instanceof Error ? error.message : String(error) };
+      throw error;
+    }
+    this.#lastError = undefined;
     this.#written += 1;
+  }
+
+  #lastError: { at: string; message: string } | undefined;
+
+  /** The most recent append failure, until an append succeeds again. */
+  get lastError(): { at: string; message: string } | undefined {
+    return this.#lastError;
   }
 
   /**

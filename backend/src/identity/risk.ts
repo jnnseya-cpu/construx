@@ -359,3 +359,16 @@ export function riskModel(): {
     ],
   };
 }
+
+/** Drop step-ups outside their window. They were only ever dropped when the same session asked again. */
+export function pruneExpiredStepUps(now = Date.now()): number {
+  const windowMs = config.auth.stepUpWindowMinutes * 60_000;
+  let dropped = 0;
+  for (const [tokenId, at] of steppedUp) {
+    if (now - at > windowMs) {
+      steppedUp.delete(tokenId);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}

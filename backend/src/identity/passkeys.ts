@@ -664,3 +664,15 @@ export function publicView(passkey: PasskeyRecord): Omit<PasskeyRecord, 'publicK
   const { publicKey: _publicKey, ...rest } = passkey;
   return rest;
 }
+
+/** Drop ceremonies that expired unanswered. A started-and-abandoned ceremony was held for the life of the process. */
+export function pruneExpiredChallenges(now = Date.now()): number {
+  let dropped = 0;
+  for (const [key, record] of challenges) {
+    if (record.expiresAt < now) {
+      challenges.delete(key);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}

@@ -6,6 +6,9 @@ import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
 import { groupOf } from './group/directory.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletSignal } from './billing/acu.ts';
+import { statfsSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { recordTrialTaken, resetTrials } from './identity/trials.ts';
 import { buildInvoice, type Invoice } from './billing/invoice.ts';
 import {
   assignIdentity,
@@ -63,6 +66,9 @@ import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/e
  * collide with it — tenant ids are ULIDs.
  */
 export const PLATFORM_TENANT_ID = 'platform';
+
+/** Below this much free space on the journal volume the process reports itself unready: the next commit may be the one that fails. */
+const LIVENESS_MIN_FREE_BYTES = 256 * 1_048_576;
 
 /** A refund or chargeback against a recorded payment: its own record, never a rewrite of the receipt. */
 export type PaymentReversal = {
@@ -2593,6 +2599,20 @@ export class Platform {
       }
     }
 
+    // The free trials already taken, counted again from the wallets rather
+    // than remembered: a trial grant is an entry on the record, and the
+    // organisation it went to is the address that founded the tenancy. This
+    // was process memory and nothing else, so every restart re-opened a fresh
+    // grant for every domain that had already had one.
+    resetTrials();
+    for (const [tenantId, entries] of walletEntries) {
+      if (!entries.some((entry) => entry.type === 'GRANT' && entry.note === TRIAL_GRANT_NOTE)) continue;
+      const founder = this.users(tenantId)
+        .filter((user) => user.roles.includes('ENTERPRISE_ADMIN') || user.roles.includes('OWNER'))
+        .sort((a, b) => a.id.localeCompare(b.id))[0];
+      if (founder) recordTrialTaken(founder.email);
+    }
+
     for (const record of this.ledger.entitiesOfType('ACUWallet')) {
       const tenantId = record.tenantId;
       const subscription = this.#subscriptions.get(tenantId);
@@ -3738,16 +3758,59 @@ export class Platform {
    * was already available behind: `/v1/admin/readiness` and
    * `/v1/ai/control-plane`.
    */
+  #shuttingDown = false;
+
+  /** Say no to every probe from here on. Called first thing in a shutdown, so the proxy stops sending work before the listener closes. */
+  beginShutdown(): void {
+    this.#shuttingDown = true;
+  }
+
+  /**
+   * Whether this process can serve, and why not when it cannot.
+   *
+   * `/readyz` answered `ok` unconditionally as long as the process was
+   * listening, so the container health check could only ever fail on a
+   * refused socket: a volume refusing writes, a disk about to fill, or a
+   * process mid-shutdown all read as healthy while every command answered 500.
+   * These are liveness invariants — things that stop the record being
+   * extended — and not configuration, which stays on the operator's readiness
+   * screen so a missing marketing key can never restart a healthy container.
+   */
+  liveness(): { ok: boolean; reasons: string[] } {
+    const reasons: string[] = [];
+    if (this.#shuttingDown) reasons.push('shutting down');
+    const journal = this.ledger.journal;
+    if (journal?.lastError) {
+      reasons.push(`the journal refused the last write at ${journal.lastError.at}: ${journal.lastError.message}`);
+    }
+    if (journal) {
+      try {
+        const stats = statfsSync(dirname(journal.path));
+        const freeBytes = Number(stats.bavail) * Number(stats.bsize);
+        if (freeBytes < LIVENESS_MIN_FREE_BYTES) {
+          reasons.push(`${Math.round(freeBytes / 1_048_576)} MB free on the journal volume; below ${LIVENESS_MIN_FREE_BYTES / 1_048_576} MB the next commit may be the one that fails`);
+        }
+      } catch {
+        // A volume the process cannot stat is one it cannot write either; the
+        // append error above is the authoritative signal for that.
+      }
+    }
+    return { ok: reasons.length === 0, reasons };
+  }
+
   health(): {
-    status: 'ok';
+    status: 'ok' | 'not-ready';
     env: string;
     /** The commit this process is running, or `unknown` if the deployer did not say. */
     commit: string;
+    reasons?: string[];
   } {
+    const live = this.liveness();
     return {
-      status: 'ok',
+      status: live.ok ? 'ok' : 'not-ready',
       env: config.env,
       commit: config.buildCommit || 'unknown',
+      ...(live.ok ? {} : { reasons: live.reasons }),
     };
   }
 
@@ -3758,7 +3821,8 @@ export class Platform {
    * `/v1/admin/readiness`, which is already operator-only.
    */
   operationalHealth(): {
-    status: 'ok';
+    status: 'ok' | 'not-ready';
+    reasons?: string[];
     env: string;
     commit: string;
     aiMode: string;

@@ -49,6 +49,9 @@ set -eu
 APP_DIR="${CONSTRUX_APP_DIR:-/srv/construx/app}"
 BRANCH="${CONSTRUX_DEPLOY_BRANCH:-claude/ai-agent-construction-os-999410}"
 BACKUP_DIR="${CONSTRUX_BACKUP_DIR:-/srv/construx/backups}"
+# How many backup sets to keep on this host. Off-host copies are a separate
+# job (see the runbook); this only stops the local set eating the volume.
+BACKUP_KEEP="${CONSTRUX_BACKUP_KEEP:-14}"
 # Two checks, because they fail for different reasons and want different
 # answers.
 #
@@ -142,8 +145,28 @@ log "deploying $SHORT_TARGET (from $SHORT_CURRENT)"
 mkdir -p "$BACKUP_DIR"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 if docker exec construx sh -c 'cat /data/ledger.jsonl' > "$BACKUP_DIR/ledger-$STAMP.jsonl" 2>/dev/null; then
-  docker exec construx sh -c 'cat /data/ledger.jsonl.acu' > "$BACKUP_DIR/acu-$STAMP.jsonl" 2>/dev/null || true
-  log "journal backed up to $BACKUP_DIR/ledger-$STAMP.jsonl"
+  # The record is more than the chain. The wallet file, the page views and the
+  # revoked sessions sit beside it and each was an append-only file the backup
+  # did not copy; the evidence store and the site's own pictures are the files
+  # the chain's hashes point at, and a restore without them is a record that
+  # proves documents nobody holds any more. Every one of them is taken, from
+  # the running container, in one pass.
+  for SIDE in acu views revoked; do
+    docker exec construx sh -c "cat /data/ledger.jsonl.$SIDE" > "$BACKUP_DIR/$SIDE-$STAMP.jsonl" 2>/dev/null || rm -f "$BACKUP_DIR/$SIDE-$STAMP.jsonl"
+  done
+  if docker exec construx sh -c 'cd /data && ls -d evidence site-media 2>/dev/null | tar cf - -T -' > "$BACKUP_DIR/files-$STAMP.tar" 2>/dev/null; then
+    log "journal and files backed up to $BACKUP_DIR/*-$STAMP.*"
+  else
+    rm -f "$BACKUP_DIR/files-$STAMP.tar"
+    log "journal backed up to $BACKUP_DIR/ledger-$STAMP.jsonl (no evidence or site-media directory yet)"
+  fi
+  # Keep the last N sets. Every deploy wrote a full copy of a file that only
+  # grows into a directory nothing pruned, on the same disk the record lives
+  # on — so the backups were what filled the volume the journal needed.
+  ls -1t "$BACKUP_DIR"/ledger-*.jsonl 2>/dev/null | tail -n +"$((BACKUP_KEEP + 1))" | while read -r OLD; do
+    OLD_STAMP="${OLD##*/ledger-}"; OLD_STAMP="${OLD_STAMP%.jsonl}"
+    rm -f "$BACKUP_DIR"/*-"$OLD_STAMP".jsonl "$BACKUP_DIR"/files-"$OLD_STAMP".tar
+  done
 else
   # A first deploy, or a container that is already down. Neither is a reason to
   # refuse to deploy — there is nothing to lose in either case — but it is a

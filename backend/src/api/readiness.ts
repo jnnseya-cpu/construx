@@ -190,6 +190,39 @@ export function readiness(now = new Date()): Readiness {
       env: ['EVIDENCE_STORE_PATH', 'EVIDENCE_MAX_BYTES'],
     },
     {
+      key: 'evidence.encryption',
+      label: 'Evidence encryption at rest',
+      // Critical, and it was not listed at all: the master key never appeared
+      // here, so a deployment holding every customer's photographs and signed
+      // instructions in the clear reported no blocker. A stolen volume, or a
+      // backup copy on the same host, is a readable archive without it.
+      critical: true,
+      state: config.evidence.masterKey !== '' ? 'CONFIGURED' : config.evidence.storePath === '' ? 'NOT_SET' : 'DEGRADED',
+      detail:
+        config.evidence.masterKey !== ''
+          ? 'Every file in the evidence store is sealed under a per-tenant key wrapped by the master key. A copied volume is ciphertext.'
+          : config.evidence.storePath === ''
+            ? 'No evidence store, so nothing to seal.'
+            : 'Files are stored in the clear. A stolen volume or a backup copy is a readable archive of every customer\'s site photographs, signed instructions and scanned contracts. Set the key from a secret manager, never from a file on the evidence volume.',
+      env: ['EVIDENCE_MASTER_KEY'],
+    },
+    {
+      key: 'demo.tenancy',
+      label: 'Demonstration tenancy',
+      critical: false,
+      // Not a blocker: a public sandbox is a deliberate marketing choice. Listed
+      // because on a production deployment it hands any anonymous visitor a
+      // working sign-in and a wallet to spend, and the operator should be
+      // choosing that rather than inheriting it from a default.
+      state: !config.demo.enabled ? 'NOT_SET' : production ? 'DEGRADED' : 'CONFIGURED',
+      detail: !config.demo.enabled
+        ? 'Switched off. No sandbox identity can be signed into.'
+        : production
+          ? 'Open in production: any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Right for a public sandbox; wrong beside real customer records.'
+          : 'Open. Any visitor can sign into the seeded demonstration as any role.',
+      env: ['DEMO_TENANCY_ENABLED', 'DEMO_ACU_CREDIT_MINOR'],
+    },
+    {
       key: 'signing.key',
       label: 'Signature witness',
       critical: false,
@@ -203,7 +236,11 @@ export function readiness(now = new Date()): Readiness {
     {
       key: 'transport.trustedProxies',
       label: 'Client address behind a proxy',
-      critical: false,
+      // Critical exactly when the operator has declared a proxy in front: then
+      // an empty range means every request in the world shares one login
+      // bucket. With nothing declared it stays advisory, because with nothing
+      // in front the socket address is the client.
+      critical: ['REVERSE_PROXY', 'LOAD_BALANCER', 'SERVICE_MESH'].includes(config.transport.termination),
       state:
         parseTrustedProxies(config.transport.trustedProxyCidrs).rejected.length > 0
           ? 'DEGRADED'

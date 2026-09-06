@@ -1,4 +1,6 @@
 import { startGateway } from './api/gateway.ts';
+import { attachRevocationJournal, type RevocationRecord } from './identity/auth.ts';
+import { startHygiene, stopHygiene } from './ops/hygiene.ts';
 import { rateLimiter } from './api/middleware.ts';
 import { SharedLimiter } from './api/sharedlimiter.ts';
 import { assertProductionSafety, config } from './config.ts';
@@ -36,6 +38,44 @@ const platform = new Platform();
 for (const warning of assertProductionSafety()) {
   process.stderr.write(`[config warning] ${warning}\n`);
 }
+
+// Two of those warnings are not warnings. A production process signing
+// sessions with the published development secret is one anybody holding this
+// repository can mint a session for any role on; a production process with no
+// journal loses every record on its first restart. Both printed a line and
+// served traffic. Neither is a state a deployment can be allowed to reach, so
+// the process refuses to start rather than run in it. Nothing else here is
+// refused: a missing marketing key or an undeclared TLS posture is reported on
+// the operator's readiness screen, where a person decides.
+if (config.env === 'production') {
+  const fatal: string[] = [];
+  if (config.auth.jwtSecret === 'construx-development-secret') {
+    fatal.push('GATEWAY_JWT_SECRET is the published development default; set a deployment-specific secret');
+  }
+  if (config.ledger.journalPath === '') {
+    fatal.push('LEDGER_JOURNAL_PATH is unset; the record would be lost on the first restart');
+  }
+  if (fatal.length > 0) {
+    process.stderr.write(`\n[boot refused] ${fatal.join('\n[boot refused] ')}\n\nThis process will not serve a production deployment in that state. See docs/GO-LIVE.md.\n\n`);
+    process.exit(1);
+  }
+}
+
+// A rejection nobody caught, or an exception thrown off the request path, ends
+// a Node process — and here that is a full-replay outage plus every piece of
+// in-memory state. Neither was handled. Both are now logged with what is known
+// and the process still exits deliberately: continuing after an unknown
+// exception is how a ledger writer keeps running with corrupt state.
+process.on('unhandledRejection', (reason) => {
+  process.stderr.write(`[fatal] unhandled promise rejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}\n`);
+  process.exitCode = 1;
+  process.kill(process.pid, 'SIGTERM');
+});
+process.on('uncaughtException', (error) => {
+  process.stderr.write(`[fatal] uncaught exception: ${error.stack ?? error.message}\n`);
+  process.exitCode = 1;
+  process.kill(process.pid, 'SIGTERM');
+});
 
 // --- Durability -------------------------------------------------------------
 
@@ -284,6 +324,21 @@ if (follower && ledgerStore) {
     }
   }
 
+  // Revoked sessions. A fourth file beside the chain, the wallet and the
+  // views, for the reason the wallet is separate: a refresh rotation revokes
+  // a token every quarter of an hour per person, and one governed event per
+  // rotation would bury the record of what the company did under session
+  // housekeeping. Without it a restart honoured every revoked refresh token
+  // again for the rest of its seven days.
+  const revocationPath = `${config.ledger.journalPath}.revoked`;
+  const revocations = attachRevocationJournal(new RecordJournal<RevocationRecord>(revocationPath, { fsync: config.ledger.fsync }));
+  if (revocations.truncated) {
+    process.stderr.write(`[journal] the final line of ${revocationPath} was incomplete and has been dropped.\n`);
+  }
+  if (revocations.restored > 0 || revocations.expired > 0) {
+    process.stdout.write(`[identity] ${revocations.restored} revoked session(s) restored, ${revocations.expired} expired and dropped\n`);
+  }
+
   // The identity every generated document goes out under. Held in a map and
   // committed to the chain; without this a restarted process holds a complete
   // record and cannot brand a single document from it.
@@ -437,6 +492,9 @@ const egressTimer = startEgress();
 // moment a divergence could be discovered is during a dispute, by the person
 // least able to do anything about it.
 const assuranceTimer = follower ? undefined : startAssurance(platform);
+// The sweep over every operational map that only ever grew: expired codes,
+// ceremonies, enrolments, step-ups, lockouts, buckets, replies, registrations.
+startHygiene();
 
 // The commercial chain, escalated on a timer rather than only when somebody
 // opens the position: a break on a project nobody has open is otherwise found
@@ -590,6 +648,10 @@ process.stdout.write(
  * makes the data durable.
  */
 const shutdown = (signal: string): void => {
+  // First, so the readiness probe says no and the proxy stops sending work
+  // before the listener closes on requests already in flight.
+  platform.beginShutdown();
+  stopHygiene();
   process.stdout.write(`\nReceived ${signal}, shutting down.\n`);
   newsletter.stop();
   marketing.stop();

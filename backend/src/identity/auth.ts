@@ -174,11 +174,96 @@ export function issueTokens(input: IssueInput, now = Date.now()): TokenPair {
   };
 }
 
-/** Revoked token ids. A real deployment backs this with a shared store. */
-const revoked = new Set<string>();
+/**
+ * Revoked token ids, and when each stops mattering.
+ *
+ * This was a `Set` in process memory and nothing else, so a restart — which
+ * this deployment does on every push — honoured every revoked refresh token
+ * again for the rest of its seven days. "I signed out" and "that session was
+ * revoked" have to survive the process. The set is now written through to a
+ * record beside the ledger journal (`<journal>.revoked`, attached at boot by
+ * `main.ts`), read back and pruned of expired ids on the next boot, so a
+ * revocation lasts exactly as long as the token it revokes.
+ *
+ * Not on the hash chain: a refresh rotation revokes a token every quarter of
+ * an hour per person, and one governed event per rotation would bury the
+ * record of what the company did under session housekeeping. Same mechanism
+ * as the ACU wallet and the page views — its own file, same journal code.
+ */
+const revoked = new Map<string, number>();
 
-export function revokeToken(tokenId: string): void {
-  revoked.add(tokenId);
+export type RevocationRecord = { tokenId: string; expiresAt: number };
+
+let revocationJournal: { append(record: RevocationRecord): void } | undefined;
+
+/**
+ * Attach the durable record. Returns how many live revocations were restored
+ * and how many expired ones were dropped, so boot can say so.
+ */
+export function attachRevocationJournal(
+  journal: { append(record: RevocationRecord): void; read(): { records: RevocationRecord[]; truncated: boolean } },
+  now = Date.now(),
+): { restored: number; expired: number; truncated: boolean } {
+  const { records, truncated } = journal.read();
+  let expired = 0;
+  for (const record of records) {
+    if (typeof record.tokenId !== 'string' || typeof record.expiresAt !== 'number') continue;
+    if (record.expiresAt <= now) {
+      expired += 1;
+      continue;
+    }
+    revoked.set(record.tokenId, record.expiresAt);
+  }
+  revocationJournal = journal;
+  return { restored: revoked.size, expired, truncated };
+}
+
+/** Forget the durable record. Tests only. */
+export function detachRevocationJournal(): void {
+  revocationJournal = undefined;
+  revoked.clear();
+}
+
+/**
+ * Revoke a token id. `expiresAt` is when the longest-lived token carrying the
+ * id lapses on its own; absent, the refresh lifetime from now is assumed, which
+ * is never shorter than the truth.
+ */
+export function revokeToken(tokenId: string, expiresAt?: number): void {
+  const until = expiresAt ?? Date.now() + config.auth.refreshTtlDays * 86_400_000;
+  revoked.set(tokenId, until);
+  revocationJournal?.append({ tokenId, expiresAt: until });
+}
+
+/** Drop revocations whose tokens have lapsed anyway. Returns how many went. */
+export function pruneExpired(now = Date.now()): { revocations: number; challenges: number; factorChallenges: number } {
+  let revocations = 0;
+  for (const [tokenId, until] of revoked) {
+    if (until <= now) {
+      revoked.delete(tokenId);
+      revocations += 1;
+    }
+  }
+  let expiredChallenges = 0;
+  for (const [key, challenge] of challenges) {
+    if (challenge.expiresAt < now) {
+      challenges.delete(key);
+      expiredChallenges += 1;
+    }
+  }
+  let expiredFactors = 0;
+  for (const [key, challenge] of factorChallenges) {
+    if (challenge.expiresAt < now) {
+      factorChallenges.delete(key);
+      expiredFactors += 1;
+    }
+  }
+  return { revocations, challenges: expiredChallenges, factorChallenges: expiredFactors };
+}
+
+/** How many revocations are held. Readiness reads it; tests pin it. */
+export function revocationCount(): number {
+  return revoked.size;
 }
 
 export function verifyToken(
@@ -236,7 +321,9 @@ export function verifyToken(
  */
 export function refreshTokens(refreshToken: string, now = Date.now()): TokenPair {
   const context = verifyToken(refreshToken, 'refresh', now, { allowLegacyIssuer: true });
-  revokeToken(context.tokenId);
+  // The refresh token is the longest-lived holder of this id, so its expiry is
+  // exactly how long the revocation has to be remembered.
+  revokeToken(context.tokenId, context.expiresAt);
   return issueTokens(
     {
       actorId: context.actorId,

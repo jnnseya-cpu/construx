@@ -1281,8 +1281,17 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/readyz',
     public: true,
-    description: 'Readiness probe including AI control plane status',
-    handler: (platform) => platform.health(),
+    description: 'Readiness probe: 200 while this process can extend the record, 503 with the reasons when it cannot',
+    handler: (platform) => {
+      const health = platform.health();
+      // A probe that can only ever say yes is furniture. The container health
+      // check and the deploy gate both read this; a volume refusing writes, a
+      // disk about to fill or a process mid-shutdown must fail it.
+      if (health.status !== 'ok') {
+        throw new DomainError('NOT_READY', (health.reasons ?? []).join('; ') || 'not ready', 503);
+      }
+      return health;
+    },
   },
 
   // -------------------------------------------------------------------- auth

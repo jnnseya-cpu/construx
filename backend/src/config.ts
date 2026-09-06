@@ -413,6 +413,27 @@ export const config = {
     serverErrorPercent: num('OPS_WATCH_SERVER_ERROR_PERCENT', 5),
     authFailurePercent: num('OPS_WATCH_AUTH_FAILURE_PERCENT', 20),
     rateLimitedThreshold: num('OPS_WATCH_RATE_LIMITED_THRESHOLD', 50),
+    /**
+     * Free space on the journal volume below which the watch fires, in
+     * megabytes. The record only grows; the disk it lives on does not.
+     */
+    diskFreeMinimumMb: num('OPS_WATCH_DISK_FREE_MB', 1024),
+    /**
+     * The journal size above which the watch fires, in megabytes. Boot reads
+     * the whole file and replays every event, so the size is the length of
+     * every future restart; past this it is time to plan snapshots or the
+     * Postgres store rather than discover the boot time on a deploy.
+     */
+    journalMaximumMb: num('OPS_WATCH_JOURNAL_MAX_MB', 2048),
+    /**
+     * A second channel for alerts, one that is not the mail pipeline. Every
+     * alert also went through the outbox and the relay it was monitoring, so
+     * the failures most likely in week one — SMTP unconfigured or refusing —
+     * were exactly the ones whose alert could not arrive. An https URL that
+     * takes a JSON POST: a Slack or Teams incoming webhook, a PagerDuty events
+     * URL, an uptime service. Empty means email only, and the position says so.
+     */
+    alertWebhookUrl: str('OPS_ALERT_WEBHOOK_URL', ''),
   },
 
   evidence: {
@@ -537,7 +558,12 @@ export const config = {
      * that retries for ever is a queue that hides a permanently bad address
      * behind a number that never stops going up.
      */
-    maxAttempts: num('NOTIFICATIONS_MAX_ATTEMPTS', 5),
+    // Ten, doubling from a minute: the last retry is about eight and a half
+    // hours out and the whole run spans seventeen. Five gave up after sixteen
+    // minutes, which is shorter than an ordinary relay outage — and the
+    // notices that matter most, a watch alert about the relay among them, were
+    // exactly the ones abandoned while it was down.
+    maxAttempts: num('NOTIFICATIONS_MAX_ATTEMPTS', 10),
     /**
      * How long the outbox waits before retrying, doubling per attempt.
      *
@@ -1453,6 +1479,16 @@ export function assertProductionSafety(): string[] {
     }
     if (!config.ledger.fsync) {
       warnings.push('LEDGER_JOURNAL_FSYNC is disabled — events may be acknowledged before reaching the disk');
+    }
+    if (config.evidence.masterKey === '' && config.evidence.storePath !== '') {
+      warnings.push(
+        'EVIDENCE_MASTER_KEY is unset — evidence is stored in the clear, so a stolen volume or a backup copy is a readable archive of every customer\'s site photographs, signed instructions and scanned contracts',
+      );
+    }
+    if (config.demo.enabled) {
+      warnings.push(
+        'DEMO_TENANCY_ENABLED is on in production — any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Set it to false on a deployment holding real customer records',
+      );
     }
     if (config.ledger.postgresMode === 'off' && config.postgres.host !== '') {
       warnings.push(

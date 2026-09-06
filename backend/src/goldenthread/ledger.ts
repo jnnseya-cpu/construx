@@ -115,6 +115,60 @@ function chainBody(event: GoldenThreadEvent): string {
 export class GoldenThreadLedger {
   readonly #events: GoldenThreadEvent[] = [];
   readonly #entities = new Map<string, EntityRecord>();
+
+  /**
+   * Secondary indexes, maintained on every commit and every replayed event.
+   *
+   * `list` and `listByTenant` allocated an array of every entity on the
+   * platform and filtered it, on every call, from 632 call sites; `events`
+   * did the same over every event ever written. Fine on one project; on a
+   * deployment with years of record it is latency that grows with the whole
+   * platform's history rather than with the caller's project, and it grows
+   * without any single event that explains it. A record is filed under
+   * `(projectId, refType)` and `(tenantId, refType)` once, at the moment it
+   * is set, and an event under its project and its tenancy; the reads walk
+   * the bucket they need. An entity never changes project or tenancy — the
+   * ledger refuses that as an isolation breach before it gets here — so a
+   * re-set of the same key replaces in place and the buckets stay exact.
+   */
+  readonly #byProjectType = new Map<string, Map<string, EntityRecord>>();
+  readonly #byTenantType = new Map<string, Map<string, EntityRecord>>();
+  readonly #eventsByProject = new Map<string, GoldenThreadEvent[]>();
+  readonly #eventsByTenant = new Map<string, GoldenThreadEvent[]>();
+
+  #index(key: string, record: EntityRecord): void {
+    this.#entities.set(key, record);
+    const byProject = `${record.projectId}\u0000${record.refType}`;
+    let projectBucket = this.#byProjectType.get(byProject);
+    if (!projectBucket) {
+      projectBucket = new Map();
+      this.#byProjectType.set(byProject, projectBucket);
+    }
+    projectBucket.set(key, record);
+    const byTenant = `${record.tenantId}\u0000${record.refType}`;
+    let tenantBucket = this.#byTenantType.get(byTenant);
+    if (!tenantBucket) {
+      tenantBucket = new Map();
+      this.#byTenantType.set(byTenant, tenantBucket);
+    }
+    tenantBucket.set(key, record);
+  }
+
+  #file(event: GoldenThreadEvent): void {
+    this.#events.push(event);
+    let project = this.#eventsByProject.get(event.projectId);
+    if (!project) {
+      project = [];
+      this.#eventsByProject.set(event.projectId, project);
+    }
+    project.push(event);
+    let tenant = this.#eventsByTenant.get(event.tenantId);
+    if (!tenant) {
+      tenant = [];
+      this.#eventsByTenant.set(event.tenantId, tenant);
+    }
+    tenant.push(event);
+  }
   /** Head of the hash chain, per project. Tenants never share a chain. */
   readonly #chainHeads = new Map<string, string>();
   readonly #subscribers: LedgerSubscriber[] = [];
@@ -314,9 +368,9 @@ export class GoldenThreadLedger {
     // means telling somebody their payment notice was issued and losing it.
     this.#journal?.append(event);
 
-    this.#events.push(event);
+    this.#file(event);
     this.#seenEventIds.add(eventId);
-    this.#entities.set(key, record);
+    this.#index(key, record);
     this.#chainHeads.set(input.projectId, event.chainHash);
 
     for (const subscriber of this.#subscribers) {
@@ -409,9 +463,9 @@ export class GoldenThreadLedger {
         this.#recordedHashes.delete(key);
       }
 
-      this.#events.push(event);
+      this.#file(event);
       this.#seenEventIds.add(event.eventId);
-      this.#entities.set(key, {
+      this.#index(key, {
         refType: event.entity.refType,
         refId: event.entity.refId,
         tenantId: event.tenantId,
@@ -453,9 +507,9 @@ export class GoldenThreadLedger {
 
   /** Every entity of a type within a project, ordered by refId for determinism. */
   list(projectId: string, refType: string): EntityRecord[] {
-    return [...this.#entities.values()]
-      .filter((r) => r.projectId === projectId && r.refType === refType)
-      .sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
+    const bucket = this.#byProjectType.get(`${projectId}\u0000${refType}`);
+    if (!bucket) return [];
+    return [...bucket.values()].sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
   }
 
   /**
@@ -471,14 +525,21 @@ export class GoldenThreadLedger {
   }
 
   listByTenant(tenantId: string, refType: string): EntityRecord[] {
-    return [...this.#entities.values()]
-      .filter((r) => r.tenantId === tenantId && r.refType === refType)
-      .sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
+    const bucket = this.#byTenantType.get(`${tenantId}\u0000${refType}`);
+    if (!bucket) return [];
+    return [...bucket.values()].sort((a, b) => (a.refId < b.refId ? -1 : a.refId > b.refId ? 1 : 0));
   }
 
   /** Ordered event stream. Ordering is (timestamp, eventId) — the replay contract. */
   events(filter: { projectId?: string; tenantId?: string; until?: string; from?: string } = {}): GoldenThreadEvent[] {
-    return this.#events
+    // The narrowest bucket first: a project's events, else a tenancy's, else
+    // everything. The remaining conditions still apply to whatever was chosen.
+    const source = filter.projectId
+      ? (this.#eventsByProject.get(filter.projectId) ?? [])
+      : filter.tenantId
+        ? (this.#eventsByTenant.get(filter.tenantId) ?? [])
+        : this.#events;
+    return source
       .filter((e) => {
         if (filter.projectId && e.projectId !== filter.projectId) return false;
         if (filter.tenantId && e.tenantId !== filter.tenantId) return false;

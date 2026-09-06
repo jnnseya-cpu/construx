@@ -141,48 +141,32 @@ export function verifyProject(platform: Platform, tenantId: string, projectId: s
   return result;
 }
 
-/**
- * Verify the next slice.
- *
- * Exported so an operator can force a pass rather than waiting for the
- * interval, and so a test can drive it without a timer.
- */
-export function sweep(platform: Platform, perPass = config.assurance.projectsPerPass): AssuranceReport {
-  const projects = allProjects(platform);
-  const at = new Date().toISOString();
-  lastPassAt = at;
-
-  if (projects.length === 0) {
-    return { at, checked: 0, intact: 0, diverged: [], neverVerified: 0, results: [] };
+/** One project's verification, with a failure of the verifier itself recorded as a finding rather than a skip. */
+function verifyOne(platform: Platform, project: { tenantId: string; projectId: string }, at: string): ProjectAssurance {
+  try {
+    return verifyProject(platform, project.tenantId, project.projectId);
+  } catch (error) {
+    // A verification that itself throws is a finding, not a skip. Recording
+    // it as intact would be the single worst thing this module could do.
+    return {
+      projectId: project.projectId,
+      tenantId: project.tenantId,
+      verifiedAt: at,
+      events: 0,
+      intact: false,
+      divergences: [
+        {
+          eventId: 'n/a',
+          reason: `The verification itself failed: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ],
+      durationMs: 0,
+    };
   }
+}
 
-  const results: ProjectAssurance[] = [];
-  const take = Math.max(1, Math.min(perPass, projects.length));
-
-  for (let index = 0; index < take; index += 1) {
-    const project = projects[(cursor + index) % projects.length]!;
-    try {
-      results.push(verifyProject(platform, project.tenantId, project.projectId));
-    } catch (error) {
-      // A verification that itself throws is a finding, not a skip. Recording
-      // it as intact would be the single worst thing this module could do.
-      results.push({
-        projectId: project.projectId,
-        tenantId: project.tenantId,
-        verifiedAt: at,
-        events: 0,
-        intact: false,
-        divergences: [
-          {
-            eventId: 'n/a',
-            reason: `The verification itself failed: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        durationMs: 0,
-      });
-    }
-  }
-
+/** The pass's bookkeeping: move the cursor, tell somebody about every divergence, and report. */
+function finishPass(platform: Platform, projects: Array<{ tenantId: string; projectId: string }>, results: ProjectAssurance[], take: number, at: string): AssuranceReport {
   cursor = (cursor + take) % projects.length;
 
   const diverged = results.filter((result) => !result.intact);
@@ -202,6 +186,60 @@ export function sweep(platform: Platform, perPass = config.assurance.projectsPer
     neverVerified: projects.filter((project) => !verified.has(project.projectId)).length,
     results,
   };
+}
+
+/**
+ * Verify the next slice.
+ *
+ * Exported so an operator can force a pass rather than waiting for the
+ * interval, and so a test can drive it without a timer.
+ */
+export function sweep(platform: Platform, perPass = config.assurance.projectsPerPass): AssuranceReport {
+  const projects = allProjects(platform);
+  const at = new Date().toISOString();
+  lastPassAt = at;
+
+  if (projects.length === 0) {
+    return { at, checked: 0, intact: 0, diverged: [], neverVerified: 0, results: [] };
+  }
+
+  const results: ProjectAssurance[] = [];
+  const take = Math.max(1, Math.min(perPass, projects.length));
+
+  for (let index = 0; index < take; index += 1) {
+    results.push(verifyOne(platform, projects[(cursor + index) % projects.length]!, at));
+  }
+
+  return finishPass(platform, projects, results, take, at);
+}
+
+/**
+ * The same pass, yielding to the event loop between projects.
+ *
+ * A replay re-hashes every event of a project, synchronously, and the timer
+ * ran five of them back to back on the thread that serves every request — a
+ * multi-second stall every fifteen minutes that grew with the projects. The
+ * timer uses this one; the work per project is unchanged, and a request that
+ * arrives between two projects is answered before the next begins.
+ */
+export async function sweepYielding(platform: Platform, perPass = config.assurance.projectsPerPass): Promise<AssuranceReport> {
+  const projects = allProjects(platform);
+  const at = new Date().toISOString();
+  lastPassAt = at;
+
+  if (projects.length === 0) {
+    return { at, checked: 0, intact: 0, diverged: [], neverVerified: 0, results: [] };
+  }
+
+  const results: ProjectAssurance[] = [];
+  const take = Math.max(1, Math.min(perPass, projects.length));
+
+  for (let index = 0; index < take; index += 1) {
+    if (index > 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    results.push(verifyOne(platform, projects[(cursor + index) % projects.length]!, at));
+  }
+
+  return finishPass(platform, projects, results, take, at);
 }
 
 function notify(platform: Platform, failure: ProjectAssurance): void {
@@ -276,12 +314,9 @@ export function startAssurance(platform: Platform): NodeJS.Timeout | undefined {
   if (!config.assurance.enabled || timer) return timer;
 
   timer = setInterval(() => {
-    try {
-      sweep(platform);
-    } catch {
-      // The interval must survive a pass that failed, or one bad project stops
-      // the platform verifying anything ever again.
-    }
+    // The interval must survive a pass that failed, or one bad project stops
+    // the platform verifying anything ever again.
+    sweepYielding(platform).catch(() => undefined);
   }, config.assurance.intervalSeconds * 1_000);
 
   timer.unref();

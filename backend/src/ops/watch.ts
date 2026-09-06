@@ -1,3 +1,5 @@
+import { statfsSync, statSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { assertProductionSafety, config } from '../config.ts';
 import { counters } from '../api/telemetry.ts';
 import { ping, scannerAddress, scannerConfigured } from '../evidence/scanner.ts';
@@ -242,6 +244,60 @@ export const WATCH_RULES: WatchRule[] = [
         value: warnings.length,
         threshold: 0,
         detail: warnings.length === 0 ? 'Nothing unsafe' : warnings.join('; '),
+      };
+    },
+  },
+  {
+    id: 'disk_space',
+    what: 'Free space on the volume the journal is written to',
+    because:
+      'The record only grows and the disk does not. A full volume is a journal that refuses its next append, and ' +
+      'from that moment every command answers 500 while nothing else looks wrong. Nothing watched it.',
+    severity: 'CRITICAL',
+    standing: true,
+    observe: (platform) => {
+      const journal = platform.ledger.journal;
+      if (!journal) return { judged: false, because: 'no journal is configured, so there is no volume to watch' };
+      let freeMb: number;
+      try {
+        const stats = statfsSync(dirname(journal.path));
+        freeMb = Math.floor((Number(stats.bavail) * Number(stats.bsize)) / 1_048_576);
+      } catch (error) {
+        return { judged: true, breached: true, detail: `the journal volume could not be read: ${(error as Error).message}` };
+      }
+      return {
+        judged: true,
+        breached: freeMb < config.ops.diskFreeMinimumMb,
+        value: freeMb,
+        threshold: config.ops.diskFreeMinimumMb,
+        detail: `${freeMb} MB free on the volume holding ${journal.path}`,
+      };
+    },
+  },
+  {
+    id: 'journal_size',
+    what: 'How large the journal has grown',
+    because:
+      'Boot reads the whole file and replays every event, so the size of the journal is the length of every future ' +
+      'restart and every deploy. Past the threshold it is time to plan snapshots or the Postgres store, rather than ' +
+      'to learn the boot time from a deploy that took the site down for it.',
+    severity: 'WARNING',
+    standing: true,
+    observe: (platform) => {
+      const journal = platform.ledger.journal;
+      if (!journal) return { judged: false, because: 'no journal is configured' };
+      let sizeMb: number;
+      try {
+        sizeMb = Math.floor(statSync(journal.path).size / 1_048_576);
+      } catch {
+        return { judged: false, because: 'the journal has not been written yet' };
+      }
+      return {
+        judged: true,
+        breached: sizeMb >= config.ops.journalMaximumMb,
+        value: sizeMb,
+        threshold: config.ops.journalMaximumMb,
+        detail: `${sizeMb} MB in ${journal.path}, replayed in full at every boot`,
       };
     },
   },
@@ -514,7 +570,72 @@ function send(
     actorId: 'system:watch',
     correlationId: `watch-${rule.id}-${at}`,
   });
+  void postWebhook(rule, observation, transition, at);
   return true;
+}
+
+/**
+ * The second channel.
+ *
+ * Every alert went through the outbox and the relay it was monitoring, to the
+ * operators' mailboxes and nowhere else — so a relay that was down took the
+ * alert about the relay down with it. This posts the same alert as JSON to
+ * `OPS_ALERT_WEBHOOK_URL`, which is any https endpoint that takes a POST: a
+ * Slack or Teams incoming webhook (both read `text`), a PagerDuty events URL,
+ * an uptime service. Fire and forget with a short timeout; a failure is
+ * recorded on the position rather than thrown, because the alert is already
+ * on the outbox and the webhook is the belt to that brace, not the other way
+ * round. Never awaited by the evaluation, so a slow endpoint cannot stall it.
+ */
+export type WebhookState = {
+  configured: boolean;
+  lastAttemptAt?: string;
+  lastStatus?: number;
+  lastError?: string;
+};
+
+let webhookState: WebhookState = { configured: config.ops.alertWebhookUrl !== '' };
+
+export function alertWebhookState(): WebhookState {
+  return { ...webhookState, configured: config.ops.alertWebhookUrl !== '' };
+}
+
+async function postWebhook(
+  rule: WatchRule,
+  observation: Extract<Observation, { judged: true }>,
+  transition: Transition,
+  at: string,
+): Promise<void> {
+  const url = config.ops.alertWebhookUrl;
+  if (url === '') return;
+  const headline = `${transition === 'RESOLVED' ? 'RESOLVED' : rule.severity}: ${rule.what} — ${observation.detail}`;
+  const body = JSON.stringify({
+    // `text` is what Slack, Teams, Discord and most uptime services read.
+    text: `[CONSTRUX] ${headline}`,
+    platform: 'CONSTRUX',
+    rule: rule.id,
+    severity: rule.severity,
+    transition,
+    what: rule.what,
+    because: rule.because,
+    detail: observation.detail,
+    ...(observation.value !== undefined ? { value: observation.value } : {}),
+    ...(observation.threshold !== undefined ? { threshold: observation.threshold } : {}),
+    observedAt: at,
+    publicBaseUrl: config.publicBaseUrl,
+  });
+  webhookState = { ...webhookState, configured: true, lastAttemptAt: new Date().toISOString() };
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'construx-watch/1' },
+      body,
+      signal: AbortSignal.timeout(5_000),
+    });
+    webhookState = { ...webhookState, lastStatus: response.status, ...(response.ok ? { lastError: undefined } : { lastError: `HTTP ${response.status}` }) };
+  } catch (error) {
+    webhookState = { ...webhookState, lastStatus: undefined, lastError: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export type WatchPosition = {
@@ -573,6 +694,8 @@ export type WatchPosition = {
    * correct behaviour and is also an operator who will never be woken.
    */
   recordedNotSent: number;
+  /** The channel that is not the mail pipeline, and what happened the last time it was used. */
+  webhook: WebhookState;
   /**
    * Enterprise / Group v1.0 §17: the figures the specification names as
    * metrics, each read from what exists — counted, never modelled.
@@ -663,6 +786,7 @@ export function watchPosition(platform: Platform): WatchPosition {
       detail: delivery.detail,
     })),
     recordedNotSent: alerts.filter((delivery) => delivery.status === 'RECORDED').length,
+    webhook: alertWebhookState(),
     operational: operationalFigures(platform),
   };
 }

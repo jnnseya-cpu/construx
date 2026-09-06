@@ -305,3 +305,15 @@ export function currentCodeFor(actorId: string, now = clock()): string | undefin
   const record = store.forActor(actorId);
   return record ? totp(reveal(record), now.getTime()) : undefined;
 }
+
+/** Drop enrolments that expired unconfirmed. One was held for the life of the process per abandoned attempt. */
+export function pruneExpiredEnrolments(now = Date.now()): number {
+  let dropped = 0;
+  for (const [key, record] of pending) {
+    if (record.expiresAt < now) {
+      pending.delete(key);
+      dropped += 1;
+    }
+  }
+  return dropped;
+}
