@@ -8,6 +8,9 @@ import { deliveries } from '../notifications/notify.ts';
 import { webhookHealth } from '../billing/stripe.ts';
 import { issuancesOf } from '../group/issuance.ts';
 import type { Platform } from '../platform.ts';
+import { backupStanding } from './backup.ts';
+import { heartbeatState, type HeartbeatState } from './heartbeat.ts';
+import { onCallAt, type OnCallNow } from './oncall.ts';
 
 /**
  * The platform watching its own numbers, and telling somebody.
@@ -301,6 +304,20 @@ export const WATCH_RULES: WatchRule[] = [
       };
     },
   },
+  {
+    id: 'backup_offhost',
+    what: 'Whether a copy of the record younger than two backup intervals exists off this host',
+    because:
+      'A copy on the same disk survives a bad deploy and nothing else. A lost volume, a lost host or a ransomware run ' +
+      'takes the copies with the original, and the record is the product. Nothing said so until a set was missed.',
+    severity: 'CRITICAL',
+    standing: true,
+    observe: () => {
+      const standing = backupStanding();
+      if (!standing.judged) return { judged: false, because: standing.detail };
+      return { judged: true, breached: standing.breached, detail: standing.detail };
+    },
+  },
 ];
 
 export type RuleState = {
@@ -540,9 +557,17 @@ function send(
   const operators = platform.operators();
   if (operators.length === 0) return false;
 
+  // The person on call first, the others copied. An alert that reaches one
+  // inbox and nobody else is a single point of failure with a name on it; one
+  // that reaches everybody and names nobody is furniture within a week.
+  const onCall = onCallAt(platform, new Date(at));
+  const ordered = onCall.person
+    ? [...operators.filter((operator) => operator.id === onCall.person!.operatorId), ...operators.filter((operator) => operator.id !== onCall.person!.operatorId)]
+    : operators;
+
   queue(platform, {
     code: transition === 'RESOLVED' ? 'system.watch_resolved' : 'system.watch_alert',
-    recipients: operators.map((operator) => ({
+    recipients: ordered.map((operator) => ({
       id: operator.id,
       tenantId: 'platform',
       name: operator.name,
@@ -560,6 +585,7 @@ function send(
       ...(observation.value !== undefined ? { value: observation.value } : {}),
       ...(observation.threshold !== undefined ? { threshold: observation.threshold } : {}),
       observedAt: at,
+      ...(onCall.person ? { onCall: onCall.person.name, onCallEmail: onCall.person.email } : {}),
     },
     branding: {
       clientName: 'CONSTRUX',
@@ -570,7 +596,7 @@ function send(
     actorId: 'system:watch',
     correlationId: `watch-${rule.id}-${at}`,
   });
-  void postWebhook(rule, observation, transition, at);
+  void postWebhook(rule, observation, transition, at, onCall);
   return true;
 }
 
@@ -605,13 +631,15 @@ async function postWebhook(
   observation: Extract<Observation, { judged: true }>,
   transition: Transition,
   at: string,
+  onCall?: OnCallNow,
 ): Promise<void> {
   const url = config.ops.alertWebhookUrl;
   if (url === '') return;
   const headline = `${transition === 'RESOLVED' ? 'RESOLVED' : rule.severity}: ${rule.what} — ${observation.detail}`;
   const body = JSON.stringify({
     // `text` is what Slack, Teams, Discord and most uptime services read.
-    text: `[CONSTRUX] ${headline}`,
+    // The on-call name is in it, so a channel full of people knows whose it is.
+    text: `[CONSTRUX] ${headline}${onCall?.person ? ` — on call: ${onCall.person.name}` : ''}`,
     platform: 'CONSTRUX',
     rule: rule.id,
     severity: rule.severity,
@@ -623,6 +651,7 @@ async function postWebhook(
     ...(observation.threshold !== undefined ? { threshold: observation.threshold } : {}),
     observedAt: at,
     publicBaseUrl: config.publicBaseUrl,
+    ...(onCall?.person ? { onCall: { name: onCall.person.name, email: onCall.person.email, until: onCall.until, byOverride: onCall.byOverride } } : {}),
   });
   webhookState = { ...webhookState, configured: true, lastAttemptAt: new Date().toISOString() };
   try {
@@ -696,6 +725,10 @@ export type WatchPosition = {
   recordedNotSent: number;
   /** The channel that is not the mail pipeline, and what happened the last time it was used. */
   webhook: WebhookState;
+  /** The dead-man's switch an external monitor listens for, and whether it is being sent. */
+  heartbeat: HeartbeatState;
+  /** Who the next alert reaches first. Null means everybody and nobody in particular. */
+  onCall: OnCallNow;
   /**
    * Enterprise / Group v1.0 §17: the figures the specification names as
    * metrics, each read from what exists — counted, never modelled.
@@ -787,6 +820,8 @@ export function watchPosition(platform: Platform): WatchPosition {
     })),
     recordedNotSent: alerts.filter((delivery) => delivery.status === 'RECORDED').length,
     webhook: alertWebhookState(),
+    heartbeat: heartbeatState(),
+    onCall: onCallAt(platform),
     operational: operationalFigures(platform),
   };
 }

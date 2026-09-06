@@ -79,6 +79,14 @@ const COMMANDS = {
     submitLabel: 'Flush',
     fields: [],
   }),
+  backup: () => ({
+    title: 'Back up the record off this host now',
+    intent:
+      'Ships every journal file and the site media to the object store as a stamped set, in parts, with a manifest naming each file and its hash. The same run the timer makes, brought forward; the newest sets are kept and older ones pruned only after this one lands.',
+    path: '/v1/admin/backups/run',
+    submitLabel: 'Back up now',
+    fields: [],
+  }),
 };
 
 /** Tone for a watch severity, using the platform's own vocabulary. */
@@ -93,7 +101,7 @@ export async function operations(root) {
   // collector configured still has chains to prove. A failed panel says so
   // rather than rendering as an empty one, because "nothing to report" and
   // "this is broken" must never look the same.
-  const [assurance, watch, repair, egress, fleet, ladder, retention, chainSweep] = await Promise.all([
+  const [assurance, watch, repair, egress, fleet, ladder, retention, chainSweep, backups] = await Promise.all([
     api.get('/v1/admin/assurance').catch((error) => ({ error })),
     api.get('/v1/admin/watch').catch((error) => ({ error })),
     api.get('/v1/admin/repair').catch((error) => ({ error })),
@@ -111,6 +119,7 @@ export async function operations(root) {
       ? Promise.resolve({ error: { status: 403, message: 'Platform operators are barred from customer delivery data' } })
       : api.get('/v1/evidence/retention').catch((error) => ({ error })),
     api.get('/v1/admin/consistency-sweep').catch((error) => ({ error })),
+    api.get('/v1/admin/backups').catch((error) => ({ error })),
   ]);
 
   const failed = (panel) => (panel && panel.error ? panel.error.message ?? 'This could not be read' : null);
@@ -141,6 +150,7 @@ export async function operations(root) {
               { id: 'evaluate', label: 'Evaluate rules', permitted: true },
               { id: 'repair', label: 'Repair pass', permitted: true },
               { id: 'flush', label: 'Flush telemetry', permitted: true },
+              { id: 'backup', label: 'Back up now', permitted: true },
             ]),
           )}
         </div>
@@ -287,6 +297,57 @@ export async function operations(root) {
               </p>
               <ul>${(repair.refuses ?? []).map((line) => html`<li>${line}</li>`)}</ul>
             `}
+      </section>
+
+      <section class="card">
+        <h3>Off-host backup</h3>
+        ${backups.error
+          ? refusal('Off-host backup', backups.error)
+          : backups.configured
+            ? html`
+                <div class="grid g4">
+                  <div class="metric"><span>Last set shipped</span><strong>${backups.lastSuccessAt ? time(backups.lastSuccessAt) : 'none yet'}</strong></div>
+                  <div class="metric"><span>Sets held off-host</span><strong>${(backups.sets ?? []).length}</strong></div>
+                  <div class="metric ${raw(backups.lastRun && !backups.lastRun.ok ? 'bad' : '')}"><span>Last run</span><strong>${
+                    backups.lastRun ? (backups.lastRun.ok ? 'shipped' : 'failed') : backups.running ? 'running' : '—'
+                  }</strong></div>
+                  <div class="metric"><span>Next due</span><strong>${backups.nextAt ? time(backups.nextAt) : backups.enabled ? '—' : 'timer off'}</strong></div>
+                </div>
+                <p class="metric-sub">
+                  ${backups.enabled
+                    ? `Every ${backups.intervalMinutes} minutes to ${backups.destination}, keeping the newest ${backups.keep} sets there.`
+                    : `An object store is configured at ${backups.destination} and the timer is not armed (BACKUP_INTERVAL_MINUTES is 0, or this is a follower). Back up now still works.`}
+                  ${backups.lastRun
+                    ? backups.lastRun.ok
+                      ? ` Last set ${backups.lastRun.stamp}: ${backups.lastRun.files.length} file${backups.lastRun.files.length === 1 ? '' : 's'}, ${Math.round(backups.lastRun.bytes / 1_048_576)} MB in ${backups.lastRun.durationMs} ms${
+                          backups.lastRun.pruned.length > 0 ? `; pruned ${backups.lastRun.pruned.join(', ')}` : ''
+                        }.`
+                      : ` Last run failed: ${backups.lastRun.error}`
+                    : ''}
+                  Evidence is not in the set: with an object store configured, the evidence store is that object store.
+                </p>
+                ${raw(
+                  table({
+                    headers: ['Set', 'Files', 'Size', 'Manifest'],
+                    align: ['mono', 'num', 'num', ''],
+                    rows: (backups.sets ?? []).slice(0, 10).map((set) => [
+                      set.stamp,
+                      String(set.files),
+                      `${Math.round(set.bytes / 1_048_576)} MB`,
+                      set.manifest ? badge('complete', 'good') : badge('no manifest', 'bad'),
+                    ]),
+                    empty: 'No set has been shipped yet. The first is due within one interval of boot.',
+                  }),
+                )}
+              `
+            : html`<div class="notice err">
+                <div>
+                  <b>The record exists on this host only.</b><br />
+                  No object store is configured, so nothing ships the journal off the box. The deploy script copies it
+                  onto the same disk before each deploy, which survives a bad deploy and not a lost volume. Set
+                  <code>OBJECT_STORE_ENDPOINT</code>, <code>OBJECT_STORE_BUCKET</code> and the keys, and the timer arms itself.
+                </div>
+              </div>`}
       </section>
 
       <section class="card">

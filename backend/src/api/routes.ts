@@ -83,6 +83,8 @@ import * as commitments from '../domain/commitments.ts';
 import * as invitation from '../domain/invitation.ts';
 import * as cde from '../domain/cde.ts';
 import * as watch from '../ops/watch.ts';
+import * as oncall from '../ops/oncall.ts';
+import { backupPosition, runBackup } from '../ops/backup.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
@@ -2524,6 +2526,84 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'read the platform watch');
       return watch.watchPosition(platform);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/oncall',
+    readOnly: true,
+    description: 'Who the platform’s own alerts reach first: the rota, whoever holds the pager now, and the next handovers',
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'read the on-call rota');
+      return oncall.onCallPosition(platform);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/oncall',
+    description: 'Set the on-call rota: operators in handover order, how many days each holds the pager, and when period one starts',
+    schema: {
+      type: 'object',
+      properties: {
+        operatorIds: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        rotationDays: { type: 'integer', minimum: 1, maximum: 90 },
+        startsAt: { type: 'string' },
+      },
+      required: ['operatorIds', 'rotationDays'],
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'set the on-call rota');
+      const body = ctx.body as { operatorIds: string[]; rotationDays: number; startsAt?: string };
+      const rota = oncall.setRota(platform, auth(ctx), body);
+      return { rota, now: oncall.onCallAt(platform) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/oncall/override',
+    description: 'Hand the pager to one operator until a date — a swap, a holiday — or clear the override with an empty operator',
+    schema: {
+      type: 'object',
+      properties: {
+        operatorId: { type: 'string' },
+        until: { type: 'string' },
+        reason: { type: 'string', minLength: 3, maxLength: 300 },
+      },
+      required: ['reason'],
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'override the on-call rota');
+      const body = ctx.body as { operatorId?: string; until?: string; reason: string };
+      const rota = oncall.setOverride(platform, auth(ctx), {
+        operatorId: body.operatorId && body.operatorId.trim() !== '' ? body.operatorId : null,
+        ...(body.until ? { until: body.until } : {}),
+        reason: body.reason,
+      });
+      return { rota, now: oncall.onCallAt(platform) };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/admin/backups',
+    readOnly: true,
+    description: 'The off-host backup: where the record is shipped, when it last was, what the store holds, and when the next set is due',
+    handler: (_platform, ctx) => {
+      operatorOnly(ctx, 'read the backup position');
+      return backupPosition();
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/backups/run',
+    description: 'Ship a set of the record to the object store now rather than waiting for the interval',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'run a backup');
+      const run = await runBackup(platform);
+      if (!run.ok) throw new DomainError('BACKUP_FAILED', run.error ?? 'The backup did not complete', 503);
+      return run;
     },
   },
   {

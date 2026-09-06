@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
@@ -25,11 +26,61 @@ import { badge, html, humanise, raw, render, table, time, toast } from '../lib/u
  * what and was told no.
  */
 
+/**
+ * The on-call doors. The rota is the whole rota each time — order, rotation,
+ * start — so the record is a statement rather than a diff; the override hands
+ * the pager to one person until a date for a reason that stays on the chain.
+ */
+const ONCALL_COMMANDS = {
+  rota: (position) => ({
+    title: 'Set the on-call rota',
+    intent:
+      'Who the platform’s own alerts reach first, in handover order. Time decides the handover, not a person: period n since the start goes to operator n. The others are copied on every alert.',
+    path: '/v1/admin/oncall',
+    submitLabel: 'Set the rota',
+    fields: [
+      {
+        name: 'operatorIds',
+        label: 'Operators, in handover order',
+        type: 'multiselect',
+        options: (position.operators ?? []).map((operator) => ({ value: operator.operatorId, label: `${operator.name} — ${operator.email}` })),
+        hint: 'Handover follows the order the operators are listed in.',
+      },
+      { name: 'rotationDays', label: 'Days each person holds the pager', type: 'number', value: position.rota?.rotationDays ?? 7, step: '1' },
+      { name: 'startsAt', label: 'Period one starts', type: 'datetime-local', required: false, hint: 'Left empty, now.' },
+    ],
+  }),
+  override: (position) => ({
+    title: 'Hand the pager to one person',
+    intent: 'A swap or a holiday. The override lapses on its own at the date given; the rotation resumes with whoever it names then.',
+    path: '/v1/admin/oncall/override',
+    submitLabel: 'Hand over',
+    fields: [
+      {
+        name: 'operatorId',
+        label: 'Who takes the pager',
+        type: 'select',
+        options: (position.rota?.members ?? []).map((member) => ({ value: member.operatorId, label: `${member.name} — ${member.email}` })),
+      },
+      { name: 'until', label: 'Until', type: 'datetime-local', required: false, hint: 'Left empty, one rotation from now.' },
+      { name: 'reason', label: 'Why', type: 'text' },
+    ],
+  }),
+  clear: () => ({
+    title: 'Clear the override',
+    intent: 'The rotation resumes with whoever it names now.',
+    path: '/v1/admin/oncall/override',
+    submitLabel: 'Clear',
+    fields: [{ name: 'reason', label: 'Why', type: 'text' }],
+  }),
+};
+
 export async function alerts(root) {
-  const [watch, assurance, security] = await Promise.all([
+  const [watch, assurance, security, oncall] = await Promise.all([
     api.get('/v1/admin/watch').catch((error) => ({ error })),
     api.get('/v1/admin/assurance').catch((error) => ({ error })),
     api.get('/v1/admin/security').catch((error) => ({ error })),
+    api.get('/v1/admin/oncall').catch((error) => ({ error })),
   ]);
 
   const firing = watch.error ? [] : (watch.alerts ?? []).filter((alert) => alert.firing);
@@ -87,6 +138,56 @@ export async function alerts(root) {
             </div>
           </div>`
         : ''}
+
+      ${oncall.error
+        ? refusal('On call', oncall.error)
+        : html`<div class="card" style="margin-bottom:14px" data-oncall>
+            <h2>
+              On call
+              ${oncall.now.person ? badge(oncall.now.byOverride ? 'by override' : 'by rotation', oncall.now.byOverride ? 'warn' : 'ok') : badge('nobody named', 'bad')}
+            </h2>
+            <div class="metric-sub" style="margin-bottom:10px">
+              ${oncall.now.person
+                ? html`<b>${oncall.now.person.name}</b> (${oncall.now.person.email}) holds the pager until ${String(oncall.now.until).slice(0, 16).replace('T', ' ')} UTC${
+                    oncall.now.next ? html`, then ${oncall.now.next.name}` : ''
+                  }. Every alert names them in its subject and its webhook line and reaches them first; the other operators are copied.`
+                : 'No rota is set. Every alert goes to every operator and names nobody, which is how an alert becomes furniture: each person assumes one of the others has it.'}
+              ${!watch.error && watch.heartbeat
+                ? html`<br />External monitor: ${
+                    watch.heartbeat.configured
+                      ? html`heartbeat every ${watch.heartbeat.intervalSeconds}s, ${watch.heartbeat.beats} sent since start${
+                          watch.heartbeat.lastError ? html`, last attempt failed: ${watch.heartbeat.lastError}` : ''
+                        }${watch.heartbeat.withheld > 0 ? html`, ${watch.heartbeat.withheld} withheld while the platform was not live` : ''}.`
+                      : html`<b>none</b>. A dead process alerts nobody; set <code>OPS_HEARTBEAT_URL</code> and point the monitor’s HTTP check at <code>/readyz</code>.`
+                  }`
+                : ''}
+            </div>
+            ${oncall.rota
+              ? table({
+                  headers: ['From', 'Until', 'Holds the pager'],
+                  rows: (oncall.schedule ?? []).map((slot) => [
+                    String(slot.from).slice(0, 16).replace('T', ' '),
+                    String(slot.until).slice(0, 16).replace('T', ' '),
+                    html`${slot.person.name} <span class="metric-sub">${slot.person.email}</span>`,
+                  ]),
+                  empty: 'No handover is scheduled.',
+                })
+              : ''}
+            <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn primary sm" data-oncall-command="rota">${oncall.rota ? 'Change the rota' : 'Set the rota'}</button>
+              ${oncall.rota ? html`<button class="btn quiet sm" data-oncall-command="override">Hand the pager to one person</button>` : ''}
+              ${oncall.rota?.override ? html`<button class="btn quiet sm" data-oncall-command="clear">Clear the override</button>` : ''}
+            </div>
+            ${oncall.rota
+              ? html`<div class="metric-sub" style="margin-top:8px">
+                  Rota set by ${oncall.rota.setBy} on ${String(oncall.rota.setAt).slice(0, 10)}: ${oncall.rota.members.map((member) => member.name).join(' → ')}, ${oncall.rota.rotationDays} day${
+                    oncall.rota.rotationDays === 1 ? '' : 's'
+                  } each from ${String(oncall.rota.startsAt).slice(0, 10)}.${
+                    oncall.rota.override ? html` Override: ${oncall.rota.override.name} until ${String(oncall.rota.override.until).slice(0, 16).replace('T', ' ')} — ${oncall.rota.override.reason}.` : ''
+                  }
+                </div>`
+              : ''}
+          </div>`}
 
       ${!watch.error && watch.operational
         ? html`<div class="card" style="margin-bottom:14px" data-operational>
@@ -229,6 +330,15 @@ export async function alerts(root) {
           </div>`}
     `,
   );
+
+  root.querySelector('[data-oncall]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-oncall-command]');
+    if (!button) return;
+    const spec = ONCALL_COMMANDS[button.dataset.oncallCommand]?.(oncall);
+    if (!spec) return;
+    if (!(await command(spec))) return;
+    await alerts(root);
+  });
 
   document.getElementById('evaluate-watch')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

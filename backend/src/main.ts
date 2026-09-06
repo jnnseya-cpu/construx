@@ -24,6 +24,8 @@ import { startConsistencySweep, stopConsistencySweep } from './ops/consistencysw
 import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { startWatch } from './ops/watch.ts';
+import { startHeartbeat } from './ops/heartbeat.ts';
+import { backupsEnabled, startBackupSchedule } from './ops/backup.ts';
 import { Platform } from './platform.ts';
 
 /**
@@ -484,6 +486,24 @@ const outboxTimer = follower ? (): void => undefined : startOutboxDrain(platform
 // notices.
 const watchTimer = startWatch(platform);
 
+// The dead-man's switch. Every watch rule runs inside this process; the one
+// failure none of them can report is this process being gone. A monitor
+// outside it expecting this ping is the only thing that can.
+const heartbeatTimer = startHeartbeat(platform);
+
+// The record shipped off the host. A copy on the same disk survives a bad
+// deploy and nothing else. Primary only: a follower's journal is a copy of a
+// copy, and two processes shipping the same sets would double the store.
+const backupTimer = follower
+  ? (): void => undefined
+  : startBackupSchedule(platform, (run) => {
+      process.stdout.write(
+        run.ok
+          ? `[backup] set ${run.stamp} shipped: ${run.files.length} file(s), ${Math.round(run.bytes / 1_048_576)} MB in ${run.durationMs} ms${run.pruned.length > 0 ? `; pruned ${run.pruned.join(', ')}` : ''}\n`
+          : `[backup] set ${run.stamp} FAILED: ${run.error}\n`,
+      );
+    });
+
 // Telemetry egress. Unset means the counters still answer the admin screens and
 // still die with the container, which is the state every deployment has been in
 // until now — said out loud on the banner rather than left to be discovered
@@ -598,7 +618,16 @@ process.stdout.write(
     `  Console      http://localhost:${config.port}/app`,
     `  API routes   http://localhost:${config.port}/v1/routes`,
     `  Rate limits  ${limiterState}`,
-    `  Health       http://localhost:${config.port}/readyz`,
+    `  Health       http://localhost:${config.port}/readyz${config.ops.heartbeatUrl !== '' ? ` · heartbeat every ${config.ops.heartbeatIntervalSeconds}s to ${new URL(config.ops.heartbeatUrl).host}` : ' · no external monitor is told this process is alive (set OPS_HEARTBEAT_URL)'}`,
+    `  Backup       ${
+      follower
+        ? 'not on a follower'
+        : backupsEnabled()
+          ? `every ${config.backup.intervalMinutes} min to ${config.objectStore.endpoint}/${config.objectStore.bucket}/${config.backup.prefix}/, keeping ${config.backup.keep} sets`
+          : config.objectStore.endpoint === ''
+            ? 'NONE OFF THIS HOST — the deploy script copies onto the same disk only. Set OBJECT_STORE_* to ship the record.'
+            : 'off (BACKUP_INTERVAL_MINUTES=0 or no journal)'
+    }`,
     `  Telemetry    ${
       egressConfigured()
         ? `shipping to ${config.otlp.endpoint} every ${config.otlp.intervalSeconds}s`
@@ -666,6 +695,8 @@ const shutdown = (signal: string): void => {
   erasures.stop();
   outboxTimer();
   watchTimer();
+  heartbeatTimer();
+  backupTimer();
   stopConsistencySweep();
   server.close(() => {
     void (async () => {

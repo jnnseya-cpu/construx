@@ -83,6 +83,10 @@ function bodyFor(event: NotificationEvent, payload: Record<string, unknown>): st
 
   if (typeof payload.detail === 'string' && payload.detail.trim() !== '') lines.push(payload.detail);
 
+  // A platform alert names who holds the pager, so everybody copied on it
+  // knows whose it is rather than each assuming one of the others has it.
+  if (typeof payload.onCall === 'string' && payload.onCall.trim() !== '') lines.push(`On call: ${payload.onCall}`);
+
   if (event.mandatory) {
     lines.push(
       'You are receiving this because it concerns the security or administration of your account. ' +

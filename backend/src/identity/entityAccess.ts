@@ -667,6 +667,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // settles, so it is classified with the delivery record rather than with the
   // dispatch summary above.
   NotificationOutbox: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
+  OnCallRota: { area: 'PLATFORM_ADMINISTRATION' },
   NotificationDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NotificationPreferences: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
 

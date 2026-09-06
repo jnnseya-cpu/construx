@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,034 passing, 0 failing, 0 skipped, across 274 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,056 passing, 0 failing, 0 skipped, across 277 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 308 TypeScript files, 200,306 lines |
-| Application | 78 ES modules, 45,928 lines (including a service worker) |
-| API routes | 1,096 — 742 writes, 354 reads (49 public across both) |
+| Backend | 311 TypeScript files, 201,185 lines |
+| Application | 78 ES modules, 46,099 lines (including a service worker) |
+| API routes | 1,101 — 745 writes, 356 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -12089,15 +12089,90 @@ photographs in the clear reported no blocker) and the boot warns about it;
 proxy range becomes critical the moment a proxy is declared in
 `TLS_TERMINATION`.
 
-**Not closed here, and why.** Journal snapshots so boot replays only the tail,
-and streaming asynchronous evidence I/O, are rewrites of the two most
-load-bearing paths and need a staging soak, not a pass. Per-purpose secrets
-with a key id, so the signing secret can rotate without invalidating export
-tags already handed to third parties, is a design change to every token the
-platform issues. Lockouts and challenges in Redis, an off-host backup
-schedule, an external uptime monitor and a named on-call are a host, a
+**Not closed in that pass, and why.** Journal snapshots so boot replays only
+the tail, and streaming asynchronous evidence I/O, are rewrites of the two
+most load-bearing paths and need a staging soak, not a pass. Per-purpose
+secrets with a key id, so the signing secret can rotate without invalidating
+export tags already handed to third parties, is a design change to every
+token the platform issues. Lockouts and challenges in Redis, an off-host
+backup schedule, an external uptime monitor and a named on-call are a host, a
 service and a person respectively. `hardening.test.ts` and
-`alerting.test.ts` cover the rest.
+`alerting.test.ts` cover the rest. The seven were then asked for by name;
+what closed each is below.
+
+### The dead-man's switch, the on-call rota and the off-host backup
+
+Three of the seven, built as the platform's own side of what a host, a
+service and a person supply.
+
+**The external monitor has something to miss.** Every watch rule runs inside
+the process it watches, so a dead process alerted nobody. `ops/heartbeat.ts`
+POSTs `OPS_HEARTBEAT_URL` every `OPS_HEARTBEAT_INTERVAL_SECONDS` (default 60)
+with the commit and the event count — and **only while `Platform.liveness()`
+says the record can be extended**. A process mid-shutdown, one whose journal
+refused its last write, or one on a volume under the floor sends nothing, so
+a monitor expecting the ping (healthchecks.io, Cronitor, Better Stack,
+Grafana OnCall's heartbeat) raises on a dead process and on a live one that
+cannot write, and is never told "fine" by a process that is not. Beats sent,
+ticks withheld and why, and the last error are on `GET /v1/admin/watch`
+under `heartbeat`, on the Risk & alerts screen, and on the boot banner;
+readiness lists `uptime.monitor`. The runbook's *The external monitor* says
+to point the same service's HTTP check at `/readyz` as well, which also
+proves the front door. `heartbeat.test.ts` covers the ping, the withholding,
+the unreachable monitor and the unconfigured state.
+
+**Alerts reach a named person first.** `ops/oncall.ts` is a rota of
+operators on the platform's own governance chain (`OnCallRota`,
+`ONCALL_ROTA_SET`, `ONCALL_OVERRIDE_SET`, `PLATFORM_ADMINISTRATION`): the
+members in handover order, how many days each holds the pager, when period
+one starts, who set it. **Time decides the handover** — period *n* since the
+start goes to member *n mod length* — so nothing has to run at midnight and a
+process that was down at the handover still knows who holds it at 00:01. An
+override hands the pager to one member until a date for a reason, lapses on
+its own, and is cleared by name. `watch.send` puts the on-call person first
+in the recipients with the other operators copied, carries `onCall` in the
+payload so the mail body says *On call: <name>*, and the webhook's `text`
+line ends `— on call: <name>` with an `onCall` object beside it for a
+PagerDuty or Grafana OnCall route to read. `GET /v1/admin/oncall` is the
+position (the rota, who holds it now and until when, the next handovers,
+every operator to compose from); `POST /v1/admin/oncall` sets the rota and
+`POST /v1/admin/oncall/override` the override; the Risk & alerts screen
+carries the card and the three doors. What it is not: an acknowledgement
+flow or an escalation chain — the alert reaches the person through the
+outbox and the webhook that exist, and escalation lives in the service the
+webhook points at. `oncall.test.ts` covers the rotation, the wrap, the
+override's lapse, the refusals, the restart, the alert's ordering and body,
+and the doors over HTTP.
+
+**The record ships off the host on a timer.** `ops/backup.ts` copies every
+journal file — `ledger.jsonl`, `.acu`, `.views`, `.revoked`, `.snapshot`
+where one exists — and the site media to the configured object store as one
+set under `BACKUP_PREFIX/<stamp>/` every `BACKUP_INTERVAL_MINUTES` (default
+six hours), keeping the newest `BACKUP_KEEP` (default 30). Each file goes up
+in parts of `BACKUP_PART_MB` (default 64) read through a file handle, so a
+journal of gigabytes never sits in memory whole; `manifest.json` is written
+last, naming every file, its size, its part count and its SHA-256, so a set
+with a manifest is a whole set and a restored file can be checked before
+boot. Pruning happens after a run lands, never before, so a failed run leaves
+every set it found. Evidence is deliberately not in the set: with an object
+store configured the evidence store *is* that object store, so the evidence
+is off the host by construction, and without one there is nowhere to ship a
+backup either. The watch rule `backup_offhost` (standing, critical) fires
+when no successful set is younger than two intervals and, in production,
+when there is no object store to ship to at all; readiness lists
+`backup.offhost` as critical. `GET /v1/admin/backups` is the position and
+`POST /v1/admin/backups/run` the door (*Back up now* on Platform operations,
+with the sets the store holds); the runbook's *Restore* gained the
+reassembly from parts with the manifest's hashes checked. Primary only: a
+follower ships nothing. `backup.test.ts` drives a set against a fake store
+speaking S3: the parts and their reassembly, the empty file that still has a
+part, the manifest, retention, the failed run that prunes nothing, and the
+standing rule's age judgement. No set has been shipped from this
+environment; the first live run on the host is the first.
+
+**Still open from the seven, each with a section of its own below as it
+closes:** journal snapshots, asynchronous evidence I/O, per-purpose secrets
+with key ids, and Redis-backed lockouts.
 
 ---
 

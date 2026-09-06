@@ -361,6 +361,39 @@ export function readiness(now = new Date()): Readiness {
       env: ['GATEWAY_RATE_LIMIT_REDIS_URL', 'GATEWAY_RATE_LIMIT_MAX', 'GATEWAY_RATE_LIMIT_WINDOW_SECONDS'],
     },
     {
+      key: 'uptime.monitor',
+      label: 'External uptime monitor',
+      critical: false,
+      state: config.ops.heartbeatUrl === '' ? 'NOT_SET' : 'CONFIGURED',
+      detail:
+        config.ops.heartbeatUrl === ''
+          ? 'No heartbeat URL. Every watch rule runs inside this process, so a dead process alerts nobody; nothing outside it is told it is alive.'
+          : `A heartbeat is sent every ${config.ops.heartbeatIntervalSeconds}s while the platform can extend the record. A monitor expecting it raises when the process dies, hangs or cannot write the journal.`,
+      env: ['OPS_HEARTBEAT_URL', 'OPS_HEARTBEAT_INTERVAL_SECONDS'],
+    },
+    {
+      key: 'backup.offhost',
+      label: 'Off-host backup',
+      // Critical in the sense that matters: the record is the product, and a
+      // copy on the same disk survives a bad deploy and nothing else.
+      critical: true,
+      state:
+        config.objectStore.endpoint === '' || config.objectStore.bucket === ''
+          ? 'NOT_SET'
+          : config.backup.intervalMinutes > 0 && config.ledger.journalPath !== ''
+            ? 'CONFIGURED'
+            : 'DEGRADED',
+      detail:
+        config.objectStore.endpoint === '' || config.objectStore.bucket === ''
+          ? 'No object store, so the record exists on this host only. The deploy script copies it onto the same disk before each deploy, which survives a bad deploy and not a lost volume.'
+          : config.backup.intervalMinutes <= 0
+            ? 'An object store is configured and BACKUP_INTERVAL_MINUTES is 0, so nothing ships the record to it.'
+            : config.ledger.journalPath === ''
+              ? 'An object store is configured and there is no journal to ship.'
+              : `Every journal file and the site media are shipped to the object store as a stamped set every ${config.backup.intervalMinutes} minutes; the newest ${config.backup.keep} sets are kept there. The watch fires when a set is missed.`,
+      env: ['BACKUP_INTERVAL_MINUTES', 'BACKUP_KEEP', 'BACKUP_PART_MB', 'BACKUP_PREFIX', 'OBJECT_STORE_ENDPOINT', 'OBJECT_STORE_BUCKET'],
+    },
+    {
       key: 'public.url',
       label: 'Public address',
       critical: true,

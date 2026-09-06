@@ -224,9 +224,24 @@ copy and cannot contain a half-written earlier one. A torn final line in a
 backup is handled on load exactly as a torn line from a crash.
 
 **A copy on the same host is not a backup.** It survives a bad deploy and
-nothing else. Ship every set off the box — an S3-compatible bucket, another
-machine, a cloud drive — on a schedule, and keep the retention there longer
-than here. Nothing in this repository does that for you yet.
+nothing else. The platform ships the record off the box itself where an
+object store is configured (`OBJECT_STORE_*`): every `BACKUP_INTERVAL_MINUTES`
+(default six hours) it writes one set under `BACKUP_PREFIX/<stamp>/` —
+`ledger.jsonl`, `.acu`, `.views`, `.revoked`, `.snapshot` where one exists,
+and `site-media/*` — each file in parts of `BACKUP_PART_MB` named
+`<file>.part-0000`, `part-0001`, …, then `manifest.json` last, naming every
+file, its size, its part count and its SHA-256. A set with a manifest is a
+whole set. The newest `BACKUP_KEEP` sets (default 30) are kept there and
+older ones pruned only after a new one lands. *Back up now* on Platform
+operations makes the same run on demand; `GET /v1/admin/backups` is the
+position; the watch rule `backup_offhost` fires when no set is younger than
+two intervals, and in production when there is no object store at all.
+
+Evidence is not in the set, deliberately: with an object store configured the
+evidence store *is* that object store (the only store, never a cache in
+front of the volume), so the evidence is off the host by construction. With
+no object store there is nowhere to ship a backup either, and the readiness
+screen says so under *Off-host backup*.
 
 ### Restore
 
@@ -235,6 +250,26 @@ than here. Nothing in this repository does that for you yet.
    `LEDGER_JOURNAL_PATH.acu`, `.views` and `.revoked`, and unpack the tar into
    `EVIDENCE_STORE_PATH` and `SITE_MEDIA_PATH`.
 3. Start it.
+
+**From the object store.** Fetch the set and reassemble each file from its
+parts in order; the manifest's hash says whether the reassembly is right
+before the service is asked to replay it.
+
+```bash
+# Any S3 client. The AWS CLI against an S3-compatible endpoint:
+STAMP=20260906T060000Z
+aws --endpoint-url "$OBJECT_STORE_ENDPOINT" s3 cp --recursive "s3://$OBJECT_STORE_BUCKET/backups/$STAMP/" ./restore/
+cd restore
+for NAME in $(jq -r '.files[].name' manifest.json); do
+  mkdir -p "$(dirname "$NAME")"
+  cat "$NAME".part-* > "$NAME"
+  echo "$(jq -r --arg n "$NAME" '.files[] | select(.name==$n) | .sha256' manifest.json)  $NAME" | sha256sum -c -
+done
+```
+
+Then step 2 above: the `ledger.jsonl*` files onto the volume at
+`LEDGER_JOURNAL_PATH`, `site-media/` into `SITE_MEDIA_PATH`. The evidence is
+already in the object store under its tenancy prefixes and needs no restore.
 
 **Drill it before you need it.** `deploy/restore-drill.sh` takes a backup set,
 boots a second container from the live image against a throwaway volume on a
@@ -583,6 +618,40 @@ Every response carries `x-trace-id` and `x-correlation-id`. Errors are RFC 7807
 `application/problem+json`. Metrics are grouped by route *pattern*, never by
 path, so an id in a URL cannot produce one series per project.
 
+### The external monitor
+
+Every watch rule runs inside the process it watches, so a dead process
+alerts nobody. Two things outside it, both needed:
+
+1. **An HTTP check on `PUBLIC_BASE_URL/readyz`** from an uptime service, on a
+   minute or two. It answers `503 NOT_READY` with the reasons when the
+   process is up and cannot extend the record (journal refusing writes, the
+   volume nearly full, mid-shutdown), and it proves the front door — the
+   proxy's route to the container — which nothing inside can.
+2. **The heartbeat.** Set `OPS_HEARTBEAT_URL` to a dead-man's-switch URL
+   (healthchecks.io, Cronitor, Better Stack, Grafana OnCall's heartbeat, or
+   your own). The process POSTs it every `OPS_HEARTBEAT_INTERVAL_SECONDS`
+   (default 60) **only while the platform is live** — so the monitor raises
+   on a dead process, a hung one, and a live one that cannot write. Set the
+   monitor's grace to two or three intervals. `GET /v1/admin/watch` shows
+   `heartbeat`: beats sent, ticks withheld and why, the last error.
+
+Both can page the same place `OPS_ALERT_WEBHOOK_URL` does.
+
+### Who is on call
+
+Set the rota on *Risk & alerts* (`POST /v1/admin/oncall`: operators in
+handover order, days each holds the pager, when period one starts). Time
+decides the handover — period *n* since the start goes to operator *n* —
+so nothing has to run at midnight. *Hand the pager to one person* is an
+override with an end date and a reason; it lapses on its own. The rota and
+every override are events on the platform's own chain (`ONCALL_ROTA_SET`,
+`ONCALL_OVERRIDE_SET`), so "who was on call when it fired" is answerable
+later. Every alert reaches the person on call first with the other
+operators copied, names them in the mail body, and carries `onCall` in the
+webhook JSON and `— on call: <name>` in its `text` line, which a PagerDuty
+or Grafana OnCall events URL can route on.
+
 ---
 
 ## What this deployment does not have
@@ -599,17 +668,18 @@ Stated so it is not mistaken for an omission somebody can fix with a flag.
   mode (see *The ledger store*), but somebody starts it, and the ACU wallet
   file still has to be copied from the old volume.
 - **Point-in-time recovery is the ship lag, not the backup interval, once the
-  store is on.** Without it, recovery granularity is however often the files
-  are copied.
+  store is on.** Without it, recovery granularity is the off-host backup
+  interval (`BACKUP_INTERVAL_MINUTES`, default six hours) — and with no object
+  store configured, however often the files are copied by hand.
 - **No log shipping or metrics store.** The process writes structured JSON to
   stdout and exposes counters; an OTLP collector receives them only where
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and the last 5,000 request logs are all
   the process keeps. Alerting exists — eight watch rules, told to the operators
   through the outbox and, where `OPS_ALERT_WEBHOOK_URL` is set, posted as JSON
-  to a channel that is not the mail relay being watched. What does not exist is
-  a monitor *outside* this process: a dead process alerts nobody. Point an
-  external uptime check at `/readyz`, which answers 503 when the process cannot
-  extend the record.
+  to a channel that is not the mail relay being watched. The monitor *outside*
+  this process is still yours to run: the platform sends a heartbeat to
+  `OPS_HEARTBEAT_URL` and answers `/readyz`, and a service you point at both
+  is what notices a dead process (see *The external monitor*).
 - **No CDN.** The frontend is served by the backend from one origin.
 
 None of these are hard to add, and none of them are claimed.

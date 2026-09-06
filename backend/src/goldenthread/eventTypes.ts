@@ -1155,6 +1155,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_DELIVERY_RECORDED', 'NotificationDelivery', 'CREATE', 'GOVERNANCE'),
   def('NOTIFICATION_PREFERENCES_SET', 'NotificationPreferences', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  // Who the platform's own alerts reach first. A rota of operators on the
+  // record, so "who was on call when it fired" is answerable from the chain
+  // rather than from somebody's memory; an override for a swap or a holiday.
+  def('ONCALL_ROTA_SET', 'OnCallRota', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('ONCALL_OVERRIDE_SET', 'OnCallRota', 'UPDATE', 'GOVERNANCE'),
 
   // --- Change, variation, claims -------------------------------------------
   def('CHANGE_REQUEST_SUBMITTED', 'ChangeRequest', 'CREATE', 'CONTRACTS_CLAIMS', { requiresEvidence: true }),

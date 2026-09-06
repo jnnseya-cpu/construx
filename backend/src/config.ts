@@ -434,6 +434,34 @@ export const config = {
      * URL, an uptime service. Empty means email only, and the position says so.
      */
     alertWebhookUrl: str('OPS_ALERT_WEBHOOK_URL', ''),
+    /**
+     * The external uptime monitor's dead-man's switch. A dead process alerts
+     * nobody, whatever the watch says: every rule above runs inside the
+     * process it watches. This URL is pinged on the interval, and only while
+     * the platform is live (`Platform.liveness`), so a monitor that expects a
+     * ping every few minutes — healthchecks.io, Cronitor, Better Stack, a
+     * Grafana OnCall heartbeat — raises when the process dies, hangs, or
+     * stops being able to extend the record. Empty means no monitor is told,
+     * and the position says so.
+     */
+    heartbeatUrl: str('OPS_HEARTBEAT_URL', ''),
+    heartbeatIntervalSeconds: num('OPS_HEARTBEAT_INTERVAL_SECONDS', 60),
+  },
+
+  /**
+   * The record shipped off the host on a timer.
+   *
+   * A copy on the same disk survives a bad deploy and nothing else. Where an
+   * object store is configured, every journal file and the site's own pictures
+   * are copied there as a stamped set on this interval, and the newest sets
+   * are kept. Zero turns it off; the readiness screen and the watch say so.
+   */
+  backup: {
+    intervalMinutes: num('BACKUP_INTERVAL_MINUTES', 360),
+    keep: num('BACKUP_KEEP', 30),
+    /** Files go up in parts of this size, so a journal of gigabytes never sits in memory whole. */
+    partMb: num('BACKUP_PART_MB', 64),
+    prefix: str('BACKUP_PREFIX', 'backups'),
   },
 
   evidence: {
