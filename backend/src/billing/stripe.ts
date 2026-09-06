@@ -117,28 +117,43 @@ function formEncode(values: Record<string, string | number | undefined>): string
   return params.toString();
 }
 
-async function stripeRequest(path: string, body: Record<string, string | number | undefined>): Promise<Record<string, unknown>> {
+async function stripeRequest(
+  path: string,
+  body: Record<string, string | number | undefined>,
+  options: { method?: 'POST' | 'GET'; idempotencyKey?: string } = {},
+): Promise<Record<string, unknown>> {
   if (!stripeConfigured()) {
     throw new DomainError('STRIPE_UNCONFIGURED', 'Stripe is not configured on this deployment', 503);
   }
 
+  const method = options.method ?? 'POST';
   const response = await fetch(`${STRIPE_API}${path}`, {
-    method: 'POST',
+    method,
     headers: {
       Authorization: `Bearer ${config.stripe.secretKey}`,
-      'Content-Type': 'application/x-www-form-urlencoded',
+      ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
       // Stripe pins behaviour to an API version. Sending ours means a version
       // rolled out on their side cannot change the shape of what we parse.
       'Stripe-Version': config.stripe.apiVersion,
+      // Stripe's own replay guard: the same key returns the same result for a
+      // day rather than a second charge. Used for every off-session collection,
+      // keyed on the charge, so a retried run cannot take a month twice.
+      ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
     },
-    body: formEncode(body),
+    ...(method === 'POST' ? { body: formEncode(body) } : {}),
     signal: AbortSignal.timeout(20_000),
   });
 
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     const detail = (payload.error as { message?: string } | undefined)?.message ?? `HTTP ${response.status}`;
-    throw new DomainError('STRIPE_ERROR', `Stripe refused the request: ${detail}`, 502);
+    const stripeCode = (payload.error as { code?: string; decline_code?: string } | undefined);
+    const error = new DomainError('STRIPE_ERROR', `Stripe refused the request: ${detail}`, 502);
+    // Carried for the collector, which turns a decline into a recorded attempt
+    // rather than a thrown error. Never shown to a customer as a code.
+    (error as DomainError & { stripeCode?: string; declineCode?: string }).stripeCode = stripeCode?.code;
+    (error as DomainError & { stripeCode?: string; declineCode?: string }).declineCode = stripeCode?.decline_code;
+    throw error;
   }
   return payload;
 }
@@ -167,6 +182,13 @@ export async function createCheckoutSession(input: {
   cancelUrl: string;
   /** What the checkout page names, for a subscription charge. */
   description?: string;
+  /**
+   * Keep the card for the months after this one. Only ever true where the
+   * customer has authorised a recurring-card mandate: the authorisation is the
+   * mandate, and Stripe is told to save the method for off-session use so the
+   * next period can be collected against it. Without it nothing is kept.
+   */
+  saveCard?: boolean;
 }): Promise<{ id: string; url: string }> {
   if (!input.intentId && !input.chargeId) {
     throw new DomainError('CHECKOUT_TARGET_REQUIRED', 'A checkout pays a top-up request or a subscription charge', 400);
@@ -192,6 +214,9 @@ export async function createCheckoutSession(input: {
     ...(input.chargeId
       ? { 'payment_intent_data[metadata][chargeId]': input.chargeId }
       : { 'payment_intent_data[metadata][intentId]': input.intentId }),
+    // A Stripe customer to hold the card, and the card kept for off-session
+    // use. Both only under an authorised recurring-card mandate.
+    ...(input.saveCard ? { customer_creation: 'always', 'payment_intent_data[setup_future_usage]': 'off_session' } : {}),
   });
 
   const url = session.url;
@@ -199,6 +224,92 @@ export async function createCheckoutSession(input: {
     throw new DomainError('STRIPE_ERROR', 'Stripe returned a checkout session with no URL', 502);
   }
   return { id: session.id, url };
+}
+
+// ------------------------------------------------------------- card on file
+
+/** What a settled payment intent tells us about the card that paid it. */
+export async function paymentIntentDetails(paymentIntentId: string): Promise<{ customerId?: string; paymentMethodId?: string }> {
+  const intent = await stripeRequest(`/payment_intents/${encodeURIComponent(paymentIntentId)}`, {}, { method: 'GET' });
+  return {
+    ...(typeof intent.customer === 'string' ? { customerId: intent.customer } : {}),
+    ...(typeof intent.payment_method === 'string' ? { paymentMethodId: intent.payment_method } : {}),
+  };
+}
+
+export type CardSummary = { brand: string; last4: string; expMonth: number; expYear: number };
+
+/** The card behind a payment method: brand, last four, expiry. Nothing else is read and nothing else is kept. */
+export async function paymentMethodCard(paymentMethodId: string): Promise<CardSummary | undefined> {
+  const method = await stripeRequest(`/payment_methods/${encodeURIComponent(paymentMethodId)}`, {}, { method: 'GET' });
+  const card = method.card as { brand?: string; last4?: string; exp_month?: number; exp_year?: number } | undefined;
+  if (!card || typeof card.last4 !== 'string') return undefined;
+  return {
+    brand: String(card.brand ?? 'card'),
+    last4: card.last4,
+    expMonth: Number(card.exp_month ?? 0),
+    expYear: Number(card.exp_year ?? 0),
+  };
+}
+
+/**
+ * Take one subscription charge from a card on file, off-session.
+ *
+ * `confirm` and `off_session` together tell Stripe the customer is not present
+ * and the mandate they gave at the first checkout covers this. A card that
+ * needs a fresh authentication (SCA) comes back `requires_action`, which is
+ * not a payment: the outcome says so and the charge stays due for the customer
+ * to pay in person. The idempotency key is the charge id, so a retried run
+ * cannot take the same month twice however many times it is attempted.
+ */
+export async function chargeOffSession(input: {
+  customerId: string;
+  paymentMethodId: string;
+  amountMinor: number;
+  currency: string;
+  tenantId: string;
+  chargeId: string;
+  description: string;
+}): Promise<{ succeeded: true; paymentIntentId: string } | { succeeded: false; because: string; paymentIntentId?: string }> {
+  try {
+    const intent = await stripeRequest(
+      '/payment_intents',
+      {
+        amount: input.amountMinor,
+        currency: input.currency.toLowerCase(),
+        customer: input.customerId,
+        payment_method: input.paymentMethodId,
+        off_session: 'true',
+        confirm: 'true',
+        description: input.description,
+        'metadata[tenantId]': input.tenantId,
+        'metadata[chargeId]': input.chargeId,
+      },
+      { idempotencyKey: `charge-${input.chargeId}` },
+    );
+    const id = typeof intent.id === 'string' ? intent.id : undefined;
+    if (intent.status === 'succeeded' && id) return { succeeded: true, paymentIntentId: id };
+    return {
+      succeeded: false,
+      because: `Stripe answered ${String(intent.status ?? 'no status')} rather than succeeded; the card needs the customer present`,
+      ...(id ? { paymentIntentId: id } : {}),
+    };
+  } catch (error) {
+    const stripeError = error as DomainError & { stripeCode?: string; declineCode?: string };
+    if (stripeError instanceof DomainError && stripeError.code === 'STRIPE_UNCONFIGURED') throw error;
+    const reason = stripeError.declineCode ?? stripeError.stripeCode ?? (error instanceof Error ? error.message : String(error));
+    return { succeeded: false, because: `The card was not charged: ${reason}` };
+  }
+}
+
+/** Forget the card at Stripe as well as here. Best effort: a detach that fails leaves a method nobody will charge, which the record already says. */
+export async function detachPaymentMethod(paymentMethodId: string): Promise<boolean> {
+  try {
+    await stripeRequest(`/payment_methods/${encodeURIComponent(paymentMethodId)}/detach`, {});
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ------------------------------------------------------------------ webhooks
@@ -342,6 +453,10 @@ export type SettledPayment = {
   chargeId?: string;
   amountMinor: number;
   currency: string;
+  /** The Stripe customer the session created or reused, where the card is being kept. */
+  customerId?: string;
+  /** The payment intent id, bare, for reading the card back. */
+  paymentIntentId?: string;
 };
 
 /**
@@ -412,5 +527,7 @@ export function settledPayment(event: StripeEvent): SettledPayment | undefined {
     ...(metadata.chargeId ? { chargeId: metadata.chargeId } : {}),
     amountMinor,
     currency: currency.toUpperCase(),
+    ...(typeof object.customer === 'string' ? { customerId: object.customer } : {}),
+    ...(paymentIntent ? { paymentIntentId: paymentIntent } : {}),
   };
 }

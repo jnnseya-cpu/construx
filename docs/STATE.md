@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,020 passing, 0 failing, 0 skipped, across 273 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,034 passing, 0 failing, 0 skipped, across 274 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 307 TypeScript files, 199950 lines |
-| Application | 78 ES modules, 45,920 lines (including a service worker) |
+| Backend | 308 TypeScript files, 200,306 lines |
+| Application | 78 ES modules, 45,928 lines (including a service worker) |
 | API routes | 1,096 — 742 writes, 354 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
@@ -11841,18 +11841,89 @@ as the operator's grant, not as coverage; a company it covers is what reads as
 covered. `paymentmandate.test.ts` covers the position, both methods, the
 refusals, supersession, cancellation and who never sees the popup.
 
-**What is not built, stated so the popup cannot imply it.** No Direct Debit
-rail exists and no card is held, so nothing is collected against the mandate
-yet: the position's `rails` says `directDebit: false`, `card` only where
-Stripe is configured, `bankTransfer: true`. After the authorisation the popup
-hands the first month to what the deployment can take — a recurring card on a
-Stripe deployment goes straight to the existing card checkout for the first
-period; otherwise the closing step says the first month is paid by transfer
-against the reference and the authorisation is on the record for collection
-from the day the rail is live. The brand in the sentence is CONSTRUX; the
-requested text named VERYX, which is not this platform's name. `attemptCollection`
-still answers "no payment method is held"; connecting a Direct Debit or
-card-on-file rail to collect against the mandate is the remaining work.
+**What is and is not built, stated so the popup cannot imply otherwise.** No
+Direct Debit rail exists: the position's `rails` says `directDebit: false`,
+`card` only where Stripe is configured, `bankTransfer: true`. After the
+authorisation the popup hands the first month to what the deployment can take
+— a recurring card on a Stripe deployment goes straight to the existing card
+checkout for the first period, and under that mandate the card is kept and
+charged each month after (see *The card on file* below); otherwise the closing
+step says the first month is paid by transfer against the reference and the
+authorisation is on the record for collection from the day the rail is live.
+The brand in the sentence is CONSTRUX; the requested text named VERYX, which
+is not this platform's name. A Direct Debit mandate is an authorisation with
+no rail behind it: `attemptCollection` answers "no payment method is held" for
+it, and each period is paid by transfer or by card in person.
+
+### The card on file: the recurring-card mandate collects
+
+The popup's second sentence — *the same amount each month by card, until I
+cancel* — had a record and no rail: the collector answered "no payment method
+is held" for every tenancy, whatever it had authorised. `backend/src/billing/cardonfile.ts`
+is the rail, on a deployment where Stripe is keyed.
+
+**How the card is kept.** `POST /v1/billing/charges/:chargeId/checkout`
+passes `saveCard` when the mandate in force is `RECURRING_CARD`, and only
+then: the checkout session is opened with `customer_creation: always` and
+`payment_intent_data[setup_future_usage]: off_session`, so Stripe creates a
+customer to hold the card and keeps the method for use without the customer
+present. Nothing is kept under a Direct Debit authorisation or with no mandate
+at all; the checkout body carries neither field. When the signed webhook
+settles that first charge, the handler reads the payment intent back
+(`GET /v1/payment_intents/:id` → customer and payment method) and the method
+(`GET /v1/payment_methods/:id` → brand, last four, expiry) and records
+`CARD_ON_FILE_SAVED` (entity `CardOnFile`, `BILLING_ACU`, `COMMERCIAL_L3`,
+under the tenancy's governance project like the mandate): the Stripe customer
+id, the payment method id, brand, last four, expiry, the mandate it was saved
+under and the payment reference that saved it. Never a card number, never a
+CVC — those were typed into Stripe's page and never reach this process. The
+money is recorded before the card is read; a card that cannot be read back is
+said on stderr and the next period is paid in person, never the reverse. A
+redelivered webhook saves nothing twice; a newer card supersedes the one held
+(`CARD_ON_FILE_REMOVED`, *Superseded by a newer card*), so there is one at a
+time; the record survives a restart with the chain.
+
+**How the months after are taken.** `main.ts` installs `stripeCollector`
+through the existing `Collector` port where Stripe is configured (and not on a
+follower). For a tenancy with a card it creates a payment intent with
+`customer`, `payment_method`, `off_session: true`, `confirm: true`, the charge
+id in metadata and `Idempotency-Key: charge-<chargeId>`, so a retried run —
+two timer ticks, a restart mid-cycle — returns Stripe's same intent rather
+than a second charge. `succeeded` settles the period through
+`recordSubscriptionPayment` (method `CARD`, reference `stripe:<pi>`, recorded
+by `billing:collector`, source `PROVIDER`), which leaves the receipt a refund
+or dispute later finds; that receipt is new — the collector used to call
+`settleCharge` alone, which settled the period and left no receipt. A decline,
+an expired card or `requires_action` (the customer must be present for strong
+customer authentication) is not a payment: the collector answers
+`settled: false` naming the card and Stripe's reason (`visa •••• 4242: The
+card was not charged: insufficient_funds`), the attempt lands on the charge as
+before, the grace period runs, and the customer pays in person from ACU &
+Billing or the tenancy stops at the end of the grace exactly as it always has.
+One attempt per charge per cycle; nothing retries in a loop. A tenancy with no
+card is answered as the default always answered it.
+
+**What the customer sees, and what they never see.** The activation position
+carries `cardOnFile` — brand, last four, expiry month and year, when it was
+kept — and never the Stripe ids. The **Payment method** card on ACU & Billing
+shows *Visa •••• 4242, expires 12/2030 — kept since … and charged
+automatically each month*, or *No card is kept yet. Pay the first month by
+card and it is kept for the months after* under a recurring-card mandate on a
+card-capable deployment. `POST /v1/billing/mandate/cancel` also forgets the
+card (`CARD_ON_FILE_REMOVED`, *Mandate cancelled: <reason>*, under the person)
+and detaches the method at Stripe, best effort, answering `cardRemoved`: a
+card kept after the authorisation to charge it has gone is a card kept for
+nothing. `stripe.ts` grew `GET` support, the idempotency header and Stripe's
+own `code` / `decline_code` on the thrown error for the collector to read.
+
+**Stated, not implied.** `cardonfile.test.ts` drives the whole cycle against a
+fake Stripe that records what it was asked: the checkout body under each
+mandate, the two reads behind the save, the off-session charge and its
+idempotency key, a decline, `requires_action`, a superseding card, the cancel
+with its detach, and the customer's view without ids. No call has been made
+to Stripe from this environment; the wire shapes are Stripe's documented ones
+and the first live collection is the verification. Direct Debit remains
+without a rail.
 
 **The group statement stopped counting money nobody owed.** *One section per
 cost centre* showed a covered company's written-off first month as *Plan
@@ -13022,16 +13093,18 @@ outstanding**. A tenancy two periods behind that settles one has not caught up,
 and reinstating it there would let somebody stay live for ever by always paying
 the oldest invoice.
 
-**What is not built, stated rather than implied.** There is no stored payment
-method and no off-session charge: this platform holds no card. `attemptCollection`
-therefore cannot debit anybody and does not pretend to — it asks the configured
-collector, and the default answers *"no payment method is held for this
-tenancy"*, which is the truth and is what lands on the record. What settles a
-charge today is a payment recorded against it, by the Stripe webhook or by an
-operator recording a transfer. Everything after that point is real: the charge is
-raised automatically, the clock runs, and the tenancy stops. Wiring a card is
-replacing one function — the `Collector` port exists for exactly that — not
-building the cycle.
+**What is not built, stated rather than implied.** When this was written
+there was no stored payment method and no off-session charge, and
+`attemptCollection` asked the configured collector, whose default answers
+*"no payment method is held for this tenancy"* — the truth, and what lands on
+the record. That default is still the answer on a deployment without Stripe
+and for any tenancy that has not authorised a recurring-card mandate and paid
+its first month by card. Where both hold, the `Collector` port is now filled
+by `stripeCollector` — see *The card on file* — and the month is taken from
+the card Stripe keeps. What settles a charge otherwise is a payment recorded
+against it, by the Stripe webhook or by an operator recording a transfer.
+Everything after that point is real: the charge is raised automatically, the
+clock runs, and the tenancy stops.
 
 **The platform is not its own customer.** The operator tenancy exists from
 process construction, before any `createTenant`, so it has an in-memory

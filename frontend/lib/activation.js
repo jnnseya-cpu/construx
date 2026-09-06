@@ -165,7 +165,8 @@ export function showActivation(position) {
     const stepThree = async (mandate) => {
       const charge = position.firstCharge;
       // A card, on a deployment that can take one: straight to checkout for the
-      // first month. The webhook settles the charge and opens the tenancy.
+      // first month. The webhook settles the charge, opens the tenancy and,
+      // under this mandate, keeps the card for the months after.
       if (mandate.method === 'RECURRING_CARD' && position.rails.card && charge) {
         const chargeId = charge.id;
         try {

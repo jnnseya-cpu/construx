@@ -4,6 +4,7 @@ import { groupOfTenant } from '../group/directory.ts';
 import { primaryCompanyOf } from '../group/onboarding.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
+import { cardOnFile, cardSummary } from './cardonfile.ts';
 import * as collection from './collection.ts';
 import { PACKAGES } from './seats.ts';
 import { stripeConfigured } from './stripe.ts';
@@ -21,12 +22,15 @@ import { BILLING_CURRENCY } from './payments.ts';
  * rail collects against once one is connected.
  *
  * **What is and is not built, stated so the popup cannot imply otherwise.**
- * The record is real and replayable. Collection is not: this deployment holds
- * no card and has no Direct Debit rail, so `attemptCollection` still answers
- * "no payment method is held" and the first month is paid by card checkout
- * (where Stripe is configured) or by transfer against the `CX-` reference,
- * recorded by the operator. `rails` on the position says exactly which of the
- * three the deployment can take, and the popup reads it rather than promising.
+ * The record is real and replayable. The recurring-card rail is real where
+ * Stripe is keyed: the first month paid by card checkout under this mandate
+ * is paid with a card Stripe keeps, `billing/cardonfile.ts` records which, and
+ * the monthly cycle charges it off-session. No Direct Debit rail exists, so a
+ * Direct Debit mandate is an authorisation waiting for one: each period is
+ * paid by transfer against the `CX-` reference, recorded by the operator, or
+ * by card where offered. `rails` and `cardOnFile` on the position say exactly
+ * what this deployment can take and holds, and the popup reads them rather
+ * than promising.
  */
 
 export type MandateMethod = 'DIRECT_DEBIT' | 'RECURRING_CARD';
@@ -97,6 +101,8 @@ export type ActivationPosition = {
   firstCharge: { id: string; amountMinor: number; dueAt: string; paymentReference: string } | null;
   /** Which rails this deployment can actually take. */
   rails: { card: boolean; directDebit: boolean; bankTransfer: boolean };
+  /** The card kept for the months after the first, where one is: brand, last four, expiry. Never the ids. */
+  cardOnFile: { brand: string; last4: string; expMonth: number; expYear: number; savedAt: string } | null;
   mandate: PaymentMandate | null;
   wording: Record<MandateMethod, string>;
 };
@@ -138,6 +144,7 @@ export function activationPosition(platform: Platform, tenantId: string): Activa
     status: subscription.status,
     firstCharge: due ? { id: due.id, amountMinor: due.amountMinor, dueAt: due.dueAt, paymentReference: `CX-${due.id.slice(-8).toUpperCase()}` } : null,
     rails: { card: stripeConfigured(), directDebit: false, bankTransfer: true },
+    cardOnFile: cardSummary(cardOnFile(platform, tenantId)),
     mandate: currentMandate(platform, tenantId),
     wording: {
       DIRECT_DEBIT: mandateWording('DIRECT_DEBIT', tenant.legalName, monthlyPriceMinor),

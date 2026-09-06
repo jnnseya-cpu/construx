@@ -1682,6 +1682,8 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // for a rail to collect against; it moves no money itself.
   def('PAYMENT_MANDATE_AUTHORISED', 'PaymentMandate', 'CREATE', 'AI_BILLING', { creates: true }),
   def('PAYMENT_MANDATE_CANCELLED', 'PaymentMandate', 'UPDATE', 'AI_BILLING'),
+  def('CARD_ON_FILE_SAVED', 'CardOnFile', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('CARD_ON_FILE_REMOVED', 'CardOnFile', 'UPDATE', 'AI_BILLING'),
   // A request that will never be paid: the tenancy it was raised on has been
   // closed and its wallet emptied, so there is nothing a receipt could credit.
   // Cancelled with the closure named, rather than left counted for ever as

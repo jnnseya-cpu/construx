@@ -10,7 +10,9 @@ import { WriterLock } from './goldenthread/writerlock.ts';
 import { Pool } from './store/postgres.ts';
 import type { ACUEntry } from './billing/acu.ts';
 import { startNewsletterSchedule } from './messaging/newsletter.ts';
-import { startCollectionSchedule } from './billing/collection.ts';
+import { setCollector, startCollectionSchedule } from './billing/collection.ts';
+import { stripeCollector } from './billing/cardonfile.ts';
+import { stripeConfigured } from './billing/stripe.ts';
 import { coverGroupCompanies } from './group/onboarding.ts';
 import { startErasureSchedule } from './identity/erasure.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
@@ -537,6 +539,11 @@ if (!follower) {
     process.stdout.write(`[identity] ${entry.userId} of ${entry.tenantId} made owner: founding administrator, nobody else could have\n`);
   }
 }
+
+// The rail behind the recurring-card mandate. Where Stripe is keyed, a card
+// saved at the first checkout is charged off-session each cycle; where it is
+// not, the default collector still answers that no method is held.
+if (!follower && stripeConfigured()) setCollector(stripeCollector(platform));
 
 const collection = follower
   ? { stop: (): void => undefined }

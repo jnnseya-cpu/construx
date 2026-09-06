@@ -84,9 +84,13 @@ export async function billing(root) {
                       <b>${activation.mandate.method === 'DIRECT_DEBIT' ? 'Direct Debit (BACS)' : 'Recurring card'}</b> · authorised by
                       ${activation.mandate.authorisedByName} on ${activation.mandate.authorisedAt.slice(0, 10)} · ${exact(activation.mandate.amountMinor)} a month
                       <br /><span style="font-style:italic">${activation.mandate.wording}</span>
-                      ${activation.rails.directDebit || (activation.mandate.method === 'RECURRING_CARD' && activation.rails.card)
-                        ? ''
-                        : html`<br />Collection by this method is not yet connected on this deployment: each period is paid by bank transfer against its reference, or by card where offered, until it is.`}
+                      ${activation.cardOnFile
+                        ? html`<br /><b>${activation.cardOnFile.brand.charAt(0).toUpperCase() + activation.cardOnFile.brand.slice(1)} •••• ${activation.cardOnFile.last4}</b>, expires ${String(activation.cardOnFile.expMonth).padStart(2, '0')}/${activation.cardOnFile.expYear} — kept since ${activation.cardOnFile.savedAt.slice(0, 10)} and charged automatically each month. Cancelling the mandate forgets it.`
+                        : activation.mandate.method === 'RECURRING_CARD' && activation.rails.card
+                          ? html`<br />No card is kept yet. Pay the first month by card and it is kept for the months after.`
+                          : activation.rails.directDebit
+                            ? ''
+                            : html`<br />Collection by this method is not yet connected on this deployment: each period is paid by bank transfer against its reference, or by card where offered, until it is.`}
                     </div>`
                 : html`<div class="metric-sub" style="margin:6px 0 10px">
                       No payment method is authorised yet. ${activation.packageLabel} is ${exact(activation.monthlyPriceMinor)} a month, collected today and each

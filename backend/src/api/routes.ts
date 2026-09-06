@@ -173,6 +173,7 @@ import { approveTransferCase, cancelTransferCase, executeTransferCase, openTrans
 import { addCompany, appointAdministrator, foundGroup, GROUP_COMPANY_PACKAGES, onboardGroup, readinessOf, type AddCompanyInput, type OnboardingInput } from '../group/onboarding.ts';
 import * as growthEngine from '../growth/engine.ts';
 import * as estateEngine from '../billing/estateengine.ts';
+import * as cardonfile from '../billing/cardonfile.ts';
 import * as mandate from '../billing/mandate.ts';
 import { accountRequests, advanceAccountRequest, declineAccountRequest, deleteAccountRequest, provisionAccountRequest, receiveAccountRequest, recordProvisionNotice, REQUEST_STATUSES } from '../identity/requests.ts';
 import * as bim from '../engines/bim.ts';
@@ -20527,9 +20528,14 @@ export const ROUTES: Route[] = [
     pattern: '/v1/billing/mandate/cancel',
     description: 'Cancel the payment method authorised for this account, with the reason on the record',
     schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 3, maxLength: 500 } }, additionalProperties: false },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = authoriseTenant(ctx, 'BILLING_ACU', 'U');
-      return mandate.cancelMandate(platform, actor, body<{ reason: string }>(ctx).reason);
+      const reason = body<{ reason: string }>(ctx).reason;
+      const cancelled = mandate.cancelMandate(platform, actor, reason);
+      // A card kept after the authorisation to charge it has gone is a card
+      // kept for nothing: forgotten here and, where Stripe answers, there.
+      const card = await cardonfile.removeCardOnFile(platform, actor.tenantId, { refType: 'User', refId: actor.actorId }, `Mandate cancelled: ${reason}`);
+      return { ...cancelled, cardRemoved: card.removed };
     },
   },
   {
@@ -20553,6 +20559,9 @@ export const ROUTES: Route[] = [
         description: `${PACKAGES[charge.package as PackageTier]?.label ?? charge.package} — the period from ${charge.periodStart.slice(0, 10)}. The AI allowance for the period is credited when this settles.`,
         successUrl: config.stripe.successUrl || `${config.publicBaseUrl}/app/billing?paid=1`,
         cancelUrl: config.stripe.cancelUrl || `${config.publicBaseUrl}/app/billing`,
+        // The mandate is the authorisation to keep the card; without one,
+        // nothing is kept.
+        saveCard: mandate.currentMandate(platform, actor.tenantId)?.method === 'RECURRING_CARD',
       });
       return { checkoutUrl: session.url, sessionId: session.id, chargeId: charge.id };
     },
@@ -20777,7 +20786,7 @@ export const ROUTES: Route[] = [
     // to would let anybody make this process buffer 50MB per connection.
     maxBytes: 256 * 1024,
     description: 'Stripe payment webhook. Signature-verified; the only unauthenticated route that moves money',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       // Public because Stripe holds no credential of ours, which makes the
       // signature the entire defence. Unverified, this is a URL that credits
       // wallets to anybody who finds it.
@@ -20847,7 +20856,32 @@ export const ROUTES: Route[] = [
           source: 'PROVIDER',
           note: `Stripe ${event.type}`,
         });
-        return { received: true, acted: true, receiptId: paid.receipt.id, chargeId: charge.id, alreadyRecorded: paid.alreadyRecorded };
+        // The card that paid, kept for the months after — only under a
+        // recurring-card mandate, which is the authorisation to keep it, and
+        // only where the checkout created a customer to hold it. The money is
+        // already recorded above; a card that cannot be read back is said on
+        // stderr and the next period is paid in person, never the reverse.
+        let cardSaved = false;
+        const held = mandate.currentMandate(platform, payment.tenantId);
+        if (held?.method === 'RECURRING_CARD' && payment.customerId && payment.paymentIntentId) {
+          try {
+            const details = await stripe.paymentIntentDetails(payment.paymentIntentId);
+            const summary = details.paymentMethodId ? await stripe.paymentMethodCard(details.paymentMethodId) : undefined;
+            if (details.paymentMethodId && summary) {
+              cardSaved = !cardonfile.saveCardOnFile(platform, {
+                tenantId: payment.tenantId,
+                customerId: payment.customerId,
+                paymentMethodId: details.paymentMethodId,
+                card: summary,
+                mandateId: held.id,
+                savedFrom: payment.reference,
+              }).alreadySaved;
+            }
+          } catch (error) {
+            process.stderr.write(`[stripe] the card behind ${payment.reference} could not be read back for ${payment.tenantId}: ${(error as Error).message}\n`);
+          }
+        }
+        return { received: true, acted: true, receiptId: paid.receipt.id, chargeId: charge.id, alreadyRecorded: paid.alreadyRecorded, cardSaved };
       }
 
       const { receipt, alreadyRecorded } = platform.creditFromPayment({

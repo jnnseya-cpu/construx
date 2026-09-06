@@ -329,7 +329,19 @@ export async function attemptCollection(
   });
 
   if (outcome.settled) {
-    settleCharge(platform, { chargeId: charge.id, reference: outcome.reference }, now);
+    // A payment, recorded as one: a receipt under the reference the processor
+    // gave, so a refund or a dispute against it later finds what it undoes.
+    // `settleCharge` alone settled the period and left no receipt, which was
+    // fine while no collector ever settled anything.
+    platform.recordSubscriptionPayment({
+      tenantId: charge.tenantId,
+      chargeId: charge.id,
+      method: 'CARD',
+      reference: outcome.reference,
+      recordedBy: 'billing:collector',
+      source: 'PROVIDER',
+      note: 'Collected from the card on file against the recurring-card mandate',
+    });
     return outcome;
   }
 
