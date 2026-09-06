@@ -1,11 +1,15 @@
 import { esc } from '../messaging/render.ts';
-import { GROUP_LICENCE, PACKAGES } from '../billing/seats.ts';
+import { CONTROLLER_PASS, GROUP_LICENCE, PACKAGES, UNCHARGED_ROLES } from '../billing/seats.ts';
+import { isControllerRole } from '../identity/licence.ts';
+import { PERMISSION_MATRIX, type Role } from '../identity/roles.ts';
 import type { ExposurePosition } from './exposure.ts';
 import { config } from '../config.ts';
-import { CURRENCIES, JURISDICTIONS, formatMoney } from '../domain/locale.ts';
+import { CURRENCIES, JURISDICTIONS, abbreviateMoney, formatMoney } from '../domain/locale.ts';
+import { DEMO_TENANCY } from '../seed.ts';
 import { NOTIFICATION_EVENTS, CATEGORIES } from '../notifications/catalogue.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
+import { AGENTS } from '../agents/registry.ts';
 import { accountTypes } from '../identity/signup.ts';
 import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES } from './layout.ts';
 import { addressBlock, businessDetails, emailLink, phoneLink, socialLinks } from './business.ts';
@@ -38,6 +42,13 @@ function facts() {
   return {
     routes: ROUTES.length,
     publicRoutes,
+    // The fleet, and the part of it that may act unattended. Both counted
+    // because this site asserted for months that the whole fleet was capped at
+    // PROPOSE — in the About page, in the Terms and in the policy list — while
+    // two agents held an ACT ceiling. A governance claim in a contract is the
+    // last place a typed number belongs.
+    agents: AGENTS.length,
+    actAgents: AGENTS.filter((agent) => agent.mandate?.maxUnattended === 'ACT').length,
     ledgerEvents: EVENT_TYPES.length,
     commsEvents: NOTIFICATION_EVENTS.length,
     commsCategories: CATEGORIES.length,
@@ -124,16 +135,23 @@ export function about(): string {
       One record, written once, readable by every discipline that needs it, and provable afterwards.
     </p>
     <p>
-      Its AI agents examine that evidence continuously rather than at the month end: identifying emerging risks,
-      coordinating the workflows between disciplines, and telling each person what has changed, what is at risk, what
-      is costing money, and what has to happen next. Continuously, because the month-end review is precisely the
-      instrument that finds things three weeks late.
+      Its ${f.agents} AI agents examine that evidence continuously rather than at the month end: identifying emerging
+      risks, coordinating the workflows between disciplines, and telling each person what has changed, what is at
+      risk, what is costing money, and what has to happen next. Continuously, because the month-end review is
+      precisely the instrument that finds things three weeks late.
     </p>
     <p>
-      That the agents only ever <em>propose</em> is not a limitation added afterwards. It follows directly from the
-      problem: the failure was never that decisions were made badly. It was that the people making them did not have
-      what they needed in front of them at the time. So the system's job is to put it there — and the decision stays
-      with the person carrying the duty for it.
+      That they almost all only ever <em>propose</em> is not a limitation added afterwards. It follows directly from
+      the problem: the failure was never that decisions were made badly. It was that the people making them did not
+      have what they needed in front of them at the time. So the system's job is to put it there — and the decision
+      stays with the person carrying the duty for it.
+    </p>
+    <p>
+      ${f.actAgents} of the ${f.agents} may act without being asked, and neither of them decides anything. One files
+      the return register off an invitation the platform has already read; the other says the platform itself is
+      unwell, which is the one act on this system where waiting for an approval makes the outcome worse. Both are
+      confined to an envelope naming the exact commands, granted by a person with governance authority, carrying an
+      end date, revocable, and recorded — and both carry a value ceiling of zero.
     </p>
 
     <h3>Why it is built as a record rather than a workflow</h3>
@@ -172,8 +190,10 @@ export function about(): string {
     <p>
       That is why ${f.ledgerEvents} event types are a <em>closed</em> catalogue rather than a free-text field. An event
       nothing can emit is a capability that does not exist, and a test fails if one appears. It is why a correction is a
-      new event and the original stays visible. And it is why no AI agent in the system holds a mandate above
-      <code>PROPOSE</code> — governance decisions are human by construction, not by policy.
+      new event and the original stays visible. And it is why governance decisions are human by construction rather
+      than by policy: the catalogue marks those events closed to AI authorship, so ${f.agents - f.actAgents} of the
+      ${f.agents} agents can do nothing but propose, and the ${f.actAgents} that may act cannot reach a governance
+      event whatever envelope anybody tries to grant them.
     </p>
 
     <h2>What we will not do</h2>
@@ -296,6 +316,27 @@ export function howItWorks(): string {
       from a backup of a file. A second process can follow that database as a warm standby: it holds the whole record,
       answers every read, refuses every write by name, and is promoted by a restart. The lag between the ledger and the
       database is on the operator's screen, never hidden.
+    </p>
+    <p>
+      Three things sit behind that, each answering a different way of losing a record. A snapshot is written beside
+      the journal, so a boot restores the state and replays only the tail rather than the whole history — the
+      difference between a restart that takes seconds and one that takes longer every month the platform runs. Where
+      an object store is configured, the journal and the media are copied off the machine on a timer, each set
+      carrying a manifest naming every file's size and hash, so a restore can be checked rather than hoped over. And
+      the restore drill is a script rather than a paragraph, because a backup nobody has restored from is a belief.
+    </p>
+
+    <h2>8 · Somebody finds out before you do</h2>
+    <p>
+      The process sends a heartbeat outward to a monitor on a timer, and it is a dead man's switch rather than a
+      ping: it is withheld when the record cannot be extended, so a platform that is running but cannot write is
+      reported as down — which is the honest answer, and the one an ordinary uptime check gets wrong. The readiness
+      probe answers with its reasons rather than a bare failure. Alerts reach a named person on a rota with a defined
+      handover rather than a shared inbox, because an alert that reaches everybody reaches nobody.
+    </p>
+    <p>
+      None of that is an availability commitment, and <a href="/status">Platform status</a> still publishes no uptime
+      percentage. A figure nobody measures is a decoration, and this is the page that would have to be true.
     </p>
   </div>
 </section>
@@ -481,8 +522,13 @@ export function blog(platform?: Platform): string {
   //
   // Guarded on the ledger rather than on the platform: these renderers are
   // called with a stub in the tests that walk every public page, and a site
-  // that cannot reach a ledger has no stored posts — it still has the six in
+  // that cannot reach a ledger has no stored posts — it still has those in
   // the build, and rendering those is the right answer rather than an error.
+  // Sorted on the fullest instant each source knows rather than on the date
+  // alone: a compiled note has a date and sorts as that day's midnight, a post
+  // published from the console has the moment it went live. Comparing dates
+  // alone left a same-day tie to array order, which buried a post published
+  // this morning under a note dated the same day and written weeks ago.
   const entries = [
     ...POSTS.map((post) => ({
       slug: post.slug,
@@ -490,6 +536,7 @@ export function blog(platform?: Platform): string {
       standfirst: post.standfirst,
       tag: post.tag,
       date: post.date,
+      at: `${post.date}T00:00:00.000Z`,
       minutes: readMinutes(post.body),
     })),
     ...(platform?.ledger ? publishedPosts(platform) : []).map((post) => ({
@@ -498,9 +545,10 @@ export function blog(platform?: Platform): string {
       standfirst: post.standfirst,
       tag: post.tag,
       date: (post.publishedAt ?? '').slice(0, 10),
+      at: post.publishedAt ?? '',
       minutes: readMinutes(post.body),
     })),
-  ].sort((a, b) => b.date.localeCompare(a.date));
+  ].sort((a, b) => b.at.localeCompare(a.at));
 
   return page(
     {
@@ -594,6 +642,29 @@ export function developers(): string {
       may <em>begin</em> an authentication and never complete one — an invariant with a test behind it, because a
       demonstration endpoint once returned a working session to anonymous callers.
     </p>
+    <p>
+      A person may enrol a passkey or an authenticator app. Sign-ins are bound to the devices they come from, and a
+      request whose shape is unusual for that person is challenged again rather than refused outright. Repeated
+      failures lock the identity, and the count is held centrally so a lockout cannot be escaped by reaching a
+      different replica. Tokens are signed with a key derived per purpose and carrying an identifier, so one can be
+      rotated with the previous still verifying and nothing signed for one purpose is accepted for another.
+    </p>
+
+    <h2>Integrating without a person</h2>
+    <p>
+      A machine gets its own credential rather than borrowing somebody's: API keys with their own scopes, separate
+      sandbox and live keys, and webhooks for what you would otherwise poll for. There is a change feed with
+      idempotency keys on it, and a batch contract the field applications are built against — the same one, not a
+      private endpoint, because the console holds no privileged path and neither do they.
+    </p>
+
+    <h2>What arrives, and what it is checked for</h2>
+    <p>
+      Every uploaded file is streamed to a signature scanner before anything reads it, and a file that could not be
+      scanned is recorded as unscanned rather than assumed clean. Evidence is encrypted at rest where a master key is
+      configured, and the readiness probe treats a missing one as a critical finding rather than a default —
+      a stolen volume should not be a readable archive of somebody's site photographs and signed instructions.
+    </p>
 
     <h2>Communication events</h2>
     <p>
@@ -666,7 +737,7 @@ export function contact(): string {
           title: 'Enterprise agreement',
           tag: 'Sales',
           body:
-            'Enterprise is provisioned with an agreement rather than a form, so there is no self-serve button for it. Tell us the programme, the jurisdictions and the identity count.',
+            'Enterprise is provisioned with an agreement rather than a form, so there is no self-serve button for it. Tell us the programme, the jurisdictions and how many people hold Controller authority — not your headcount, which is not what an agreement is sized on.',
         },
         {
           title: 'Security and assurance',
@@ -754,6 +825,14 @@ function contactDetails(): string {
 
 export function getStarted(): string {
   const types = accountTypes();
+  // Counted off the permission matrix, not stated. A role is a Controller
+  // because it holds approval, administration or governance authority
+  // somewhere on that matrix — the same test the billing engine applies — so
+  // this page cannot advertise a split the invoice does not honour.
+  const roles = (Object.keys(PERMISSION_MATRIX) as Role[]).filter((role) => !UNCHARGED_ROLES.includes(role));
+  const controllerRoles = roles.filter(isControllerRole).length;
+  const chargeableRoles = roles.length;
+  const participantRoles = chargeableRoles - controllerRoles;
 
   return page(
     {
@@ -765,7 +844,9 @@ export function getStarted(): string {
       eyebrow: 'Product',
       title: 'Start in about a minute',
       standfirst:
-        'Pick the package, confirm your address, and you are the administrator of your own tenancy. No card, no call, no sales qualification step.',
+        'Pick the package, confirm your address, and you are the administrator of your own tenancy. No call and no ' +
+        'sales qualification step — the Trial needs no card either, and a paid package opens when its first month ' +
+        'is paid.',
     })}
 
 <section class="prose">
@@ -826,6 +907,38 @@ export function getStarted(): string {
 
 <section class="prose">
   <div class="wrap narrow">
+    <h2>Who takes a seat, and who does not</h2>
+    <p>
+      A package's seats are <b>Controller seats</b>. A Controller is somebody who approves money, baselines or
+      contracts, administers people, or runs the business — ${controllerRoles} of the ${chargeableRoles} roles the
+      platform grants. The other ${participantRoles} are participants: site, quality, design, supervision and supply.
+      <b>A participant takes no seat</b>, whether they work for you or for one of your subcontractors, so putting the
+      people who do the work onto the record costs nothing.
+    </p>
+    <p>
+      That matters most across organisations, because a construction project is not one company. <b>A project
+      invitation never adds anybody to your paid seats.</b> A Controller invited from another firm is admitted on the
+      Controller licence their own organisation — or any company in their group — already pays for; one person holds
+      one seat however many projects they are invited onto, and nobody is charged twice for them.
+    </p>
+    <p>
+      Where an invited Controller holds no licence anywhere, the platform says so and admits them as a participant
+      until you decide. A <b>${esc(CONTROLLER_PASS.label)}</b> then opens Controller authority for that one person on
+      that one project, for a period you set up to ${CONTROLLER_PASS.maxMonths} months, at
+      ${esc(formatMoney(CONTROLLER_PASS.monthlyPriceMinor, 'GBP'))} a month. It is bought deliberately and appears as
+      its own line on the invoice. Nothing buys it automatically.
+    </p>
+    <p>
+      AI a guest runs is charged to the sponsor who agreed to it: their own organisation, under a monthly limit that
+      organisation consented to, or you, once, on an authorisation you gave. Never both, and never without a ledger
+      entry naming which.
+    </p>
+    <p class="note">
+      Two roles consume no seat on any package: the platform operator, who is barred from your delivery data by the
+      permission model, and a regulator — Building Safety Regulator access is an obligation the asset owner carries,
+      not a licence we sell.
+    </p>
+
     <h2>How AI is paid for</h2>
     <p>
       Every paid plan credits an AI allowance the moment each month's subscription is paid, and you can top it up
@@ -842,6 +955,25 @@ export function getStarted(): string {
     <p>
       Top up whenever you want more. Unused allowance is exactly what it looks like: credit on the account, recorded
       as its own entry so an invoice can tell an allowance from a purchase.
+    </p>
+    <!--
+      The arithmetic, published.
+
+      This section used to say the arithmetic mattered less than the guarantee
+      around it and leave it at that — while the Terms of Service committed us
+      to charging "at the published multiplier". A contractual term pointing at
+      a rate published nowhere is precisely the kind of thing this site exists
+      not to do, so here it is, read from the configuration the billing engine
+      charges on rather than typed.
+    -->
+    <h3>The arithmetic, since the Terms refer to it</h3>
+    <p>
+      One ACU is one penny of credit. An AI action costs what the provider
+      charged for it multiplied by <b>${config.billing.markupMultiplier}</b>, and that multiplier is the same on every
+      package and every bundle — a larger bundle is fewer transactions and one purchase order, not a lower rate, and
+      nothing in the product should imply otherwise. Each paid package credits
+      <b>${config.billing.subscriptionAcuAllocationPercent}%</b> of its monthly price as allowance when that month's
+      payment settles.
     </p>
 
     <h2>What a trial does and does not include</h2>
@@ -978,7 +1110,30 @@ function legal(meta: { title: string; description: string; path: string; updated
   );
 }
 
-const UPDATED = '21 August 2026';
+/**
+ * The date on each legal page, and it is a promise rather than a decoration.
+ *
+ * There was one constant for all three, which is a defect with two heads. It
+ * read 21 August while the Terms had been rewritten twice since — most
+ * recently the seat clause, which now says a project invitation never adds a
+ * person to the host's paid seats — and while the policy list had gained
+ * Cancellation and Refunds, two consumer-facing terms that did not exist
+ * before. A "last updated" predating the update is worse than none: a
+ * customer who read the old version and checked the date concludes nothing
+ * has changed, on the clauses that changed most.
+ *
+ * The second head is subtler and is why this is now three dates. Bumping one
+ * shared constant for a change to the Terms silently restamps the Privacy
+ * Policy as revised on a day nothing in it moved — which is the same lie
+ * pointing the other way.
+ *
+ * Move only the one whose document actually changed.
+ */
+const UPDATED = {
+  terms: '6 September 2026',
+  privacy: '6 September 2026',
+  policies: '6 September 2026',
+} as const;
 
 export function terms(): string {
   return legal(
@@ -986,7 +1141,7 @@ export function terms(): string {
       title: 'Terms of Service',
       description: 'The terms on which CONSTRUX is provided, and the limits of what it does.',
       path: '/terms',
-      updated: UPDATED,
+      updated: UPDATED.terms,
     },
     `<h2>1. What the service is</h2>
     <p>
@@ -1030,8 +1185,12 @@ export function terms(): string {
       the quote says so and states the provider's floor rather than presenting a floor as a forecast.
     </p>
     <p>
-      No AI agent holds a mandate above <code>PROPOSE</code>. Every governance decision is taken by a person, and the
-      event catalogue refuses AI authorship on decision events.
+      Every governance decision is taken by a person. The event catalogue refuses AI authorship on decision events,
+      so no agent can reach one however it is configured. Almost the whole fleet is confined to
+      <code>PROPOSE</code>; a small number of agents may additionally act unattended, and only inside an envelope
+      that names the permitted commands, was granted by a person holding governance authority in your tenancy,
+      carries an end date, is revocable at any time, and is recorded on the chain. No such envelope may carry a
+      command the catalogue closes to AI, and none in use carries authority over money.
     </p>
 
     <h2>6. Your data</h2>
@@ -1069,12 +1228,19 @@ export function privacy(): string {
       title: 'Privacy Policy',
       description: 'What personal data the platform holds, why, and what it will never do with it.',
       path: '/privacy',
-      updated: UPDATED,
+      updated: UPDATED.privacy,
     },
     `<h2>What we hold</h2>
     <p>
       For each identity: a name, an email address, the roles held, and the tenancy. Optionally a mobile number, where
-      one has been given for notices that ride SMS. Nothing else about a person is required to use the product.
+      one has been given for notices that ride SMS. Where a person was invited from another organisation, which
+      organisation that is and on what basis they hold access here. Nothing else about a person is asked for.
+    </p>
+    <p>
+      Security records accumulate against an identity because they are what protects it: the devices a sign-in has
+      come from, any passkey or authenticator enrolled, the risk assessment that decided whether to challenge, and a
+      count of failed attempts. Whoever pays also has the card reference described under
+      <a href="#sub-processors">sub-processors</a> — never the card number.
     </p>
 
     <h2>What the record contains about people</h2>
@@ -1114,11 +1280,27 @@ export function privacy(): string {
       behind it is no longer resolvable.
     </p>
 
-    <h2>Sub-processors</h2>
+    <h2 id="sub-processors">Sub-processors</h2>
     <p>
       Email is delivered through an SMTP relay you can see named in your own delivery log. AI actions are executed by
       the provider recorded on the event, with the model class and cost. Every channel that has no provider configured
       records as dispatched-not-transmitted rather than as delivered.
+    </p>
+    <p>
+      Depending on how a deployment is configured, these others may also receive data. Each is listed with what it
+      receives, because a list naming two of nine is not a disclosure:
+    </p>
+    <ul class="rules">
+      <li><b>Payment processor.</b> Card details are entered on the processor's own page and never reach us. What we keep is the customer and payment-method reference, the card brand, its last four digits and its expiry, so a subscription can be collected each month and you can see which card it is.</li>
+      <li><b>Object storage.</b> Where configured, evidence is held there, and a copy of the event journal and site media is shipped off the machine on a timer so the record survives the loss of a host.</li>
+      <li><b>File signature scanner.</b> Every uploaded file is streamed to a scanner before anything reads it. A file that could not be scanned is recorded as unscanned rather than treated as clean.</li>
+      <li><b>Shared cache.</b> Where more than one process runs, sign-in failure counts are held centrally so a lockout cannot be escaped by reaching a different replica. It holds counters against an identity, not content.</li>
+      <li><b>Telemetry collector.</b> Where configured, counters, request timings and the security event stream, so a fault can be diagnosed after it has happened.</li>
+      <li><b>Uptime monitor and alert channel.</b> A heartbeat carrying the commit and event count, and alerts naming the on-call person. No project data is in either.</li>
+    </ul>
+    <p class="note">
+      Anything not configured on a deployment receives nothing and is not a sub-processor of it. Which are configured
+      on yours is answerable from the platform rather than from this page.
     </p>`,
   );
 }
@@ -1156,7 +1338,12 @@ export function policies(): string {
     [
       'Data retention',
       '/policies',
-      'The event chain is retained for the life of the tenancy. Notification delivery records are retained because "we told you on the 14th" must stay answerable. Bounded operational logs rotate and are never the source of a metric.',
+      'The event chain is retained for the life of the tenancy. Notification delivery records are retained because ' +
+        '"we told you on the 14th" must stay answerable. Bounded operational logs rotate and are never the source ' +
+        'of a metric. Where off-host backup is configured, a bounded number of recent copies of the record is held ' +
+        'in object storage and the oldest is discarded as each new one lands — so a copy of your data outlives a ' +
+        'deletion inside the platform by as long as that window, which is a property of having backups at all ' +
+        'rather than a policy choice we could make differently.',
     ],
     [
       'Sub-processors',
@@ -1166,12 +1353,22 @@ export function policies(): string {
     [
       'AI usage',
       '/policies',
-      'No agent mandate above PROPOSE. Governance decisions refuse AI authorship at the catalogue level. Costs are quoted before an action runs and charged against the wallet with a ledger entry.',
+      'Governance decisions refuse AI authorship at the catalogue level, so no agent can reach one. Almost every ' +
+        'agent is confined to PROPOSE; the few that may act unattended do so only inside a revocable, dated ' +
+        'envelope a person granted, naming the permitted commands, and none carries authority over money. Costs ' +
+        'are quoted before an action runs and charged against the wallet with a ledger entry.',
     ],
     [
       'Accessibility',
       '/policies',
-      'Semantic markup and keyboard focus are in place. Neither has been audited against WCAG, and we will not claim conformance we have not tested.',
+      'A WCAG 2.2 AA audit has been run against the signed-in console in a real browser, and what it found was ' +
+        'fixed: three text colours that failed contrast on the surfaces they were used on, missing landmark ' +
+        'regions, nineteen decorative icons that announced themselves, and a heading outline that skipped a level ' +
+        'across 254 card titles. It reports clean on language, one h1 per view, control and input labelling, table ' +
+        'headers, target size and a uniform focus state. That is not a conformance statement and we will not call ' +
+        'it one: the audit is automated, at one viewport, on the console — it does not cover these marketing ' +
+        'pages, keyboard traps, screen-reader announcement order, reflow at 320 pixels, or the cognitive criteria. ' +
+        'What is true is that the failures an automated check can find have been found and fixed.',
     ],
   ];
 
@@ -1180,7 +1377,7 @@ export function policies(): string {
       title: 'All policies',
       description: 'Every policy in one place, including the ones that say what has not been done.',
       path: '/policies',
-      updated: UPDATED,
+      updated: UPDATED.policies,
     },
     `<p>
       Everything that governs how the platform is run and used. Where a policy describes something not yet built, it
@@ -1403,7 +1600,7 @@ export type DemoInput = {
  * directions: nobody browsing the site ever reaches `/app`, so the strongest
  * thing here — a seeded programme carried concept to operations that anybody
  * can walk through — was behind a login; and every real customer signing in had
- * to scroll past twelve fictional people to reach the form.
+ * to scroll past a screenful of fictional people to reach the form.
  *
  * A page rather than a section of the landing page, because it is a link
  * somebody sends: into an email, a deck, a post. Not folded into
@@ -1580,9 +1777,12 @@ ${
       commissioning, handover, operations. Nothing in it is a mock-up — every figure on every screen is computed from
       the same event chain a paying customer's would be, across ${f.ledgerEvents} event types and ${f.routes} routes.
     </p>
+    <!-- The count is the list's own length, because it was once a word typed
+         into prose beside the very list that disproves it. -->
     <p>
-      Twelve identities on the same programme, described here by what each one will put in front of you rather than by
-      its role code, because a role code only means something once you have already seen the product.
+      ${input.seeded.length} identities on the same programme, described here by what each one will put in front of
+      you rather than by its role code, because a role code only means something once you have already seen the
+      product.
     </p>
     <div class="cards g3">
       ${input.seeded.map(identityCard).join('')}
@@ -1750,7 +1950,9 @@ export function exposure(position?: ExposurePosition): string {
     </ul>
 
     <div class="cta-row">
-      <a class="btn lg" href="/demo">See it computed on a live £17.6M job</a>
+      <a class="btn lg" href="/demo">See it computed on a live ${esc(
+        abbreviateMoney(DEMO_TENANCY.contractValueMinor, 'GBP'),
+      )} job</a>
       <a class="btn lg ghost" href="/get-started">Start free</a>
     </div>
   </div>

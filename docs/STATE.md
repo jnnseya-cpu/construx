@@ -15,9 +15,9 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,115 passing, 0 failing, 0 skipped, across 282 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,130 passing, 0 failing, 0 skipped, across 283 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 317 TypeScript files, 205,064 lines |
+| Backend | 317 TypeScript files, 205,483 lines |
 | Application | 78 ES modules, 46,652 lines (including a service worker) |
 | API routes | 1,119 — 768 writes, 351 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
@@ -26,7 +26,7 @@ and claims of completion that did not hold.
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
-Counted from the tree on 5 September 2026 (`npm test`, `wc`, and the
+Counted from the tree on 6 September 2026 (`npm test`, `wc`, and the
 `ROUTES`, `EVENT_TYPES`, `ENTITY_ACCESS` and `AGENTS` tables at import). The
 figures drift as the work below lands; the Blueprint screen counts the same
 tables from the running process and is the live figure.
@@ -18227,3 +18227,154 @@ state:
 exit guarantee — the reader has just been told what the platform declines to do,
 and who decided that is the next question. It leads with the failure and keeps
 the CV to one line, because an "about us" written in adjectives answers nothing.
+
+---
+
+## The public site, audited against the product it describes
+
+`site/pages.ts` opens by stating the rule: every number on the marketing pages
+is read from the thing it describes, because "marketing figures that drift from
+the product are the most common way a site starts lying, and they drift silently
+because nobody tests prose". The rule held for the figures that were derived and
+did nothing for the ones that were not. Every public page was read against the
+code; this is what that found and what was done about it.
+
+### The claim in the Terms of Service that the code had stopped honouring
+
+Four pages and **section 5 of the Terms** said no AI agent holds a mandate above
+`PROPOSE`. Two of the 81 agents carry `maxUnattended: 'ACT'` — `AGT-ITT-REGISTER`,
+which files a tender return register off a reading the platform already holds,
+and `CX-PLATFORM-HEALTH`, which says the platform itself is unwell. Both are
+deliberate and both are recorded here. The site was not.
+
+This is a different class of defect from a stale figure on a landing page,
+because it sat in a document a customer contracts on.
+
+What replaced it is stronger for being true, and the counts come from the
+registry so the day a third ACT ceiling is granted the page says three:
+
+- Almost the whole fleet can only propose.
+- The two that may act do so only inside an **envelope** naming the exact
+  commands, granted by a person holding governance authority, carrying an end
+  date, revocable, and recorded on the chain. Declaring `ACT` confers nothing.
+- Both envelopes carry a **value ceiling of zero**, and `sitefacts.test.ts`
+  fails if that stops being true while the pages still say it.
+- No envelope may contain a command the catalogue closes to AI, so a governance
+  decision is a state no agent can reach whatever anybody grants it.
+
+### Four figures that had drifted
+
+| Claim | Truth | Where |
+|---|---|---|
+| The demonstration is a **£17.6M** job — in a button, three times | The seed builds it at **£18.5M** | landing hero, two CTAs, exposure CTA |
+| "Application 14 goes in at £1.42M", stated to run on the seeded project | The seed builds three cycles; there is no application 14 and neither figure exists | landing money section |
+| "**Twelve** identities on the same programme" | Thirteen, beside the list that renders them | `/demo` |
+| Hero panel "drawn to the shape of the real seeded project" | Its margin, delay and progress figures appear nowhere in the seed | landing |
+
+The contract value, the sector and the city now come from `DEMO_TENANCY`, which
+the seed itself builds the project from, through `abbreviateMoney`. The identity
+count is the list's own length. The money section carries the seeded third
+cycle's real figures — applied £2,248,650, certified £2,129,000, £119,650
+withheld for handrail terminations not to detail and dewatering rates not agreed
+— which is a better story than the invented one precisely because a reader can
+open the cycle and check it.
+
+The hero panel's commercial and programme figures are emergent from a full
+seeded run rather than constants a page render can source, so they stay
+illustrative and the panel now says so in a caption outside its `aria-hidden`
+wrapper. The alternative — copying literals off one run — is the defect that
+produced this section.
+
+**One thing the test caught that the audit did not.** The first version of these
+fixes explained each drift in an *HTML* comment. An HTML comment explaining a
+wrong figure ships the wrong figure to every reader who views source, so the
+test that forbids `£17.6M` on the page failed on the explanation of why it was
+removed. Those notes are TypeScript comments now.
+
+### The footer asserted a state nothing could check
+
+`All systems operational`, on every page, whatever the process was doing — on
+the same site whose own copy says a status page that always reads operational
+because it is hard-coded is worse than no status page. The footer is rendered by
+every page and has no platform to ask. The link stays and now says what it is;
+the state is asserted only on `/status`, which reads the running process.
+
+### Three legal pages sharing one date
+
+`UPDATED` was a single constant. The Terms had been rewritten twice since it was
+last moved and the policy list had gained Cancellation and Refunds — so both
+were misdated, and bumping the constant for either would have restamped the
+Privacy Policy as revised on a day nothing in it changed. Each document now
+carries its own date.
+
+### What was true and unpublished
+
+- **Seats.** The strongest commercial answer this platform has — participants
+  free, one person one seat, an external Controller admitted on their own
+  organisation's licence, a Project Controller Pass only where the host chooses
+  — existed only in Terms section 3, which nobody reads before buying. It is now
+  a landing section and a pricing block, with the Controller/participant split
+  counted off the permission matrix rather than stated, so the page cannot
+  advertise a division the billing engine does not charge.
+- **The multiplier.** Terms section 5 charged "at the published multiplier"
+  while nothing published it. `/get-started` now states it and the subscription
+  allowance percentage, both read from config.
+- **Sub-processors.** The disclosure named two of nine. It now names the payment
+  processor and what card metadata is kept (never the number), object storage,
+  the file signature scanner, the shared cache, the telemetry collector and the
+  heartbeat and alert channels, each with what it receives — and says that
+  anything not configured on a deployment receives nothing.
+- **What we hold.** Extended to the home organisation and access basis for an
+  invited person, and to the security records that accumulate against an
+  identity: bound devices, passkeys and authenticators, risk assessments and
+  failed-attempt counts.
+- **Accessibility.** The policy said neither semantic markup nor keyboard focus
+  had been audited. The WCAG 2.2 AA audit had been run and its failures fixed.
+  The policy now says what was measured, what was fixed and — at the same length
+  — what is still not claimed.
+- **Durability and on-call.** How it works stopped at the Postgres follower. It
+  now covers journal snapshots, off-host backup with a per-file manifest, the
+  restore drill, the dead man's switch heartbeat and the named on-call rota,
+  while still publishing no uptime percentage.
+- **Developers.** Passkeys, device binding, risk-based step-up, shared lockouts
+  and per-purpose signing keys; API keys, sandbox and live, webhooks, the change
+  feed and the batch contract; the signature scanner and evidence encryption at
+  rest.
+- **"No card, no call"** sat on the same page as "first month paid before the
+  account opens". The standfirst now says which is which.
+- **The enterprise contact card** asked for an identity count, which is not what
+  an agreement is sized on any more.
+
+### Findability
+
+`/verify-document` — the one page whose entire audience arrives from outside,
+linked from every page footer and every issued document — was in no sitemap,
+because the sitemap was built from `SITE_PAGES` and that list drives the
+navigation. Public pages outside the navigation are now a named list of their
+own.
+
+### The site's own sweep
+
+`seoSweep` scored **50/100, WEAK** before this work and **62** after, with every
+check the repository controls now passing. The two blog notes written for it —
+the seat model, and this audit — cleared the freshness check, which had been
+failing at 16 days against a 14-day window.
+
+The four that still fail are operator actions on a live deployment, not code:
+five empty landing image slots (Company Profile), and topic coverage, keyword
+coverage and internal linking, which the marketing library generator on the
+SEO & Content screen closes by publishing a post per topic.
+
+### What guards it now
+
+`backend/tests/sitefacts.test.ts` seeds the demonstration project and asserts
+the pages and the record agree: the contract value, the sector and city, the
+identity count, the third payment cycle's three figures, the agent counts and
+their zero value ceiling, that no page claims the fleet is capped at `PROPOSE`,
+that the multiplier the Terms refer to is published, that each legal document
+carries its own date, that the footer asserts no platform state, and that
+`/verify-document` is in the sitemap.
+
+Thirteen tests, and the reason they are worth their runtime is the Terms: a
+stale figure on a landing page is embarrassing, and the same drift inside a
+contractual term is not.

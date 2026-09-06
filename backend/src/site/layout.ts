@@ -190,6 +190,20 @@ function header(current: string): string {
 </header>`;
 }
 
+/**
+ * The site footer.
+ *
+ * Its status line used to assert that every system was operational, on every
+ * page, whatever the process was doing. The footer is rendered by every page
+ * and has no platform to ask, so the sentence was a constant — it would have
+ * gone on saying so straight through an outage, on the same site whose own
+ * copy says a status page that always reads operational because it is
+ * hard-coded is worse than no status page. It was the one claim here that
+ * nothing could make true.
+ *
+ * The link stays where it was and now says what it is. The state is asserted
+ * on `/status`, which reads the running process.
+ */
 function footer(): string {
   const groups = ['Product', 'Company', 'Legal'] as const;
   const columns = groups
@@ -208,7 +222,7 @@ function footer(): string {
       <div class="foot-brand">
         <a class="mark" href="/" aria-label="CONSTRUX home"><span>CONSTRU<span class="x">X</span></span></a>
         <p>The record of how an asset came to exist — governed, evidenced and verifiable from concept to thirty-year operation.</p>
-        <p class="foot-status"><a href="/status"><span class="dot"></span> All systems operational</a></p>
+        <p class="foot-status"><a href="/status"><span class="dot"></span> Platform status, read live</a></p>
       </div>
       ${columns}
       ${contactColumn(business)}

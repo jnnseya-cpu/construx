@@ -116,6 +116,44 @@ export const POSTS: Post[] = [
       'It now reads the environment fresh, and the test drives both sides of it.',
     ],
   },
+  {
+    slug: 'every-invitation-bought-a-seat',
+    title: 'Every invitation bought a seat, including the ones that should not have',
+    standfirst:
+      'A construction project is thirty companies. Charging a seat for each person invited onto one made the honest answer to "who should we put on this" be "as few as we can afford" — which puts holes in the record exactly where the work happens.',
+    date: '2026-09-05',
+    tag: 'Engineering',
+    body: [
+      'A project invitation created a paid identity. That is the ordinary way this is built, and on a construction project it is wrong in a way that damages the thing the platform exists to produce.',
+      'The arithmetic is unforgiving. A main contractor running a mid-sized job has a client, a client\'s representative, a designer, a principal designer, four or five specialist subcontractors and a supply chain behind each of those. Two hundred people is unremarkable. Charging for every one of them means the person deciding who gets an account is choosing between the budget and the completeness of the record — and the record loses, every time, because the budget is this month and the record matters at adjudication in two years.',
+      'So the fix was not a discount. It was to separate three things the system had been treating as one: who a person <em>is</em>, what their organisation <em>pays for</em>, and which projects they have been <em>invited onto</em>.',
+      'A seat now attaches to authority rather than to access. Of the twenty roles the platform grants, ten hold Controller authority — they approve money, baselines or contracts, administer people, or run the business. The other ten are participants: site, quality, design, supervision, supply. A participant consumes no seat at all, internal or external. The site manager filing a daily diary and the subcontractor closing a snag are the people whose records make the <b>golden thread</b> worth having, and they are now free to add.',
+      'The harder half is the Controller who does not work for you. A quantity surveyor invited from the client\'s side already holds a Controller licence — their own firm pays for it. Charging you again for the same person is charging twice for one seat, and it is the specific thing that makes cross-organisation working expensive enough that people avoid it.',
+      'Licence resolution therefore looks outward before it looks at your subscription: the person\'s own organisation first, then any company in their group, then a pass you chose to buy, then nothing. Where the answer is nothing, the platform does not refuse the invitation and does not quietly bill you. It admits the person as a participant, withholds the Controller roles, and says which licence would open them. Buying a Project Controller Pass is then a decision somebody takes, for one person, on one project, for a period they set.',
+      'The rule underneath all of it is one sentence, and it is worth stating plainly because the code enforces it in the seat count rather than in a policy document: <b>a project invitation must never add somebody to the host organisation\'s paid seats.</b>',
+      'AI spend needed the same treatment and did not have it. A guest running an engine was spending somebody\'s money and the platform had one wallet to reach for. Now an execution resolves to an approved sponsor — the guest\'s own organisation under a limit it consented to, or the host under a one-time authorisation it gave — and where neither exists the work is refused rather than charged to whoever happened to be nearest. No automatic billing, and no duplicate.',
+      'What this cost to build was mostly the offboarding, which is the half nobody demonstrates: a membership that expires, a licence that lapses when the guest\'s own firm stops paying, roles that come back when it resumes, open AI holds released when access ends, and an external identity deactivated when its last project membership goes. An access model that cannot be ended cleanly is not an access model, it is an accumulation.',
+    ],
+  },
+  {
+    slug: 'the-number-the-landing-page-could-not-check',
+    title: 'The number on our own landing page that nothing could check',
+    standfirst:
+      'Our marketing site reads its counts from the running product on purpose. The figures it did not read had drifted: a contract value out by nearly a million, an identity count off by one, and a governance claim in the Terms of Service that the code had stopped honouring.',
+    date: '2026-09-06',
+    tag: 'Engineering',
+    body: [
+      'This site has a rule about itself: every count on it is read from the thing it describes rather than typed into the copy. Route totals, the <b>event catalogue</b> size, notification counts. The reasoning is that prose is not tested, so a figure typed into a sentence drifts silently and nobody finds out until a customer does.',
+      'The rule was right and the coverage was not. An audit of every public page against the code found four figures that had drifted, and the worst of them was in a contract.',
+      'The <b>demonstration project</b> was advertised as a live £17.6M job, in a button, twice on the landing page and once more on the exposure calculator. The seed builds it at £18.5M. A visitor pressing "walk a live £17.6M job" arrived on a project showing a different number — which is the shortest route there is from marketing copy to a reader who stops believing the rest of the page.',
+      'The same page introduced its console panel as "drawn to the shape of the real seeded project rather than an invented dashboard with rounder numbers", and then carried a forecast margin, a delay exposure and four progress bars that appear nowhere in the seed. Below it, a payment scenario — application 14 at £1.42M against a valuation of £1.19M — was stated to run on the demonstration project. There is no application 14. The seed builds three cycles, and the third is a genuinely better story: applied £2,248,650, certified £2,129,000, £119,650 withheld for handrail terminations not to detail and dewatering rates not agreed, with a valid <b>pay less notice</b> served inside the window. It is more convincing than the invented one precisely because you can open it and read it.',
+      'The demonstration page said twelve identities beside a list of thirteen. That one had a date: a Construction Manager was added to the seed months ago and the sentence beside the list was not.',
+      'The serious one was not a number. Four pages and the Terms of Service said no AI agent in the system holds a mandate above <code>PROPOSE</code>. That stopped being true when two of the eighty-one agents were given an ACT ceiling — one that files a tender return register off a reading the platform already holds, one that says the platform itself is unwell. Both were deliberate, both are documented, and neither can reach a governance event, because the catalogue refuses AI authorship on those outright. But "no agent holds a mandate above PROPOSE" in a document a customer contracts on is a different kind of wrong from a stale figure on a marketing page.',
+      'What the true version says is stronger, which is usually how this goes. Almost the whole fleet can only propose. The two that may act do so only inside an envelope naming the exact commands, granted by a person holding governance authority, carrying an end date, revocable, recorded on the chain — and both carry a value ceiling of zero. That is a better sentence than the one it replaces, and it has the advantage of being true.',
+      'The fix in every case was the same shape as the original rule: read the figure from the thing it describes. The contract value comes off the seed through the platform\'s own money formatter. The identity count is the list\'s own length. The agent counts are computed from the registry, so the day somebody grants a third ACT ceiling the page says three. And the payment figures are pinned by a test that seeds the demonstration project and asserts the page and the record agree.',
+      'The lesson is not that we were careless with the copy. It is that a page which derives nine of its figures and types four of them will drift in exactly those four, and nobody will look, because the page has a reputation for being derived.',
+    ],
+  },
 ];
 
 /**

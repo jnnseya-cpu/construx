@@ -66,6 +66,24 @@ export const DEMO_TENANCY = {
   projectName: 'Ashworth Water Treatment Works — Phase 2',
   /** The identity the console signs in as when it bootstraps itself. */
   primaryEmail: 'pm@meridian.example',
+  /**
+   * The flagship project's contract value, and the third reader is the reason
+   * it is here.
+   *
+   * The public landing page advertises the demonstration by its size — "walk a
+   * live job of this value" — and had the figure typed into the copy as
+   * £17.6M while the seed created the project at £18.5M. Nobody noticed,
+   * because prose is not tested: a visitor pressed a button promising one
+   * number and arrived on a project showing another, which is precisely the
+   * drift every other figure on that page is read from the product to avoid.
+   *
+   * One value, formatted by the platform's own money formatter wherever it is
+   * shown.
+   */
+  contractValueMinor: 1_850_000_000,
+  /** Where and what, for the same copy. Sector is the project's own classification. */
+  city: 'Manchester',
+  sector: 'UTILITIES',
 } as const;
 
 export type SeedResult = {
@@ -1819,10 +1837,10 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     portfolioId,
     programmeId,
     name: DEMO_TENANCY.projectName,
-    sectorType: 'UTILITIES',
+    sectorType: DEMO_TENANCY.sector,
     assetType: 'Water treatment facility',
-    location: { continentCode: 'EU', countryCode: 'GB', city: 'Manchester' },
-    contractValueMinor: 1_850_000_000,
+    location: { continentCode: 'EU', countryCode: 'GB', city: DEMO_TENANCY.city },
+    contractValueMinor: DEMO_TENANCY.contractValueMinor,
     currency: 'GBP',
     plannedStart: '2026-04-01',
     plannedCompletion: '2028-09-30',

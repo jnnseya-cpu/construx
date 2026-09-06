@@ -9,6 +9,7 @@ import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { engineName } from '../src/site/article.ts';
 import * as blog from '../src/site/blog.ts';
+import { POSTS } from '../src/site/posts.ts';
 import * as visibility from '../src/site/visibility.ts';
 import { resetViews } from '../src/site/views.ts';
 import { throwsCode } from './helpers.ts';
@@ -141,13 +142,30 @@ describe('the library and the coverage it closes', () => {
   });
 });
 
+/**
+ * A clock on which the compiled notes have just gone stale.
+ *
+ * This was a fixed date — `2026-09-05` — chosen so the freshness verdict did
+ * not depend on when the suite ran. That is the right instinct and the wrong
+ * constant: it encoded "the newest compiled note is older than that day",
+ * which stopped being true the moment two notes were written, and the suite
+ * then failed on a site that had become *more* current.
+ *
+ * Derived from the notes themselves, it is stale by exactly one day past the
+ * window however many are added and whenever they are dated.
+ */
+function justStale(): Date {
+  const newest = POSTS.map((post) => post.date).sort().at(-1)!;
+  const at = new Date(`${newest}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + visibility.FRESHNESS_DAYS + 1);
+  return at;
+}
+
 describe('the sweep reads the served site', () => {
   it('finds a fresh deployment stale and uncovered, and says exactly what is missing', () => {
     resetViews();
     const platform = new Platform();
-    // A fixed day, so the freshness verdict on the compiled notes does not
-    // depend on when this suite happens to run.
-    const findings = visibility.seoSweep(platform, new Date('2026-09-05T12:00:00Z'));
+    const findings = visibility.seoSweep(platform, justStale());
     const byCheck = new Map(findings.map((finding) => [finding.check, finding]));
     assert.equal(findings.reduce((sum, finding) => sum + finding.weight, 0), 100, 'the weights make a hundred');
 
@@ -159,7 +177,7 @@ describe('the sweep reads the served site', () => {
     assert.equal(byCheck.get('hreflang')!.ok, true, byCheck.get('hreflang')!.detail);
 
     assert.equal(byCheck.get('Freshness')!.ok, false);
-    assert.match(byCheck.get('Freshness')!.detail, /15 days ago/);
+    assert.match(byCheck.get('Freshness')!.detail, new RegExp(`${visibility.FRESHNESS_DAYS + 1} days ago`));
     assert.equal(byCheck.get('Topic coverage')!.ok, false);
     assert.match(byCheck.get('Topic coverage')!.detail, /0 of 8/);
     assert.equal(byCheck.get('Keyword coverage')!.ok, false);
@@ -198,7 +216,7 @@ describe('the sweep reads the served site', () => {
 
   it('recommends the door that fixes each failure, and proposes rather than acts', () => {
     const platform = new Platform();
-    const position = visibility.visibilityPosition(platform, new Date('2026-09-05T12:00:00Z'));
+    const position = visibility.visibilityPosition(platform, justStale());
     const titles = position.recommendations.map((item) => item.title);
     assert.ok(titles.includes('Cover every topic'));
     assert.ok(titles.includes('Publish something this week'));

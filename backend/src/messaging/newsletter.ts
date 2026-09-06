@@ -144,17 +144,25 @@ export const POSTS_PER_ISSUE = 3;
  * has no address to link to.
  */
 export function latestPosts(platform: Platform, limit = POSTS_PER_ISSUE): NonNullable<CampaignCopy['posts']> {
+  // Ordered on the fullest instant each source knows, not on the date alone.
+  //
+  // A compiled note carries a date and nothing finer, so it sorts as that day's
+  // midnight; a post published from the console carries the moment it went
+  // live. On a date they share — which is the ordinary case the morning
+  // somebody publishes one — comparing dates alone left the tie to array order,
+  // and array order put the compiled note first. The issue then led with a note
+  // written weeks ago over the post published an hour before it was sent.
   const entries = [
-    ...POSTS.map((post) => ({ title: post.title, standfirst: post.standfirst, slug: post.slug, date: post.date })),
+    ...POSTS.map((post) => ({ title: post.title, standfirst: post.standfirst, slug: post.slug, at: `${post.date}T00:00:00.000Z` })),
     ...(platform.ledger ? publishedPosts(platform) : []).map((post) => ({
       title: post.title,
       standfirst: post.standfirst,
       slug: post.slug,
-      date: (post.publishedAt ?? '').slice(0, 10),
+      at: post.publishedAt ?? '',
     })),
   ];
   return entries
-    .sort((a, b) => b.date.localeCompare(a.date))
+    .sort((a, b) => b.at.localeCompare(a.at))
     .slice(0, limit)
     .map((post) => ({ title: post.title, standfirst: post.standfirst, url: postUrl(post.slug) }));
 }

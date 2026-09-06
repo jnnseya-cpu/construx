@@ -331,6 +331,17 @@ img, svg { max-width: 100%; }
   filter: blur(18px);
 }
 
+/* What the panel above it is. The panel carries the demonstration project's
+   real name and value and an illustration of everything else, and a reader
+   who cannot tell which is which is a reader who discovers it by pressing the
+   button — so the caption says so before they do. Outside the panel's
+   aria-hidden wrapper on purpose: it is the one part of that block a screen
+   reader should reach. */
+.panel-cap {
+  margin: 40px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-3); max-width: 46ch;
+}
+.panel-cap a { color: var(--text-2); }
+
 .panel-top {
   display: flex; align-items: center; gap: 8px;
   padding: 11px 14px; border-bottom: 1px solid var(--line);
@@ -910,7 +921,21 @@ img, svg { max-width: 100%; }
    introducing a fourth surface treatment — the palette already says everything
    these need, and a new colour here would be a new colour that means nothing. */
 
-.money, .refusal, .exit { padding: 76px 0; border-top: 1px solid var(--line); }
+.money, .refusal, .exit, .seats { padding: 76px 0; border-top: 1px solid var(--line); }
+
+/* The seat rules. A numbered list would say these happen in an order; they are
+   four independent rules, so they are a plain list with the rule in bold and
+   the consequence after it — the same shape the exit list uses, because they
+   are the same kind of claim. */
+.seat-rules { margin-top: 26px; list-style: none; display: grid; gap: 14px; }
+.seat-rules li {
+  padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .022), transparent);
+  color: var(--text-2); font-size: 14.5px; line-height: 1.6;
+}
+.seat-rules b { color: var(--text); }
+.seat-note { margin-top: 18px; font-size: 14px; color: var(--text-3); max-width: 66ch; }
+.seats .cta-row { margin-top: 24px; }
 
 /* The scene, then the verdict. Set apart from ordinary body copy because the
    whole argument of the section is that these two sentences are the product. */

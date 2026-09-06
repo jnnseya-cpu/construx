@@ -24,6 +24,23 @@ import type { Platform } from '../platform.ts';
  * real person.
  */
 
+/**
+ * Public pages the navigation does not offer, and which a sitemap built only
+ * from `SITE_PAGES` therefore left invisible.
+ *
+ * `/verify-document` is the strongest of them. It is the page a stranger
+ * holding a document from this platform uses to check it — a client's
+ * solicitor, an adjudicator, an insurer — with no account and no relationship
+ * to the customer. It is linked from the footer of every page and from every
+ * document the platform issues, and it was in no sitemap at all: the one page
+ * whose whole audience arrives from outside was the one page a search engine
+ * was never told about.
+ *
+ * Not added to `SITE_PAGES` instead, because that list drives the header and
+ * the footer columns, and a verification tool is not a section of the site.
+ */
+const UNLISTED = ['/verify-document'] as const;
+
 /** Paths a crawler should never spend its budget on, or must never follow. */
 const DISALLOW = [
   '/app',
@@ -48,10 +65,10 @@ Sitemap: ${absolute('/sitemap.xml')}
  * stops re-reading the pages that genuinely changed.
  */
 export function sitemap(platform?: Platform): string {
-  // Posts published through the console, alongside the six written into the
+  // Posts published through the console, alongside those written into the
   // build. Taking the platform is what stops this becoming the lie the comment
   // above warns about: a post can now be published without a deploy, and a
-  // sitemap that only knew about the compiled six would leave every one of them
+  // sitemap that only knew about the compiled ones would leave every one of them
   // findable by nothing.
   //
   // Optional, so a caller with no platform to hand still gets the static site
@@ -68,6 +85,7 @@ export function sitemap(platform?: Platform): string {
     // The landing page is the site's root and is not in SITE_PAGES, which lists
     // the pages the navigation offers.
     { path: '/', priority: '1.0' },
+    ...UNLISTED.map((path) => ({ path, priority: '0.7' })),
     ...SITE_PAGES.map((page) => ({ path: page.path, priority: '0.7' })),
     ...POST_PAGES.map((post) => ({ path: post.path, priority: '0.6' })),
     ...published.map((post) => ({ path: `/blog/${post.slug}`, priority: '0.6' })),

@@ -1,6 +1,12 @@
 import { esc } from '../messaging/render.ts';
 import { EVENT_TYPES } from '../goldenthread/eventTypes.ts';
 import { ROUTES } from '../api/routes.ts';
+import { abbreviateMoney } from '../domain/locale.ts';
+import { AGENTS } from '../agents/registry.ts';
+import { isControllerRole } from '../identity/licence.ts';
+import { PERMISSION_MATRIX, type Role } from '../identity/roles.ts';
+import { CONTROLLER_PASS, UNCHARGED_ROLES } from '../billing/seats.ts';
+import { DEMO_TENANCY } from '../seed.ts';
 import { page } from './layout.ts';
 import { MEDIA_SLOTS, slotFile } from './media.ts';
 
@@ -81,6 +87,46 @@ function figure(id: string): string {
 export function landing(): string {
   const routes = ROUTES.length;
   const ledgerEvents = EVENT_TYPES.length;
+  /*
+   * The demonstration's own size, formatted by the platform's own money
+   * formatter.
+   *
+   * It was a literal here, and a stale one, against a project the seed creates
+   * at a different value — a number a visitor checks by pressing the button
+   * beside it, which is the shortest possible route from marketing copy to a
+   * reader who stops believing the rest of the page.
+   *
+   * The hero panel below carries this and the project's sector and city from
+   * the same place. Its commercial and programme figures are *not* sourced:
+   * they are emergent from a full seeded run rather than constants this page
+   * can read, and a literal copied off one run drifts the moment the seed's
+   * cost data changes. So the panel is captioned as the illustration it is,
+   * underneath, outside its aria-hidden wrapper.
+   *
+   * These notes are TypeScript comments rather than HTML ones on purpose. An
+   * HTML comment explaining a wrong figure ships the wrong figure to every
+   * reader who views source, which is how `sitefacts.test.ts` first failed.
+   */
+  const demoValue = abbreviateMoney(DEMO_TENANCY.contractValueMinor, 'GBP');
+
+  // Which roles a package's seats are actually for, counted off the permission
+  // matrix rather than stated. A role is a Controller because it holds
+  // approval, administration or governance authority somewhere on that matrix
+  // — so this split cannot disagree with what the billing engine charges.
+  const roles = Object.keys(PERMISSION_MATRIX) as Role[];
+  const chargeable = roles.filter((role) => !UNCHARGED_ROLES.includes(role));
+  const controllers = chargeable.filter(isControllerRole).length;
+  const participants = chargeable.length - controllers;
+  const passPrice = abbreviateMoney(CONTROLLER_PASS.monthlyPriceMinor, 'GBP');
+
+  // The fleet, and how much of it may act. This page said "the whole fleet is
+  // capped at propose" long after two agents were given an ACT ceiling — a
+  // governance claim, on the page that makes governance the argument, that the
+  // registry beside it disproved. Counted here so it cannot say that again,
+  // and it is a better sentence for being true: 81 agents is the number this
+  // site never mentioned at all.
+  const agentCount = AGENTS.length;
+  const actEligible = AGENTS.filter((agent) => agent.mandate?.maxUnattended === 'ACT').length;
 
   return page(
     {
@@ -167,7 +213,7 @@ export function landing(): string {
         never shows it.
       -->
       <div class="cta-row">
-        <a class="btn lg" href="/demo">Walk a live £17.6M job <span aria-hidden="true">→</span></a>
+        <a class="btn lg" href="/demo">Walk a live ${esc(demoValue)} job <span aria-hidden="true">→</span></a>
         <a class="btn lg ghost" href="/exposure">What one missed notice costs you</a>
       </div>
       <p class="cta-note">
@@ -196,8 +242,6 @@ export function landing(): string {
       </p>
     </div>
 
-    <!-- The console, drawn to the shape of the real seeded project rather than
-         an invented dashboard with rounder numbers. -->
     <div class="hero-panel" aria-hidden="true">
       <div class="panel">
         <!--
@@ -213,7 +257,9 @@ export function landing(): string {
         </div>
         <div class="panel-body">
           <div class="kpis">
-            <div class="kpi"><div class="k">Contract value</div><div class="val accent">£17.6M</div><div class="d">infrastructure · Manchester</div></div>
+            <div class="kpi"><div class="k">Contract value</div><div class="val accent">${esc(demoValue)}</div><div class="d">${esc(
+              DEMO_TENANCY.sector.toLowerCase(),
+            )} · ${esc(DEMO_TENANCY.city)}</div></div>
             <div class="kpi"><div class="k">Forecast margin</div><div class="val warn">5.91%</div><div class="d">2.09 pts eroded vs tender</div></div>
             <div class="kpi"><div class="k">Delay exposure</div><div class="val bad">48.6d</div><div class="d">critical · recovery costed</div></div>
           </div>
@@ -244,6 +290,11 @@ export function landing(): string {
       </div>
       <div class="panel-shadow"></div>
     </div>
+    <p class="panel-cap">
+      The console's shape, drawn rather than screenshotted, on the demonstration project's real name and value. The
+      commercial and programme figures in it are an illustration — <a href="/demo">the seeded programme itself</a> is
+      one click away and every figure on it is computed from its own event chain.
+    </p>
   </div>
 
   <!--
@@ -284,21 +335,77 @@ ${figure('command-centre')}
     <div class="statute-mark">HGCRA 1996 · s.111</div>
     <h2 class="section-h">The notice nobody was counting</h2>
     <p class="money-scene">
-      Application 14 goes in at <b>£1.42M</b>. The valuation says <b>£1.19M</b>. The client's pay less notice is served
-      two days after the window shuts.
+      On the demonstration project, application 3 goes in at <b>£2,248,650</b>. The valuation withholds
+      <b>£119,650</b> — handrail terminations not to detail, dewatering rates not agreed — and the pay less notice is
+      served inside the window. The notified sum is <b>£2,129,000</b>, and the reason is on the record.
     </p>
     <p class="money-verdict">
-      On that day the whole <b>£1.42M</b> became the notified sum and payable in full — whatever the valuation said.
-      The QS found out at the month-end review, three weeks later. <b>The platform computes it the day the window
-      closes</b>, names the notice that established the sum, and states what has to be served next.
+      Serve that same notice two days late and the whole <b>£2,248,650</b> becomes the notified sum, payable in full,
+      whatever the valuation said. The QS finds out at the month-end review, three weeks later. <b>The platform
+      computes it the day the window closes</b>, names the notice that established the sum, and states what has to be
+      served next.
     </p>
     <p class="money-note">
-      That scenario runs on the seeded demonstration project, not on a customer's job. Put your own turnover into
-      <a href="/exposure">the arithmetic</a> and it will tell you what one window is worth on your books — with no
-      industry average anywhere in it, because we have not got one and would not print one if we had.
+      Those are the seeded demonstration project's own figures, not a customer's job, and you can
+      <a href="/demo">open the cycle and read them</a>. Put your own turnover into <a href="/exposure">the
+      arithmetic</a> and it will tell you what one window is worth on your books — with no industry average anywhere
+      in it, because we have not got one and would not print one if we had.
     </p>
     <div class="cta-row">
       <a class="btn" href="/exposure">Work it out on my numbers</a>
+    </div>
+  </div>
+</section>
+
+<!--
+  The first objection anybody in this industry raises, answered before they
+  have to ask it.
+
+  A project is thirty companies and two hundred people. Every platform in this
+  market prices per user, so the honest answer to "who should we put on it"
+  becomes "as few as we can afford" — and the record then has holes in it
+  exactly where the work happened. That is not a pricing quibble, it is the
+  reason evidence platforms fail in this industry.
+
+  The figures are counted off the permission matrix and the seat catalogue, so
+  the page cannot claim a split the billing engine does not charge.
+-->
+<section class="seats">
+  <div class="wrap narrow">
+    <div class="statute-mark">One person · one seat · any number of projects</div>
+    <h2 class="section-h">Invite the whole job. Pay for the ${controllers} roles that decide.</h2>
+    <p class="section-lede">
+      Of the ${chargeable.length} roles this platform grants, ${controllers} hold authority — they approve money,
+      baselines and contracts, administer people, or run the business. Those are what a package's seats are.
+      The other ${participants} are participants, and a participant takes no seat at all.
+    </p>
+    <ul class="seat-rules">
+      <li>
+        <b>A project invitation never adds anybody to your paid seats.</b> Site, quality, design, supply and
+        supervision come on for nothing, whether they work for you or for one of your subcontractors.
+      </li>
+      <li>
+        <b>A Controller from another organisation arrives on their own licence.</b> If their firm — or any company in
+        their group — already pays for their seat, that seat travels with them onto your project. You are not charged
+        a second time for a person somebody else is already paying for.
+      </li>
+      <li>
+        <b>Where they hold no licence anywhere, you decide.</b> A ${esc(CONTROLLER_PASS.label)} opens Controller
+        authority for that person on that one project, for as long as you set, at ${esc(passPrice)} a month. It is a
+        purchase you make deliberately; nothing buys it for you.
+      </li>
+      <li>
+        <b>A regulator costs nothing, ever.</b> Building Safety Regulator access is an obligation the asset owner
+        carries, not a licence we sell — so it and the platform operator are the ${UNCHARGED_ROLES.length} roles that
+        consume no seat on any package.
+      </li>
+    </ul>
+    <p class="seat-note">
+      And the AI a guest runs is charged to whoever agreed to pay for it — their own organisation under a consented
+      monthly limit, or you, once, on an authorisation you gave. Never both, and never silently.
+    </p>
+    <div class="cta-row">
+      <a class="btn ghost" href="/get-started">What each package includes</a>
     </div>
   </div>
 </section>
@@ -351,9 +458,18 @@ ${figure('command-centre')}
       <article>
         <h3>No agent decides anything</h3>
         <p>
-          The whole fleet is capped at <b>propose</b>. Governance events are marked as closed to AI in the catalogue
-          itself, so a decision made by a model is not a permission that was withheld — it is a state the system cannot
-          reach.
+          Of ${agentCount} agents, ${actEligible} may ever act without being asked — and only inside an envelope a
+          person granted, with an end date, revocable, naming the exact commands. One files a tender return register;
+          the other says the platform is unwell. Both carry a value ceiling of <b>zero</b>. Every other agent can only
+          propose.
+        </p>
+      </article>
+      <article>
+        <h3>A decision is a state a model cannot reach</h3>
+        <p>
+          Governance events are marked closed to AI in the event catalogue itself, and an envelope naming one is
+          refused when somebody tries to grant it. So a decision taken by a model is not a permission that was
+          withheld — there is no path to it, whatever an agent or a future envelope attempts.
         </p>
       </article>
       <article>
@@ -546,7 +662,7 @@ ${figure('command-centre')}
     <h2>Start with a record you can defend</h2>
     <p>A trial governs, records and computes. No card, no call, no sales qualification step.</p>
     <div class="cta-row">
-      <a class="btn lg" href="/demo">Walk a live £17.6M job <span aria-hidden="true">→</span></a>
+      <a class="btn lg" href="/demo">Walk a live ${esc(demoValue)} job <span aria-hidden="true">→</span></a>
       <a class="btn lg ghost" href="/exposure">What it costs you</a>
       <a class="btn lg ghost" href="/get-started">Start free</a>
       <a class="btn lg ghost" href="/developers">Read the API</a>
