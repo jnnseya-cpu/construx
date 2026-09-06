@@ -2,8 +2,10 @@ import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type Role } from '../identity/roles.ts';
+import { accessClassOf, type AcuSponsorType } from '../identity/licence.ts';
 import { PACKAGES } from '../billing/seats.ts';
 import { purchasedSeats } from '../billing/subscription.ts';
+import { activateMembership, createMembership, endPendingMembership, holdsHostSeat, membershipOf, membershipsOf } from './membership.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -43,12 +45,22 @@ import type { Platform } from '../platform.ts';
  * Inviting a subcontractor's engineer onto a job is normal; making them an
  * administrator of the main contractor's platform is a takeover, and it is the
  * kind of thing that happens by picking the wrong item in a list.
+ *
+ * **An invitation never creates a paid seat on its own.** The seat rule above
+ * applies to the host's own Controllers, who take one of the package's seats
+ * exactly as they always did. Everybody else — a participant of any
+ * organisation, or a Controller from another company or from a company of
+ * the same group — is admitted on the licence they already hold, or held
+ * back until the host chooses to buy a pass or to reduce the roles. Which of
+ * those a person is, and whose licence covers them, is resolved when the
+ * invitation is sent and recorded on the `ProjectMembership` beside it; see
+ * `domain/membership.ts` and `identity/licence.ts`.
  */
 
 /** How long an invitation stands before it lapses and gives its seat back. */
 const INVITATION_TTL_DAYS = 14;
 
-export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'WITHDRAWN' | 'EXPIRED';
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'WITHDRAWN' | 'EXPIRED' | 'DECLINED';
 
 /**
  * Roles that may never be given to somebody outside the organisation.
@@ -87,12 +99,33 @@ export function worksOnProject(roles: readonly Role[]): boolean {
   );
 }
 
-/** Invitations still outstanding, which are holding seats. */
+/** Invitations still outstanding. */
 export function pendingInvitations(ctx: EngineContext, now = new Date()): Array<Record<string, unknown>> {
   return ctx.ledger
     .listByTenant(ctx.tenantId, 'ProjectInvitation')
     .map((record) => record.state)
     .filter((state) => state.status === 'PENDING' && String(state.expiresAt) > now.toISOString());
+}
+
+/**
+ * The outstanding invitations that are holding one of the package's seats:
+ * the host's own Controllers, and nobody else. Written before the membership
+ * existed, an invitation carries no class of its own; the membership beside
+ * it does, and an invitation older than that record is a home member's — the
+ * only kind there was — and holds a seat as it always did.
+ */
+export function seatHoldingInvitations(ledger: EngineContext['ledger'], tenantId: string, now = new Date()): Array<Record<string, unknown>> {
+  const memberships = new Map(
+    ledger.listByTenant(tenantId, 'ProjectMembership').map((record) => [String(record.state.invitationId), record.state as unknown as Parameters<typeof holdsHostSeat>[0]]),
+  );
+  return ledger
+    .listByTenant(tenantId, 'ProjectInvitation')
+    .map((record) => record.state)
+    .filter((state) => state.status === 'PENDING' && String(state.expiresAt) > now.toISOString())
+    .filter((state) => {
+      const membership = memberships.get(String(state.id));
+      return membership ? holdsHostSeat(membership) : true;
+    });
 }
 
 /**
@@ -121,9 +154,19 @@ export function inviteToProject(
      * which is what the supplier portal resolves them to their own firm by.
      */
     supplierId?: string;
+    /** When the appointment ends. Optional for the host's own people; an external appointment without one runs until revoked. */
+    expiresAt?: string;
+    /** Who the host proposes should pay for an external person's AI. Recorded as a proposal; nothing is funded until approved. */
+    acuSponsor?: AcuSponsorType;
   },
   now = new Date(),
-): { invitationId: string; expiresAt: string; seatsRemaining: number | null } {
+): {
+  invitationId: string;
+  membershipId: string;
+  expiresAt: string;
+  seatsRemaining: number | null;
+  licence: { accessClass: string; relationship: string; source: string; hostBillableSeat: boolean; reasonCode: string; withheldRoles: Role[] };
+} {
   // Read on project setup, so somebody who cannot see the project cannot staff
   // it. The narrower test — that they are actually working on it — follows.
   authorise(ctx, 'PROJECT_SETUP', 'R', { lifecyclePhase: currentPhase(ctx) });
@@ -192,41 +235,66 @@ export function inviteToProject(
   }
 
   // An invitation to somebody already here is a role change, and doing it this
-  // way would take a second seat for one person.
-  const existing = platform.users(ctx.tenantId).find((user) => user.email.toLowerCase() === input.email.trim().toLowerCase());
-  if (existing) {
+  // way would take a second seat for one person. The exception is an external
+  // person already on one of this organisation's projects: a second project
+  // is a second membership of the same identity, which is exactly what the
+  // one-person-many-projects rule needs.
+  const existing = platform.users(ctx.tenantId).find((user) => user.email.toLowerCase() === input.email.trim().toLowerCase() && !user.erasedAt);
+  if (existing && !existing.external) {
     throw new DomainError(
       'ALREADY_IN_TENANCY',
       `${input.email} already has an identity here. Change what they may do rather than inviting them again.`,
       409,
     );
   }
+  if (existing && !input.external) {
+    throw new DomainError(
+      'ALREADY_IN_TENANCY',
+      `${input.email} is here as an external member from ${existing.homeOrganisation ?? 'another organisation'}; invite them as external.`,
+      409,
+    );
+  }
+  if (existing && membershipsOf(platform, ctx.tenantId, ctx.projectId).some((membership) => membership.userId === existing.id && (membership.status === 'ACTIVE' || membership.status === 'PENDING' || membership.status === 'SUSPENDED'))) {
+    throw new DomainError('ALREADY_A_MEMBER', `${input.email} already holds a membership of this project. Change it rather than inviting them again.`, 409);
+  }
+
+  const invitationId = ulid();
+  const expiresAt = new Date(now.getTime() + INVITATION_TTL_DAYS * 86_400_000).toISOString();
 
   // --- the seat -------------------------------------------------------------
   //
   // Held now, not on acceptance. A cap that only bites when somebody clicks a
   // link means the business has already promised a place to a person outside
-  // it, and the refusal lands on the wrong person at the worst moment.
+  // it, and the refusal lands on the wrong person at the worst moment. Only a
+  // home Controller's invitation holds one: a participant takes no seat, and
+  // an external Controller brings a licence or waits for one.
+  const takesSeat = !input.external && accessClassOf(input.roles) === 'CONTROLLER';
   const subscription = platform.subscription(ctx.tenantId);
   const limit = subscription ? seatLimit(subscription.package, purchasedSeats(ctx.ledger, ctx.tenantId)) : null;
   let seatsRemaining: number | null = null;
 
   if (limit !== null && subscription) {
-    const taken = subscription.assignedIdentities.length + pendingInvitations(ctx, now).length;
-    if (taken >= limit) {
+    const taken = subscription.assignedIdentities.length + seatHoldingInvitations(ctx.ledger, ctx.tenantId, now).length;
+    if (takesSeat && taken >= limit) {
       throw new DomainError(
         'SEAT_LIMIT_REACHED',
-        `This package includes ${limit} identit${limit === 1 ? 'y' : 'ies'} and ${taken} ${taken === 1 ? 'is' : 'are'} ` +
-          'already taken or invited. Move package, or withdraw an invitation that is not going to be accepted.',
+        `This package includes ${limit} Controller seat${limit === 1 ? '' : 's'} and ${taken} ${taken === 1 ? 'is' : 'are'} ` +
+          'already taken or invited. Buy a seat on ACU & Billing, move package, or withdraw an invitation that is not going to be accepted.',
         409,
         [{ field: 'email', message: 'No seat is available for this person' }],
       );
     }
-    seatsRemaining = limit - taken - 1;
+    seatsRemaining = Math.max(0, limit - taken - (takesSeat ? 1 : 0));
   }
 
-  const invitationId = ulid();
-  const expiresAt = new Date(now.getTime() + INVITATION_TTL_DAYS * 86_400_000).toISOString();
+  // Who this person is to the host, and whose licence covers them: the
+  // membership beside the invitation, resolved once and recorded.
+  const { membership } = createMembership(
+    platform,
+    ctx,
+    { invitationId, name: input.name, email: input.email, roles: input.roles, external: input.external, organisation: input.organisation, because: input.because, expiresAt: input.expiresAt, acuSponsor: input.acuSponsor },
+    now,
+  );
 
   write(ctx, {
     eventType: 'PROJECT_INVITATION_SENT',
@@ -235,6 +303,7 @@ export function inviteToProject(
       id: invitationId,
       tenantId: ctx.tenantId,
       projectId: ctx.projectId,
+      membershipId: membership.id,
       name: input.name,
       email: input.email.trim().toLowerCase(),
       roles: input.roles,
@@ -242,6 +311,12 @@ export function inviteToProject(
       organisation: input.organisation?.trim(),
       because: input.because,
       ...(input.supplierId !== undefined ? { supplierId: input.supplierId, partyId: party } : {}),
+      relationship: membership.relationship,
+      accessClass: membership.accessClass,
+      licenceSource: membership.licence.source,
+      hostBillableSeat: membership.licence.hostBillableSeat,
+      withheldRoles: membership.withheldRoles,
+      appointmentEndsAt: membership.expiresAt,
       invitedBy: ctx.auth.actorId,
       invitedAt: now.toISOString(),
       expiresAt,
@@ -249,7 +324,20 @@ export function inviteToProject(
     },
   });
 
-  return { invitationId, expiresAt, seatsRemaining };
+  return {
+    invitationId,
+    membershipId: membership.id,
+    expiresAt,
+    seatsRemaining,
+    licence: {
+      accessClass: membership.accessClass,
+      relationship: membership.relationship,
+      source: membership.licence.source,
+      hostBillableSeat: membership.licence.hostBillableSeat,
+      reasonCode: membership.licence.reasonCode,
+      withheldRoles: membership.withheldRoles,
+    },
+  };
 }
 
 /** Take an invitation back, returning the seat it was holding. */
@@ -257,6 +345,7 @@ export function withdrawInvitation(
   ctx: EngineContext,
   input: { invitationId: string; reason: string },
   now = new Date(),
+  platform?: Platform,
 ): { invitationId: string } {
   authorise(ctx, 'PROJECT_SETUP', 'R', { lifecyclePhase: currentPhase(ctx) });
   if (!worksOnProject(ctx.auth.roles)) {
@@ -282,7 +371,38 @@ export function withdrawInvitation(
       withdrawalReason: input.reason,
     },
   });
+  if (platform && typeof record.state.membershipId === 'string') {
+    endPendingMembership(platform, ctx, record.state.membershipId, `Invitation withdrawn: ${input.reason}`, now);
+  }
 
+  return { invitationId: input.invitationId };
+}
+
+/** The invitee saying no. The record shows a refusal, not a withdrawal, and nothing was ever charged. */
+export function declineInvitation(
+  platform: Platform,
+  ctx: EngineContext,
+  input: { invitationId: string; reason?: string },
+  now = new Date(),
+): { invitationId: string } {
+  const record = ctx.ledger.require({ refType: 'ProjectInvitation', refId: input.invitationId });
+  if (record.state.status !== 'PENDING') {
+    throw new DomainError('INVITATION_NOT_PENDING', `That invitation is ${String(record.state.status).toLowerCase()}`, 409);
+  }
+  write(ctx, {
+    eventType: 'PROJECT_INVITATION_DECLINED',
+    entity: { refType: 'ProjectInvitation', refId: input.invitationId },
+    nextState: {
+      ...record.state,
+      status: 'DECLINED' satisfies InvitationStatus,
+      declinedBy: ctx.auth.actorId,
+      declinedAt: now.toISOString(),
+      ...(input.reason ? { declineReason: input.reason } : {}),
+    },
+  });
+  if (typeof record.state.membershipId === 'string') {
+    endPendingMembership(platform, ctx, record.state.membershipId, `Invitation declined${input.reason ? `: ${input.reason}` : ''}`, now);
+  }
   return { invitationId: input.invitationId };
 }
 
@@ -313,17 +433,32 @@ export function acceptInvitation(
     );
   }
 
-  const roles = record.state.roles as Role[];
-  const user = platform.createUser({
-    tenantId: String(record.state.tenantId),
-    name: String(record.state.name),
-    email: String(record.state.email),
-    roles,
-    // The firm's party, where the invitation named a firm. This is the whole
-    // of what makes the identity a supplier's rather than a stranger's with a
-    // supplier role.
-    ...(typeof record.state.partyId === 'string' ? { partyId: record.state.partyId } : {}),
-  });
+  const requested = record.state.roles as Role[];
+  const membership = typeof record.state.membershipId === 'string' ? membershipOf(platform, record.state.membershipId) : undefined;
+  // What the identity is given: the membership's active roles — the request
+  // less anything withheld for want of a licence. An invitation written
+  // before memberships existed carries its roles as they were.
+  const roles = membership ? membership.activeRoles : requested;
+  const external = membership !== undefined && membership.relationship !== 'HOME_MEMBER';
+
+  // An external person already here on another project: the same identity,
+  // one more membership, the roles the union of what the memberships grant.
+  const existing = external
+    ? platform.users(String(record.state.tenantId)).find((user) => user.external && user.email.toLowerCase() === String(record.state.email) && !user.erasedAt)
+    : undefined;
+  const user =
+    existing ??
+    platform.createUser({
+      tenantId: String(record.state.tenantId),
+      name: String(record.state.name),
+      email: String(record.state.email),
+      roles,
+      // The firm's party, where the invitation named a firm. This is the whole
+      // of what makes the identity a supplier's rather than a stranger's with a
+      // supplier role.
+      ...(typeof record.state.partyId === 'string' ? { partyId: record.state.partyId } : {}),
+      ...(external && membership ? { external: { homeTenantId: membership.homeOrganisation.tenantId, homeOrganisation: membership.homeOrganisation.name } } : {}),
+    });
 
   write(ctx, {
     eventType: 'PROJECT_INVITATION_ACCEPTED',
@@ -335,8 +470,17 @@ export function acceptInvitation(
       userId: user.id,
     },
   });
+  if (membership) {
+    const activated = activateMembership(platform, ctx, membership.id, user.id, now);
+    if (existing) platform.applyMembershipRoles(activated, 'Accepted an invitation onto a further project', ctx.auth.actorId);
+  }
 
-  return { userId: user.id, email: String(record.state.email), roles };
+  return { userId: user.id, email: String(record.state.email), roles: platform.user(user.id).roles };
+}
+
+/** Whether a set of roles is a Controller's — published so the invitation form can say what it is about to ask for. */
+export function classOf(roles: readonly Role[]): 'PARTICIPANT' | 'CONTROLLER' {
+  return accessClassOf(roles);
 }
 
 /** The seat ceiling for a package plus the seats bought beyond it, or null where there is none. */

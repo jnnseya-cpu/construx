@@ -2,6 +2,8 @@ import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import * as consistency from '../domain/consistency.ts';
+import { sweepMemberships } from '../domain/membership.ts';
+import { sweepSponsorships } from '../billing/sponsorship.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { scopesForRoles } from '../identity/scopes.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -46,6 +48,8 @@ export type SweepOutcome = {
   cleared: number;
   notified: number;
   skipped: SweepSkip[];
+  /** What the membership pass ended on this tick. */
+  memberships?: { expired: number; passesExpired: number; licencesLapsed: number; sponsorshipsExpired: number };
 };
 
 export type SweepPosition = {
@@ -157,6 +161,18 @@ export async function sweepChainBreaks(platform: Platform): Promise<SweepOutcome
       const because = error instanceof DomainError ? `${error.code}: ${error.message}` : error instanceof Error ? error.message : String(error);
       outcome.skipped.push({ tenantId, projectId, because });
     }
+  }
+
+  // The same hourly pass ends what has run out: appointments past their date,
+  // passes that expired, sponsorships that lapsed, and external Controllers
+  // whose home seat has gone. On the tick rather than on a request, so a
+  // membership nobody opens still ends on time.
+  try {
+    const memberships = sweepMemberships(platform);
+    const sponsorships = sweepSponsorships(platform);
+    outcome.memberships = { expired: memberships.expired.length, passesExpired: memberships.passesExpired.length, licencesLapsed: memberships.lapsed.length, sponsorshipsExpired: sponsorships.length };
+  } catch (error) {
+    outcome.skipped.push({ tenantId: '-', projectId: '-', because: `membership sweep: ${error instanceof Error ? error.message : String(error)}` });
   }
 
   outcome.durationMs = Date.now() - started;

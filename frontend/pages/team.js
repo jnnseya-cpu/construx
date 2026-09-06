@@ -24,6 +24,15 @@ import { command, commandBar } from '../lib/command.js';
  */
 
 const STATE_TONE = { ACTIVE: 'good', DEACTIVATED: 'warn', DELETION_PENDING: 'bad', ERASED: 'neutral' };
+const BADGE_TONE = {
+  PARTICIPANT_NO_SEAT: 'neutral',
+  CONTROLLER_HOST_SEAT: 'ai',
+  CONTROLLER_HOME_LICENSED: 'ok',
+  CONTROLLER_GROUP_LICENSED: 'ok',
+  CONTROLLER_HOST_SPONSORED: 'warn',
+  CONTROLLER_LICENCE_REQUIRED: 'bad',
+  CONTROLLER_LICENCE_EXPIRED: 'bad',
+};
 const ACTIVITY_LABEL = { ACTIVE: 'Active this week', RECENT: 'Active this month', IDLE: 'Idle', DORMANT: 'Dormant', NEVER: 'Never active' };
 const ACTIVITY_TONE = { ACTIVE: 'good', RECENT: 'good', IDLE: 'warn', DORMANT: 'bad', NEVER: 'neutral' };
 
@@ -34,10 +43,16 @@ function administers() {
 
 export async function team(root) {
   let position;
-  const [support, transfers, reporting] = await Promise.all([
+  const [support, transfers, reporting, away, licensing] = await Promise.all([
     api.get('/v1/team/support-access').catch(() => null),
     api.get('/v1/team/transfer-cases').catch(() => null),
     api.get('/v1/company/reporting-grants').catch(() => null),
+    // The home side of an invitation: this company's people on other
+    // organisations' projects, and what it has been asked to pay for them.
+    // Null where the reader may not see the wallet.
+    api.get('/v1/users/external-projects').catch(() => null),
+    // Which roles are Controllers and why, as the platform derives it.
+    api.get('/v1/controller-licences/permissions').catch(() => null),
   ]);
   try {
     position = await api.get('/v1/team');
@@ -52,6 +67,8 @@ export async function team(root) {
 
   const { summary, seats, people, units, invitations, roles, governance } = position;
   const admin = administers();
+  const billable = seats.billable;
+  const classOf = new Map((licensing?.roles ?? []).map((entry) => [entry.role, entry.accessClass]));
   const me = state.session?.user?.id;
   const live = units.filter((unit) => !unit.retiredAt);
   const pending = invitations.filter((invitation) => invitation.status === 'PENDING');
@@ -137,6 +154,31 @@ export async function team(root) {
         )}
       </div>
 
+      ${billable
+        ? html`<div class="card" style="margin-bottom:14px" data-billable>
+            <h2>People against paid licences</h2>
+            <p class="metric-sub" style="margin-bottom:12px">
+              Total users are not billable seats. The package’s seats are Controller seats — the people who approve money,
+              baselines and contracts, administer people or run the business. Participants take none. A Controller from
+              another organisation, or from a company of this group, is licensed by them and costs nothing here. What this
+              organisation pays for is its own Controllers and any Project Controller Pass it bought for a guest.
+            </p>
+            <div class="grid g4">
+              ${raw(metric({ label: 'Total active users', value: billable.totalActiveUsers, sub: 'people who can sign in' }))}
+              ${raw(metric({ label: 'Host-owned Controller seats', value: billable.hostOwnedControllerSeats, sub: `of ${seats.cap === null ? 'unlimited' : seats.cap} on the ${seats.package} package`, tone: 'good' }))}
+              ${raw(metric({ label: 'Internal participants', value: billable.internalParticipants, sub: 'no seat required' }))}
+              ${raw(metric({ label: 'External participants', value: billable.externalParticipants, sub: 'no seat required' }))}
+              ${raw(metric({ label: 'Externally licensed Controllers', value: billable.externallyLicensedControllers, sub: 'seat held by their own organisation' }))}
+              ${raw(metric({ label: 'Group-licensed Controllers', value: billable.groupLicensedControllers, sub: 'seat held in the group' }))}
+              ${raw(metric({ label: 'Host-sponsored passes', value: billable.hostSponsoredPasses, sub: billable.passChargeMinor > 0 ? `${billable.passChargeMinor} a month, on the invoice` : 'none bought', tone: billable.hostSponsoredPasses > 0 ? 'warn' : '' }))}
+              ${raw(metric({ label: 'Total host-billable licences', value: billable.totalHostBillableLicences, sub: billable.formula, tone: 'good' }))}
+            </div>
+            ${billable.controllersAwaitingLicence > 0
+              ? html`<div style="margin-top:10px">${notice(`${billable.controllersAwaitingLicence} Controller${billable.controllersAwaitingLicence === 1 ? '' : 's'} from outside ${billable.controllersAwaitingLicence === 1 ? 'is' : 'are'} waiting on a licence decision. Their Controller roles are withheld and nothing is charged. Buy a pass or reduce the roles on Enterprise & Portfolio.`, 'warn')}</div>`
+              : ''}
+          </div>`
+        : ''}
+
       <div class="card" style="margin-bottom:14px" data-directory>
         <h2>User directory</h2>
         <p class="metric-sub" style="margin-bottom:12px">
@@ -146,11 +188,12 @@ export async function team(root) {
         ${table({
           headers: admin ? ['Identity', 'Roles', 'Activity', 'Risk signal', 'Second factor', 'Status', ''] : ['Identity', 'Roles', 'Activity', 'Risk signal', 'Second factor', 'Status'],
           rows: people.map((person) => [
-            html`<div><b>${person.name}</b></div>
+            html`<div><b>${person.name}</b>${person.external ? html` ${badge(`external · ${person.homeOrganisation ?? 'another organisation'}`, 'warn')}` : ''}</div>
               <div class="metric-sub">${person.email}${person.unitName ? ` · ${person.unitName}` : ''}${
                 person.managerName ? ` · reports to ${person.managerName}` : ''
               }${person.reports > 0 ? ` · manages ${person.reports}` : ''}</div>`,
-            html`${(person.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+            html`${(person.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}
+              <div class="metric-sub">${person.accessClass === 'CONTROLLER' ? (person.external ? 'Controller · licensed elsewhere' : 'Controller · one of this package’s seats') : 'Participant · no seat'}</div>`,
             html`${badge(ACTIVITY_LABEL[person.activity] ?? person.activity, ACTIVITY_TONE[person.activity] ?? 'neutral')}
               ${person.lastActivityAt ? html`<div class="metric-sub">${date(person.lastActivityAt)}</div>` : ''}`,
             person.risk.length === 0
@@ -212,15 +255,17 @@ export async function team(root) {
       <div class="card" style="margin-bottom:14px" data-invitations>
         <h2>Invitations</h2>
         <p class="metric-sub" style="margin-bottom:12px">
-          Every invitation this tenancy has sent, across its projects. A pending invitation holds a seat; withdrawing it gives
-          the seat back. Invitations are sent from a project on Enterprise &amp; Portfolio.
+          Every invitation this tenancy has sent, across its projects. A pending invitation to one of this organisation’s own
+          Controllers holds a seat; withdrawing it gives the seat back. A participant, or a Controller from another
+          organisation, holds none. Invitations are sent from a project on Enterprise &amp; Portfolio.
         </p>
         ${table({
-          headers: admin ? ['Person', 'Project', 'Roles', 'Invited', 'Status', ''] : ['Person', 'Project', 'Roles', 'Invited', 'Status'],
+          headers: admin ? ['Person', 'Project', 'Roles', 'Licence', 'Invited', 'Status', ''] : ['Person', 'Project', 'Roles', 'Licence', 'Invited', 'Status'],
           rows: invitations.map((invitation) => [
             html`<div><b>${invitation.name}</b></div><div class="metric-sub">${invitation.email}${invitation.organisation ? ` · ${invitation.organisation}` : ''}${invitation.external ? ' · external' : ''}</div>`,
             invitation.projectName || invitation.projectId,
             html`${(invitation.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+            invitation.badge ? badge(invitation.badgeLabel ?? humanise(invitation.badge), BADGE_TONE[invitation.badge] ?? 'neutral') : '—',
             html`${date(invitation.invitedAt)}<div class="metric-sub">by ${invitation.invitedByName}${invitation.status === 'PENDING' ? ` · lapses ${date(invitation.expiresAt)}` : ''}</div>`,
             badge(String(invitation.status).toLowerCase(), invitation.status === 'ACCEPTED' ? 'good' : invitation.status === 'PENDING' ? 'warn' : 'neutral'),
             ...(admin
@@ -235,18 +280,64 @@ export async function team(root) {
         })}
       </div>
 
+      ${away
+        ? html`<div class="card" style="margin-bottom:14px" data-away>
+            <h2>Our people on other organisations’ projects</h2>
+            <p class="metric-sub" style="margin-bottom:12px">
+              Where one of this company’s people has been invited onto another organisation’s project, their Controller seat
+              here follows them and nothing is charged to the host. Their AI there is paid for by nobody until an
+              administrator here approves an allowance — a monthly or project limit, and whether it may be exceeded. The host
+              sees whether the allowance stands, never its size or this company’s wallet.
+            </p>
+            ${table({
+              headers: ['Person', 'Host', 'Project', 'Roles', 'Licence', 'Ends', 'Status'],
+              rows: (away.memberships ?? []).map((m) => [
+                html`<div><b>${m.person.name}</b></div><div class="metric-sub">${m.person.email}</div>`,
+                m.hostName,
+                m.projectName,
+                html`${(m.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+                badge(m.accessClass === 'PARTICIPANT' ? 'participant · no seat' : m.licenceSource === 'NONE' ? 'controller · licence required' : `controller · ${humanise(m.licenceSource).toLowerCase()}`, m.accessClass === 'PARTICIPANT' ? 'neutral' : m.licenceSource === 'NONE' ? 'bad' : 'ok'),
+                m.expiresAt ? date(m.expiresAt) : html`<span class="metric-sub">until revoked</span>`,
+                badge(m.status.toLowerCase(), m.status === 'ACTIVE' ? 'ok' : m.status === 'PENDING' ? 'warn' : 'neutral'),
+              ]),
+              empty: 'Nobody from this company is on another organisation’s project.',
+            })}
+            <h3 style="margin:14px 0 6px">AI sponsorships this company has been asked for${away.awaitingDecision ? html` ${badge(`${away.awaitingDecision} awaiting a decision`, 'warn')}` : ''}</h3>
+            ${table({
+              headers: admin ? ['Person', 'Host · project', 'What', 'Limit', 'Used', 'Standing', ''] : ['Person', 'Host · project', 'What', 'Limit', 'Used', 'Standing'],
+              rows: (away.asSponsor ?? []).map((s) => [
+                html`<div><b>${s.person.name}</b></div><div class="metric-sub">asked by ${s.requestedBy?.name ?? '—'} · ${date(s.requestedAt)}</div>`,
+                `${s.hostName} · ${s.projectName}`,
+                html`${humanise(s.authorisationType)}${s.workflow ? html`<div class="metric-sub">${s.workflow}</div>` : ''}<div class="metric-sub">${s.reason}</div>`,
+                html`${s.maximumMinor} ACUs${s.overageAllowed ? html`<div class="metric-sub">overage allowed</div>` : ''}${s.expiresAt ? html`<div class="metric-sub">until ${date(s.expiresAt)}</div>` : ''}`,
+                s.usage ? html`${s.usage.consumedMinor} used · ${s.usage.remainingMinor} left${s.usage.heldMinor ? html`<div class="metric-sub">${s.usage.heldMinor} held</div>` : ''}` : '—',
+                badge(s.status.toLowerCase(), s.status === 'ACTIVE' ? 'ok' : s.status === 'PENDING' ? 'warn' : 'neutral'),
+                ...(admin
+                  ? [
+                      html`${s.status === 'PENDING' ? html`<button class="btn sm" data-sponsorship-action="approve" data-sponsorship="${s.id}" data-name="${s.person.name}">Approve</button> <button class="btn quiet sm" data-sponsorship-action="reject" data-sponsorship="${s.id}" data-name="${s.person.name}">Decline</button>` : ''}
+                        ${s.status === 'ACTIVE' ? html`<button class="btn quiet sm" data-sponsorship-action="limit" data-sponsorship="${s.id}" data-name="${s.person.name}" data-limit="${s.maximumMinor}">Change limit</button> <button class="btn quiet sm" data-sponsorship-action="usage" data-sponsorship="${s.id}" data-name="${s.person.name}">Usage</button> <button class="btn quiet danger sm" data-sponsorship-action="revoke" data-sponsorship="${s.id}" data-name="${s.person.name}">Withdraw</button>` : ''}`,
+                    ]
+                  : []),
+              ]),
+              empty: 'No organisation has asked this company to pay for anybody’s AI.',
+            })}
+          </div>`
+        : ''}
+
       <div class="grid g2" style="margin-bottom:14px">
         <div class="card">
           <h2>Roles &amp; permissions</h2>
           <p class="metric-sub" style="margin-bottom:12px">
             The ${summary.rolesDefined} roles a tenancy may grant, and what each may do, as the platform publishes and enforces
             them. Least privilege by construction: a role holds nothing that is not listed, and a person holds nothing outside
-            their roles. Change what somebody may do by changing their roles.
+            their roles. Change what somebody may do by changing their roles. A Controller role takes one of the package’s
+            seats; a participant role takes none.
           </p>
           ${table({
-            headers: ['Role', 'Holders', 'Areas', 'Codes'],
+            headers: ['Role', 'Class', 'Holders', 'Areas', 'Codes'],
             rows: roles.map((entry) => [
               humanise(entry.role),
+              classOf.has(entry.role) ? badge(classOf.get(entry.role) === 'CONTROLLER' ? 'Controller' : 'Participant', classOf.get(entry.role) === 'CONTROLLER' ? 'ai' : 'neutral') : '—',
               String(entry.holders),
               String(entry.areas.length),
               html`${[...new Set(entry.areas.flatMap((area) => area.codes))].sort().map((code) => badge(code, 'neutral'))}`,
@@ -254,6 +345,14 @@ export async function team(root) {
             empty: 'No roles are published.',
           })}
           <div class="metric-sub" style="margin-top:8px">R read · C create · U update · A approve · I import/export · X run AI · G governance. The full matrix is on Permissions.</div>
+          ${licensing
+            ? html`<details style="margin-top:8px"><summary class="metric-sub">What makes a role a Controller</summary>
+                ${table({
+                  headers: ['Permission', 'On the matrix', 'Note'],
+                  rows: licensing.permissions.map((p) => [p.permission, p.basis ? `${p.basis.area} · ${p.basis.codes.join('')}` : html`<span class="metric-sub">no separate entry</span>`, p.note]),
+                })}
+              </details>`
+            : ''}
         </div>
 
         <div class="card" data-support-access>
@@ -593,6 +692,78 @@ export async function team(root) {
       if (done) await refresh();
     } catch (error) {
       toast('Could not retire the unit', error.message, 'err');
+    }
+  });
+
+  // The home organisation's decisions about its people's AI on other
+  // organisations' projects: approve with a limit, decline, change the
+  // limit, see what was used, withdraw.
+  root.querySelector('[data-away]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-sponsorship-action]');
+    if (!button) return;
+    const id = button.dataset.sponsorship;
+    const name = button.dataset.name ?? 'this person';
+    const action = button.dataset.sponsorshipAction;
+    try {
+      let done = null;
+      if (action === 'approve' || action === 'limit') {
+        done = await command({
+          title: action === 'approve' ? `Approve paying for ${name}’s AI` : `Change the limit for ${name}`,
+          intent:
+            action === 'approve'
+              ? 'This company’s wallet funds their AI on that project up to the limit. The host is charged nothing, and sees only that the allowance stands.'
+              : 'The new limit applies from now; what was already spent stays spent.',
+          path: `/v1/acu-sponsorships/${id}/approve`,
+          submitLabel: action === 'approve' ? 'Approve' : 'Change the limit',
+          fields: [
+            { name: 'maximumMinor', label: 'Maximum ACUs', type: 'number', step: '1', value: button.dataset.limit ?? '', required: false, hint: 'Left empty, the amount asked for stands.' },
+            {
+              name: 'overageAllowed',
+              label: 'Beyond the limit',
+              type: 'select',
+              options: [
+                { value: 'false', label: 'Refuse — more needs a new approval' },
+                { value: 'true', label: 'Allow — an estimate above the limit still runs' },
+              ],
+            },
+            { name: 'expiresAt', label: 'Until', type: 'datetime-local', required: false },
+            reason('At least five characters.'),
+          ],
+          transform: (f) => ({
+            reason: f.reason,
+            overageAllowed: String(f.overageAllowed) === 'true',
+            ...(f.maximumMinor ? { maximumMinor: Number(f.maximumMinor) } : {}),
+            ...(f.expiresAt ? { expiresAt: new Date(f.expiresAt).toISOString() } : {}),
+          }),
+        });
+      } else if (action === 'reject') {
+        done = await command({
+          title: `Decline to pay for ${name}’s AI`,
+          intent: 'Nothing runs on this company’s wallet for that project. The host may sponsor it itself.',
+          path: `/v1/acu-sponsorships/${id}/reject`,
+          submitLabel: 'Decline',
+          fields: [reason('At least five characters.')],
+        });
+      } else if (action === 'revoke') {
+        done = await command({
+          title: `Withdraw the sponsorship for ${name}`,
+          intent: 'Anything in flight on it is released; nothing further runs on this company’s wallet for that project.',
+          path: `/v1/acu-sponsorships/${id}/revoke`,
+          submitLabel: 'Withdraw',
+          fields: [reason('At least five characters.')],
+        });
+      } else if (action === 'usage') {
+        const usage = await api.get(`/v1/acu-sponsorships/${id}/usage`);
+        toast(
+          `${name}: ${usage.usage.consumedMinor} of ${usage.usage.maximumMinor} ACUs used`,
+          `${usage.usage.remainingMinor} remain${usage.usage.heldMinor ? `, ${usage.usage.heldMinor} held against work in flight` : ''} · ${usage.usage.period}`,
+          usage.usage.exhausted ? 'warn' : 'ok',
+        );
+        return;
+      }
+      if (done) await refresh();
+    } catch (error) {
+      toast('Could not do that', error.message, 'err');
     }
   });
 

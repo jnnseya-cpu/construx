@@ -71,6 +71,13 @@ export type ACUEntry = {
   aiRequestId?: string;
   invoiceId?: string;
   note?: string;
+  /**
+   * The ACU sponsorship this spend was authorised under, where the person is
+   * from another organisation and somebody agreed to pay for their AI. On the
+   * entry so the sponsorship's own allowance is measured from the wallet's
+   * record rather than from a counter beside it.
+   */
+  sponsorshipId?: string;
 };
 
 export type ACUCaps = {
@@ -248,6 +255,7 @@ export type Hold = {
   /** Estimated billed amount ring-fenced until the execution settles. */
   heldMinor: number;
   createdAt: string;
+  sponsorshipId?: string;
 };
 
 export type WalletSnapshot = {
@@ -431,6 +439,7 @@ export class ACUWallet {
     userId?: string;
     module?: string;
     feature?: string;
+    sponsorshipId?: string;
   }): Hold {
     if (this.#frozen) {
       throw new DomainError(
@@ -471,6 +480,7 @@ export class ACUWallet {
       userId: input.userId,
       module: input.module,
       feature: input.feature,
+      ...(input.sponsorshipId ? { sponsorshipId: input.sponsorshipId } : {}),
     };
     this.#holds.set(hold.holdId, hold);
     this.#record({
@@ -484,6 +494,7 @@ export class ACUWallet {
       module: input.module,
       feature: input.feature,
       aiRequestId: input.aiRequestId,
+      ...(input.sponsorshipId ? { sponsorshipId: input.sponsorshipId } : {}),
     });
     return hold;
   }
@@ -566,6 +577,7 @@ export class ACUWallet {
       module: hold.module,
       feature: hold.feature,
       aiRequestId: hold.aiRequestId,
+      ...(hold.sponsorshipId ? { sponsorshipId: hold.sponsorshipId } : {}),
       // Named on the entry rather than left to be inferred from the arithmetic.
       // An overrun is the one case where a customer is charged more than they
       // were quoted, and it has to be visible on the invoice line rather than
@@ -601,6 +613,7 @@ export class ACUWallet {
       module: hold.module,
       feature: hold.feature,
       aiRequestId: hold.aiRequestId,
+      ...(hold.sponsorshipId ? { sponsorshipId: hold.sponsorshipId } : {}),
       note: reason,
     });
   }

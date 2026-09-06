@@ -257,6 +257,8 @@ export type ExecuteInput = {
   request: ProviderRequest;
   /** Regulators get no AI unless the asset owner has explicitly enabled it. */
   aiPermitted: boolean;
+  /** The sponsorship an external person's spend is authorised under, carried onto the hold. */
+  sponsorshipId?: string;
 };
 
 export type ExecuteResult = {
@@ -556,6 +558,7 @@ export class AIOrchestrator {
       userId: input.userId,
       module: input.engine,
       feature: input.taskType,
+      ...(input.sponsorshipId ? { sponsorshipId: input.sponsorshipId } : {}),
     });
     aiRequest.status = 'HELD';
 

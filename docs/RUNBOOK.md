@@ -698,6 +698,32 @@ operators copied, names them in the mail body, and carries `onCall` in the
 webhook JSON and `— on call: <name>` in its `text` line, which a PagerDuty
 or Grafana OnCall events URL can route on.
 
+### A guest's licence, a pass, and who pays for their AI
+
+A person invited onto a project from another organisation never takes one
+of the host's package seats. What the host may need to act on:
+
+- **"Controller — Licence Required"** on the members table (Enterprise &
+  Portfolio): the person was invited with Controller roles and no seat covers
+  them. Their Controller roles are withheld and they hold participant access.
+  The host's two acts are *Sponsor a pass* (`POST
+  /v1/controller-passes/purchase`, needs `BILLING_ACU:U`, priced at
+  `CONTROLLER_PASS.monthlyPriceMinor` a month and on the invoice as its own
+  line) or *Reduce to participant*. The third option — the person's own
+  organisation buying them a seat — needs nobody at the host: the hourly
+  sweep re-checks and grants the withheld roles when a seat appears.
+- **"Controller — Licence Expired"**: the seat at home was released or the
+  pass ran out. The same two acts apply; the roles are already withheld.
+- **A guest cannot run AI** (`ACU_SPONSOR_REQUIRED`, `ACU_SPONSOR_APPROVAL_
+  REQUIRED`, `ACU_LIMIT_EXCEEDED`, all 402): nobody has agreed to pay, the
+  home organisation has not yet approved, or the allowance is used up. *AI
+  sponsor* on the member's row asks the home organisation (their
+  administrators decide on Team & Access, under *Our people on other
+  organisations' projects*) or sponsors from the host's own wallet.
+- **A membership past its end date** is ended by the hourly consistency
+  sweep (`memberships` on its position), which also expires passes and
+  lapses licences. Nothing waits for a request.
+
 ---
 
 ## What this deployment does not have

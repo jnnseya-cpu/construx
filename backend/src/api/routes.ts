@@ -44,7 +44,7 @@ import { centreCatalogue, commandCentre, type CentreFunctionId } from '../comman
 import { grantableScopes, issueKey, keyRegister, revokeKey } from '../developer/keys.ts';
 import { subscribe, subscriptionRegister, unsubscribe, webhookPosition } from '../developer/webhooks.ts';
 import type { ACUCaps } from '../billing/acu.ts';
-import { ACU_BUNDLES, GROUP_LICENCE, PACKAGES, SEATS, TOP_UPS, type PackageTier } from '../billing/seats.ts';
+import { ACU_BUNDLES, CONTROLLER_PASS, GROUP_LICENCE, PACKAGES, SEATS, TOP_UPS, controllerSeat, type PackageTier } from '../billing/seats.ts';
 import { BILLING_CURRENCY, type PaymentMethod } from '../billing/payments.ts';
 import { standing } from '../billing/entitlement.ts';
 import {
@@ -81,6 +81,9 @@ import { CDM_DOCUMENTS } from '../domain/cdm.ts';
 import * as portfolio from '../domain/portfolio.ts';
 import * as commitments from '../domain/commitments.ts';
 import * as invitation from '../domain/invitation.ts';
+import { changePermissions, memberRows, previewLicence, purchasePass, restoreMembership, revokeMembership, revokePass, seatDashboard, suspendMembership } from '../domain/membership.ts';
+import { decideSponsorship, externalMembershipsOf, requestSponsorship, revokeSponsorship, sponsorshipOf, sponsorshipPosition, usageOf, SPONSORSHIP_TYPES } from '../billing/sponsorship.ts';
+import { ACU_SPONSOR_TYPES, CONTROLLER_PERMISSIONS, LICENCE_BADGE_LABELS, accessClassOf } from '../identity/licence.ts';
 import * as cde from '../domain/cde.ts';
 import * as watch from '../ops/watch.ts';
 import * as oncall from '../ops/oncall.ts';
@@ -1127,6 +1130,11 @@ function requireTenantAdministrator(ctx: RequestContext, act: string): AuthConte
   return actor;
 }
 
+/** The project a membership is on, from its record. */
+function membershipProjectOf(platform: Platform, membershipId: string): string {
+  return String(platform.ledger.get({ refType: 'ProjectMembership', refId: membershipId })?.state.projectId ?? '');
+}
+
 /**
  * The identity directory, assembled from the records that already exist rather
  * than kept as a screen of its own: the users, the seats, the invitations, the
@@ -1158,20 +1166,25 @@ function teamPosition(platform: Platform, tenantId: string) {
   const purchased = purchasedSeats(platform.ledger, tenantId);
   const cap = seatCap(subscription, purchased);
 
+  const memberRowsByInvitation = new Map(memberRows(platform, tenantId).map((row) => [row.invitationId, row]));
   const invitations: Array<Record<string, unknown>> = platform.ledger
     .listByTenant(tenantId, 'ProjectInvitation')
     .map((record): Record<string, unknown> => {
       const state = record.state as Record<string, unknown>;
+      const member = memberRowsByInvitation.get(String(state.id));
       return {
         ...state,
         projectName: String(platform.ledger.get({ refType: 'Project', refId: String(state.projectId) })?.state.name ?? ''),
         invitedByName: personName.get(String(state.invitedBy)) ?? String(state.invitedBy),
+        ...(member ? { badge: member.badge, badgeLabel: LICENCE_BADGE_LABELS[member.badge], membershipId: member.membershipId, membershipStatus: member.status, organisation: member.organisation } : {}),
       };
     })
     .sort((a, b) => String(b.invitedAt).localeCompare(String(a.invitedAt)));
   const pending = invitations.filter(
     (invitation) => invitation.status === 'PENDING' && String(invitation.expiresAt) > new Date(now).toISOString(),
   );
+  // Only a home Controller's invitation holds a seat.
+  const seatHolding = invitation.seatHoldingInvitations(platform.ledger, tenantId, new Date(now)).length;
 
   const rows = people.map((person) => {
     const lastActivityAt = platform.lastActivity(tenantId, person.id);
@@ -1246,11 +1259,19 @@ function teamPosition(platform: Platform, tenantId: string) {
       used: subscription.assignedIdentities.length,
       cap,
       purchased,
-      heldByInvitations: pending.length,
-      remaining: cap === null ? null : Math.max(0, cap - subscription.assignedIdentities.length - pending.length),
+      heldByInvitations: seatHolding,
+      remaining: cap === null ? null : Math.max(0, cap - subscription.assignedIdentities.length - seatHolding),
       package: PACKAGES[subscription.package].label,
+      // People against paid licences, as the billing dashboard states them:
+      // the host's own Controllers and the passes it bought are what it pays
+      // for; participants and Controllers licensed elsewhere are people, not
+      // seats.
+      billable: seatDashboard(platform, tenantId),
     },
-    people: rows,
+    people: rows.map((row) => ({ ...row, accessClass: accessClassOf(row.roles), external: platform.user(row.id).external === true, homeOrganisation: platform.user(row.id).homeOrganisation ?? null })),
+    members: memberRows(platform, tenantId).map((row) => ({ ...row, badgeLabel: LICENCE_BADGE_LABELS[row.badge], projectName: String(platform.ledger.get({ refType: 'Project', refId: String(membershipProjectOf(platform, row.membershipId)) })?.state.name ?? '') })),
+    badges: LICENCE_BADGE_LABELS,
+    passPriceMinor: CONTROLLER_PASS.monthlyPriceMinor,
     units: units.map((unit) => ({
       ...unit,
       parentName: unit.parentId ? (unitName.get(unit.parentId) ?? null) : null,
@@ -4571,26 +4592,38 @@ export const ROUTES: Route[] = [
       // `assignIdentity` enforces, so the number of seats this screen says are
       // left is the number that will actually be admitted.
       const limit = subscription ? seatCap(subscription, purchasedSeats(platform.ledger, context.tenantId)) : null;
-      const pending = invitation.pendingInvitations(context);
+      // Only a home Controller's invitation holds a seat: a participant or a
+      // person from another organisation is counted as a person, not a seat.
+      const held = invitation.seatHoldingInvitations(platform.ledger, context.tenantId).length;
+      const members = memberRows(platform, context.tenantId, context.projectId);
+      const badgeOf = new Map(members.map((row) => [row.invitationId, row]));
       return {
         invitations: context.ledger
           .listByTenant(context.tenantId, 'ProjectInvitation')
-          .map((record) => record.state),
-        // The seat position, because an invitation is a seat and somebody about
-        // to send one needs to know whether there is one to give.
+          .map((record) => {
+            const row = badgeOf.get(String(record.state.id));
+            return { ...record.state, ...(row ? { badge: row.badge, badgeLabel: LICENCE_BADGE_LABELS[row.badge], membershipStatus: row.status } : {}) };
+          }),
+        members,
+        // The seat position, because a home Controller's invitation is a seat
+        // and somebody about to send one needs to know whether there is one.
         seats: {
           includedSeats: limit,
           assigned: subscription?.assignedIdentities.length ?? 0,
-          heldByInvitations: pending.length,
-          remaining: limit === null ? null : limit - (subscription?.assignedIdentities.length ?? 0) - pending.length,
+          heldByInvitations: held,
+          remaining: limit === null ? null : Math.max(0, limit - (subscription?.assignedIdentities.length ?? 0) - held),
+          pendingInvitations: invitation.pendingInvitations(context).length,
         },
+        badges: LICENCE_BADGE_LABELS,
+        passPriceMinor: CONTROLLER_PASS.monthlyPriceMinor,
       };
     },
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/invitations',
-    description: 'Invite somebody onto this project — internal or external, counted as a full identity',
+    description:
+      'Invite somebody onto this project — internal, from a group company, or external. A participant takes no seat; a Controller from outside brings their own licence or waits for one; only the host’s own Controller takes one of the package’s seats',
     schema: {
       type: 'object',
       required: ['name', 'email', 'roles', 'external', 'because'],
@@ -4602,6 +4635,8 @@ export const ROUTES: Route[] = [
         organisation: { type: 'string' },
         because: { type: 'string', minLength: 10 },
         supplierId: stringField,
+        expiresAt: { type: 'string', format: 'date-time' },
+        acuSponsor: { type: 'string', enum: ACU_SPONSOR_TYPES },
       },
       additionalProperties: false,
     },
@@ -4641,20 +4676,270 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
-      invitation.withdrawInvitation(projectContext(platform, ctx), {
-        invitationId: ctx.params.invitationId as string,
-        reason: body<{ reason: string }>(ctx).reason,
-      }),
+      invitation.withdrawInvitation(
+        projectContext(platform, ctx),
+        {
+          invitationId: ctx.params.invitationId as string,
+          reason: body<{ reason: string }>(ctx).reason,
+        },
+        new Date(),
+        platform,
+      ),
   },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/invitations/:invitationId/accept',
-    description: 'Accept an invitation, which is where the identity is created and the seat taken',
+    description: 'Accept an invitation: the identity is created, the membership goes live, and a seat is taken only where the person is the host’s own Controller',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       invitation.acceptInvitation(platform, projectContext(platform, ctx), {
         invitationId: ctx.params.invitationId as string,
       }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/invitations/:invitationId/decline',
+    description: 'Record that the invitee declined. Nothing was charged; the record shows a refusal rather than a withdrawal',
+    schema: { type: 'object', properties: { reason: { type: 'string' } }, additionalProperties: false },
+    handler: (platform, ctx) =>
+      invitation.declineInvitation(platform, projectContext(platform, ctx), {
+        invitationId: ctx.params.invitationId as string,
+        reason: body<{ reason?: string }>(ctx).reason,
+      }),
+  },
+  // ---------------------------------------------- memberships and licences
+  //
+  // The appointment behind an invitation, apart from the identity that signs
+  // in: relationship, access class, licence source, who pays for AI, and when
+  // it ends. The commercial rule is one person, one home organisation, one
+  // Controller seat — `identity/licence.ts` and `domain/membership.ts`.
+  {
+    method: 'POST',
+    pattern: '/v1/controller-licences/resolve',
+    description:
+      'Before inviting: whether these roles on this person need a Controller licence, whether one is already held elsewhere, and whether the host would pay. Says “verified” or “required” and nothing about the other organisation’s subscription',
+    schema: {
+      type: 'object',
+      required: ['email', 'roles', 'external', 'projectId'],
+      properties: {
+        email: stringField,
+        roles: { type: 'array', minItems: 1, items: { type: 'string', enum: TENANT_GRANTABLE_ROLES } },
+        external: { type: 'boolean' },
+        organisation: { type: 'string' },
+        projectId: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ email: string; roles: string[]; external: boolean; organisation?: string; projectId: string }>(ctx);
+      const context = projectContext(platform, ctx, input.projectId);
+      authorise(context, 'PROJECT_SETUP', 'R');
+      return previewLicence(
+        platform,
+        { email: input.email, hostTenantId: context.tenantId, projectId: input.projectId, external: input.external, organisation: input.organisation },
+        assertTenantGrantable(input.roles),
+      );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/controller-licences/permissions',
+    readOnly: true,
+    description: 'Which permissions make a role a Controller, and which roles are Controllers, as the platform derives them from the matrix',
+    handler: (_platform, ctx) => {
+      auth(ctx);
+      return {
+        permissions: CONTROLLER_PERMISSIONS,
+        roles: TENANT_GRANTABLE_ROLES.map((role) => ({ role, accessClass: accessClassOf([role]) })),
+        badges: LICENCE_BADGE_LABELS,
+        pass: CONTROLLER_PASS,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/members',
+    readOnly: true,
+    description: 'Everybody appointed to this project: organisation, relationship, access class, licence source, seat owner, host billability, ACU sponsor, expiry and status',
+    handler: (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      authorise(context, 'PROJECT_SETUP', 'R');
+      const rows = memberRows(platform, context.tenantId, context.projectId).map((row) => ({ ...row, badgeLabel: LICENCE_BADGE_LABELS[row.badge] }));
+      return { members: rows, badges: LICENCE_BADGE_LABELS, passPriceMinor: CONTROLLER_PASS.monthlyPriceMinor };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/project-memberships/:membershipId/permissions',
+    description: 'Change what a member may do. Controller roles run the licence resolution again and are withheld where nothing covers them; reducing to participant ends any pass at once',
+    schema: {
+      type: 'object',
+      required: ['roles', 'reason'],
+      properties: { roles: { type: 'array', minItems: 1, items: { type: 'string', enum: TENANT_GRANTABLE_ROLES } }, reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ roles: string[]; reason: string }>(ctx);
+      return changePermissions(platform, tenantContext(platform, ctx), { membershipId: ctx.params.membershipId as string, roles: assertTenantGrantable(input.roles), reason: input.reason });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/project-memberships/:membershipId/suspend',
+    description: 'Suspend a member’s access to the project at once, keeping the membership to restore',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => suspendMembership(platform, tenantContext(platform, ctx), { membershipId: ctx.params.membershipId as string, ...body<{ reason: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/project-memberships/:membershipId/restore',
+    description: 'Restore a suspended member on the same licence and sponsor',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => restoreMembership(platform, tenantContext(platform, ctx), { membershipId: ctx.params.membershipId as string, ...body<{ reason: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/project-memberships/:membershipId/revoke',
+    description: 'End a member’s access: the pass stops, open AI holds are released, the identity is deactivated if this was its last project, and everything they recorded stays',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => revokeMembership(platform, tenantContext(platform, ctx), { membershipId: ctx.params.membershipId as string, ...body<{ reason: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/controller-passes/purchase',
+    description: 'Buy a Project Controller Pass for an external Controller nobody else licenses: one project, time-limited, on this organisation’s invoice until it ends',
+    schema: {
+      type: 'object',
+      required: ['membershipId', 'expiresAt', 'reason'],
+      properties: { membershipId: stringField, expiresAt: { type: 'string', format: 'date-time' }, reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => purchasePass(platform, tenantContext(platform, ctx), body<{ membershipId: string; expiresAt: string; reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/controller-passes/:passId/revoke',
+    description: 'End a Project Controller Pass: the charge stops and the Controller roles it covered are withheld',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => revokePass(platform, tenantContext(platform, ctx), { passId: ctx.params.passId as string, ...body<{ reason: string }>(ctx) }),
+  },
+  // ------------------------------------------------------- ACU sponsorship
+  {
+    method: 'GET',
+    pattern: '/v1/acu-sponsorships',
+    readOnly: true,
+    description: 'Who pays for whose AI: the sponsorships this organisation has been asked to fund or has funded, and the ones it has raised as a host',
+    handler: (platform, ctx) => sponsorshipPosition(platform, authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/acu-sponsorships',
+    description: 'Ask the person’s own organisation to pay for their AI on this project, or sponsor it from this organisation’s wallet. Nothing is funded until the sponsor approves',
+    schema: {
+      type: 'object',
+      required: ['membershipId', 'sponsorType', 'authorisationType', 'maximumMinor', 'reason'],
+      properties: {
+        membershipId: stringField,
+        sponsorType: { type: 'string', enum: ['HOME_ORGANISATION', 'HOST_ORGANISATION'] },
+        authorisationType: { type: 'string', enum: SPONSORSHIP_TYPES },
+        maximumMinor: { type: 'integer', minimum: 1 },
+        overageAllowed: { type: 'boolean' },
+        workflow: { type: 'string' },
+        expiresAt: { type: 'string', format: 'date-time' },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const input = body<Parameters<typeof requestSponsorship>[2]>(ctx);
+      const sponsorship = requestSponsorship(platform, tenantContext(platform, ctx), input);
+      // The administrators of the organisation being asked are told; a request
+      // nobody sees is a request nobody answers.
+      let notified = 'NOT_APPLICABLE';
+      if (sponsorship.status === 'PENDING') {
+        const recipients = platform
+          .users(sponsorship.tenantId)
+          .filter((user) => user.status === 'ACTIVE' && (user.roles.includes('ENTERPRISE_ADMIN') || user.roles.includes('OWNER')))
+          .map((user) => ({ id: user.id, name: user.name, email: user.email, tenantId: user.tenantId }));
+        if (recipients.length > 0) {
+          const dispatch = await notifyEngine.notify(platform, {
+            code: 'acu.sponsorship.requested',
+            recipients,
+            payload: {
+              actor: platform.tenant(actor.tenantId).legalName,
+              enterprise: platform.tenant(sponsorship.tenantId).legalName,
+              name: sponsorship.person.name,
+              project: String(platform.ledger.get({ refType: 'Project', refId: sponsorship.projectId })?.state.name ?? sponsorship.projectId),
+              detail: `${sponsorship.authorisationType.toLowerCase().replace(/_/g, ' ')} of up to ${sponsorship.maximumMinor} ACUs. ${sponsorship.reason}`,
+              actionUrl: '/app/#/team',
+              actionLabel: 'Decide on Team & Access',
+            },
+            branding: platform.exports.branding(sponsorship.tenantId),
+            actorId: actor.actorId,
+            correlationId: ctx.correlationId,
+          });
+          notified = dispatch.deliveries.some((delivery) => delivery.status === 'SENT') ? 'SENT' : 'RECORDED';
+        } else {
+          notified = 'NO_ADMINISTRATOR';
+        }
+      }
+      return { sponsorship, notified };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/acu-sponsorships/:sponsorshipId/approve',
+    description: 'Approve paying for an external member’s AI, with the limit, or change the limit on one already approved (an administrator of the paying organisation)',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { maximumMinor: { type: 'integer', minimum: 1 }, overageAllowed: { type: 'boolean' }, expiresAt: { type: 'string', format: 'date-time' }, reason: { type: 'string', minLength: 5 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      decideSponsorship(platform, tenantContext(platform, ctx), { sponsorshipId: ctx.params.sponsorshipId as string, approve: true, ...body<{ maximumMinor?: number; overageAllowed?: boolean; expiresAt?: string; reason: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/acu-sponsorships/:sponsorshipId/reject',
+    description: 'Decline to pay for an external member’s AI (an administrator of the organisation asked)',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => decideSponsorship(platform, tenantContext(platform, ctx), { sponsorshipId: ctx.params.sponsorshipId as string, approve: false, ...body<{ reason: string }>(ctx) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/acu-sponsorships/:sponsorshipId/revoke',
+    description: 'Withdraw a sponsorship, by the organisation paying or by the host; open holds against it are released',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 5 } }, additionalProperties: false },
+    handler: (platform, ctx) => revokeSponsorship(platform, tenantContext(platform, ctx), { sponsorshipId: ctx.params.sponsorshipId as string, ...body<{ reason: string }>(ctx) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/acu-sponsorships/:sponsorshipId/usage',
+    readOnly: true,
+    description: 'What has been spent under a sponsorship and what remains, from the sponsor wallet’s own entries',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      const sponsorship = sponsorshipOf(platform, ctx.params.sponsorshipId as string);
+      if (sponsorship.tenantId !== actor.tenantId && sponsorship.hostTenantId !== actor.tenantId) throw new NotFoundError(`No ACU sponsorship ${ctx.params.sponsorshipId}`);
+      const usage = usageOf(platform, sponsorship);
+      // The host sees whether the allowance stands; the size of the other
+      // organisation's allowance is its own to know.
+      return sponsorship.tenantId === actor.tenantId
+        ? { sponsorship, usage }
+        : { sponsorship: { id: sponsorship.id, status: sponsorship.status, authorisationType: sponsorship.authorisationType, workflow: sponsorship.workflow }, standing: usage.exhausted ? 'EXHAUSTED' : 'AVAILABLE' };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/users/external-projects',
+    readOnly: true,
+    description: 'This organisation’s people on other organisations’ projects, and what it has been asked to pay for each — the home side of an invitation',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      return { memberships: externalMembershipsOf(platform, actor.tenantId), ...sponsorshipPosition(platform, actor.tenantId) };
+    },
   },
   {
     method: 'POST',
@@ -6120,6 +6405,12 @@ export const ROUTES: Route[] = [
         purchasedSeats: bought,
         purchasedMonthlyMinor: bought.reduce((sum, entitlement) => sum + entitlement.monthlyPriceMinor, 0),
         ...seatEconomics(subscription, rolesByUser),
+        // Which seat types can be bought at all: the Controller ones. A
+        // participant seat type is priced for the record and needs no buying.
+        seatTypes: Object.values(SEATS).map((seat) => ({ seat: seat.seat, label: seat.label, monthlyPriceMinor: seat.monthlyPriceMinor, roles: seat.roles, controllerSeat: controllerSeat(seat) })),
+        // People against paid licences: the split the invoice is built on.
+        billable: seatDashboard(platform, actor.tenantId),
+        passPriceMinor: CONTROLLER_PASS.monthlyPriceMinor,
       };
     },
   },
@@ -6152,6 +6443,17 @@ export const ROUTES: Route[] = [
 
       const { seat, count } = body<{ seat: keyof typeof SEATS; count: number }>(ctx);
       const definition = SEATS[seat];
+      // A participant seat type is nothing to buy: the people it prices are
+      // admitted without a seat. Refused rather than sold, because a charge
+      // for nothing is the kind of thing an invoice dispute is made of.
+      if (!controllerSeat(definition)) {
+        throw new DomainError(
+          'SEAT_NOT_REQUIRED',
+          `${definition.label} prices participant roles (${definition.roles.join(', ')}), and a participant takes no seat on this package. Add the person; nothing needs buying.`,
+          422,
+          [{ field: 'seat', message: 'Choose a Controller seat type' }],
+        );
+      }
       const entitlementId = ulid();
       const monthlyPriceMinor = count * definition.monthlyPriceMinor;
       write(engineCtx, {
@@ -18810,7 +19112,9 @@ export const ROUTES: Route[] = [
       });
 
       return renderAndCharge(
-        platform.spendingWallet(actor.tenantId).wallet,
+        // The sponsor's wallet for an external member, refused where none is
+        // approved; the tenancy's own for everybody else.
+        platform.spendingWalletFor(actor, ctx.params.projectId as string).wallet,
         document,
         { format: chosen, projectId: ctx.params.projectId as string, userId: actor.actorId },
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
@@ -18908,7 +19212,7 @@ export const ROUTES: Route[] = [
       });
 
       return renderAndCharge(
-        platform.spendingWallet(actor.tenantId).wallet,
+        platform.spendingWalletFor(actor, projectId).wallet,
         document,
         { format: chosen, projectId, userId: actor.actorId },
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
@@ -20526,7 +20830,16 @@ export const ROUTES: Route[] = [
     pattern: '/v1/billing/wallet',
     description: 'ACU wallet position, caps and alerts — the group’s wallet for a company covered by its group, and it says so',
     handler: (platform, ctx) => {
-      const spending = platform.spendingWallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId);
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      // An external member is shown who pays for their AI and how much of the
+      // allowance remains — never the host's balance, which is not theirs.
+      const position = platform.acuPositionFor(actor, `${actor.tenantId}-governance`, null);
+      if (position !== null) {
+        return position.ok
+          ? { external: true, sponsorType: position.sponsorType, sponsoredBy: platform.tenant(position.sponsorTenantId).legalName, remainingMinor: position.remainingMinor, overageAllowed: position.overageAllowed, availableMinor: Math.min(position.remainingMinor, position.wallet.availableMinor()) }
+          : { external: true, sponsorType: null, sponsoredBy: null, remainingMinor: 0, refusal: { code: position.code, message: position.message } };
+      }
+      const spending = platform.spendingWallet(actor.tenantId);
       return { ...spending.wallet.snapshot(), sharedFrom: spending.sharedFrom };
     },
   },

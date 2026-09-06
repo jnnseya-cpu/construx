@@ -89,12 +89,24 @@ before(async () => {
 after(() => server.close());
 
 describe('buying a seat beyond the package', () => {
-  it('starts refused: Solo is one seat and the administrator is it', async () => {
+  it('starts refused: Solo is one Controller seat and the administrator is it', async () => {
     assert.equal(PACKAGES.SOLO.includedSeats, 1);
-    const refused = await post('/v1/users', adminToken, { name: 'Second', email: 'second@solosurveys.example', roles: ['SUPERVISOR'] });
+    const refused = await post('/v1/users', adminToken, { name: 'Second', email: 'second@solosurveys.example', roles: ['PLANNER'] });
     assert.equal(refused.status, 422, JSON.stringify(refused.body));
     assert.equal(refused.body.title, 'SEAT_LIMIT_REACHED');
     assert.match(String(refused.body.detail), /buy a seat on acu & billing/i);
+  });
+
+  it('admits a participant without a seat, and will not sell a seat for one', async () => {
+    // The package's seats are Controller seats. A supervisor records what
+    // happened on site and approves nothing commercial: no seat, no purchase.
+    const admitted = await post('/v1/users', adminToken, { name: 'Site Lead', email: 'site@solosurveys.example', roles: ['SUPERVISOR'] });
+    assert.equal(admitted.status, 201, JSON.stringify(admitted.body));
+    assert.equal(platform.subscription(tenantId).assignedIdentities.length, 1, 'the participant took no seat');
+    const pointless = await post('/v1/billing/seats/purchase', adminToken, { seat: 'SITE_SUPERVISOR', count: 1 });
+    assert.equal(pointless.status, 422, JSON.stringify(pointless.body));
+    assert.equal(pointless.body.title, 'SEAT_NOT_REQUIRED');
+    assert.equal(purchasedSeats(platform.ledger, tenantId), 0);
   });
 
   it('the seats position publishes the cap and nothing bought yet', async () => {
@@ -108,44 +120,44 @@ describe('buying a seat beyond the package', () => {
   it('is refused for an unknown seat type and an absurd count', async () => {
     const unknown = await post('/v1/billing/seats/purchase', adminToken, { seat: 'ASTRONAUT', count: 1 });
     assert.equal(unknown.status, 400, JSON.stringify(unknown.body));
-    const many = await post('/v1/billing/seats/purchase', adminToken, { seat: 'SITE_SUPERVISOR', count: 21 });
+    const many = await post('/v1/billing/seats/purchase', adminToken, { seat: 'PLANNER', count: 21 });
     assert.equal(many.status, 400, JSON.stringify(many.body));
     assert.equal(purchasedSeats(platform.ledger, tenantId), 0);
   });
 
   it('is barred to the platform operator — a tenancy commits itself to a charge', async () => {
-    const refused = await post('/v1/billing/seats/purchase', operatorToken, { seat: 'SITE_SUPERVISOR', count: 1 });
+    const refused = await post('/v1/billing/seats/purchase', operatorToken, { seat: 'PLANNER', count: 1 });
     assert.equal(refused.status, 403, JSON.stringify(refused.body));
     assert.equal(refused.body.title, 'ACCOUNT_LAYER_SEPARATION');
   });
 
   it('buys one seat at the seat price and lifts the cap by one', async () => {
-    const bought = await post('/v1/billing/seats/purchase', adminToken, { seat: 'SITE_SUPERVISOR', count: 1 });
+    const bought = await post('/v1/billing/seats/purchase', adminToken, { seat: 'PLANNER', count: 1 });
     assert.equal(bought.status, 201, JSON.stringify(bought.body));
     assert.equal(bought.body.seats, 1);
-    assert.equal(bought.body.label, SEATS.SITE_SUPERVISOR.label);
-    assert.equal(bought.body.monthlyPriceMinor, SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.equal(bought.body.label, SEATS.PLANNER.label);
+    assert.equal(bought.body.monthlyPriceMinor, SEATS.PLANNER.monthlyPriceMinor);
     assert.equal(bought.body.seatsUsed, 1);
     assert.equal(bought.body.seatCap, 2);
     assert.equal(bought.body.seatsPurchased, 1);
 
     const entitlements = purchasedSeatEntitlements(platform.ledger, tenantId);
     assert.equal(entitlements.length, 1);
-    assert.equal(entitlements[0]?.unitMinor, SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.equal(entitlements[0]?.unitMinor, SEATS.PLANNER.monthlyPriceMinor);
     assert.equal(entitlements[0]?.id, bought.body.entitlementId);
   });
 
   it('admits the second person on the bought seat, and refuses a third', async () => {
-    const admitted = await post('/v1/users', adminToken, { name: 'Second', email: 'second@solosurveys.example', roles: ['SUPERVISOR'] });
+    const admitted = await post('/v1/users', adminToken, { name: 'Second', email: 'second@solosurveys.example', roles: ['PLANNER'] });
     assert.equal(admitted.status, 201, JSON.stringify(admitted.body));
-    assert.equal(platform.users(tenantId).length, 2);
+    assert.equal(platform.users(tenantId).length, 3, 'the administrator, the participant and the planner');
 
-    const third = await post('/v1/users', adminToken, { name: 'Third', email: 'third@solosurveys.example', roles: ['PLANNER'] });
+    const third = await post('/v1/users', adminToken, { name: 'Third', email: 'third@solosurveys.example', roles: ['PM'] });
     assert.equal(third.status, 422, JSON.stringify(third.body));
     assert.equal(third.body.title, 'SEAT_LIMIT_REACHED');
     // The refusal states both what the package includes and what has been bought.
     assert.match(String(third.body.detail), /includes 1 seat and 1 more has been bought/);
-    assert.equal(platform.users(tenantId).length, 2);
+    assert.equal(platform.users(tenantId).length, 3);
   });
 
   it('shows the bought seat on the seats position', async () => {
@@ -153,7 +165,7 @@ describe('buying a seat beyond the package', () => {
     assert.equal(seats.body.seatsUsed, 2);
     assert.equal(seats.body.seatsPurchased, 1);
     assert.equal(seats.body.seatCap, 2);
-    assert.equal(seats.body.purchasedMonthlyMinor, SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.equal(seats.body.purchasedMonthlyMinor, SEATS.PLANNER.monthlyPriceMinor);
     assert.equal((seats.body.purchasedSeats as unknown[]).length, 1);
   });
 
@@ -162,10 +174,10 @@ describe('buying a seat beyond the package', () => {
     const invoice = platform.previewInvoice(tenantId, period);
     const seatLines = invoice.lines.filter((line) => line.category === 'SEATS');
     assert.equal(seatLines.length, 1);
-    assert.equal(seatLines[0]?.amountMinor, SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
-    assert.match(seatLines[0]?.description ?? '', /Additional seat — Site Manager \/ Supervisor × 1/);
-    assert.equal(invoice.seatsMinor, SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
-    assert.equal(invoice.totalMinor, PACKAGES.SOLO.monthlyPriceMinor + SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.equal(seatLines[0]?.amountMinor, SEATS.PLANNER.monthlyPriceMinor);
+    assert.match(seatLines[0]?.description ?? '', /Additional seat — Planner \/ Planning Engineer × 1/);
+    assert.equal(invoice.seatsMinor, SEATS.PLANNER.monthlyPriceMinor);
+    assert.equal(invoice.totalMinor, PACKAGES.SOLO.monthlyPriceMinor + SEATS.PLANNER.monthlyPriceMinor);
     assert.ok(invoice.commercialTerms.some((term) => /seats bought beyond the package/i.test(term)));
   });
 
@@ -174,7 +186,7 @@ describe('buying a seat beyond the package', () => {
     const dueAt = new Date(Date.parse(subscription.renewsAt) + DAY);
     const raised = collection.raiseCharge(platform, tenantId, dueAt);
     assert.ok(raised, 'a due period raises a charge');
-    assert.equal(raised.charge.amountMinor, PACKAGES.SOLO.monthlyPriceMinor + SEATS.SITE_SUPERVISOR.monthlyPriceMinor);
+    assert.equal(raised.charge.amountMinor, PACKAGES.SOLO.monthlyPriceMinor + SEATS.PLANNER.monthlyPriceMinor);
   });
 
   it('counts bought seats when judging a package move', () => {

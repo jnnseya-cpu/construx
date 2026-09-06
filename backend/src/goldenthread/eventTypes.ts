@@ -130,6 +130,54 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROJECT_INVITATION_SENT', 'ProjectInvitation', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('PROJECT_INVITATION_ACCEPTED', 'ProjectInvitation', 'UPDATE', 'GOVERNANCE'),
   def('PROJECT_INVITATION_WITHDRAWN', 'ProjectInvitation', 'UPDATE', 'GOVERNANCE'),
+  // The invitee saying no, which is a different fact from the sender taking it
+  // back: one is a refusal the record should show, the other a correction.
+  def('PROJECT_INVITATION_DECLINED', 'ProjectInvitation', 'UPDATE', 'GOVERNANCE'),
+  // A person's relationship to a project, apart from the invitation that
+  // started it and from the identity that signs in. The invitation is an offer
+  // with a fortnight to live; the membership is the appointment — who they are
+  // with, what class of authority they hold, whose licence covers it, who pays
+  // for their AI, and when it ends. Created with the invitation as PENDING,
+  // ACTIVE on acceptance, and ended by expiry or revocation. See
+  // `domain/membership.ts` and `identity/licence.ts` for the commercial rule.
+  def('PROJECT_MEMBERSHIP_CREATED', 'ProjectMembership', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('PROJECT_MEMBERSHIP_ACTIVATED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // Controller-level permissions asked for with no licence to cover them. The
+  // membership stays a participant's until a licence decision is recorded.
+  def('CONTROLLER_PERMISSION_REQUESTED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // The licence found: the person's own organisation's seat, or the group's.
+  // Recorded because "why was this person not charged for" is the first
+  // question an invoice dispute asks, and the answer has to be on the record.
+  def('HOME_CONTROLLER_LICENCE_VERIFIED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('GROUP_CONTROLLER_LICENCE_VERIFIED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // The licence that covered a Controller has stopped: the seat at home was
+  // revoked, the pass ran out. Controller authority stops with it.
+  def('CONTROLLER_LICENCE_LAPSED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // The host reducing a requested Controller to a participant rather than
+  // paying for a pass — a permission change with a commercial consequence.
+  def('PERMISSION_DOWNGRADED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('PERMISSION_UPGRADED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // Who pays for the person's AI moved from one organisation to the other.
+  def('BILLING_RESPONSIBILITY_CHANGED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('MEMBERSHIP_SUSPENDED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('MEMBERSHIP_RESTORED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('MEMBERSHIP_EXPIRED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  def('MEMBERSHIP_REVOKED', 'ProjectMembership', 'UPDATE', 'GOVERNANCE'),
+  // The Project Controller Pass: a one-project, time-limited Controller
+  // licence the host buys for a person who has none. Bought, and then ended by
+  // running out, by revocation, or by the membership it was bought for ending.
+  def('PROJECT_CONTROLLER_PASS_PURCHASED', 'ControllerPass', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('PROJECT_CONTROLLER_PASS_EXPIRED', 'ControllerPass', 'UPDATE', 'GOVERNANCE'),
+  def('PROJECT_CONTROLLER_PASS_REVOKED', 'ControllerPass', 'UPDATE', 'GOVERNANCE'),
+  // Who pays for an external person's AI, and up to how much. Requested by the
+  // host, approved or rejected by an administrator of the organisation whose
+  // wallet it is — never by the host — and revocable by either. On the sponsor
+  // organisation's own chain, because it is their money.
+  def('ACU_SPONSORSHIP_REQUESTED', 'AcuSponsorship', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('ACU_SPONSORSHIP_APPROVED', 'AcuSponsorship', 'UPDATE', 'GOVERNANCE'),
+  def('ACU_SPONSORSHIP_REJECTED', 'AcuSponsorship', 'UPDATE', 'GOVERNANCE'),
+  def('ACU_SPONSORSHIP_REVOKED', 'AcuSponsorship', 'UPDATE', 'GOVERNANCE'),
+  def('ACU_LIMIT_CHANGED', 'AcuSponsorship', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_ASSIGNED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('IDENTITY_SEAT_REVOKED', 'Subscription', 'UPDATE', 'GOVERNANCE'),
   def('SUBSCRIPTION_ACTIVATED', 'Subscription', 'CREATE', 'GOVERNANCE'),

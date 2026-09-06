@@ -24,6 +24,44 @@ import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/e
 /** The region's name, from the shared vocabulary rather than a second list. */
 const regionLabel = (code) => CONTINENT.find((option) => option.value === code)?.label ?? code ?? 'Not stated';
 
+/** How a member relates to this organisation, as the members table words it. */
+const RELATIONSHIP_LABEL = { HOME_MEMBER: 'Internal', GROUP_MEMBER: 'Group', EXTERNAL_INVITEE: 'External' };
+
+/** The seat badge's tone: a licence required or lapsed is the thing to act on. */
+const BADGE_TONE = {
+  PARTICIPANT_NO_SEAT: 'neutral',
+  CONTROLLER_HOST_SEAT: 'ai',
+  CONTROLLER_HOME_LICENSED: 'ok',
+  CONTROLLER_GROUP_LICENSED: 'ok',
+  CONTROLLER_HOST_SPONSORED: 'warn',
+  CONTROLLER_LICENCE_REQUIRED: 'bad',
+  CONTROLLER_LICENCE_EXPIRED: 'bad',
+};
+
+/**
+ * The acts on one member, by what the record says is open to do. A Controller
+ * with no licence gets the two decisions the rule allows the host — buy a pass
+ * or reduce the roles — and never a third that would add the person to the
+ * paid seats unasked.
+ */
+function memberActions(member) {
+  const act = (action, label, tone = 'quiet') =>
+    html`<button class="btn ${tone} sm" data-member-action="${action}" data-membership="${member.membershipId}" data-name="${member.name}" data-pass="${member.passId ?? ''}">${label}</button>`;
+  if (member.status === 'REVOKED' || member.status === 'EXPIRED') return '';
+  const external = member.relationship !== 'HOME_MEMBER';
+  const parts = [];
+  if (member.badge === 'CONTROLLER_LICENCE_REQUIRED' || member.badge === 'CONTROLLER_LICENCE_EXPIRED') {
+    parts.push(act('pass', 'Sponsor a pass'), act('reduce', 'Reduce to participant'));
+  }
+  if (member.status === 'ACTIVE' || member.status === 'PENDING') parts.push(act('roles', 'Roles'));
+  if (external && (member.status === 'ACTIVE' || member.status === 'PENDING')) parts.push(act('sponsor', 'AI sponsor'));
+  if (member.passId && member.licenceSource === 'HOST_SPONSORED_PASS') parts.push(act('revoke-pass', 'End the pass'));
+  if (member.status === 'ACTIVE') parts.push(act('suspend', 'Suspend'));
+  if (member.status === 'SUSPENDED') parts.push(act('restore', 'Restore'));
+  if (member.status !== 'PENDING') parts.push(act('revoke', 'Revoke', 'quiet danger'));
+  return html`${parts}`;
+}
+
 /**
  * The page for somebody the estate position is refused to.
  *
@@ -163,7 +201,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -188,6 +226,13 @@ export async function enterprise(root) {
     // named firm's person rather than a stranger with a supplier role. Null
     // where the reader may not see the register; the invitation still works.
     api.get('/v1/supply-chain?all=true').catch(() => null),
+    // Everybody appointed to this project, with whose licence covers them and
+    // who pays for their AI — the members table the commercial rule is read
+    // from. Null where the reader may not see it.
+    api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null),
+    // Who this organisation has asked to pay for a guest's AI, and what it
+    // has agreed to pay itself.
+    api.get('/v1/acu-sponsorships').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -258,11 +303,18 @@ export async function enterprise(root) {
               // it — that is the whole point of the command — and the platform
               // decides whether the caller is working on it or merely reading
               // it, from the same matrix this screen reads.
-              permitted: can('PROJECT_SETUP', 'R') && (invitations?.seats?.remaining ?? 1) !== 0,
-              reason:
-                invitations?.seats?.remaining === 0
-                  ? `Every identity in this package is taken or invited (${invitations.seats.assigned} assigned, ${invitations.seats.heldByInvitations} invited). Move package, or withdraw an invitation.`
-                  : blockedReason('PROJECT_SETUP', 'R'),
+              // Open even when the package's Controller seats are all taken:
+              // a participant, or a Controller licensed elsewhere, takes none,
+              // and the platform refuses the one kind that does.
+              permitted: can('PROJECT_SETUP', 'R'),
+              reason: blockedReason('PROJECT_SETUP', 'R'),
+            },
+            {
+              id: 'check',
+              label: 'Check a licence',
+              tone: '',
+              permitted: can('PROJECT_SETUP', 'R'),
+              reason: blockedReason('PROJECT_SETUP', 'R'),
             },
             {
               id: 'person',
@@ -548,15 +600,15 @@ export async function enterprise(root) {
         </div>
       </div>
 
-      <div class="card pad0" style="margin-bottom:14px">
+      <div class="card pad0" style="margin-bottom:14px" data-members>
         <h2 style="padding:15px 17px 0">
-          Invited onto this project
+          Project members
           ${
             invitations?.seats
               ? badge(
                   invitations.seats.remaining === null
-                    ? 'unlimited identities'
-                    : `${invitations.seats.remaining} identit${invitations.seats.remaining === 1 ? 'y' : 'ies'} left`,
+                    ? 'unlimited Controller seats'
+                    : `${invitations.seats.remaining} Controller seat${invitations.seats.remaining === 1 ? '' : 's'} left`,
                   invitations.seats.remaining === 0 ? 'bad' : invitations.seats.remaining === null ? 'neutral' : 'ok',
                 )
               : ''
@@ -564,12 +616,63 @@ export async function enterprise(root) {
         </h2>
         <div class="metric-sub" style="padding:0 17px 10px">
           Anybody working on this project may bring somebody onto it — the designer, the temporary works engineer, the
-          client's representative, a subcontractor's own QS. Internal or external, each one is a full identity against
-          the package's allowance, and the seat is held from the moment the invitation is sent rather than when it is
-          accepted: promising a place the business cannot give is worse than refusing the person who sent it.
+          client's representative, a subcontractor's own QS. One person, one home organisation, one Controller seat:
+          a participant takes no seat; a Controller from another organisation, or from a company of the same group,
+          brings their own licence with them; only this organisation's own Controller takes one of the package's seats,
+          held from the moment the invitation is sent. Nobody is added to this organisation's paid seats by being invited.
         </div>
         ${table({
-          headers: ['Name', 'Email', 'With', 'Roles', 'Invited by', 'Expires', 'Status'],
+          headers: administers() || can('PROJECT_SETUP', 'R')
+            ? ['Person', 'Organisation', 'Relationship', 'Roles', 'Licence', 'Seat owner', 'Host billable', 'ACU sponsor', 'Expiry', 'Status', '']
+            : ['Person', 'Organisation', 'Relationship', 'Roles', 'Licence', 'Seat owner', 'Host billable', 'ACU sponsor', 'Expiry', 'Status'],
+          rows: (members?.members ?? []).map((member) => [
+            html`<div><b>${member.name}</b></div><div class="metric-sub">${member.email}</div>`,
+            member.organisation || '—',
+            badge(RELATIONSHIP_LABEL[member.relationship] ?? humanise(member.relationship), member.relationship === 'HOME_MEMBER' ? 'neutral' : 'warn'),
+            html`${(member.activeRoles ?? []).map((role) => badge(humanise(role), 'neutral'))}${(member.withheldRoles ?? []).map((role) => badge(`${humanise(role)} — withheld`, 'bad'))}`,
+            badge(member.badgeLabel ?? humanise(member.badge), BADGE_TONE[member.badge] ?? 'neutral'),
+            member.seatOwner ?? html`<span class="metric-sub">none</span>`,
+            member.hostBillable ? badge('yes', 'warn') : badge('no', 'ok'),
+            member.acuSponsor === 'NONE' ? html`<span class="metric-sub">not sponsored</span>` : html`${member.acuSponsorName ?? humanise(member.acuSponsor)}`,
+            member.expiresAt ? date(member.expiresAt) : html`<span class="metric-sub">until revoked</span>`,
+            badge(member.status.toLowerCase(), member.status === 'ACTIVE' ? 'ok' : member.status === 'PENDING' ? 'warn' : member.status === 'SUSPENDED' ? 'bad' : 'neutral'),
+            ...(administers() || can('PROJECT_SETUP', 'R') ? [memberActions(member)] : []),
+          ]),
+          empty: 'Nobody has been appointed to this project yet. Invite somebody above.',
+        })}
+        ${
+          invitations?.seats && invitations.seats.remaining !== null
+            ? html`<div class="metric-sub" style="padding:10px 17px 15px">
+                ${invitations.seats.assigned} Controller seat${invitations.seats.assigned === 1 ? '' : 's'} assigned and
+                ${invitations.seats.heldByInvitations} held by outstanding invitations to this organisation's own Controllers, against
+                ${invitations.seats.includedSeats} in this package. A Project Controller Pass for a guest is
+                ${money(invitations.passPriceMinor ?? 0, currency)} a month and is charged separately.
+              </div>`
+            : ''
+        }
+        ${
+          (sponsorships?.asHost ?? []).length
+            ? html`<div style="padding:0 17px 15px">
+                <div class="metric-sub" style="margin-bottom:6px"><b>Sponsorships asked of other organisations</b></div>
+                ${table({
+                  headers: ['Person', 'Asked of', 'What', 'Standing', 'Asked'],
+                  rows: sponsorships.asHost.map((s) => [
+                    s.person.name,
+                    s.sponsorName,
+                    `${humanise(s.authorisationType)}${s.workflow ? ` · ${s.workflow}` : ''}`,
+                    badge(s.standing.toLowerCase(), s.standing === 'AVAILABLE' ? 'ok' : s.standing === 'PENDING' ? 'warn' : 'neutral'),
+                    date(s.requestedAt),
+                  ]),
+                })}
+              </div>`
+            : ''
+        }
+      </div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">Invitations</h2>
+        ${table({
+          headers: ['Name', 'Email', 'With', 'Roles', 'Licence', 'Invited by', 'Expires', 'Status'],
           rows: (invitations?.invitations ?? []).map((invite) => [
             invite.name,
             invite.email,
@@ -577,21 +680,13 @@ export async function enterprise(root) {
               ? html`${invite.organisation ?? '—'}${badge('external', 'warn')}`
               : html`<span class="metric-sub">this organisation</span>`,
             html`${(invite.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}`,
+            invite.badge ? badge(invite.badgeLabel ?? humanise(invite.badge), BADGE_TONE[invite.badge] ?? 'neutral') : '—',
             (people.users ?? []).find((u) => u.id === invite.invitedBy)?.name ?? invite.invitedBy,
             date(invite.expiresAt),
             badge(humanise(invite.status), statusTone(invite.status)),
           ]),
           empty: 'Nobody has been invited to this project yet.',
         })}
-        ${
-          invitations?.seats && invitations.seats.remaining !== null
-            ? html`<div class="metric-sub" style="padding:10px 17px 15px">
-                ${invitations.seats.assigned} identit${invitations.seats.assigned === 1 ? 'y' : 'ies'} assigned and
-                ${invitations.seats.heldByInvitations} held by outstanding invitations, against
-                ${invitations.seats.includedSeats} in this package.
-              </div>`
-            : ''
-        }
       </div>
 
       <div class="card" data-people>
@@ -634,11 +729,48 @@ export async function enterprise(root) {
    * stores.
    */
   const COMMANDS = {
+    check: {
+      title: 'Check the licence before inviting',
+      intent:
+        'Whether these roles on this person need a Controller licence, whether one is already held by their own organisation ' +
+        'or their group, and whether this organisation would pay anything. Says "verified" or "required" and nothing about ' +
+        'the other organisation\u2019s subscription.',
+      path: '/v1/controller-licences/resolve',
+      submitLabel: 'Check',
+      fields: [
+        { name: 'email', label: 'Work email' },
+        {
+          name: 'external',
+          label: 'Which organisation',
+          type: 'select',
+          options: [
+            { value: 'false', label: 'Ours — they work here' },
+            { value: 'true', label: 'External — another company, or a company of our group' },
+          ],
+        },
+        { name: 'organisation', label: 'Their organisation', required: false },
+        {
+          name: 'roles',
+          label: 'Roles to check',
+          type: 'select',
+          multiple: true,
+          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+        },
+      ],
+      transform: (f) => ({
+        ...f,
+        projectId: state.session.projectId,
+        external: String(f.external) === 'true',
+        roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
+        ...(f.organisation ? {} : { organisation: undefined }),
+      }),
+    },
     invite: {
       title: 'Invite somebody onto this project',
       intent:
-        'Internal or external. They become a full identity against this package\u2019s allowance, and the seat is held ' +
-        'from now rather than from when they accept.',
+        'A participant takes no seat. A Controller from another organisation brings their own licence, or is admitted as a ' +
+        'participant until you buy a Project Controller Pass or reduce the roles. Only one of our own Controllers takes one ' +
+        'of this package\u2019s seats, held from now rather than from when they accept. Nothing is charged to anybody by inviting.',
       path: `/v1/projects/${state.session.projectId}/invitations`,
       submitLabel: 'Send the invitation',
       fields: [
@@ -650,7 +782,7 @@ export async function enterprise(root) {
           type: 'select',
           options: [
             { value: 'false', label: 'Ours — they work here' },
-            { value: 'true', label: 'External — another company' },
+            { value: 'true', label: 'External — another company, or a company of our group' },
           ],
         },
         {
@@ -665,6 +797,14 @@ export async function enterprise(root) {
           type: 'select',
           multiple: true,
           options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+          hint: 'Controller roles — approving money, baselines and contracts, administering people — need a licence. Participant roles do not.',
+        },
+        {
+          name: 'expiresAt',
+          label: 'Appointment ends',
+          type: 'datetime-local',
+          required: false,
+          hint: 'When their access to this project ends on its own. Left empty, it runs until revoked.',
         },
         {
           name: 'because',
@@ -691,6 +831,7 @@ export async function enterprise(root) {
         external: String(f.external) === 'true',
         roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
         ...(f.supplierId ? {} : { supplierId: undefined }),
+        ...(f.expiresAt ? { expiresAt: new Date(f.expiresAt).toISOString() } : { expiresAt: undefined }),
       }),
     },
 
@@ -931,6 +1072,158 @@ export async function enterprise(root) {
     }),
   );
 
+  // What may be done about one member: the licence decisions, the roles, the
+  // AI sponsor, and the lifecycle. Each is a command the platform decides on;
+  // the console only says what it is about to ask.
+  root.querySelector('[data-members]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-member-action]');
+    if (!button) return;
+    const membershipId = button.dataset.membership;
+    const name = button.dataset.name ?? 'this person';
+    const action = button.dataset.memberAction;
+    const reason = (hint) => ({ name: 'reason', label: 'Reason', type: 'textarea', hint });
+    const passPrice = money(invitations?.passPriceMinor ?? members?.passPriceMinor ?? 0, currency);
+    try {
+      let done = null;
+      if (action === 'pass') {
+        done = await command({
+          title: `Sponsor a Project Controller Pass for ${name}`,
+          intent:
+            `These roles need a Controller licence and ${name} holds none. This does not add them to your paid seats: a pass is ` +
+            `${passPrice} a month on this organisation’s invoice, opens this project only, and ends with the appointment. ` +
+            'The other options are to reduce the roles, or to ask their organisation to license them.',
+          path: '/v1/controller-passes/purchase',
+          submitLabel: `Buy the pass — ${passPrice} a month`,
+          fields: [
+            { name: 'expiresAt', label: 'Pass ends', type: 'datetime-local', hint: 'No later than the appointment’s end; at most twelve months.' },
+            reason('At least ten characters; this is the sentence the invoice carries.'),
+          ],
+          transform: (f) => ({ membershipId, expiresAt: new Date(f.expiresAt).toISOString(), reason: f.reason }),
+        });
+      } else if (action === 'reduce') {
+        done = await command({
+          title: `Reduce ${name} to a participant`,
+          intent: 'The Controller roles are withdrawn and the participant roles kept — or a viewer, where there were none. Nothing is charged and nothing further will be.',
+          path: `/v1/project-memberships/${membershipId}/permissions`,
+          submitLabel: 'Reduce',
+          fields: [
+            {
+              name: 'roles',
+              label: 'Participant roles to keep',
+              type: 'select',
+              multiple: true,
+              options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+            },
+            reason('At least ten characters.'),
+          ],
+          transform: (f) => ({ roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean), reason: f.reason }),
+        });
+      } else if (action === 'roles') {
+        done = await command({
+          title: `Change what ${name} may do on this project`,
+          intent:
+            'Controller roles need a licence. These permissions will not add the person automatically to your paid seats: an ' +
+            'existing home or group licence is reused, or the roles are withheld until you buy a Project Controller Pass or reduce them.',
+          path: `/v1/project-memberships/${membershipId}/permissions`,
+          submitLabel: 'Change roles',
+          fields: [
+            {
+              name: 'roles',
+              label: 'Roles',
+              type: 'select',
+              multiple: true,
+              options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+            },
+            reason('At least ten characters.'),
+          ],
+          transform: (f) => ({ roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean), reason: f.reason }),
+        });
+      } else if (action === 'sponsor') {
+        done = await command({
+          title: `Who pays for ${name}’s AI on this project`,
+          intent:
+            'Ask their own organisation to sponsor it — nothing is funded until one of its administrators approves, with a limit — or ' +
+            'sponsor it from this organisation’s wallet, which needs authority over the money here. A one-time authorisation names one engine.',
+          path: '/v1/acu-sponsorships',
+          submitLabel: 'Raise the sponsorship',
+          fields: [
+            {
+              name: 'sponsorType',
+              label: 'Who pays',
+              type: 'select',
+              options: [
+                { value: 'HOME_ORGANISATION', label: 'Their organisation — ask them to approve' },
+                { value: 'HOST_ORGANISATION', label: 'This organisation — from our wallet' },
+              ],
+            },
+            {
+              name: 'authorisationType',
+              label: 'What is authorised',
+              type: 'select',
+              options: [
+                { value: 'MONTHLY_ALLOWANCE', label: 'A monthly allowance' },
+                { value: 'PROJECT_ALLOWANCE', label: 'An allowance for the whole appointment' },
+                { value: 'ONE_TIME_EXECUTION', label: 'One named engine, up to a maximum' },
+              ],
+            },
+            { name: 'maximumMinor', label: 'Maximum ACUs', type: 'number', step: '1', hint: 'One ACU is one minor unit.' },
+            { name: 'workflow', label: 'Engine (one-time only)', required: false, hint: 'The engine name a one-time authorisation covers, e.g. ESTIMATE_TENDER.' },
+            { name: 'expiresAt', label: 'Until', type: 'datetime-local', required: false },
+            reason('What the AI is for, in a sentence the sponsor can approve.'),
+          ],
+          transform: (f) => ({
+            membershipId,
+            sponsorType: f.sponsorType,
+            authorisationType: f.authorisationType,
+            maximumMinor: Number(f.maximumMinor),
+            reason: f.reason,
+            ...(f.workflow ? { workflow: f.workflow } : {}),
+            ...(f.expiresAt ? { expiresAt: new Date(f.expiresAt).toISOString() } : {}),
+          }),
+        });
+        if (done?.notified === 'NO_ADMINISTRATOR') toast('Nobody to ask', 'That organisation has no administrator to approve the request.', 'warn');
+        else if (done?.sponsorship?.status === 'PENDING') toast('Sponsorship requested', `${done.sponsorship.person.name}’s organisation has been asked to approve it.`, 'ok');
+      } else if (action === 'revoke-pass') {
+        done = await command({
+          title: `End the Project Controller Pass for ${name}`,
+          intent: 'The charge stops and the Controller roles it covered are withheld. The person stays a participant.',
+          path: `/v1/controller-passes/${button.dataset.pass}/revoke`,
+          submitLabel: 'End the pass',
+          fields: [reason('At least five characters.')],
+        });
+      } else if (action === 'suspend') {
+        done = await command({
+          title: `Suspend ${name}’s access`,
+          intent: 'Refused at once and kept to restore. A pass, where there is one, keeps running until restored or ended.',
+          path: `/v1/project-memberships/${membershipId}/suspend`,
+          submitLabel: 'Suspend',
+          fields: [reason('At least five characters.')],
+        });
+      } else if (action === 'restore') {
+        done = await command({
+          title: `Restore ${name}’s access`,
+          intent: 'On the same licence and the same sponsor.',
+          path: `/v1/project-memberships/${membershipId}/restore`,
+          submitLabel: 'Restore',
+          fields: [reason('At least five characters.')],
+        });
+      } else if (action === 'revoke') {
+        done = await command({
+          title: `Revoke ${name}’s access to this project`,
+          intent:
+            'Access ends now, open AI holds are released, any pass stops, and the identity is deactivated if this was its last project. ' +
+            'Everything they recorded stays on the chain under their name.',
+          path: `/v1/project-memberships/${membershipId}/revoke`,
+          submitLabel: 'Revoke',
+          fields: [reason('At least five characters.')],
+        });
+      }
+      if (done) await draw();
+    } catch (error) {
+      toast('Could not do that', error.message, 'err');
+    }
+  });
+
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
@@ -938,6 +1231,26 @@ export async function enterprise(root) {
     if (!spec) return;
     const result = await command(spec);
     if (!result) return;
+
+    // The licence check answers on the spot rather than changing anything:
+    // verified or required, whose seat, and whether this organisation pays.
+    if (button.dataset.command === 'check') {
+      toast(
+        result.verdict,
+        `${humanise(result.accessClass)} · ${RELATIONSHIP_LABEL[result.relationship] ?? result.relationship}${result.homeOrganisation ? ` · ${result.homeOrganisation}` : ''} · ` +
+          `${result.hostBillableSeat ? 'this organisation would pay' : 'nothing charged here'}${result.controllerRoles?.length ? ` · Controller roles: ${result.controllerRoles.map(humanise).join(', ')}` : ''}`,
+        result.badge === 'CONTROLLER_LICENCE_REQUIRED' ? 'warn' : 'ok',
+      );
+      return;
+    }
+    if (button.dataset.command === 'invite' && result.licence?.withheldRoles?.length) {
+      toast(
+        'Controller licence required',
+        `${result.licence.withheldRoles.map(humanise).join(', ')} withheld until a licence is chosen. They are admitted as a participant; ` +
+          'nothing has been added to your paid seats. Sponsor a pass or reduce the roles from the members table.',
+        'warn',
+      );
+    }
 
     // A workspace with no project yet adopts the one just created. The
     // project-scoped screens all said "there is not one here yet — Enterprise &

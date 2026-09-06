@@ -1,5 +1,6 @@
 import { acusFromMinor, minimumMultiplier } from './acu.ts';
 import { config } from '../config.ts';
+import { isControllerRole } from '../identity/licence.ts';
 import type { Role } from '../identity/roles.ts';
 
 /**
@@ -396,6 +397,32 @@ export const UNCHARGED_ROLES: Role[] = ['PLATFORM_ADMIN', 'REGULATOR'];
 export function seatForRole(role: Role): SeatDefinition | undefined {
   return Object.values(SEATS).find((seat) => seat.roles.includes(role));
 }
+
+/**
+ * Whether a seat type is one the package counts.
+ *
+ * A package's seats are Controller seats: the people who approve money,
+ * baselines and contracts, administer the business or run it. A participant
+ * — site, quality, design, supply — takes no seat, so a seat type whose roles
+ * are all participants is priced here for the record and cannot be bought,
+ * because there is nothing to buy: the person is admitted without one.
+ */
+export function controllerSeat(seat: SeatDefinition): boolean {
+  return seat.roles.some(isControllerRole);
+}
+
+/**
+ * The Project Controller Pass: a time-limited, one-project Controller licence
+ * the host buys for an external person who has no Controller seat of their
+ * own. Priced below every full seat because it opens one project and none of
+ * the tenancy, and stated once here beside the seats it stands in for.
+ */
+export const CONTROLLER_PASS = {
+  label: 'Project Controller Pass',
+  monthlyPriceMinor: 4_000,
+  /** The longest a single pass may run before it has to be renewed deliberately. */
+  maxMonths: 12,
+} as const;
 
 /**
  * What a tenant's seats would cost bought individually. This is not what they

@@ -62,14 +62,17 @@ function authFor(userId: string): AuthContext {
 }
 
 let unique = 0;
+// A planner: a Controller-class role, because it approves the programme
+// baseline. The seat arithmetic below turns on the class — a participant's
+// invitation holds no seat — so the default has to be a role that takes one.
 const someone = (over: Partial<Parameters<typeof invitation.inviteToProject>[2]> = {}) => {
   unique += 1;
   return {
     name: `Invited Person ${unique}`,
     email: `invited-${unique}@elsewhere.example`,
-    roles: ['DESIGNER' as const],
+    roles: ['PLANNER' as const],
     external: false,
-    because: 'Temporary works design for the diversion, six weeks from Monday.',
+    because: 'Programme planning for the diversion, six weeks from Monday.',
     ...over,
   };
 };
@@ -210,6 +213,22 @@ describe('an invitation is a seat, from the moment it is sent', () => {
     assert.equal(invitation.pendingInvitations(ctx).length, limit - 1, 'the invitations are not being counted');
 
     throwsCode(() => invitation.inviteToProject(platform, ctx, someone()), 'SEAT_LIMIT_REACHED');
+  });
+
+  it('holds no seat for a participant, however many are invited', () => {
+    // A designer, a supervisor, an inspector: the people who do the work take
+    // no Controller seat, so a one-seat package can bring on as many of them
+    // as the project needs, and the invitation says so.
+    const { tenant, admin } = smallTenancy();
+    const ctx = platform.context(authFor(admin.id), `${tenant.id}-governance`, { source: 'WEB' });
+    for (const role of ['DESIGNER', 'SUPERVISOR', 'QAQC'] as const) {
+      const sent = invitation.inviteToProject(platform, ctx, someone({ roles: [role] }));
+      assert.equal(sent.licence.accessClass, 'PARTICIPANT');
+      assert.equal(sent.licence.hostBillableSeat, false);
+      assert.equal(sent.seatsRemaining, 0, 'the one seat is still the administrator’s');
+    }
+    assert.equal(invitation.seatHoldingInvitations(platform.ledger, tenant.id).length, 0, 'participant invitations hold no seat');
+    throwsCode(() => invitation.inviteToProject(platform, ctx, someone({ roles: ['PLANNER'] })), 'SEAT_LIMIT_REACHED');
   });
 
   it('frees the seat again when one of those invitations is withdrawn', () => {

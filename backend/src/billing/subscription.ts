@@ -1,5 +1,6 @@
-import { PACKAGES, UNCHARGED_ROLES, seatForRole, type PackageTier } from './seats.ts';
+import { PACKAGES, UNCHARGED_ROLES, controllerSeat, seatForRole, type PackageTier } from './seats.ts';
 import { DomainError } from '../core/errors.ts';
+import { accessClassOf } from '../identity/licence.ts';
 import type { Role } from '../identity/roles.ts';
 
 /**
@@ -214,10 +215,27 @@ export function seatCap(subscription: Subscription, purchased: number): number |
  *
  * Roles that carry no seat cost — the platform operator, and a regulator whose
  * access the asset owner is obliged to provide — do not consume the cap either.
+ *
+ * Nor does a participant. The package's seats are Controller seats: a person
+ * whose roles carry no Controller-level authority — a supervisor, an
+ * inspector, a designer, a supplier, a viewer — is admitted without one. And
+ * nor does a Controller whose seat is somebody else's: a person invited onto
+ * a project from another organisation, or from another company of the same
+ * group, brings their own licence with them, and `licensedElsewhere` says so.
+ * Roles left undefined keep the older meaning — a seat is taken — so a
+ * caller that has not classified the person is charged rather than not.
  */
-export function assignIdentity(subscription: Subscription, userId: string, roles: Role[] = [], purchased = 0): Subscription {
+export function assignIdentity(
+  subscription: Subscription,
+  userId: string,
+  roles?: Role[],
+  purchased = 0,
+  options: { licensedElsewhere?: boolean } = {},
+): Subscription {
   if (subscription.assignedIdentities.includes(userId)) return subscription;
-  if (roles.some((role) => UNCHARGED_ROLES.includes(role))) return subscription;
+  if (roles?.some((role) => UNCHARGED_ROLES.includes(role))) return subscription;
+  if (roles !== undefined && accessClassOf(roles) === 'PARTICIPANT') return subscription;
+  if (options.licensedElsewhere) return subscription;
 
   // The package's seats plus the ones bought beyond it. A seat bought and not
   // counted here is money taken for nothing.
@@ -250,7 +268,10 @@ export function seatEconomics(
   const counts = new Map<string, { minor: number; count: number }>();
 
   for (const userId of subscription.assignedIdentities) {
-    const seat = (rolesByUser.get(userId) ?? []).map(seatForRole).find(Boolean);
+    // The Controller seat the person's roles are priced at. A participant
+    // seat type is never counted: nobody holding only those roles is in
+    // `assignedIdentities` any more.
+    const seat = (rolesByUser.get(userId) ?? []).map(seatForRole).find((candidate) => candidate && controllerSeat(candidate));
     if (!seat) continue;
     const entry = counts.get(seat.label) ?? { minor: seat.monthlyPriceMinor, count: 0 };
     entry.count += 1;

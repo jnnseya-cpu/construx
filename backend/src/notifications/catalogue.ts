@@ -154,6 +154,14 @@ def('invitation.reminder', 'Invitation reminder', 'Reminder: your invitation to 
 def('invitation.accepted', 'Invitation accepted', '{{name}} accepted your invitation', 'SUCCESS', [I]);
 def('invitation.declined', 'Invitation declined', '{{name}} declined the invitation', 'INFO', [I]);
 def('invitation.expired', 'Invitation expired', 'Your invitation has expired', 'INFO', [E, I]);
+// Another organisation asking this one to pay for one of its people's AI on
+// their project. To the administrators who hold the wallet, because the
+// answer is a commercial decision and nothing runs until it is given.
+def('acu.sponsorship.requested', 'ACU sponsorship requested', '{{actor}} asks {{enterprise}} to sponsor AI for {{name}} on {{project}}', 'WARNING', [E, I]);
+def('acu.sponsorship.decided', 'ACU sponsorship decided', 'Sponsorship for {{name}} on {{project}}: {{decision}}', 'INFO', [E, I]);
+// A project appointment ending, by its date or by the host's hand. To the
+// person and to whoever brought them on.
+def('membership.ended', 'Project access ended', 'Access to {{project}} has ended for {{name}}', 'INFO', [E, I]);
 
 // ---------------------------------------------------------- Login & Security
 group('LOGIN_SECURITY');

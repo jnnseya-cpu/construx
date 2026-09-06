@@ -21,6 +21,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import type { TenancyStanding } from '../billing/entitlement.ts';
+import type { AcuResolution } from '../billing/sponsorship.ts';
 
 /**
  * Shared execution context for every engine.
@@ -74,7 +75,35 @@ export type EngineContext = {
    * are separate questions and this answers only the first.
    */
   actingAs?: ActorRef;
+  /**
+   * Present on an external member's context and on nobody else's: which
+   * sponsorship would fund an AI execution here, resolved per task because a
+   * host may have authorised one named engine and nothing else. `runAI`
+   * substitutes the sponsor's wallet for `wallet` and refuses when nothing is
+   * approved — an external person's AI is never charged to the host by
+   * default and never to their own organisation without its consent.
+   */
+  acu?: AcuContext;
 };
+
+export type AcuContext = {
+  membershipId: string;
+  sponsorTenantId: string | null;
+  resolve: (task: { engine: string } | null) => AcuResolution;
+};
+
+/**
+ * The wallet a chargeable act may draw on — the sponsor's for an external
+ * member, the context's own for everybody else — or the refusal, as the 402
+ * the person should see. Every metered path that does not go through `runAI`
+ * takes its wallet from here.
+ */
+export function chargeableWallet(ctx: EngineContext): ACUWallet {
+  if (!ctx.acu) return ctx.wallet;
+  const position = ctx.acu.resolve(null);
+  if (!position.ok) throw new DomainError(position.code, position.message, 402);
+  return position.wallet;
+}
 
 /**
  * Refuse a state change from a tenancy that is not entitled to make one.
@@ -341,6 +370,29 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
 
   const aiPermitted = !ctx.auth.roles.includes('REGULATOR') || ctx.auth.regulatorAiEnabled;
 
+  // Whose money. An external member's execution is funded by the sponsorship
+  // resolved for this engine — a one-time authorisation for it, or the
+  // approved allowance — and refused, before anything is reserved, where none
+  // is approved or the allowance would not cover the estimate.
+  let wallet = ctx.wallet;
+  let sponsorshipId: string | undefined;
+  if (ctx.acu) {
+    const position = ctx.acu.resolve({ engine: task.engine });
+    if (!position.ok) throw new DomainError(position.code, position.message, 402);
+    wallet = position.wallet;
+    sponsorshipId = position.sponsorship.id;
+    if (!position.overageAllowed) {
+      const quote = ctx.orchestrator.quote({ capability: task.capability, engine: task.engine, taskType: task.taskType, wallet, projectId: ctx.projectId, inputRefs: task.inputRefs });
+      if (quote.estimatedChargeMinor > position.remainingMinor) {
+        throw new DomainError(
+          'ACU_LIMIT_EXCEEDED',
+          `This would cost about ${quote.estimatedChargeMinor} ACUs and ${position.remainingMinor} remain of what was approved for you on this project. More needs the sponsor's approval.`,
+          402,
+        );
+      }
+    }
+  }
+
   const execute = (request: ProviderRequest) =>
     ctx.orchestrator.execute(
       {
@@ -353,8 +405,9 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
         inputRefs: task.inputRefs,
         request,
         aiPermitted,
+        ...(sponsorshipId ? { sponsorshipId } : {}),
       },
-      ctx.wallet,
+      wallet,
     );
 
   // A task held to the standard asks for the standard. The instruction and the

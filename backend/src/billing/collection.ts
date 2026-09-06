@@ -8,6 +8,7 @@ import { subscriptionPriceMinor } from '../group/agreement.ts';
 import { groupOfTenant } from '../group/directory.ts';
 import { purchasedBlocks } from './storage.ts';
 import { monthlySubscriptionCharge, purchasedSeatChargeMinor } from './subscription.ts';
+import { passChargeMinor } from '../domain/membership.ts';
 import type { Subscription } from './subscription.ts';
 
 /**
@@ -186,11 +187,14 @@ export function raiseCharge(
   // The package part is priced through the group's agreement where the
   // tenancy is a company of one (a rate-card discount is a term the group
   // approved); storage and seats bought beyond the package are at list.
+  // Plus the Project Controller Passes in force: the one thing an invited
+  // person can ever cost the host, and only because the host bought it.
   const amountMinor =
     subscription.status === 'ACTIVE'
       ? subscriptionPriceMinor(platform, tenantId, monthlySubscriptionCharge(subscription)).amountMinor +
         purchasedBlocks(platform.ledger, tenantId) * config.billing.storageBlockPriceMinor +
-        purchasedSeatChargeMinor(platform.ledger, tenantId)
+        purchasedSeatChargeMinor(platform.ledger, tenantId) +
+        passChargeMinor(platform, tenantId, now)
       : 0;
   if (amountMinor <= 0 || subscription.status === 'CANCELLED') return undefined;
 

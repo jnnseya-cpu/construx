@@ -17,9 +17,19 @@ export type InvoiceLine = {
   quantity: number;
   unitMinor: number;
   amountMinor: number;
-  category: 'SUBSCRIPTION' | 'SEATS' | 'STORAGE' | 'AI_USAGE';
+  category: 'SUBSCRIPTION' | 'SEATS' | 'CONTROLLER_PASSES' | 'STORAGE' | 'AI_USAGE';
   projectId?: string;
   module?: string;
+};
+
+/** A Project Controller Pass as the invoice states it. */
+export type ControllerPassLine = {
+  passId: string;
+  personName: string;
+  projectId: string;
+  projectName: string;
+  monthlyPriceMinor: number;
+  expiresAt: string;
 };
 
 export type Invoice = {
@@ -32,6 +42,8 @@ export type Invoice = {
   subscriptionMinor: number;
   /** Seats bought beyond the package, at the prices they were bought at. */
   seatsMinor: number;
+  /** Project Controller Passes in force this period. */
+  passesMinor: number;
   storageMinor: number;
   aiUsageMinor: number;
   aiRawCostMinor: number;
@@ -54,6 +66,7 @@ export function buildInvoice(
   currency = 'USD',
   storageBlocks = 0,
   seatEntitlements: PurchasedSeat[] = [],
+  controllerPasses: ControllerPassLine[] = [],
 ): Invoice {
   const tier = TIERS[subscription.tier];
   // The package charge is already in minor units — the whole billing path works
@@ -84,6 +97,24 @@ export function buildInvoice(
       unitMinor: entitlement.unitMinor,
       amountMinor: entitlement.monthlyPriceMinor,
       category: 'SEATS',
+    });
+  }
+
+  // Project Controller Passes: a one-project Controller licence bought for
+  // somebody from outside, one line per pass naming the person and the
+  // project, so the invoice separates what the host pays for its own
+  // Controllers from what it pays for a guest's. Never a line for an
+  // external Controller licensed elsewhere — that is the whole point.
+  let passesMinor = 0;
+  for (const pass of controllerPasses) {
+    passesMinor += pass.monthlyPriceMinor;
+    lines.push({
+      description: `Project Controller Pass — ${pass.personName} on ${pass.projectName}, until ${pass.expiresAt.slice(0, 10)}`,
+      quantity: 1,
+      unitMinor: pass.monthlyPriceMinor,
+      amountMinor: pass.monthlyPriceMinor,
+      category: 'CONTROLLER_PASSES',
+      projectId: pass.projectId,
     });
   }
 
@@ -128,6 +159,7 @@ export function buildInvoice(
     lines,
     subscriptionMinor,
     seatsMinor,
+    passesMinor,
     storageMinor,
     aiUsageMinor,
     aiRawCostMinor,
@@ -149,11 +181,13 @@ export function buildInvoice(
      * charge, and `aiUsageDrawnFromCredit` says so rather than leaving somebody
      * to work out why the lines do not sum to the total.
      */
-    totalMinor: subscriptionMinor + seatsMinor + storageMinor,
+    totalMinor: subscriptionMinor + seatsMinor + passesMinor + storageMinor,
     aiUsageDrawnFromCredit: true,
     commercialTerms: [
       'Subscription fees cover platform access, identity management, governance, auditability and non-AI functionality.',
       'Seats bought beyond the package are charged monthly at the seat price in force when they were bought, for as long as they are held.',
+      'The package’s seats are Controller seats. Participants take no seat, and a person from another organisation is never charged for here unless a Project Controller Pass is bought for them.',
+      'A Project Controller Pass is charged monthly for as long as it runs and stops with the appointment it was bought for.',
       'AI services are prepaid: credit is purchased in advance and drawn down as it is consumed.',
       'AI usage shown on this invoice has already been paid for at the point credit was purchased, and is stated here for transparency rather than charged again.',
       'Each ACU represents the underlying third-party AI compute cost incurred by CONSTRUX.',

@@ -313,6 +313,14 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // The common data environment: the file itself, its revision and its state.
   InformationContainer: { area: 'DESIGN_INFORMATION' },
   ProjectInvitation: { area: 'PROJECT_SETUP' },
+  // The appointment behind an invitation: who the person is with, whose
+  // licence covers them, who pays for their AI. Same area as the invitation
+  // for the same reason; the licence and sponsor fields are commercial facts
+  // about the host's own bill, not the other organisation's.
+  ProjectMembership: { area: 'PROJECT_SETUP' },
+  // Money the host spends: with the seats and the wallet.
+  ControllerPass: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  AcuSponsorship: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   OrgUnit: { area: 'ENTERPRISE_STRUCTURE' },
   // What the tenancy owes and whether it has been paid. Under billing, with
   // the wallet and the invoices, because that is who asks the question.

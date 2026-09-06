@@ -62,7 +62,8 @@ before(async () => {
   tenantId = created.tenant.id;
   const a = platform.createUser({ tenantId, name: 'Rowan Adeyemi', email: 'rowan@northgate.example', roles: ['ENTERPRISE_ADMIN'] });
   const b = platform.createUser({ tenantId, name: 'Sam Kaur', email: 'sam@northgate.example', roles: ['ENTERPRISE_ADMIN'] });
-  const w = platform.createUser({ tenantId, name: 'Lee Morgan', email: 'lee@northgate.example', roles: ['SUPERVISOR'] });
+  // A planner: a Controller-class role, so the seat arithmetic below has a seat to release and re-take.
+  const w = platform.createUser({ tenantId, name: 'Lee Morgan', email: 'lee@northgate.example', roles: ['PLANNER'] });
   admin = { id: a.id, token: tokenFor(a.id) };
   second = { id: b.id, token: tokenFor(b.id) };
   worker = { id: w.id };

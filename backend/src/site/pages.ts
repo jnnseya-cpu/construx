@@ -785,9 +785,9 @@ export function getStarted(): string {
         <ul class="plan-list">
           <li>${
             t.includedSeats === null
-              ? 'Unlimited identities'
-              : `${t.includedSeats} identit${t.includedSeats === 1 ? 'y' : 'ies'} included`
-          }</li>
+              ? 'Unlimited Controller seats'
+              : `${t.includedSeats} Controller seat${t.includedSeats === 1 ? '' : 's'} included`
+          } — participants free</li>
           <li>${t.storageGb >= 1000 ? `${(t.storageGb / 1000).toFixed(t.storageGb % 1000 === 0 ? 0 : 1)} TB storage` : `${t.storageGb} GB storage`}</li>
           <li>${
             t.aiAllowanceAcus > 0
@@ -1005,9 +1005,14 @@ export function terms(): string {
 
     <h2>3. Your account and your people</h2>
     <p>
-      The administrator of a tenancy controls who holds an identity in it and what each may do. Seats are consumed by
-      identities, not by logins. A platform operator identity and a regulator identity consume no seat, and the operator
-      is barred from customer delivery data by the permission model rather than by policy.
+      The administrator of a tenancy controls who holds an identity in it and what each may do. A package’s seats are
+      Controller seats: they are consumed by the people who approve money, baselines and contracts, administer people or
+      run the business. Participants — site, quality, design and supply roles — take no seat. One person holds one
+      Controller seat, with their own organisation, however many projects they are invited onto: a person invited onto
+      another organisation’s project is never added to that organisation’s paid seats, and a Controller from outside is
+      admitted on the seat their own organisation or group already pays for, or on a Project Controller Pass the host
+      chooses to buy for one project. A platform operator identity and a regulator identity consume no seat, and the
+      operator is barred from customer delivery data by the permission model rather than by policy.
     </p>
 
     <h2>4. Packages and what they include</h2>

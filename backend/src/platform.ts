@@ -9,7 +9,7 @@ import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletS
 import { statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { recordTrialTaken, resetTrials } from './identity/trials.ts';
-import { buildInvoice, type Invoice } from './billing/invoice.ts';
+import { buildInvoice, type ControllerPassLine, type Invoice } from './billing/invoice.ts';
 import {
   assignIdentity,
   monthlySubscriptionCharge,
@@ -43,7 +43,9 @@ import { SIGNATURES } from './site/media.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
 import { hashEvidence } from './core/canonical.ts';
 import { ulid } from './core/ids.ts';
-import type { EngineContext } from './engines/context.ts';
+import type { AcuContext, EngineContext } from './engines/context.ts';
+import { activePasses, membershipInForce, membershipsOfUser, type ProjectMembership } from './domain/membership.ts';
+import { resolveAcu, type AcuResolution } from './billing/sponsorship.ts';
 import { GoldenThreadLedger } from './goldenthread/ledger.ts';
 import type { PostgresLedgerStore } from './goldenthread/pgstore.ts';
 import type { EventSource } from './goldenthread/types.ts';
@@ -69,6 +71,11 @@ export const PLATFORM_TENANT_ID = 'platform';
 
 /** Below this much free space on the journal volume the process reports itself unready: the next commit may be the one that fails. */
 const LIVENESS_MIN_FREE_BYTES = 256 * 1_048_576;
+
+/** A system actor is named `system:<job>`; anything else is a person. */
+function actorRef(actorId: string): { refType: 'User' | 'System'; refId: string } {
+  return actorId.startsWith('system:') ? { refType: 'System', refId: actorId } : { refType: 'User', refId: actorId };
+}
 
 /** A refund or chargeback against a recorded payment: its own record, never a rewrite of the receipt. */
 export type PaymentReversal = {
@@ -203,6 +210,19 @@ export type PlatformUser = {
    */
   unitId?: string;
   managerId?: string;
+  /**
+   * An identity created by accepting a project invitation from another
+   * organisation. It lives in the host tenancy because that is the isolation
+   * boundary every read applies, and it is scoped to the projects its
+   * memberships name rather than to the tenancy — `context()` enforces that.
+   * Its seat, where it holds Controller roles, is somebody else's: the home
+   * organisation's, the group's, or a pass the host bought. Absent on every
+   * home member rather than `false`, so it has to be set on purpose.
+   */
+  external?: true;
+  /** The tenancy the person belongs to, where it is on the platform; null for an organisation that is only a name. */
+  homeTenantId?: string | null;
+  homeOrganisation?: string;
 };
 
 /**
@@ -899,6 +919,12 @@ export class Platform {
     partyId?: string;
     /** Only `seedDemoProject` passes this. See `PlatformUser.demonstration`. */
     demonstration?: true;
+    /**
+     * Somebody from another organisation, admitted onto a project. Their
+     * seat is not this tenancy's: see `PlatformUser.external`. Only the
+     * invitation acceptance sets this.
+     */
+    external?: { homeTenantId: string | null; homeOrganisation: string };
   }): PlatformUser {
     const subscription = this.subscription(input.tenantId);
     const userId = ulid();
@@ -912,10 +938,13 @@ export class Platform {
       partyId: input.partyId,
       status: 'ACTIVE',
       ...(input.demonstration ? { demonstration: true as const } : {}),
+      ...(input.external ? { external: true as const, homeTenantId: input.external.homeTenantId, homeOrganisation: input.external.homeOrganisation } : {}),
     };
 
     // Seat assignment can fail on a tier limit; the user is not created if so.
-    const updated = assignIdentity(subscription, userId, input.roles, purchasedSeats(this.ledger, input.tenantId));
+    // A participant takes none, and an external person's seat is the
+    // organisation's that licensed them — never this one's.
+    const updated = assignIdentity(subscription, userId, input.roles, purchasedSeats(this.ledger, input.tenantId), { licensedElsewhere: input.external !== undefined });
     this.#subscriptions.set(input.tenantId, updated);
     this.#users.set(userId, user);
 
@@ -939,6 +968,7 @@ export class Platform {
         // from this state, and a flag that lived only in the process would be
         // lost on the first restart — taking the demonstration sign-in with it.
         ...(input.demonstration ? { demonstration: true as const } : {}),
+        ...(input.external ? { external: true as const, homeTenantId: input.external.homeTenantId, homeOrganisation: input.external.homeOrganisation } : {}),
       },
     });
 
@@ -1043,13 +1073,15 @@ export class Platform {
 
     // Seats are priced by role, so a change is a revoke and a re-assign rather
     // than an edit. If the new roles do not fit the tier this throws and the
-    // identity keeps the roles it had.
+    // identity keeps the roles it had. A person reduced to a participant
+    // gives the seat back here; an external person never takes one.
     const subscription = this.subscription(user.tenantId);
     const reseated = assignIdentity(
       revokeIdentity(subscription, user.id),
       user.id,
       roles,
       purchasedSeats(this.ledger, user.tenantId),
+      { licensedElsewhere: user.external === true },
     );
     this.#subscriptions.set(user.tenantId, reseated);
     user.roles = roles;
@@ -1229,9 +1261,9 @@ export class Platform {
     // the identity is restored and un-seated, which is recoverable, rather
     // than erased, which is not.
     const subscription = this.subscription(actor.tenantId);
-    const reseated = assignIdentity(subscription, input.userId, user.roles, purchasedSeats(this.ledger, actor.tenantId));
+    const reseated = assignIdentity(subscription, input.userId, user.roles, purchasedSeats(this.ledger, actor.tenantId), { licensedElsewhere: user.external === true });
     this.#subscriptions.set(actor.tenantId, reseated);
-    this.commitSeatAssigned(reseated);
+    if (reseated !== subscription) this.commitSeatAssigned(reseated);
 
     return { userId: input.userId };
   }
@@ -1296,24 +1328,136 @@ export class Platform {
     }
     this.assertNotLastAdministrator(actor.tenantId, user);
 
-    this.revokeUserSeat(actor.tenantId, input.userId);
+    this.#deactivate(user, { refType: 'User', refId: actor.actorId }, input.reason, 'WEB');
+    return { userId: input.userId, status: 'SUSPENDED' };
+  }
+
+  /** The one writer of a deactivation, shared by the governed command above and the membership machinery below. */
+  #deactivate(user: PlatformUser, actor: { refType: 'User' | 'System'; refId: string }, reason: string, source: EventSource): void {
+    this.revokeUserSeat(user.tenantId, user.id);
     this.ledger.commit({
-      tenantId: actor.tenantId,
-      projectId: `${actor.tenantId}-governance`,
-      actor: { refType: 'User', refId: actor.actorId },
-      source: 'WEB',
+      tenantId: user.tenantId,
+      projectId: `${user.tenantId}-governance`,
+      actor,
+      source,
       correlationId: ulid(),
       eventType: 'USER_DEACTIVATED',
-      entity: { refType: 'User', refId: input.userId },
+      entity: { refType: 'User', refId: user.id },
       nextState: {
         ...this.userRecord(user),
         status: 'SUSPENDED',
         deactivatedAt: new Date().toISOString(),
-        deactivatedBy: actor.actorId,
-        reason: input.reason,
+        deactivatedBy: actor.refId,
+        reason,
       },
     });
-    return { userId: input.userId, status: 'SUSPENDED' };
+  }
+
+  // --- external members: the identity follows the membership ------------------
+
+  /**
+   * Set an external identity's roles to what its live memberships grant.
+   *
+   * An external person's roles are never edited directly: they are the union
+   * of the active roles of every membership they hold in this tenancy, so a
+   * pass bought, a licence lapsed or a permission reduced on one project
+   * lands on the identity through here and nowhere else. The seat rule in
+   * `#applyRoles` knows the person is licensed elsewhere and takes none.
+   */
+  applyMembershipRoles(membership: ProjectMembership, reason: string, actorId: string): void {
+    if (!membership.userId) return;
+    const user = this.#users.get(membership.userId);
+    if (!user || !user.external) return;
+    const live = membershipsOfUser(this, membership.tenantId, user.id).filter((other) => other.id !== membership.id && other.status === 'ACTIVE');
+    const roles = [...new Set([...(membership.status === 'ACTIVE' ? membership.activeRoles : []), ...live.flatMap((other) => other.activeRoles)])] as Role[];
+    if (roles.length === 0 || (roles.length === user.roles.length && roles.every((role) => user.roles.includes(role)))) return;
+    this.#applyRoles(user, roles, reason, actorRef(actorId), actorId.startsWith('system:') ? 'SYSTEM' : 'WEB');
+  }
+
+  /**
+   * A membership ended or was suspended: what follows for the identity.
+   *
+   * Every hold the person has open in any wallet that could be funding them
+   * is released — nothing in flight is charged to an appointment that has
+   * ended. An external identity whose last live membership this was is
+   * deactivated, which stops sign-in and every context; one with others
+   * keeps them, on the roles those grant. A home member's identity is the
+   * tenancy's own to manage and is left alone.
+   */
+  endProjectAccess(membership: ProjectMembership, reason: string, actorId: string): void {
+    if (!membership.userId) return;
+    const user = this.#users.get(membership.userId);
+    if (!user) return;
+    const funders = new Set([membership.tenantId, membership.acu.sponsorTenantId, membership.homeOrganisation.tenantId].filter((id): id is string => Boolean(id)));
+    for (const tenantId of funders) {
+      let wallet: ACUWallet | undefined;
+      try {
+        wallet = this.spendingWallet(tenantId).wallet;
+      } catch {
+        wallet = undefined;
+      }
+      if (!wallet) continue;
+      for (const hold of wallet.openHolds().filter((held) => held.userId === user.id)) wallet.release(hold.holdId, reason);
+    }
+    if (!user.external) return;
+    const others = membershipsOfUser(this, membership.tenantId, user.id).filter((other) => other.id !== membership.id && membershipInForce(other));
+    if (others.length > 0) {
+      this.applyMembershipRoles({ ...membership, status: 'REVOKED' }, reason, actorId);
+      return;
+    }
+    if (user.status === 'ACTIVE' && user.erasedAt === undefined) {
+      this.#deactivate(user, actorRef(actorId), reason, actorId.startsWith('system:') ? 'SYSTEM' : 'WEB');
+    }
+  }
+
+  /** A suspended membership restored: the identity comes back if it was deactivated for it, on the roles the membership grants. */
+  restoreProjectAccess(membership: ProjectMembership, reason: string, actorId: string): void {
+    if (!membership.userId) return;
+    const user = this.#users.get(membership.userId);
+    if (!user || !user.external) return;
+    if (user.status === 'SUSPENDED' && user.erasedAt === undefined && user.erasureRequestedAt === undefined) {
+      user.status = 'ACTIVE';
+      this.ledger.commit({
+        tenantId: user.tenantId,
+        projectId: `${user.tenantId}-governance`,
+        actor: actorRef(actorId),
+        source: actorId.startsWith('system:') ? 'SYSTEM' : 'WEB',
+        correlationId: ulid(),
+        eventType: 'USER_REACTIVATED',
+        entity: { refType: 'User', refId: user.id },
+        nextState: { ...this.userRecord(user), status: 'ACTIVE', reactivatedAt: new Date().toISOString(), reactivatedBy: actorId, reason },
+      });
+    }
+    this.applyMembershipRoles(membership, reason, actorId);
+  }
+
+  /**
+   * The AI position of an external member on a project: which sponsorship
+   * would fund an execution, or why none would. Null for everybody else —
+   * a home member spends from the tenancy as always.
+   */
+  acuPositionFor(auth: AuthContext, projectId: string, task: { engine: string } | null, now = new Date()): AcuResolution | null {
+    const user = this.#users.get(auth.actorId);
+    if (!user?.external) return null;
+    const held = membershipsOfUser(this, auth.tenantId, user.id).filter((membership) => membershipInForce(membership, now));
+    const membership = held.find((candidate) => candidate.projectId === projectId) ?? held[0];
+    if (!membership) return { ok: false, code: 'PROJECT_PERMISSION_DENIED', message: 'You hold no live membership of this project' };
+    return resolveAcu(this, membership, task, now);
+  }
+
+  /**
+   * The wallet an actor's chargeable work draws on, for this project.
+   *
+   * The tenancy's own — or its group's — for a home member. For an external
+   * member, the wallet of whichever organisation agreed to pay: never the
+   * host's by default, and never anybody's without an approved sponsorship,
+   * which is refused here as a 402 with the reason.
+   */
+  spendingWalletFor(auth: AuthContext, projectId: string): { wallet: ACUWallet; sharedFrom: { tenantId: string; name: string } | null } {
+    const position = this.acuPositionFor(auth, projectId, null);
+    if (position === null) return this.spendingWallet(auth.tenantId);
+    if (!position.ok) throw new DomainError(position.code, position.message, 402);
+    return { wallet: position.wallet, sharedFrom: { tenantId: position.sponsorTenantId, name: this.tenant(position.sponsorTenantId).legalName } };
   }
 
   /**
@@ -1341,9 +1485,9 @@ export class Platform {
 
     // The seat first: if there is none, nothing below happens.
     const subscription = this.subscription(actor.tenantId);
-    const reseated = assignIdentity(subscription, user.id, user.roles, purchasedSeats(this.ledger, actor.tenantId));
+    const reseated = assignIdentity(subscription, user.id, user.roles, purchasedSeats(this.ledger, actor.tenantId), { licensedElsewhere: user.external === true });
     this.#subscriptions.set(actor.tenantId, reseated);
-    this.commitSeatAssigned(reseated);
+    if (reseated !== subscription) this.commitSeatAssigned(reseated);
     user.status = 'ACTIVE';
 
     this.ledger.commit({
@@ -1383,6 +1527,7 @@ export class Platform {
       ...(user.coverHash ? { coverHash: user.coverHash } : {}),
       ...(user.unitId ? { unitId: user.unitId } : {}),
       ...(user.managerId ? { managerId: user.managerId } : {}),
+      ...(user.external ? { external: true as const, homeTenantId: user.homeTenantId ?? null, homeOrganisation: user.homeOrganisation ?? '' } : {}),
     };
   }
 
@@ -3601,7 +3746,20 @@ export class Platform {
       BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
       purchasedSeatEntitlements(this.ledger, tenantId),
+      this.#passLines(tenantId),
     );
+  }
+
+  /** The Project Controller Passes in force, as invoice lines. */
+  #passLines(tenantId: string): ControllerPassLine[] {
+    return activePasses(this, tenantId).map((pass) => ({
+      passId: pass.id,
+      personName: pass.person.name,
+      projectId: pass.projectId,
+      projectName: String(this.ledger.get({ refType: 'Project', refId: pass.projectId })?.state.name ?? pass.projectId),
+      monthlyPriceMinor: pass.monthlyPriceMinor,
+      expiresAt: pass.expiresAt,
+    }));
   }
 
   issueInvoice(tenantId: string, period: string): Invoice {
@@ -3639,6 +3797,7 @@ export class Platform {
       BILLING_CURRENCY,
       storage.purchasedBlocks(this.ledger, tenantId),
       purchasedSeatEntitlements(this.ledger, tenantId),
+      this.#passLines(tenantId),
     );
 
     this.ledger.commit({
@@ -3700,11 +3859,28 @@ export class Platform {
       );
     }
 
+    // A deactivated identity holds no context. Sign-in already refused it;
+    // this closes the token it may still be carrying.
+    const user = this.#users.get(auth.actorId);
+    if (user && user.status !== 'ACTIVE' && !auth.roles.includes('PLATFORM_ADMIN')) {
+      throw new ForbiddenError('This identity has been deactivated', 'IDENTITY_DEACTIVATED');
+    }
+
+    // An external member reaches only the projects their live memberships
+    // name, and spends only what a sponsor agreed to. Enforced here, where
+    // every project-scoped command passes, rather than route by route.
+    const acu = user?.external ? this.#externalMemberGate(auth, projectId) : undefined;
+    const funded = acu?.resolve(null);
+
     return {
       ledger: this.ledger,
       orchestrator: this.orchestrator,
-      // The wallet the spend comes from: the group's, for a covered company.
-      wallet: this.spendingWallet(auth.tenantId).wallet,
+      // The wallet the spend comes from: the group's, for a covered company;
+      // the approved sponsor's, for an external member. Where no sponsor has
+      // approved anything the tenancy's own wallet is carried so the context
+      // is whole, and `runAI` refuses before it can be charged.
+      wallet: funded?.ok ? funded.wallet : this.spendingWallet(auth.tenantId).wallet,
+      ...(acu ? { acu } : {}),
       auth,
       source: options.source ?? 'WEB',
       correlationId: options.correlationId ?? ulid(),
@@ -3723,6 +3899,38 @@ export class Platform {
       // grant, so reactivating restores what they had rather than silently
       // dropping a module nobody remembered to re-add.
       grantedModules: this.grantedModules(auth.tenantId),
+    };
+  }
+
+  /**
+   * The membership check for an external identity.
+   *
+   * The governance pseudo-project is the tenancy's own scope — where tenant-
+   * level reads and the person's own account live — and is open to anybody
+   * holding a live membership at all. A named project needs a live
+   * membership of that project, and the refusal says which way it is not:
+   * suspended, ended, revoked, or never granted.
+   */
+  #externalMemberGate(auth: AuthContext, projectId: string, now = new Date()): AcuContext {
+    const held = membershipsOfUser(this, auth.tenantId, auth.actorId);
+    const governance = projectId === `${auth.tenantId}-governance`;
+    const candidates = governance ? held : held.filter((membership) => membership.projectId === projectId);
+    const live = candidates.find((membership) => membershipInForce(membership, now));
+    if (!live) {
+      const ended = candidates[0];
+      if (ended?.status === 'SUSPENDED') {
+        throw new ForbiddenError(`Access to this project is suspended${ended.statusReason ? `: ${ended.statusReason}` : ''}`, 'PROJECT_MEMBERSHIP_SUSPENDED');
+      }
+      if (ended && (ended.status === 'EXPIRED' || (ended.expiresAt !== null && ended.expiresAt <= now.toISOString()))) {
+        throw new ForbiddenError('Your appointment to this project has ended', 'PROJECT_MEMBERSHIP_EXPIRED');
+      }
+      if (ended?.status === 'REVOKED') throw new ForbiddenError('Your access to this project was revoked', 'PROJECT_MEMBERSHIP_REVOKED');
+      throw new ForbiddenError('You are not a member of this project', 'PROJECT_PERMISSION_DENIED');
+    }
+    return {
+      membershipId: live.id,
+      sponsorTenantId: live.acu.sponsorTenantId,
+      resolve: (task) => resolveAcu(this, live, task, new Date()),
     };
   }
 

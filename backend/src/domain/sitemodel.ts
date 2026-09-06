@@ -1,7 +1,7 @@
 import { meterSpatialStage } from '../billing/spatial.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, write, type EngineContext } from '../engines/context.ts';
+import { authorise, chargeableWallet, write, type EngineContext } from '../engines/context.ts';
 import { LOGISTICS_ELEMENT, type LogisticsElement } from '../engines/sitevisit.ts';
 import * as geo from './geometry.ts';
 import * as recon from './reconstruction.ts';
@@ -236,7 +236,7 @@ export function reconstructSurface(
   const record = requireModel(ctx, input.modelId);
 
   const metered = meterSpatialStage(
-    ctx.wallet,
+    chargeableWallet(ctx),
     {
       stage: 'RECONSTRUCTION',
       // The observations are the work: every one contributes a ray to a solve.
@@ -325,7 +325,7 @@ export function reconstructFromDepth(
   const record = requireModel(ctx, input.modelId);
 
   const metered = meterSpatialStage(
-    ctx.wallet,
+    chargeableWallet(ctx),
     {
       stage: 'RECONSTRUCTION',
       primitives: input.depth.samples.length,
@@ -403,7 +403,7 @@ export function segmentGround(
   }
 
   const metered = meterSpatialStage(
-    ctx.wallet,
+    chargeableWallet(ctx),
     { stage: 'SEGMENTATION', primitives: surface.triangles.length, projectId: ctx.projectId, userId: ctx.auth.actorId },
     () => segmentation.segment(surface),
   );
@@ -833,7 +833,7 @@ export function compareModels(
     const from = fromModel.surface;
     const to = toModel.surface;
     const metered = meterSpatialStage(
-      ctx.wallet,
+      chargeableWallet(ctx),
       {
         stage: 'CHANGE_VOLUME',
         // The clip is every later triangle against every earlier one, so the

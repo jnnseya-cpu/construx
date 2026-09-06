@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,091 passing, 0 failing, 0 skipped, across 281 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,115 passing, 0 failing, 0 skipped, across 282 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 314 TypeScript files, 202,310 lines |
-| Application | 78 ES modules, 46,168 lines (including a service worker) |
-| API routes | 1,102 — 746 writes, 356 reads (49 public across both) |
+| Backend | 317 TypeScript files, 205,064 lines |
+| Application | 78 ES modules, 46,652 lines (including a service worker) |
+| API routes | 1,119 — 768 writes, 351 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -9294,6 +9294,7 @@ named so it is not mistaken for finished.
 | Commitment extraction | Reads a held letter for what it promises and what it demands, drops anything not quoted verbatim from the letter, and registers a confirmed one in the obligation calendar that already exists | Needs a provider that reads prose; a local deployment is refused rather than given an invented undertaking. The wire contract is proven against real vendor response shapes; the reading is not |
 | Clause extraction | From supplied text, or in one step from an ingested file: "Read as specification" on the Documents screen runs the same reading over the text ingestion read out of the file, with the file's own hash as the document and `INGESTED_FILE` as the source on the record. A table recovered from an ingested bill goes onto an open measurement schedule as measured items in one step too ("Into a measurement schedule"), each sourced to the document, page and table | A scan still has to be transcribed by a model and confirmed before either step; the clause reading needs a provider that reads prose, as before |
 | 4D scheduling | Twin states link to task ids | No visualisation |
+| Cross-organisation access | Memberships, portable home and group Controller seats, the Project Controller Pass, ACU sponsorship with home consent and limits, the billing dashboard, and the console for both sides (see *One person, one home organisation, one Controller seat*) | Permission scope below the project — package, workstream, data room, record — is not modelled, so an external member's roles apply across the one project they hold; a project-level shared wallet does not exist, so `PROJECT_WALLET` and `CLIENT_FUNDED_ALLOWANCE` are not offered as sponsors; the anti-abuse detections the requirement lists are not built |
 | Newsletter delivery | SMTP submission verified against a socket, per-recipient outcomes recorded, a permanent refusal (5xx) suppressing the address until an operator lifts it from the Newsletter screen, a transient one retried on the next issue. A bounce that arrives after the relay accepted the message is recorded against the delivery it concerns (`POST /v1/newsletter/bounces`, the "Record a bounce" door and a per-recipient button on the Newsletter screen): the delivery becomes `FAILED` with the diagnostic verbatim, a permanent bounce suppresses the address exactly as a synchronous refusal does, a transient one is retried by a forced re-issue | The platform still reads no mailbox: the bounce reaches the record when an operator reads the bounce message and records it, or a relay posts it to the endpoint with an operator credential. No relay is integrated for that; DKIM belongs at the relay, where the key should live |
 
 ---
@@ -13289,6 +13290,187 @@ Reachable on the Enterprise & Portfolio screen, which shows who has been invited
 by whom, from which organisation, and the seat position beside it — assigned,
 held by invitations, and how many are left. The invite button is shut with that
 arithmetic in the reason when the package is full.
+
+### One person, one home organisation, one Controller seat
+
+**The commercial rule.** An invitation created an identity in the host's
+tenancy and the identity took one of the host's seats, whoever the person
+was and whatever they already paid for at home. A quantity surveyor whose own
+company paid for her seat took a second one the moment a main contractor
+invited her onto a job, and a third from the next contractor; and every
+designer, supervisor and inspector took a seat too. The instruction given is
+the rule that replaces that, and it is now what the platform does: *an
+internal group user or external invitee must not be added to the host
+organisation's paid-seat count merely because they are invited to a
+construction project. If Controller permissions are required, the system
+reuses the user's existing home or group Controller licence. The host is
+charged only when it explicitly purchases a Project Controller Pass. AI usage
+is charged to the approved ACU sponsor for that execution, with no automatic
+or duplicate billing.*
+
+**Five things told apart that were one thing before.** `identity/licence.ts`
+holds the vocabulary and the pure rule; `domain/membership.ts` the
+appointment; `billing/sponsorship.ts` the money for AI.
+
+- **Access class**, derived from the permission matrix and not from a
+  second list: a role is a *Controller* when it holds `G` anywhere, `C`/`U`/`A`
+  on the enterprise structure, `C` or `A` on project setup, `U`/`A` on billing,
+  or `A` on baselines, budgets, change, payments, contracts, awards, tender
+  price or bid decisions — `CONTROLLER_PERMISSIONS` publishes each named
+  permission and what it is on the matrix, and which of the requirement's
+  nineteen have no separate entry here and why. Enterprise admin, owner,
+  executive, development manager, project director, commercial manager, EPC,
+  QS, PM and planner are Controllers; principal designer, safety, QA/QC,
+  designer, BIM, construction manager, supervisor, FM, supplier and viewer are
+  participants. **A participant takes no seat, anywhere.** `assignIdentity`
+  skips them as it skips the operator and the regulator; a seat type whose
+  roles are all participants is priced for the record and refused for purchase
+  (`SEAT_NOT_REQUIRED`). The package's seats are Controller seats and the
+  pricing page says so.
+- **Organisation relationship**: `HOME_MEMBER` (the host's own person),
+  `GROUP_MEMBER` (a person of a company in the host's group), `EXTERNAL_INVITEE`.
+  Found from the email — where else the address is a person — never declared.
+- **Licence source**, resolved in the order the requirement fixes and by the
+  pure function it gives (`resolveControllerLicence`): a valid Controller seat
+  at home, then in the group, then a host pass, then none. "Valid" is the same
+  test `assignIdentity` applied when it seated the person — a live
+  subscription counting them, on Controller roles. The prohibited shortcut,
+  *billable because Controller*, is not expressible: the host is billable in
+  exactly two cases, its own Controller on its own package, or a pass it
+  bought.
+- **The membership** (`ProjectMembership`, on the project's chain): who the
+  person is with, their class, the roles requested and the roles *active*,
+  the licence and its owner, whether the host pays, who pays for their AI,
+  when it ends, and its status — `PENDING` with the invitation, `ACTIVE` on
+  acceptance, `SUSPENDED`, `EXPIRED`, `REVOKED`. Controller roles asked for
+  with no licence behind them are **withheld**: the person is admitted as a
+  participant (or a viewer where there were none) and the roles wait on the
+  record. Nothing elevates and nothing is bought on anybody's behalf. The
+  identity of an external person is created in the host tenancy on
+  acceptance as before — that is the isolation boundary every read applies —
+  marked `external` with its home tenancy, and scoped: `Platform.context`
+  refuses a named project the person holds no live membership of
+  (`PROJECT_PERMISSION_DENIED`, `_SUSPENDED`, `_EXPIRED`, `_REVOKED`), and a
+  deactivated identity holds no context at all (`IDENTITY_DEACTIVATED`). One
+  identity holds several memberships on several projects of the same host,
+  its roles the union of what they grant, and one seat at home.
+- **ACU sponsorship** (`AcuSponsorship`, on the paying organisation's own
+  chain): a monthly allowance, a project allowance, or one named engine up to
+  a maximum. Requested by the host of the home organisation and `PENDING`
+  until one of its administrators approves it with a limit; or raised by the
+  host on its own wallet, in which case the administrator with authority over
+  that money approves it in the act. An external member's AI is funded by
+  whichever sponsorship resolves for the engine in hand — a one-time
+  authorisation for it first, then the default sponsor's allowance — and
+  refused before anything is reserved where none is approved
+  (`ACU_SPONSOR_REQUIRED`, `ACU_SPONSOR_APPROVAL_REQUIRED`) or the estimate
+  exceeds what remains (`ACU_LIMIT_EXCEEDED`, unless overage was allowed).
+  What was spent is measured from the sponsor wallet's own entries, which
+  carry the sponsorship id, not from a counter. The host's wallet is never
+  charged for a guest by default, and the guest never sees the host's balance:
+  `GET /v1/billing/wallet` answers an external member with the sponsor and
+  the remainder, and the host reads of a home sponsorship only that it
+  stands. Every metered path takes its wallet from `chargeableWallet(ctx)` or
+  `Platform.spendingWalletFor`, so the document render charges follow the same
+  rule as the engines.
+
+**The Project Controller Pass** (`ControllerPass`, `CONTROLLER_PASS` in
+`billing/seats.ts` at 4,000 a month): bought by the host for one membership
+on one project, time-limited to at most twelve months and never beyond the
+appointment, refused for a participant (`PROJECT_PASS_NOT_REQUIRED`) and for
+anybody already licensed elsewhere (`DUPLICATE_SEAT_BILLING_DETECTED`). It
+grants the withheld roles, appears on the invoice as its own
+`CONTROLLER_PASSES` line naming the person and the project, is collected
+with the package, and ends — by running out, by revocation, or with the
+membership — with the roles withheld again and the charge stopped.
+
+**The billing dashboard** (`seatDashboard`, on `GET /v1/team` and `GET
+/v1/billing/seats`, drawn on Team & Access): total active users, host-owned
+Controller seats, internal and external participants, externally and
+group-licensed Controllers, host-sponsored passes, Controllers awaiting a
+licence, and *host-billable licences = host-owned Controller seats + active
+passes*, stated with its formula.
+
+**The record.** Twenty-two events: `PROJECT_INVITATION_DECLINED`;
+`PROJECT_MEMBERSHIP_CREATED` / `_ACTIVATED`; `CONTROLLER_PERMISSION_REQUESTED`,
+`HOME_CONTROLLER_LICENCE_VERIFIED`, `GROUP_CONTROLLER_LICENCE_VERIFIED`,
+`CONTROLLER_LICENCE_LAPSED`, `PERMISSION_UPGRADED` / `_DOWNGRADED`,
+`BILLING_RESPONSIBILITY_CHANGED`, `MEMBERSHIP_SUSPENDED` / `_RESTORED` /
+`_EXPIRED` / `_REVOKED`; `PROJECT_CONTROLLER_PASS_PURCHASED` / `_EXPIRED` /
+`_REVOKED`; `ACU_SPONSORSHIP_REQUESTED` / `_APPROVED` / `_REJECTED` /
+`_REVOKED`, `ACU_LIMIT_CHANGED`. Each membership event carries a `change`
+block — what it was, what it is, who, when, why, and the commercial
+consequence in a sentence. The requirement's `ACU_EXECUTION_RESERVED` /
+`_CONSUMED` / `_REFUNDED` are the wallet's own `HOLD` / `DEBIT` / `RELEASE`
+entries, which already carry the project, the person and now the sponsorship;
+they are not written a second time into the project chain, for the reason
+the catalogue's `NOT_EMITTED` gives.
+
+**Ending.** Revocation, suspension and expiry release every open hold the
+person has in any wallet that could be funding them, end the pass, and
+deactivate the identity where this was its last live membership; everything
+the person recorded stays under their name. The hourly consistency sweep
+runs `sweepMemberships` and `sweepSponsorships`: appointments past their
+date, passes run out, sponsorships lapsed, external Controllers whose seat
+at home has gone (roles withheld, `CONTROLLER_LICENCE_LAPSED`) and — the
+other direction — withheld roles granted when a seat has appeared at home,
+without anybody at the host acting.
+
+**The console.** Enterprise & Portfolio: *Check a licence* before inviting
+(verified or required, whose seat, whether this organisation would pay, and
+nothing about the other organisation's subscription); the invitation form
+takes an appointment end date; the *Project members* table shows person,
+organisation, relationship, roles with any withheld ones marked, the seat
+badge in the requirement's words (*Participant — No Seat Required*,
+*Controller — Host Seat / Home Licensed / Group Licensed / Host Sponsored /
+Licence Required / Licence Expired*), seat owner, host billability, ACU
+sponsor, expiry and status, with *Sponsor a pass*, *Reduce to participant*,
+*Roles*, *AI sponsor*, *End the pass*, *Suspend*, *Restore* and *Revoke* on
+each row; and the sponsorships asked of other organisations with their
+standing. Team & Access: *People against paid licences*; the invitations
+table with the badge; *Our people on other organisations' projects* with
+the sponsorships this company has been asked for — approve with a limit,
+decline, change the limit, usage, withdraw; and the roles table with each
+role's class and what makes a role a Controller.
+
+**Routes.** `POST /v1/controller-licences/resolve`, `GET
+/v1/controller-licences/permissions`, `GET /v1/projects/:projectId/members`,
+`POST /v1/projects/:projectId/invitations/:invitationId/decline`, `POST
+/v1/project-memberships/:membershipId/permissions|suspend|restore|revoke`,
+`POST /v1/controller-passes/purchase`, `POST
+/v1/controller-passes/:passId/revoke`, `GET|POST /v1/acu-sponsorships`, `POST
+/v1/acu-sponsorships/:sponsorshipId/approve|reject|revoke`, `GET
+/v1/acu-sponsorships/:sponsorshipId/usage`, `GET /v1/users/external-projects`.
+The requirement's `/v1/tenants/{tenantId}/...` prefix is not used: a tenant id
+in a path is an invitation to pass somebody else's, and every route here is
+scoped by the token as every other route is. `tests/crossorg.test.ts` carries
+the scenarios SC-001 to SC-006 and the acceptance criteria AC-001 to AC-007,
+AC-009 and AC-010 — the pure rule, the class of every grantable role, the
+badge wording, the participant admitted on no seat, the home-licensed and
+group-licensed Controllers on no seat, one person on two projects on one
+seat, the scoped identity, the withheld Controller, the pass bought,
+invoiced, refused twice and revoked, the downgrade and the re-request, the
+revocation, the money refused then charged to the home wallet under the
+sponsorship, the limit tightened and refused, the host's one-time
+authorisation taking precedence for its engine, the withdrawal releasing the
+hold, expiry on the hour with the pass and the identity, a lapsed and a
+restored home seat, and the HTTP surface including what each side may see of
+the other. `invitation.test.ts`, `seatpurchase.test.ts` and `useradmin.test.ts`
+now use Controller roles where the seat arithmetic is the subject, and
+`seatpurchase` proves a participant admitted without one.
+
+**What is stated rather than built.** The requirement's `PROJECT_WALLET` and
+`CLIENT_FUNDED_ALLOWANCE` sponsor types are not offered: no project wallet
+exists on this platform — every wallet belongs to a tenancy — and a sponsor
+type nothing can fund would be a setting that does nothing. Permission
+*scope* below the project (package, workstream, data room, record) is not
+modelled: an external membership opens one project and the roles are the
+identity's across it, as the existing permission matrix works; tenant-level
+reads an external Controller role permits are not membership-filtered beyond
+what the matrix already refuses. A pass suspended on payment failure is the
+tenancy's own suspension, which already stops everything. The anti-abuse
+detections (shared identities, dormant external memberships, circular
+sponsorship) are not built.
 
 ### Taking the subscription, and stopping when it does not arrive
 
