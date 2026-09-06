@@ -241,6 +241,14 @@ export const config = {
     })(),
     /** How often a follower asks the database for what the primary has shipped. */
     followIntervalMs: Math.max(250, num('LEDGER_FOLLOW_INTERVAL_MS', 2_000)),
+    /**
+     * A snapshot of the ledger's state beside the journal, so a boot replays
+     * only the events written since it rather than every event ever. Taken on
+     * this interval when at least `snapshotMinEvents` have been written since
+     * the last; zero turns the timer off. See `goldenthread/snapshot.ts`.
+     */
+    snapshotIntervalMinutes: num('LEDGER_SNAPSHOT_INTERVAL_MINUTES', 60),
+    snapshotMinEvents: num('LEDGER_SNAPSHOT_MIN_EVENTS', 1_000),
   },
 
   /**
@@ -710,6 +718,15 @@ export const config = {
     accessTtlMinutes: num('GATEWAY_AUTH_ACCESS_TTL_MINUTES', 15),
     refreshTtlDays: num('GATEWAY_AUTH_REFRESH_TTL_DAYS', 7),
     jwtSecret: str('GATEWAY_JWT_SECRET', 'construx-development-secret'),
+    /**
+     * The secret being retired, or several comma-separated. Everything is
+     * signed under `GATEWAY_JWT_SECRET` and verified against it and then
+     * these, so a rotation is two deploys — add the old value here with the
+     * new one above, then drop it once nothing signed under it is still in
+     * circulation — rather than one that signs every session out and every
+     * export tag invalid. See `identity/secrets.ts` and the runbook.
+     */
+    jwtSecretPrevious: str('GATEWAY_JWT_SECRET_PREVIOUS', ''),
 
     /**
      * How many wrong codes one challenge accepts before it dies.
@@ -1487,6 +1504,12 @@ export function assertProductionSafety(): string[] {
   if (config.env === 'production') {
     if (config.auth.jwtSecret === 'construx-development-secret') {
       warnings.push('GATEWAY_JWT_SECRET is still the development default');
+    }
+    if (config.auth.jwtSecretPrevious.split(',').map((value) => value.trim()).includes(config.auth.jwtSecret)) {
+      warnings.push('GATEWAY_JWT_SECRET_PREVIOUS contains the current secret — the rotation has not happened, the old value is still what signs everything');
+    }
+    if (config.auth.jwtSecretPrevious.split(',').map((value) => value.trim()).includes('construx-development-secret')) {
+      warnings.push('GATEWAY_JWT_SECRET_PREVIOUS still accepts the published development default — anything signed under it verifies until it is dropped');
     }
     if (config.evidence.storePath === '') {
       warnings.push(

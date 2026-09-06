@@ -59,6 +59,16 @@ export type CommitInput = {
 
 export type LedgerSubscriber = (event: GoldenThreadEvent) => void;
 
+/** The ledger's materialised state at an event count, as a snapshot carries it. */
+export type LedgerSnapshotState = {
+  events: number;
+  lastEventId: string;
+  chainHeads: Array<[projectId: string, chainHash: string]>;
+  recordedHashes: Array<[entityKey: string, hash: string]>;
+  discrepancies: StateHashDiscrepancy[];
+  entities: EntityRecord[];
+};
+
 /** Entity JSON Schemas, registered by refType, enforced after every patch. */
 const entitySchemas = new Map<string, Schema>();
 
@@ -488,6 +498,93 @@ export class GoldenThreadLedger {
   /** Every state-hash discrepancy found on replay since this ledger was built. */
   discrepancies(): readonly StateHashDiscrepancy[] {
     return this.#discrepancies;
+  }
+
+  /**
+   * The materialised state as it stands, for a snapshot.
+   *
+   * Captured synchronously: the event count, every chain head, every entity
+   * record and the recorded-hash exceptions belong to one instant. The record
+   * objects are frozen and replaced rather than mutated on commit, so a
+   * caller that serialises them later still holds the state as at that
+   * instant, whatever has been committed since.
+   */
+  snapshotState(): LedgerSnapshotState {
+    return {
+      events: this.#events.length,
+      lastEventId: this.#events.at(-1)?.eventId ?? '',
+      chainHeads: [...this.#chainHeads.entries()],
+      recordedHashes: [...this.#recordedHashes.entries()],
+      discrepancies: [...this.#discrepancies],
+      entities: [...this.#entities.values()],
+    };
+  }
+
+  /**
+   * Come up from a snapshot and replay only the events after it.
+   *
+   * The snapshot is trusted only as far as the journal agrees with it: it
+   * must name exactly as many events as the journal's prefix, the last of
+   * them by id, and the chain head of every project as the prefix's events
+   * leave it. Anything else is refused (`SNAPSHOT_MISMATCH`) and the caller
+   * replays in full. What is not re-verified is the prefix's chain, event by
+   * event — that is the work the snapshot exists to skip, and the assurance
+   * sweep re-proves every chain continuously anyway.
+   *
+   * Only on a ledger that holds nothing yet: a snapshot is a starting point,
+   * never a merge.
+   */
+  restoreFromSnapshot(
+    snapshot: LedgerSnapshotState,
+    events: readonly GoldenThreadEvent[],
+  ): { restored: number; fromSnapshot: number; replayed: number; entities: number; discrepancies: StateHashDiscrepancy[] } {
+    if (this.#events.length > 0 || this.#entities.size > 0) {
+      throw new DomainError('SNAPSHOT_MISMATCH', 'A snapshot restores an empty ledger; this one already holds events.');
+    }
+    if (snapshot.events > events.length) {
+      throw new DomainError(
+        'SNAPSHOT_MISMATCH',
+        `The snapshot was taken at ${snapshot.events} events and the journal holds ${events.length}; the journal has been shortened since.`,
+      );
+    }
+    const prefix = events.slice(0, snapshot.events);
+    const last = prefix.at(-1);
+    if (snapshot.events > 0 && last?.eventId !== snapshot.lastEventId) {
+      throw new DomainError(
+        'SNAPSHOT_MISMATCH',
+        `The snapshot ends at event ${snapshot.lastEventId} and the journal's event ${snapshot.events} is ${last?.eventId ?? 'absent'}.`,
+      );
+    }
+    const heads = new Map<string, string>();
+    for (const event of prefix) heads.set(event.projectId, event.chainHash ?? EMPTY_STATE_HASH);
+    if (heads.size !== snapshot.chainHeads.length) {
+      throw new DomainError('SNAPSHOT_MISMATCH', `The snapshot names ${snapshot.chainHeads.length} chains and the journal's prefix ${heads.size}.`);
+    }
+    for (const [projectId, head] of snapshot.chainHeads) {
+      if (heads.get(projectId) !== head) {
+        throw new DomainError('SNAPSHOT_MISMATCH', `The snapshot's head for project ${projectId} is not where the journal's prefix leaves the chain.`);
+      }
+    }
+
+    for (const event of prefix) {
+      this.#file(event);
+      this.#seenEventIds.add(event.eventId);
+    }
+    for (const record of snapshot.entities) {
+      this.#index(entityKey(record), { ...record, state: deepFreeze(record.state) });
+    }
+    for (const [projectId, head] of snapshot.chainHeads) this.#chainHeads.set(projectId, head);
+    for (const [key, hash] of snapshot.recordedHashes) this.#recordedHashes.set(key, hash);
+    this.#discrepancies.push(...snapshot.discrepancies);
+
+    const tail = this.restore(events.slice(snapshot.events));
+    return {
+      restored: events.length,
+      fromSnapshot: snapshot.events,
+      replayed: tail.restored,
+      entities: this.#entities.size,
+      discrepancies: [...snapshot.discrepancies, ...tail.discrepancies],
+    };
   }
 
   /** Idempotent ingestion of an event minted elsewhere (offline device, replica). */

@@ -1,5 +1,6 @@
 import { EVENT_TYPES, isPlatformGovernanceEvent, lookupEventType, type EventGroup } from '../goldenthread/eventTypes.ts';
 import type { StorePosition } from '../goldenthread/pgstore.ts';
+import { snapshotPosition, type SnapshotPosition } from '../goldenthread/snapshot.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -74,6 +75,12 @@ export type EventStorePosition = {
    * journal on this volume is the only durable copy.
    */
   store: (StorePosition & { ledgerEvents: number; agrees: boolean; note: string }) | null;
+  /**
+   * The snapshot beside the journal: what the next boot replays from, how
+   * this one came up, and how much has been written since. Absent means no
+   * journal, so nothing a snapshot would shorten.
+   */
+  snapshot: SnapshotPosition | null;
   note: string;
 };
 
@@ -213,6 +220,7 @@ export function eventStorePosition(platform: Platform, windowDays = DEFAULT_WIND
     evidence: { withEvidence, requiringEvidence },
     journal,
     store,
+    snapshot: journal ? snapshotPosition(platform.ledger) : null,
     durability: journal
       ? {
           ledgerEvents: events.length,

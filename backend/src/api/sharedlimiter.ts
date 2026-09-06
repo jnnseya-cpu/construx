@@ -187,7 +187,16 @@ export type SharedLimiterOptions = {
   connectTimeoutMs?: number;
 };
 
-export class SharedLimiter {
+/**
+ * One command at a time against one Redis, reconnecting on the next call
+ * after a failure.
+ *
+ * Extracted from the limiter when the identity lockouts needed the same
+ * backend: the connection, the authentication and the reconnect discipline
+ * are the same four verbs whoever is calling, and two copies of a socket
+ * state machine would be two places for the same bug.
+ */
+export class RespClient {
   readonly #host: string;
   readonly #port: number;
   readonly #password: string | undefined;
@@ -200,6 +209,11 @@ export class SharedLimiter {
     this.#port = url.port === '' ? 6379 : Number(url.port);
     this.#password = url.password === '' ? undefined : decodeURIComponent(url.password);
     this.#connectTimeoutMs = options.connectTimeoutMs ?? 500;
+  }
+
+  /** The host, for a banner or a position. Never the password. */
+  get host(): string {
+    return `${this.#host}:${this.#port}`;
   }
 
   async #connected(): Promise<RespConnection> {
@@ -229,6 +243,41 @@ export class SharedLimiter {
   }
 
   /**
+   * Run one command. Throws when the backend is unreachable or answers with
+   * an error; a dropped connection is discarded so the next call reconnects
+   * rather than reusing a socket that is already gone.
+   */
+  async call(parts: readonly string[]): Promise<unknown> {
+    let connection: RespConnection;
+    try {
+      connection = await this.#connected();
+    } catch (error) {
+      this.#connection = undefined;
+      throw error instanceof Error ? error : new RespError('The limiter backend is unreachable');
+    }
+    try {
+      return await connection.send(parts);
+    } catch (error) {
+      this.#connection?.close();
+      this.#connection = undefined;
+      throw error instanceof Error ? error : new RespError('The limiter backend failed');
+    }
+  }
+
+  close(): void {
+    this.#connection?.close();
+    this.#connection = undefined;
+  }
+}
+
+export class SharedLimiter {
+  readonly #client: RespClient;
+
+  constructor(options: SharedLimiterOptions) {
+    this.#client = new RespClient(options);
+  }
+
+  /**
    * Consume one token, across every replica sharing this backend.
    *
    * Throws rather than returning a verdict when the backend is unreachable. The
@@ -245,32 +294,15 @@ export class SharedLimiter {
     // still has a meaningful deficit, short enough that keys do not accumulate.
     const ttlMs = Math.ceil((capacity / refillPerMs) * 2);
 
-    let connection: RespConnection;
-    try {
-      connection = await this.#connected();
-    } catch (error) {
-      this.#connection = undefined;
-      throw error instanceof Error ? error : new RespError('The limiter backend is unreachable');
-    }
-
-    let reply: unknown;
-    try {
-      reply = await connection.send([
-        'EVAL',
-        BUCKET_SCRIPT,
-        '1',
-        key,
-        String(capacity),
-        String(refillPerMs),
-        String(ttlMs),
-      ]);
-    } catch (error) {
-      // A dropped connection is not a verdict. Discard it so the next call
-      // reconnects rather than reusing a socket that is already gone.
-      this.#connection?.close();
-      this.#connection = undefined;
-      throw error instanceof Error ? error : new RespError('The limiter backend failed');
-    }
+    const reply = await this.#client.call([
+      'EVAL',
+      BUCKET_SCRIPT,
+      '1',
+      key,
+      String(capacity),
+      String(refillPerMs),
+      String(ttlMs),
+    ]);
 
     if (!Array.isArray(reply) || reply.length !== 3) {
       throw new RespError('The limiter backend returned something other than a verdict');
@@ -284,7 +316,6 @@ export class SharedLimiter {
   }
 
   close(): void {
-    this.#connection?.close();
-    this.#connection = undefined;
+    this.#client.close();
   }
 }

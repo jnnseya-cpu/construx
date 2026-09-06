@@ -3,8 +3,11 @@ import { attachRevocationJournal, type RevocationRecord } from './identity/auth.
 import { startHygiene, stopHygiene } from './ops/hygiene.ts';
 import { rateLimiter } from './api/middleware.ts';
 import { SharedLimiter } from './api/sharedlimiter.ts';
+import { attachShared as attachSharedLockouts } from './identity/lockout.ts';
+import { SharedLockouts } from './identity/sharedlockouts.ts';
 import { assertProductionSafety, config } from './config.ts';
 import { Journal, RecordJournal } from './goldenthread/journal.ts';
+import { readSnapshot, recordBoot, snapshotPath, startSnapshots } from './goldenthread/snapshot.ts';
 import { PostgresLedgerStore, type StorePosition } from './goldenthread/pgstore.ts';
 import { WriterLock } from './goldenthread/writerlock.ts';
 import { Pool } from './store/postgres.ts';
@@ -283,7 +286,47 @@ if (follower && ledgerStore) {
   // loading a record that has been altered. Refusing to start is the correct
   // response: a platform that boots on a broken chain is one that will be asked
   // to prove something from it later.
-  const { restored, entities, discrepancies } = platform.ledger.restore(events);
+  //
+  // From the snapshot beside the journal where one exists and agrees with it
+  // — the same events, the same last id, the same chain heads — replaying only
+  // what was written since. A snapshot that disagrees, is torn or cannot be
+  // read is said on stderr and the whole record is replayed instead; it is a
+  // shortcut, never a source of truth.
+  let restored = 0;
+  let entities = 0;
+  let discrepancies: ReturnType<typeof platform.ledger.restore>['discrepancies'] = [];
+  let snapshotNote = '';
+  {
+    let snapshot: ReturnType<typeof readSnapshot>;
+    let refused: string | undefined;
+    try {
+      snapshot = readSnapshot(snapshotPath());
+    } catch (error) {
+      refused = (error as Error).message;
+    }
+    if (snapshot && refused === undefined) {
+      try {
+        const outcome = platform.ledger.restoreFromSnapshot(snapshot.state, events);
+        restored = outcome.restored;
+        entities = outcome.entities;
+        discrepancies = outcome.discrepancies;
+        recordBoot({ from: 'SNAPSHOT', fromSnapshot: outcome.fromSnapshot, replayed: outcome.replayed });
+        snapshotNote = ` (${outcome.fromSnapshot} from the snapshot taken ${snapshot.stats.takenAt.slice(0, 16).replace('T', ' ')}, ${outcome.replayed} replayed)`;
+      } catch (error) {
+        refused = (error as Error).message;
+      }
+    }
+    if (!snapshot || refused !== undefined) {
+      if (refused !== undefined) {
+        process.stderr.write(`[snapshot] not used: ${refused} Replaying the whole journal instead.\n`);
+      }
+      const outcome = platform.ledger.restore(events);
+      restored = outcome.restored;
+      entities = outcome.entities;
+      discrepancies = outcome.discrepancies;
+      recordBoot({ from: events.length > 0 ? 'JOURNAL' : 'NOTHING', fromSnapshot: 0, replayed: outcome.restored, ...(refused !== undefined ? { refused } : {}) });
+    }
+  }
   if (stats.truncated || rewriteJournal) journal.repair(events);
   for (const found of discrepancies) {
     // Said on the way up, every boot, until the record is examined. The chain
@@ -364,7 +407,7 @@ if (follower && ledgerStore) {
   platform.attachWalletSink((entry) => wallets.append(entry));
 
   durability =
-    `${stats.path} — ${restored} event${restored === 1 ? '' : 's'} restored into ${entities} entities, ` +
+    `${stats.path} — ${restored} event${restored === 1 ? '' : 's'} restored${snapshotNote} into ${entities} entities, ` +
     `${identity.users} users across ${identity.tenants} tenancies, ${records.length} ACU entries, ` +
     `${brandings} branding${brandings === 1 ? '' : 's'}`;
   if (discrepancies.length > 0) durability += ` — ${discrepancies.length} STATE-HASH DISCREPANC${discrepancies.length === 1 ? 'Y' : 'IES'} (see stderr)`;
@@ -423,7 +466,10 @@ if (configuredOperator === '') {
 let limiterState = 'in-process (single instance only)';
 if (config.rateLimit.redisUrl !== '') {
   rateLimiter.attachShared(new SharedLimiter({ url: config.rateLimit.redisUrl }));
-  limiterState = `shared via ${new URL(config.rateLimit.redisUrl).host}`;
+  // The identity lockouts share the backend: a run spread across replicas
+  // is one count going up rather than one per replica.
+  attachSharedLockouts(new SharedLockouts({ url: config.rateLimit.redisUrl }));
+  limiterState = `shared via ${new URL(config.rateLimit.redisUrl).host} (rate buckets and identity lockouts)`;
 }
 
 /**
@@ -490,6 +536,11 @@ const watchTimer = startWatch(platform);
 // failure none of them can report is this process being gone. A monitor
 // outside it expecting this ping is the only thing that can.
 const heartbeatTimer = startHeartbeat(platform);
+
+// The snapshot beside the journal, so the next boot replays only the tail.
+// Primary only: a follower's state is the database's, and it replays from
+// there.
+const snapshotTimer = follower ? (): void => undefined : startSnapshots(platform.ledger);
 
 // The record shipped off the host. A copy on the same disk survives a bad
 // deploy and nothing else. Primary only: a follower's journal is a copy of a
@@ -697,6 +748,7 @@ const shutdown = (signal: string): void => {
   watchTimer();
   heartbeatTimer();
   backupTimer();
+  snapshotTimer();
   stopConsistencySweep();
   server.close(() => {
     void (async () => {

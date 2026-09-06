@@ -1,10 +1,11 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { config } from '../config.ts';
 import { AuthError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Role } from './roles.ts';
 import { clearFailures, lockState, recordFailure } from './lockout.ts';
 import { scopesForRoles } from './scopes.ts';
+import { signFor, verifyFor } from './secrets.ts';
 
 /**
  * Token issuance and verification.
@@ -101,21 +102,26 @@ function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString('base64url');
 }
 
-function sign(payload: string): string {
-  return createHmac('sha256', config.auth.jwtSecret).update(payload).digest('base64url');
-}
-
-function safeEquals(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
-
+/**
+ * Signed under the session key derived for the current secret, and the
+ * header names the key (`kid`), so a rotation is visible on the token and the
+ * verifier can try the right key first. See `identity/secrets.ts`.
+ */
 function encode(claims: TokenClaims): string {
-  const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const { kid } = signFor('session', '');
+  const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT', kid }));
   const body = base64url(JSON.stringify(claims));
-  return `${header}.${body}.${sign(`${header}.${body}`)}`;
+  return `${header}.${body}.${signFor('session', `${header}.${body}`).signature}`;
+}
+
+/** The key id a token was signed under, where its header names one. */
+function kidOf(header: string): string | undefined {
+  try {
+    const parsed = JSON.parse(Buffer.from(header, 'base64url').toString('utf8')) as { kid?: unknown };
+    return typeof parsed.kid === 'string' ? parsed.kid : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type IssueInput = {
@@ -276,7 +282,12 @@ export function verifyToken(
   if (parts.length !== 3) throw new AuthError('Malformed token');
   const [header, body, signature] = parts as [string, string, string];
 
-  if (!safeEquals(signature, sign(`${header}.${body}`))) throw new AuthError('Invalid token signature');
+  // The current key, then each previous secret's, then the form tokens were
+  // signed in before keys were derived — so a rotation signs nobody out and
+  // a token from the build before this one still opens.
+  if (!verifyFor('session', `${header}.${body}`, signature, 'base64url', { kidHint: kidOf(header) }).valid) {
+    throw new AuthError('Invalid token signature');
+  }
 
   let claims: TokenClaims;
   try {

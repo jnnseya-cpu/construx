@@ -171,8 +171,9 @@ mechanism rather than inventing a parallel one.
 Stated so it is not mistaken for compliance. These follow from
 `docs/STATE.md`'s "what is not built":
 
-- **Database safety** — the ledger is in-process with a journal on one volume.
-  Postgres with RLS and append-only rules is built behind
+- **Database safety** — the ledger is in-process with a journal on one volume,
+  a snapshot beside it so boot replays only the tail, and a scheduled copy to
+  an object store when one is configured. Postgres with RLS and append-only rules is built behind
   `LEDGER_POSTGRES_MODE` (mirror, primary, follower) and verified against a
   live Postgres 16 in CI, and is `off` by default; one process still extends
   the chain at a time, and failover is a promotion somebody starts.

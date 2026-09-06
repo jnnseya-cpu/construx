@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
 import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
@@ -10,6 +10,7 @@ import type { AuthContext } from './auth.ts';
 import { attachCompany, createGroup, grantGroupRole, groupBySlug } from '../group/directory.ts';
 import type { Role } from './roles.ts';
 import { recordTrialTaken, resetTrials, trialGrantAllowed } from './trials.ts';
+import { signFor, verifyFor } from './secrets.ts';
 
 /**
  * Public registration.
@@ -163,14 +164,14 @@ export function resetRegistrations(): void {
 }
 
 function hashToken(token: string): string {
-  return createHmac('sha256', config.auth.jwtSecret).update(token).digest('hex');
+  // Keyed under the sign-up-link key derived for the current secret rather
+  // than a plain hash, so a leaked table of pending registrations is not a
+  // table of usable links. See `identity/secrets.ts`.
+  return signFor('signup-link', token, 'hex').signature;
 }
 
 function tokensMatch(supplied: string, expected: string): boolean {
-  const a = Buffer.from(hashToken(supplied), 'hex');
-  const b = Buffer.from(expected, 'hex');
-  // Length must match before timingSafeEqual, which throws on a mismatch.
-  return a.length === b.length && timingSafeEqual(a, b);
+  return verifyFor('signup-link', supplied, expected, 'hex').valid;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;

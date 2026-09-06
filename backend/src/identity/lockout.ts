@@ -1,4 +1,5 @@
 import { config } from '../config.ts';
+import type { SharedLockouts } from './sharedlockouts.ts';
 
 /**
  * Counting failures against the identity rather than the connection.
@@ -48,6 +49,22 @@ import { config } from '../config.ts';
  * not a fact about the business — so a restart forgives everybody. That is the
  * honest trade and it is stated rather than hidden: what a restart must never
  * forgive is a ledger entry, and none of this is one.
+ *
+ * **Shared across replicas where a backend is attached.** One process, the
+ * map is the whole truth. Four replicas behind a load balancer are four
+ * counts, and a run spread across them gets four times the failures before
+ * any one of them locks — the multiplied budget the shared rate limiter
+ * closed for the per-address limit, on the control that exists because that
+ * limit is not enough. With `attachShared`, the map becomes this process's
+ * mirror of a count kept in Redis (`identity/sharedlockouts.ts`): `refresh`
+ * pulls a subject's shared state in before a verification, every failure
+ * recorded here is counted there atomically and the reply mirrored back, and
+ * a successful sign-in clears both. The synchronous readers — the verifier,
+ * the risk score — keep reading the map, which is at most one round-trip
+ * behind. A backend that cannot be reached leaves the process counting on its
+ * own for that request, counted and shown on the security position; the
+ * per-address limiter sharing the backend is already refusing the login route
+ * during that outage.
  */
 
 type Subject = {
@@ -61,6 +78,93 @@ const subjects = new Map<string, Subject>();
 
 const windowMs = () => config.auth.failureWindowMinutes * 60_000;
 const lockMs = () => config.auth.lockoutMinutes * 60_000;
+
+// --- the shared backend -----------------------------------------------------
+
+let shared: SharedLockouts | undefined;
+
+export type SharedLockoutState = {
+  /** Where the count lives. */
+  backend: 'process' | 'redis';
+  host?: string;
+  /** Round-trips that could not be made since boot; each one left the process counting alone for that request. */
+  fallbacks: number;
+  lastError?: string;
+  lastErrorAt?: string;
+  /** Successful round-trips since boot, so a configured backend that is never reached is visible. */
+  roundTrips: number;
+};
+
+let sharedState: SharedLockoutState = { backend: 'process', fallbacks: 0, roundTrips: 0 };
+
+/** Attach the backend every replica shares. Undefined detaches; the map is then the whole truth again. */
+export function attachShared(backend: SharedLockouts | undefined): void {
+  shared = backend;
+  sharedState = backend ? { backend: 'redis', host: backend.host, fallbacks: 0, roundTrips: 0 } : { backend: 'process', fallbacks: 0, roundTrips: 0 };
+}
+
+export function sharedLockoutState(): SharedLockoutState {
+  return { ...sharedState };
+}
+
+function noteFallback(error: unknown): void {
+  sharedState = {
+    ...sharedState,
+    fallbacks: sharedState.fallbacks + 1,
+    lastError: error instanceof Error ? error.message : String(error),
+    lastErrorAt: new Date().toISOString(),
+  };
+}
+
+function mirror(subject: string, state: { failures: number; windowFrom: number; lockedUntil?: number } | undefined): void {
+  if (!state) {
+    subjects.delete(subject);
+    return;
+  }
+  subjects.set(subject, { failures: state.failures, windowFrom: state.windowFrom, ...(state.lockedUntil !== undefined ? { lockedUntil: state.lockedUntil } : {}) });
+}
+
+/**
+ * Bring one subject's state in from the shared backend, so the synchronous
+ * check that follows answers for every replica rather than this one. Nothing
+ * without a backend; a backend that cannot be reached is a counted fallback
+ * and the map stands as it is.
+ */
+export async function refresh(subject: string): Promise<void> {
+  if (!shared) return;
+  try {
+    mirror(subject, await shared.state(subject, windowMs()));
+    sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
+  } catch (error) {
+    noteFallback(error);
+  }
+}
+
+/** Every subject the backend holds, mirrored in, for the operator's view. */
+export async function refreshAll(): Promise<void> {
+  if (!shared) return;
+  try {
+    for (const entry of await shared.subjects(windowMs())) mirror(entry.subject, entry.state);
+    sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
+  } catch (error) {
+    noteFallback(error);
+  }
+}
+
+/** The shared count, kept in step after a local change. Never awaited by the caller; the reply corrects the mirror. */
+function push(subject: string, change: 'FAILURE' | 'CLEAR'): void {
+  if (!shared) return;
+  const backend = shared;
+  const outcome =
+    change === 'CLEAR'
+      ? backend.clear(subject).then(() => undefined)
+      : backend.recordFailure(subject, windowMs(), lockMs(), config.auth.maxIdentityFailures).then((reply) => mirror(subject, reply.state));
+  outcome
+    .then(() => {
+      sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
+    })
+    .catch((error: unknown) => noteFallback(error));
+}
 
 export type LockState = {
   locked: boolean;
@@ -115,10 +219,12 @@ export function recordFailure(subject: string, now = Date.now()): LockState & { 
   if (held.failures >= config.auth.maxIdentityFailures) {
     held.lockedUntil = now + lockMs();
     subjects.set(subject, held);
+    push(subject, 'FAILURE');
     return { locked: true, retryAfterSeconds: Math.ceil(lockMs() / 1000), failures: held.failures, justLocked: true };
   }
 
   subjects.set(subject, held);
+  push(subject, 'FAILURE');
   return { locked: false, retryAfterSeconds: 0, failures: held.failures, justLocked: false };
 }
 
@@ -132,6 +238,7 @@ export function recordFailure(subject: string, now = Date.now()): LockState & { 
  */
 export function clearFailures(subject: string): void {
   subjects.delete(subject);
+  push(subject, 'CLEAR');
 }
 
 /** Every identity currently locked, for the operator's security view. */
@@ -147,6 +254,11 @@ export function lockedSubjects(now = Date.now()): Array<{ subject: string; retry
 /** Test isolation only. Never called by the running platform. */
 export function reset(): void {
   subjects.clear();
+}
+
+/** Test isolation only: forget the tallies without detaching. */
+export function resetSharedTallies(): void {
+  sharedState = { ...sharedState, fallbacks: 0, roundTrips: 0, lastError: undefined, lastErrorAt: undefined };
 }
 
 /**

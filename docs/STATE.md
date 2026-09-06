@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,056 passing, 0 failing, 0 skipped, across 277 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,091 passing, 0 failing, 0 skipped, across 281 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 311 TypeScript files, 201,185 lines |
-| Application | 78 ES modules, 46,099 lines (including a service worker) |
-| API routes | 1,101 — 745 writes, 356 reads (49 public across both) |
+| Backend | 314 TypeScript files, 202,310 lines |
+| Application | 78 ES modules, 46,168 lines (including a service worker) |
+| API routes | 1,102 — 746 writes, 356 reads (49 public across both) |
 | Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 335, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -12170,9 +12170,163 @@ part, the manifest, retention, the failed run that prunes nothing, and the
 standing rule's age judgement. No set has been shipped from this
 environment; the first live run on the host is the first.
 
-**Still open from the seven, each with a section of its own below as it
-closes:** journal snapshots, asynchronous evidence I/O, per-purpose secrets
-with key ids, and Redis-backed lockouts.
+### One secret, a key per purpose, each with an id
+
+`GATEWAY_JWT_SECRET` signed everything — sessions, evidence links, the
+verification tag on every exported document, unsubscribe links, sign-up
+links — with the raw secret as the HMAC key. A leak of one signature's key
+was a leak of them all, and rotating the secret invalidated every session
+and every export tag ever handed to a third party the moment the new value
+went in, which is why it was never rotated. `identity/secrets.ts` closes it.
+
+**Per purpose.** Each use derives its own 32-byte key from the secret with
+HKDF-SHA256 under a label naming the purpose (`construx/session/v1`,
+`construx/export-tag/v1`, …), so a session key and an export-tag key share a
+secret and nothing else. **With a key id.** Every signature is made under a
+key the platform can name — the first eight hex characters of the SHA-256
+of the secret, an identifier that reveals nothing usable — which a session
+token carries in its JWT header as `kid` and the readiness detail under
+*Session signing secret* shows. **Rotation without a cliff.**
+`GATEWAY_JWT_SECRET_PREVIOUS` holds the secret being retired (or several,
+comma-separated); everything is signed under the current secret and verified
+against the current key, then each previous, with the `kid` hint tried
+first so the common case costs one HMAC. A token minted yesterday, a link in
+a mail sent last week and a tag printed on a document last year keep
+verifying for as long as the previous secret is kept and stop the day it is
+dropped; the runbook's *Secrets* gives the two-deploy procedure and how long
+each purpose needs. **What is already out there still verifies.** Every
+purpose also verifies under the form it signed in before this existed — the
+raw secret, or the raw secret with its suffix — tried last, so nothing
+already issued is refused by the change itself; new signatures are never
+made that way. Signatures accepted under a previous secret and under the
+pre-derivation form are counted since boot and reported on
+`GET /v1/admin/readiness` as `signing`, which is the answer to "can the old
+secret be dropped yet". The boot warns when `_PREVIOUS` still holds the
+current secret or the published development default.
+
+Callers: `auth.ts` (`kid` in the header, the chain on verify), `evidence/
+store.ts` signed links (a store carrying a secret of its own uses it alone),
+`evidence/envelope.ts` export tags, `messaging/audience.ts` unsubscribe
+tokens, `identity/signup.ts` verification links. Deliberately not moved: the
+change-feed idempotency key, which is an identifier consumers store rather
+than a credential, and whose derivation changing would change every key they
+hold. `secrets.test.ts` covers the per-purpose keys, the header, the
+rotation for each purpose including the drop, the pre-derivation forms, the
+store with its own secret, and the readiness and boot warnings.
+
+### Identity lockouts shared across replicas
+
+`identity/lockout.ts` counted failures against an identity in a map. Four
+replicas behind a load balancer were four counts, so a run spread across
+them got four times the failures before any one of them locked — the
+multiplied-budget defect the shared rate limiter closed for the per-address
+limit, on the control that exists because that limit is not enough.
+
+`identity/sharedlockouts.ts` keeps the count in Redis under `lock:<subject>`
+and changes it only through scripts, because a read-modify-write across the
+network is a race under exactly the load a lockout exists for; the scripts
+use Redis's own clock, for the reason the limiter does, and return the whole
+state. The RESP connection, authentication and reconnect discipline were
+lifted out of `api/sharedlimiter.ts` into `RespClient` and both use it. **The
+map stays the thing every synchronous caller reads** — the challenge
+verifier, the second-factor verifier, the risk score — and becomes this
+process's mirror of the shared count: `refresh(subject)` pulls the state in
+one round-trip before each verification (the three auth routes await it),
+every failure recorded locally is counted in Redis atomically with the reply
+mirrored back, and a successful sign-in clears both. `refreshAll` scans the
+backend before the operator's security view lists who is locked. Attached
+from `GATEWAY_RATE_LIMIT_REDIS_URL`, the same backend the limiter shares.
+**A backend that cannot be reached leaves the process counting on its own
+for that request**, counted as a fallback with the error on
+`GET /v1/admin/security` under `lockouts`, so a configured backend that is
+never reached is visible; the per-address limiter sharing the backend is
+already refusing the login route during that outage. Stated: the mirror is
+at most one round-trip behind, so at the threshold a run across *n*
+replicas can land up to *n* extra attempts before every replica sees the
+lock. `sharedlockouts.test.ts` runs the scripts against a real
+`redis-server` the run starts (skipping loudly where none exists, never
+passing silently): the threshold crossing reported once, the lock lifting
+with a clean slate, the window, the listing, a second replica seeing and
+completing the first's count, the operator's view of another replica's lock,
+and the counted fallback. Verified against Redis 7.0.15 in this
+environment.
+
+### A snapshot beside the journal, so boot replays only the tail
+
+Boot read the whole journal and replayed every event — two hashes and a
+patch each, from the first event the platform ever wrote — so the size of
+the journal was the length of every restart and every deploy.
+`goldenthread/snapshot.ts` writes `<journal>.snapshot`: the ledger's
+materialised state as at event *N* — every entity record, every chain head,
+the recorded-hash exceptions and the discrepancies found so far — as NDJSON
+with a SHA-256 over its own bytes on the last line. `GoldenThreadLedger.
+snapshotState()` captures all of it in one synchronous step; the records are
+frozen objects the ledger replaces rather than mutates, so writing them out
+in batches with the event loop yielded between batches serialises the state
+as at the capture whatever is committed meanwhile. Written beside the target
+and renamed over it.
+
+**Checked against the journal, never trusted.** `restoreFromSnapshot` takes
+a snapshot only on an empty ledger, and only when the journal agrees with it:
+at least *N* events, the *N*th by id, and the chain head of every project
+exactly where the prefix's events leave it. Anything else is
+`SNAPSHOT_MISMATCH`; a torn, edited or unreadable file is `SNAPSHOT_CORRUPT`;
+either way `main.ts` says so on stderr and replays the whole journal. What
+the shortcut skips is re-verifying the prefix's chain event by event — the
+assurance sweep re-proves every chain from its first event continuously, so
+an alteration inside the prefix is still found, by the sweep rather than
+the boot, and stated so. The file is still read in full: every event has to
+be in memory for the audit feed, the exports and the verifier; what no
+longer happens is rebuilding the state from the first event. The banner says
+`N events restored (M from the snapshot taken …, K replayed)`.
+
+A timer takes one every `LEDGER_SNAPSHOT_INTERVAL_MINUTES` (default 60) once
+`LEDGER_SNAPSHOT_MIN_EVENTS` (default 1,000) have been written since the last,
+primary only; `POST /v1/admin/ledger/snapshot` and *Take a snapshot now* on
+the Event Store screen take one on demand, and the screen's *What the next
+boot replays* card shows the snapshot on the volume, how this process came
+up, the events written since, and the timer. The off-host backup ships the
+snapshot with the journal; a restore without one is a full replay, slower
+and equally correct. `snapshot.test.ts` proves a ledger restored from a
+snapshot plus the journal is the ledger a full replay builds — every entity,
+every chain head, every event — with only the tail replayed; a platform
+rehydrated from one knows its people and extends the chain; and a shorter
+journal, a swapped event, an edited chain head, a non-empty ledger, a torn
+file, an edited file and a foreign version are each refused.
+
+### Evidence moved off the event loop
+
+`EvidenceStore.put`, `get` and `putChunk` read and wrote the volume with the
+synchronous `fs` calls, which held the one process that serves everybody for
+the whole of a fifty-megabyte write or read. `write`, `read` and
+`writeChunk` are the same three through `fs/promises`: the same checks in
+the same order (shared, so the two cannot drift), the same paths, the same
+envelope, the same answers — a file stored by one form is read by the other
+— and the bytes move while the loop is free. The three request paths that
+matter go through them: the upload route (`writeChunk` for a resumable
+part, `store` for a whole file), the download route (`fetch`) and the signed
+link (`holds`). `store`, `fetch` and `holds` were already the object-store-
+aware entry points, so this also closes a defect the change found: the
+upload and download routes called `put` and `get`, which only ever touched
+the volume, so a deployment with an object store configured wrote uploads to
+a relative path under the working directory and served nothing from the
+store. `writeChunk` assembles through `store` for the same reason; the parts
+are staged on the local disk either way, and a deployment with an object
+store and no `EVIDENCE_STORE_PATH` stages them under the working directory,
+which is stated here rather than hidden. The synchronous forms stay for the
+callers that are synchronous by nature — the PDF renderer resolving an
+image, an issuance rendered in one step — and for the tests that drive the
+store directly. Hashing and the envelope are CPU and stay on the loop; what
+no longer blocks it is the disk. `evidenceasync.test.ts` covers the three
+against the synchronous forms: the same objects at the same addresses, the
+same refusals, idempotence, tenancy separation, a corrupted object refused,
+the resumable parts in any order, the parts that do not assemble, and the
+ceiling crossed mid-upload.
+
+**All seven are closed.** What each still leaves for the host is stated in
+its section: the monitor and the on-call service are pointed at from
+outside; the object store, the Redis and the previous secret are configured
+in; the first live backup and the first live snapshot are the first.
 
 ---
 

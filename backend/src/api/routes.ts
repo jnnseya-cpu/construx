@@ -85,6 +85,7 @@ import * as cde from '../domain/cde.ts';
 import * as watch from '../ops/watch.ts';
 import * as oncall from '../ops/oncall.ts';
 import { backupPosition, runBackup } from '../ops/backup.ts';
+import { takeSnapshot } from '../goldenthread/snapshot.ts';
 import * as correspondence from '../domain/correspondence.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
@@ -257,6 +258,7 @@ import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import { MODULES, isModuleId, requireModule , grantLifecycle } from '../identity/modules.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
+import * as lockout from '../identity/lockout.ts';
 import { renderAndCharge, quoteRender, type RenderableFormat } from '../export/render.ts';
 import { classifyEntity } from '../identity/entityAccess.ts';
 import { FIELD_FORBIDDEN_EVENTS, MAX_SYNC_BATCH } from '../field/sync.ts';
@@ -308,6 +310,7 @@ import {
 import { metrics, recentLogs, type HtmlPolicy, type RequestContext } from './middleware.ts';
 import { gatewayMetrics, recordSecurityEvent, securityEvents, securitySummary, type SecurityEventKind } from './telemetry.ts';
 import { readiness } from './readiness.ts';
+import { signingPosition } from '../identity/secrets.ts';
 
 /**
  * The gateway routing table. Routes are explicit and versioned — no backend
@@ -1439,6 +1442,10 @@ export const ROUTES: Route[] = [
       // attempt was the one that crossed the threshold. The alternative — a
       // richer return from `verifyMfaChallenge` — would put "should somebody be
       // emailed" inside a function whose job is to say whether a code is right.
+      // The shared count first, where one is kept: a run spread across
+      // replicas is one number going up, and this replica must see it before
+      // it judges the code.
+      await lockout.refresh(actorId);
       const wasLocked = identityLock(actorId).locked;
       const verified = verifyMfaChallenge(actorId, challengeId, code);
 
@@ -1557,8 +1564,9 @@ export const ROUTES: Route[] = [
       properties: { actorId: stringField, factorChallengeId: stringField, code: stringField },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const { actorId, factorChallengeId, code } = body<{ actorId: string; factorChallengeId: string; code: string }>(ctx);
+      await lockout.refresh(actorId);
       // The challenge is looked at before the code: a code offered against no
       // live challenge is not verified at all, so nothing here can be used to
       // probe an authenticator outside a sign-in that passed the first factor.
@@ -2464,7 +2472,10 @@ export const ROUTES: Route[] = [
       // The operational picture the public probe used to carry, alongside the
       // capability map. One operator-only door onto both, rather than a
       // readiness probe quietly serving business figures to the internet.
-      return { ...readiness(), running: platform.operationalHealth() };
+      // Which key everything is signed under, which are still accepted, and
+      // whether anything presented since boot still relied on an old one —
+      // the answer to "can the previous secret be dropped yet".
+      return { ...readiness(), running: platform.operationalHealth(), signing: signingPosition() };
     },
   },
   {
@@ -2582,6 +2593,18 @@ export const ROUTES: Route[] = [
         reason: body.reason,
       });
       return { rota, now: oncall.onCallAt(platform) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/ledger/snapshot',
+    description: 'Write a snapshot of the ledger’s state beside the journal now, so the next boot replays only what is written after it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      operatorOnly(ctx, 'take a ledger snapshot');
+      const outcome = await takeSnapshot(platform.ledger);
+      if (!outcome.taken) throw new DomainError('SNAPSHOT_NOT_TAKEN', outcome.because ?? 'The snapshot was not written', 409);
+      return outcome.stats;
     },
   },
   {
@@ -3053,12 +3076,18 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/admin/security',
     description: 'The gateway security audit stream: auth failures, denials, rate limits, admin access',
-    handler: (_platform, ctx) => {
+    handler: async (_platform, ctx) => {
       // The audit stream names who tried what. It is operator-only for the same
       // reason the logs are: it is a map of where the locks are.
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Operator access required');
+      // Every replica's locks, not this one's: the backend is scanned and
+      // mirrored in before the map is read.
+      await lockout.refreshAll();
       return {
         summary: securitySummary(),
+        // Where the count lives, and whether this process has had to count
+        // alone. A configured backend that is never reached is visible here.
+        lockouts: lockout.sharedLockoutState(),
         // Who is shut out *now*, rather than who was shut out at some point in
         // a scrolling stream. It is the question an operator is actually asked
         // — somebody rings up unable to sign in — and answering it from the
@@ -4879,9 +4908,10 @@ export const ROUTES: Route[] = [
       properties: { challengeId: stringField, code: stringField },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = auth(ctx);
       const { challengeId, code } = body<{ challengeId: string; code: string }>(ctx);
+      await lockout.refresh(actor.actorId);
       if (!verifyMfaChallenge(actor.actorId, challengeId, code)) {
         // The same refusal a first-factor failure gives, for the same reason:
         // distinguishing "wrong code" from "locked" rebuilds the enumeration
@@ -21539,7 +21569,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/evidence/:hash',
     upload: true,
     description: 'Store the file behind an evidence hash the ledger already records',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = auth(ctx);
       if (actor.roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
@@ -21566,9 +21596,15 @@ export const ROUTES: Route[] = [
       // a connection that dies at 90% starts again at nothing, and on a bad
       // enough link the evidence never arrives at all — the record exists, the
       // hash is on the chain, and the file behind it is on a handset.
+      //
+      // The disk is waited on, not blocked on: a fifty-megabyte drawing set
+      // used to hold the one process that serves everybody for the whole of
+      // its write. `writeChunk` and `store` move the bytes through
+      // `fs/promises` — and `store` goes to the object store where one is
+      // configured, which the synchronous `put` never did.
       const chunks = Number(ctx.query.get('chunks') ?? 0);
       if (chunks > 0) {
-        const state = platform.evidence.putChunk(
+        const state = await platform.evidence.writeChunk(
           actor.tenantId,
           ctx.params.hash as string,
           Number(ctx.query.get('index') ?? 0),
@@ -21579,7 +21615,7 @@ export const ROUTES: Route[] = [
         return { ...state, evidenceId: record.refId, projectId: record.projectId };
       }
 
-      const stored = platform.evidence.put(actor.tenantId, ctx.params.hash as string, incoming, mediaType(ctx.contentType));
+      const stored = await platform.evidence.store(actor.tenantId, ctx.params.hash as string, incoming, mediaType(ctx.contentType));
 
       // No ledger event is written, and that is deliberate rather than an
       // omission. The hash was committed by the domain command that registered
@@ -21616,11 +21652,12 @@ export const ROUTES: Route[] = [
     // signature nor an authorised identity.
     public: true,
     description: 'Fetch a stored evidence file, by session or by signed link',
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const hash = ctx.params.hash as string;
       const tenantId = signedTenant(platform, ctx) ?? sessionTenant(platform, ctx, hash);
 
-      const file = platform.evidence.get(tenantId, hash);
+      // Read off the event loop, from whichever store holds it.
+      const file = await platform.evidence.fetch(tenantId, hash);
       return {
         contentType: file.contentType,
         // Named by its hash. The original filename is not in the record — the
@@ -21641,7 +21678,7 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Mint an expiring link to a stored evidence file',
     schema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: (platform, ctx) => {
+    handler: async (platform, ctx) => {
       const actor = auth(ctx);
       const hash = ctx.params.hash as string;
       const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
@@ -21653,7 +21690,9 @@ export const ROUTES: Route[] = [
       });
       authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
 
-      if (!platform.evidence.has(actor.tenantId, hash)) {
+      // Asked of whichever store is in use; an unreachable object store is a
+      // refusal, never "not held".
+      if (!(await platform.evidence.holds(actor.tenantId, hash))) {
         throw new NotFoundError('The platform holds no bytes for this evidence');
       }
       return platform.evidence.signedUrl(actor.tenantId, hash);

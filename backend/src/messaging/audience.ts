@@ -1,6 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
+import { signFor, verifyFor } from '../identity/secrets.ts';
 import { DomainError } from '../core/errors.ts';
 import type { Platform, PlatformUser } from '../platform.ts';
 import { PLATFORM_TENANT_ID } from '../platform.ts';
@@ -148,15 +148,14 @@ export function setConsent(
  * thing, cannot be enumerated, and grants no read access.
  */
 export function unsubscribeToken(userId: string): string {
-  return createHmac('sha256', config.auth.jwtSecret).update(`unsubscribe:${userId}`).digest('base64url');
+  // Under the unsubscribe key derived for the current secret; a link in a
+  // mail sent under the previous secret still works for as long as that
+  // secret is kept in GATEWAY_JWT_SECRET_PREVIOUS. See `identity/secrets.ts`.
+  return signFor('unsubscribe', `unsubscribe:${userId}`).signature;
 }
 
 export function verifyUnsubscribeToken(userId: string, token: string): boolean {
-  const expected = Buffer.from(unsubscribeToken(userId));
-  const supplied = Buffer.from(String(token ?? ''));
-  // Length must match before timingSafeEqual, which throws on unequal buffers.
-  if (expected.length !== supplied.length) return false;
-  return timingSafeEqual(expected, supplied);
+  return verifyFor('unsubscribe', `unsubscribe:${userId}`, String(token ?? '')).valid;
 }
 
 export function unsubscribeUrl(userId: string): string {

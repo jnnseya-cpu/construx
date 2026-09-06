@@ -191,6 +191,21 @@ that made the data durable.
 default `SIGTERM` handling as PID 1 is to ignore it, the graceful shutdown never
 runs, and every deploy looks like a crash.
 
+**How long a boot takes is the tail, not the record.** Boot reads the whole
+journal (every event has to be in memory) but rebuilds the state from
+`<journal>.snapshot` where one exists and agrees with the journal — the same
+event count, the same last event, every chain head where the journal's
+prefix leaves it — and replays only what was written after it. The banner
+says so: `N events restored (M from the snapshot taken …, K replayed)`. A
+snapshot that is torn, edited or disagrees is refused with a `[snapshot]`
+line on stderr and the whole journal is replayed; nothing depends on it. The
+timer takes one every `LEDGER_SNAPSHOT_INTERVAL_MINUTES` (default 60) once
+`LEDGER_SNAPSHOT_MIN_EVENTS` (default 1,000) have been written since the last;
+*Take a snapshot now* on the Event Store screen takes one on demand, and the
+screen shows what the next boot would replay. The backup ships the snapshot
+with the journal; a restore without one is a full replay, which is slower
+and equally correct.
+
 ### Backup
 
 The record is four append-only files and two directories, all under `/data`:
@@ -201,6 +216,7 @@ The record is four append-only files and two directories, all under `/data`:
 | `ledger.jsonl.acu` | The ACU wallets: every grant, hold and charge | Wallets forget their debits and customers get AI the platform already paid for |
 | `ledger.jsonl.views` | Blog page views | Counters restart at zero |
 | `ledger.jsonl.revoked` | Sessions revoked before they expired | Every revoked refresh token works again for the rest of its seven days |
+| `ledger.jsonl.snapshot` | The ledger's state as at an event count, so boot replays only the tail | Boot replays every event; slower, equally correct |
 | `evidence/` | The files the chain's hashes point at | A record that proves documents nobody holds any more |
 | `site-media/` | The landing page's own pictures | The public site loses its images |
 
@@ -443,12 +459,42 @@ the repository. `.env` is gitignored; `.env.example` carries names and safe
 defaults and never a value.
 
 `GATEWAY_JWT_SECRET` is the one that matters most: leave it at the development
-default and every token the platform has ever signed is forgeable. The service
-warns at boot rather than refusing, because refusing to start on a bad secret
-turns a misconfiguration into an outage — but treat the warning as a page.
+default and every token the platform has ever signed is forgeable. A production
+boot refuses to start on the default (`[boot refused]`); anything else is a
+warning on the readiness screen.
 
-Rotating it invalidates every live session. Users sign in again; nothing in the
-record is affected.
+**One secret, a key per purpose, each with an id.** Sessions, evidence links,
+export verification tags, unsubscribe links and sign-up links each sign under
+a key derived from the secret with HKDF under the purpose's own label
+(`backend/src/identity/secrets.ts`). A key recovered from one purpose proves
+nothing about another. Every signature is made under a key the platform can
+name — the first eight hex characters of the SHA-256 of the secret — which a
+session token carries in its header as `kid` and the readiness screen shows
+under *Session signing secret*.
+
+**Rotating it is two deploys, and signs nobody out.**
+
+1. Generate the new value. Set `GATEWAY_JWT_SECRET` to it and
+   `GATEWAY_JWT_SECRET_PREVIOUS` to the old one (several old ones are
+   comma-separated). Deploy. From now everything is signed under the new key
+   and verified against the new key, then the old: live sessions carry on,
+   links in mails already sent still work, verification tags on documents
+   already issued still verify. The readiness detail says a rotation is in
+   progress and names the key ids.
+2. When nothing signed under the old secret is still in circulation, clear
+   `GATEWAY_JWT_SECRET_PREVIOUS` and deploy. Sessions last seven days
+   (`GATEWAY_AUTH_REFRESH_TTL_DAYS`); sign-up and evidence links minutes; an
+   **export verification tag lasts as long as the document does**, so a tag
+   handed to a third party under the old secret stops verifying the day the
+   old secret is dropped. Keep it in `_PREVIOUS` for as long as you honour
+   those, or re-issue the documents.
+
+The boot warns when `_PREVIOUS` still contains the current secret (the
+rotation has not happened) or the published development default (anything
+signed under it verifies until it is dropped). Signatures accepted under a
+previous secret since boot, and under the pre-derivation form, are counted
+on `GET /v1/admin/readiness` so you can see whether the old key is still
+being relied on before dropping it.
 
 ---
 

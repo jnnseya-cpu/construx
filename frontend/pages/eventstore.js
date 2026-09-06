@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { lineChart } from '../lib/charts.js';
 import { axisDay, head, refusal } from '../lib/estate.js';
-import { badge, html, humanise, pct, raw, render, table, time } from '../lib/ui.js';
+import { badge, html, humanise, pct, raw, render, table, time, toast } from '../lib/ui.js';
 
 /**
  * The event store.
@@ -74,6 +74,60 @@ export async function eventstore(root) {
         ? html`<div class="notice ${raw(position.journal ? 'bad' : 'warn')}" style="margin-bottom:14px">
             <div><b>${position.journal ? 'The journal and the ledger disagree' : 'Nothing here survives a restart'}</b><br />
             ${position.durability.note}</div>
+          </div>`
+        : ''}
+
+      ${position.snapshot
+        ? html`<div class="card" style="margin-bottom:14px" data-snapshot>
+            <h2>
+              What the next boot replays
+              ${position.snapshot.current ? badge('snapshot on the volume', 'ok') : badge('no snapshot', 'warn')}
+            </h2>
+            <div class="grid g4" style="margin:10px 0 12px">
+              <div>
+                <h2>Snapshot stands at</h2>
+                <div class="metric">${position.snapshot.current ? position.snapshot.current.events.toLocaleString('en-GB') : '—'}</div>
+                <div class="metric-sub">${
+                  position.snapshot.current
+                    ? `events · ${position.snapshot.current.entities.toLocaleString('en-GB')} entities · ${Math.round(position.snapshot.current.bytes / 1_048_576)} MB · taken ${time(position.snapshot.current.takenAt)}`
+                    : 'nothing beside the journal yet'
+                }</div>
+              </div>
+              <div>
+                <h2>Replayed next boot</h2>
+                <div class="metric ${raw(position.snapshot.eventsSince > position.snapshot.minEvents * 10 ? 'warn' : '')}">${position.snapshot.eventsSince.toLocaleString('en-GB')}</div>
+                <div class="metric-sub">events written since the snapshot</div>
+              </div>
+              <div>
+                <h2>This process came up</h2>
+                <div class="metric-sub" style="margin-top:8px">${
+                  position.snapshot.boot
+                    ? position.snapshot.boot.from === 'SNAPSHOT'
+                      ? `from the snapshot: ${position.snapshot.boot.fromSnapshot.toLocaleString('en-GB')} events taken as read, ${position.snapshot.boot.replayed.toLocaleString('en-GB')} replayed`
+                      : position.snapshot.boot.from === 'JOURNAL'
+                        ? `by replaying every event${position.snapshot.boot.refused ? ` — the snapshot was refused: ${position.snapshot.boot.refused}` : ''}`
+                        : 'from nothing'
+                    : 'not recorded on this process'
+                }</div>
+              </div>
+              <div>
+                <h2>Timer</h2>
+                <div class="metric-sub" style="margin-top:8px">${
+                  position.snapshot.enabled
+                    ? `every ${position.snapshot.intervalMinutes} min, once ${position.snapshot.minEvents.toLocaleString('en-GB')} events have been written since the last`
+                    : 'off — LEDGER_SNAPSHOT_INTERVAL_MINUTES is 0, or this is a follower'
+                }${position.snapshot.lastError ? html`<br />last attempt failed: ${position.snapshot.lastError}` : ''}</div>
+              </div>
+            </div>
+            <div class="metric-sub">
+              A snapshot is the ledger's state as at an event count. Boot loads it, checks it against the journal — the same
+              count, the same last event, the same chain heads — and replays only what came after; anything that disagrees is
+              refused and the whole journal is replayed instead. The assurance sweep still re-proves every chain from its first
+              event.
+            </div>
+            <div style="margin-top:10px">
+              <button class="btn quiet sm" id="take-snapshot" ${raw(position.snapshot.running ? 'disabled' : '')}>${position.snapshot.running ? 'Writing…' : 'Take a snapshot now'}</button>
+            </div>
           </div>`
         : ''}
 
@@ -264,4 +318,19 @@ export async function eventstore(root) {
       </div>
     `,
   );
+
+  document.getElementById('take-snapshot')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Writing…';
+    try {
+      const stats = await api.post('/v1/admin/ledger/snapshot', {});
+      toast('Snapshot written', `${Number(stats.events).toLocaleString('en-GB')} events, ${Number(stats.entities).toLocaleString('en-GB')} entities, ${Math.round(stats.bytes / 1_048_576)} MB`, 'ok');
+      await eventstore(root);
+    } catch (error) {
+      toast('Snapshot not written', error.message, 'err');
+      button.disabled = false;
+      button.textContent = 'Take a snapshot now';
+    }
+  });
 }

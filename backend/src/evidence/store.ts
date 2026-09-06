@@ -1,8 +1,10 @@
-import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { DomainError } from '../core/errors.ts';
 import { config } from '../config.ts';
+import { signFor, verifyFor } from '../identity/secrets.ts';
 import * as envelope from './envelope.ts';
 import { S3Client } from '../store/s3.ts';
 
@@ -121,7 +123,8 @@ export class EvidenceStore {
   readonly #objects: S3Client | undefined;
   readonly #maxBytes: number;
   readonly #linkTtlSeconds: number;
-  readonly #secret: string;
+  /** A secret of the store's own, for a test; absent, the deployment's, with its rotation chain. */
+  readonly #secret: string | undefined;
   /** Bytes per tenancy, lazily filled and maintained by put and discard. */
   readonly #usage = new Map<string, number>();
 
@@ -134,9 +137,11 @@ export class EvidenceStore {
     this.#maxBytes = options.maxBytes ?? config.evidence.maxBytes;
     this.#linkTtlSeconds = options.linkTtlSeconds ?? config.evidence.linkTtlSeconds;
     // The gateway's own secret rather than a second one: another secret is
-    // another thing to rotate, and the blast radius of either leaking is
-    // already the same.
-    this.#secret = options.secret ?? config.auth.jwtSecret;
+    // another thing to rotate. Links are signed under the evidence-link key
+    // derived from it (`identity/secrets.ts`), so a leaked link signature is
+    // not a session key, and a rotation keeps a link minted a moment before
+    // it good for the rest of its five minutes.
+    this.#secret = options.secret;
   }
 
   /** Whether a store is configured at all. Neither means hashes without files. */
@@ -193,7 +198,7 @@ export class EvidenceStore {
   /** Read the bytes, from whichever store is in use, re-verifying the hash. */
   async fetch(tenantId: string, hash: string): Promise<{ bytes: Buffer; contentType: string }> {
     const remote = this.#remote;
-    if (!remote) return this.get(tenantId, hash);
+    if (!remote) return this.read(tenantId, hash);
 
     const held = await remote.get(this.#keyFor(tenantId, hash));
     if (!held) {
@@ -213,7 +218,7 @@ export class EvidenceStore {
   /** Store the bytes in whichever store is in use. */
   async store(tenantId: string, claimedHash: string, bytes: Buffer, contentType: string): Promise<StoredObject> {
     const remote = this.#remote;
-    if (!remote) return this.put(tenantId, claimedHash, bytes, contentType);
+    if (!remote) return this.write(tenantId, claimedHash, bytes, contentType);
 
     if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty file is not evidence');
     if (bytes.length > this.#maxBytes) {
@@ -336,6 +341,148 @@ export class EvidenceStore {
       contentType,
       storedAt: new Date().toISOString(),
     };
+  }
+
+  // --- the same, off the event loop ------------------------------------------
+  //
+  // `put`, `get` and `putChunk` read and write the volume synchronously, which
+  // held the one process that serves everybody for the whole of a fifty-
+  // megabyte write or read. Every request path now goes through these three:
+  // the same checks in the same order, the same paths, the same envelope, the
+  // same answers — and the bytes move through `fs/promises`, so the loop is
+  // free while the disk works. The synchronous forms stay for the callers
+  // that are synchronous by nature (a PDF renderer resolving an image, an
+  // issuance rendered in one step) and for the tests that drive the store
+  // directly; both forms hold the same objects at the same addresses.
+
+  /** The checks `put` makes before touching the disk, shared so the two cannot drift. */
+  #checkedForWrite(claimedHash: string, bytes: Buffer): void {
+    if (!this.configured) {
+      throw new DomainError(
+        'EVIDENCE_STORE_UNCONFIGURED',
+        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
+          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
+        503,
+      );
+    }
+    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty file is not evidence');
+    if (bytes.length > this.#maxBytes) {
+      throw new DomainError('EVIDENCE_TOO_LARGE', `Evidence exceeds the ${Math.round(this.#maxBytes / 1_048_576)}MB limit`, 413);
+    }
+    if (hashBytes(bytes) !== claimedHash) {
+      throw new DomainError('EVIDENCE_HASH_MISMATCH', 'The uploaded bytes do not hash to the recorded evidence hash', 422);
+    }
+  }
+
+  /** `put`, with the disk waited on rather than blocked on. */
+  async write(tenantId: string, claimedHash: string, bytes: Buffer, contentType: string): Promise<StoredObject> {
+    this.#checkedForWrite(claimedHash, bytes);
+    const target = this.#pathFor(tenantId, claimedHash);
+    const existing = await stat(target).catch(() => undefined);
+    if (existing) return { hash: claimedHash, bytes: existing.size, contentType, storedAt: existing.mtime.toISOString() };
+
+    await mkdir(dirname(target), { recursive: true });
+    const temporary = `${target}.partial`;
+    await writeFile(temporary, envelope.encrypt(tenantId, bytes));
+    await rename(temporary, target);
+    await writeFile(`${target}.type`, contentType);
+
+    const known = this.#usage.get(tenantId);
+    if (known !== undefined) this.#usage.set(tenantId, known + bytes.length);
+    return { hash: claimedHash, bytes: bytes.length, contentType, storedAt: new Date().toISOString() };
+  }
+
+  /** `get`, with the disk waited on rather than blocked on. */
+  async read(tenantId: string, hash: string): Promise<{ bytes: Buffer; contentType: string }> {
+    if (!this.configured) throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);
+    const target = this.#pathFor(tenantId, hash);
+    let sealed: Buffer;
+    try {
+      sealed = await readFile(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new DomainError('EVIDENCE_NOT_STORED', 'The platform holds no bytes for this evidence', 404);
+      }
+      throw error;
+    }
+    const bytes = envelope.decrypt(tenantId, sealed);
+    if (hashBytes(bytes) !== hash) throw new DomainError('EVIDENCE_CORRUPT', 'The stored bytes no longer match their hash', 500);
+    const contentType = await readFile(`${target}.type`, 'utf8').catch(() => 'application/octet-stream');
+    return { bytes, contentType };
+  }
+
+  /** `putChunk`, with the disk waited on rather than blocked on. */
+  async writeChunk(
+    tenantId: string,
+    claimedHash: string,
+    index: number,
+    chunks: number,
+    bytes: Buffer,
+    contentType: string,
+  ): Promise<{ held: number[]; chunks: number; complete: boolean; object?: StoredObject }> {
+    if (!this.configured) {
+      throw new DomainError(
+        'EVIDENCE_STORE_UNCONFIGURED',
+        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
+          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
+        503,
+      );
+    }
+    if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
+      throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= chunks) {
+      throw new DomainError('EVIDENCE_CHUNK_INDEX_INVALID', `Part ${index} is outside an upload of ${chunks}`, 422);
+    }
+    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty part is not evidence');
+
+    const target = this.#pathFor(tenantId, claimedHash);
+    const done = await stat(target).catch(() => undefined);
+    if (done) {
+      return {
+        held: Array.from({ length: chunks }, (_, i) => i),
+        chunks,
+        complete: true,
+        object: { hash: claimedHash, bytes: done.size, contentType, storedAt: done.mtime.toISOString() },
+      };
+    }
+
+    const dir = this.#chunkDir(tenantId, claimedHash);
+    await mkdir(dir, { recursive: true });
+    const existing = await this.#heldChunksAsync(dir);
+    let alreadyHave = 0;
+    for (const i of existing) alreadyHave += (await stat(join(dir, String(i)))).size;
+    if (!existing.includes(index) && alreadyHave + bytes.length > this.#maxBytes) {
+      await rm(dir, { recursive: true, force: true });
+      throw new DomainError('EVIDENCE_TOO_LARGE', `Evidence exceeds the ${Math.round(this.#maxBytes / 1_048_576)}MB limit`, 413);
+    }
+
+    const part = join(dir, String(index));
+    if (!(await stat(part).catch(() => undefined))) await writeFile(part, envelope.encrypt(tenantId, bytes));
+
+    const held = await this.#heldChunksAsync(dir);
+    if (held.length < chunks) return { held, chunks, complete: false };
+
+    const pieces: Buffer[] = [];
+    for (const i of held) pieces.push(envelope.decrypt(tenantId, await readFile(join(dir, String(i)))));
+    let object: StoredObject;
+    try {
+      // Through `store`, so the assembled object lands in the object store
+      // where one is configured; the parts are staged on the local disk
+      // either way.
+      object = await this.store(tenantId, claimedHash, Buffer.concat(pieces), contentType);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+    return { held, chunks, complete: true, object };
+  }
+
+  async #heldChunksAsync(dir: string): Promise<number[]> {
+    const names = await readdir(dir).catch(() => [] as string[]);
+    return names
+      .map((name) => Number(name))
+      .filter((index) => Number.isInteger(index) && index >= 0)
+      .sort((a, b) => a - b);
   }
 
   // --- resumable upload -----------------------------------------------------
@@ -628,7 +775,7 @@ export class EvidenceStore {
   }
 
   #sign(tenantId: string, hash: string, expires: number): string {
-    return createHmac('sha256', this.#secret).update(`${tenantId}\n${hash}\n${expires}`).digest('hex');
+    return signFor('evidence-link', `${tenantId}\n${hash}\n${expires}`, 'hex', this.#secret).signature;
   }
 
   /**
@@ -640,17 +787,7 @@ export class EvidenceStore {
    */
   verifySignedUrl(tenantId: string, hash: string, expires: number, signature: string): boolean {
     if (!Number.isFinite(expires) || expires < Math.floor(Date.now() / 1000)) return false;
-
-    const expected = Buffer.from(this.#sign(tenantId, hash, expires), 'hex');
-    let given: Buffer;
-    try {
-      given = Buffer.from(signature, 'hex');
-    } catch {
-      return false;
-    }
-    // Length must match before timingSafeEqual, which throws on a mismatch —
-    // and the throw would itself be a timing signal.
-    if (given.length !== expected.length) return false;
-    return timingSafeEqual(expected, given);
+    if (typeof signature !== 'string' || !/^[0-9a-f]+$/i.test(signature)) return false;
+    return verifyFor('evidence-link', `${tenantId}\n${hash}\n${expires}`, signature.toLowerCase(), 'hex', this.#secret !== undefined ? { secret: this.#secret } : {}).valid;
   }
 }

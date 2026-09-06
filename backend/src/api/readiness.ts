@@ -1,4 +1,5 @@
 import { assertProductionSafety, config, environmentReport, isProduction } from '../config.ts';
+import { signingPosition } from '../identity/secrets.ts';
 import { parseTrustedProxies } from './clientaddress.ts';
 
 /**
@@ -150,8 +151,11 @@ export function readiness(now = new Date()): Readiness {
       detail:
         config.auth.jwtSecret === 'construx-development-secret'
           ? 'Still the development default, which is a published value — anyone holding it can forge a session for any role.'
-          : 'A deployment-specific secret is set. Sessions cannot be forged from the repository.',
-      env: ['GATEWAY_JWT_SECRET'],
+          : `A deployment-specific secret is set (key id ${signingPosition().kid}); sessions, evidence links, export tags, unsubscribe and sign-up links each sign under their own key derived from it. ` +
+            (signingPosition().rotationInProgress
+              ? `A rotation is in progress: ${signingPosition().previous.join(', ')} still verif${signingPosition().previous.length === 1 ? 'ies' : 'y'} and nothing is signed under it. Drop GATEWAY_JWT_SECRET_PREVIOUS once nothing signed under it is still in circulation.`
+              : 'No previous secret is accepted.'),
+      env: ['GATEWAY_JWT_SECRET', 'GATEWAY_JWT_SECRET_PREVIOUS'],
     },
     {
       key: 'platform.operator',
@@ -356,8 +360,8 @@ export function readiness(now = new Date()): Readiness {
       state: config.rateLimit.redisUrl === '' ? 'NOT_SET' : 'CONFIGURED',
       detail:
         config.rateLimit.redisUrl === ''
-          ? 'Buckets are per-process. Correct for one instance; behind a load balancer with N replicas the configured limit is enforced N times over, including on the login route.'
-          : 'Buckets live in Redis, so every replica shares one limit. An unreachable store is a denial, never a fall-back to the local bucket.',
+          ? 'Buckets and identity lockouts are per-process. Correct for one instance; behind a load balancer with N replicas the configured limit and the failure threshold are enforced N times over, including on the login route.'
+          : 'Buckets and identity lockouts live in Redis, so every replica shares one limit and one count of failures per identity. An unreachable store is a denial for the limiter, never a fall-back to the local bucket; the lockout falls back to this process’s own count for that request and says so on the security position.',
       env: ['GATEWAY_RATE_LIMIT_REDIS_URL', 'GATEWAY_RATE_LIMIT_MAX', 'GATEWAY_RATE_LIMIT_WINDOW_SECONDS'],
     },
     {

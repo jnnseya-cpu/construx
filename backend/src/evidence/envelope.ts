@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
+import { signFor, verifyFor } from '../identity/secrets.ts';
 
 /**
  * Envelope encryption for evidence at rest.
@@ -280,9 +281,13 @@ export function issueTag(input: { contentHash: string; reference: string; tenant
   // ULID, a reference is prefix-and-digits, a content hash is `sha256:` and hex.
   // A separator that could occur inside a field would let two different
   // documents produce one tag by shifting the boundary between them.
-  return createHmac('sha256', `${config.auth.jwtSecret}:export-verification`)
-    .update(`${input.tenantId}|${input.reference}|${input.contentHash}`)
-    .digest('base64url');
+  //
+  // Under the export-tag key derived for the current secret. A tag is handed
+  // to a third party and verified years later, which is exactly why the
+  // secret could never be rotated while every purpose shared the raw one;
+  // `identity/secrets.ts` verifies against the previous secrets too, and the
+  // form this signed in before, so what is out there keeps verifying.
+  return signFor('export-tag', `${input.tenantId}|${input.reference}|${input.contentHash}`).signature;
 }
 
 /** Whether a presented tag is one this platform issued for this document. */
@@ -290,7 +295,5 @@ export function verifyTag(
   input: { contentHash: string; reference: string; tenantId: string },
   presented: string,
 ): boolean {
-  const expected = Buffer.from(issueTag(input));
-  const offered = Buffer.from(presented);
-  return expected.length === offered.length && timingSafeEqual(expected, offered);
+  return verifyFor('export-tag', `${input.tenantId}|${input.reference}|${input.contentHash}`, presented).valid;
 }
