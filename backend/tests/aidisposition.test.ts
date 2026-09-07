@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as aidisposition from '../src/domain/aidisposition.ts';
+import * as claims from '../src/engines/claims.ts';
+import { hashEvidence } from '../src/core/canonical.ts';
 import * as safety from '../src/engines/safety.ts';
 import * as stagegate from '../src/domain/stagegate.ts';
 import { promptVersionOf } from '../src/engines/context.ts';
@@ -231,5 +233,178 @@ describe('what the gate now does with all three', () => {
       stagegate.evaluateTenderGate(asPM()).clauses.find((c) => c.clause === 'AI_ACCOUNTED')?.state,
       'PASS',
     );
+  });
+});
+
+/**
+ * The field-level record of an edit — §16.3.
+ *
+ * `ACCEPTED_WITH_CHANGE` with a prose reason says the model needed correcting
+ * and cannot say where. "Corrected the commercial figure" is a sentence
+ * somebody has to read and nobody can count; `/commercialImpact/amountMinor
+ * 4200000 → 0` is a fact, and forty of them are a measurement of exactly where
+ * this model is weak — which is the only reason to keep the record at all.
+ *
+ * The diff is computed here, never accepted from the caller. A list of changes
+ * typed alongside the edit is a second account of the same act, and two
+ * accounts eventually disagree.
+ *
+ * Two refusals matter as much as the record. An acceptance "with change" whose
+ * answer is identical to the model's, and an acceptance "unchanged" whose
+ * answer differs, are both contradictions — and both are the shape of thing a
+ * screen produces when its buttons are wired to the wrong decision.
+ */
+describe('what a person changed before standing behind it', () => {
+  /**
+   * A run that is actually held to the output standard.
+   *
+   * `runOne` above uses the safety forecast, which is not — so it has no
+   * standard answer on its record and nothing to diff against. An impact
+   * assessment is, which is why this block drives that instead of reusing the
+   * helper: a test of a diff has to run against a task that produces the thing
+   * being diffed.
+   */
+  async function runStandardOne(): Promise<string> {
+    const ctx = platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
+    const change = claims.submitChangeRequest(ctx, {
+      description: 'Ground conditions require a second run of temporary works to the trunk main diversion.',
+      origin: 'CLIENT',
+      noticeType: 'CCI',
+      reason: 'Instructed following the ground investigation review',
+      impactedPackageIds: [],
+      affectedSubcontractIds: [],
+      supportingEvidenceHash: hashEvidence(`second sheet-pile run ${Math.random()}`),
+    });
+    await claims.assessImpact(ctx, {
+      changeRequestId: change.changeRequestId,
+      costImpactMinor: 4_200_000,
+      timeImpactDays: 14,
+      affectedTaskIds: [],
+      qualityImpact: 'None.',
+      safetyImpact: 'Additional plant movements in the compound.',
+    });
+    const outstanding = aidisposition
+      .aiDispositionPosition(asPM())
+      .outstanding.filter((entry) => {
+        const state = platform.ledger.require({ refType: 'AIExecution', refId: entry.executionId }).state as {
+          standardOutput?: unknown;
+        };
+        return state.standardOutput !== undefined;
+      });
+    assert.ok(outstanding.length > 0, 'the run produced no undisposed execution held to the standard');
+    return outstanding[outstanding.length - 1]!.executionId;
+  }
+
+  /** The model's own answer, off the execution record. */
+  function modelAnswer(executionId: string): Record<string, unknown> {
+    const state = platform.ledger.require({ refType: 'AIExecution', refId: executionId }).state as {
+      standardOutput?: Record<string, unknown>;
+    };
+    assert.ok(state.standardOutput, 'the execution did not keep the answer it produced');
+    return state.standardOutput;
+  }
+
+  it('keeps the answer the model gave, which is what there is to diff against', async () => {
+    const executionId = await runStandardOne();
+    const state = platform.ledger.require({ refType: 'AIExecution', refId: executionId }).state as {
+      standardOutput?: Record<string, unknown>;
+      standardVersion?: string;
+    };
+    // An audit record of an AI execution that does not contain what the model
+    // said is missing its subject.
+    assert.ok(state.standardOutput, 'the answer is not on the execution record');
+    assert.match(String(state.standardVersion), /^aios@[0-9a-f]{8}$/);
+  });
+
+  it('records which fields were changed, and what they were changed from', async () => {
+    const executionId = await runStandardOne();
+    const edited = { ...modelAnswer(executionId), riskLevel: 'CRITICAL', recommendedAction: 'Stop the lift and re-plan it.' };
+
+    const result = aidisposition.disposeAIOutput(asPM(), {
+      executionId,
+      decision: 'ACCEPTED_WITH_CHANGE',
+      reason: 'The model under-read the lift over the live carriageway.',
+      edited,
+    });
+
+    const changes = result.changes ?? [];
+    assert.equal(changes.length, 2, JSON.stringify(changes));
+    const risk = changes.find((change) => change.field === '/riskLevel');
+    assert.ok(risk, JSON.stringify(changes));
+    assert.equal(risk.to, 'CRITICAL');
+    assert.equal(risk.from, modelAnswer(executionId).riskLevel, 'the original value was not carried');
+
+    // And it is on the record, not only in the reply.
+    const stored = aidisposition.dispositionOf(asPM(), executionId);
+    assert.equal(stored?.changes?.length, 2);
+  });
+
+  it('refuses an acceptance with change whose answer is identical to the model’s', async () => {
+    const executionId = await runStandardOne();
+    throwsCode(
+      () =>
+        aidisposition.disposeAIOutput(asPM(), {
+          executionId,
+          decision: 'ACCEPTED_WITH_CHANGE',
+          reason: 'Corrected it.',
+          edited: modelAnswer(executionId),
+        }),
+      'NO_CHANGE_MADE',
+    );
+    assert.equal(aidisposition.dispositionOf(asPM(), executionId), undefined, 'a refused disposition was still written');
+  });
+
+  it('refuses a clean acceptance whose answer differs from the model’s', async () => {
+    const executionId = await runStandardOne();
+    throwsCode(
+      () =>
+        aidisposition.disposeAIOutput(asPM(), {
+          executionId,
+          decision: 'ACCEPTED',
+          edited: { ...modelAnswer(executionId), riskLevel: 'CRITICAL' },
+        }),
+      'CHANGE_WITHOUT_DECISION',
+    );
+  });
+
+  it('still records a decision from a screen that does not hold the edited answer', async () => {
+    // Losing the decision to gain the detail would be the wrong trade: a
+    // disposition with no field-level record is still the fact the fifth gate
+    // clause reads.
+    const executionId = await runOne();
+    const result = aidisposition.disposeAIOutput(asPM(), {
+      executionId,
+      decision: 'ACCEPTED_WITH_CHANGE',
+      reason: 'Amended on paper at the pre-start.',
+    });
+    assert.equal(result.changes, undefined);
+    assert.equal(aidisposition.dispositionOf(asPM(), executionId)?.decision, 'ACCEPTED_WITH_CHANGE');
+  });
+
+  it('counts where the model is corrected, most-corrected first', async () => {
+    const first = await runStandardOne();
+    aidisposition.disposeAIOutput(asPM(), {
+      executionId: first,
+      decision: 'ACCEPTED_WITH_CHANGE',
+      reason: 'Risk under-read.',
+      edited: { ...modelAnswer(first), riskLevel: 'CRITICAL' },
+    });
+
+    const second = await runStandardOne();
+    aidisposition.disposeAIOutput(asPM(), {
+      executionId: second,
+      decision: 'ACCEPTED_WITH_CHANGE',
+      reason: 'Risk under-read again, and the action was too vague.',
+      edited: { ...modelAnswer(second), riskLevel: 'CRITICAL', recommendedAction: 'Brief the gang before the lift.' },
+    });
+
+    const position = aidisposition.aiDispositionPosition(asPM());
+    assert.equal(position.correctionsRecorded, 2);
+    // Risk twice, the action once — most-corrected first, which is the ordering
+    // that makes the list worth reading.
+    assert.equal(position.correctedFields[0]?.field, '/riskLevel');
+    assert.equal(position.correctedFields[0]?.times, 2);
+    assert.equal(position.correctedFields[1]?.field, '/recommendedAction');
+    assert.equal(position.correctedFields[1]?.times, 1);
   });
 });

@@ -7207,6 +7207,74 @@ only.
 
 ---
 
+### Who is accountable, by when, and what people actually correct — §16.3
+
+The output standard already refused an answer that could not name its sources or
+quantify its impacts. It still admitted a recommendation nobody owned, nobody was
+late on, and nobody had the authority to act on — which is a finding that reads
+like an instruction and functions like a note.
+
+**The model says what authority the action takes; the platform names who holds
+it.** `requiredAuthority` is a capability area and a permission code out of the
+real matrix — `CONTRACTS_CLAIMS / A` — and anything else is refused. That refusal
+is the whole value of the field: `SENIOR_COMMERCIAL_APPROVAL` is a string a model
+produces without hesitation and it resolves to nobody, which is worse than
+nothing because it looks checked. `attributeAccountability` then turns the
+authority into a person through the same `ownersFor` every other owner on the
+platform is resolved by. **The model never names anybody** — a model naming an
+accountable owner is inventing an org chart.
+
+Where the authority is real and nobody on this estate holds it, that is said —
+`UNRESOLVED`, with the area and level in the sentence. A finding nobody can act
+on is a fact about the estate as much as about the project, and an empty name
+would lose both. Where the action needs no authority at all, that is a third
+answer and the resolver is not even asked.
+
+`requiredBy` is a date or an explicit null with a reason, the same shape as an
+impact and for the same reason. `2026-02-30` is refused: it is well-formed, it
+is not a day, and it parses in some engines and rolls forward in others — which
+is how an impossible deadline becomes a real one nobody chose.
+
+**Which standard an answer was held to is now on the record.** `standardVersion`
+is derived from the field list exactly as `promptVersion` is derived from the
+prompt shape. The standard has just gained two fields; without this the record
+says an answer conformed and cannot say to what, which is a claim that quietly
+changes meaning every time the list does. The field *names* are hashed, not the
+wording asked of the model — rephrasing an instruction is not a new standard.
+
+**The answer itself is kept on the execution.** An audit record of an AI run
+that holds the provider, the cost and the references but not the assessment
+somebody acted on is missing its subject. It is also what makes the next part
+possible.
+
+**An edited acceptance is recorded field by field.** `ACCEPTED_WITH_CHANGE` with
+a prose reason says the model needed correcting and cannot say where; "corrected
+the commercial figure" is a sentence nobody can count. Send the amended answer
+with the disposition and the platform diffs it against what the model produced —
+computed here, never accepted from the caller, because a list of changes typed
+alongside the edit is a second account of the same act. Two contradictions are
+refused: an acceptance "with change" whose answer is identical, and an
+acceptance "unchanged" whose answer differs. Both are the shape of thing a
+screen produces when its buttons are wired to the wrong decision. A disposition
+sent without the amended answer is still recorded — losing the decision to gain
+the detail would be the wrong trade.
+
+The payoff is on the Autopilot screen: **what people correct in these answers**,
+most-corrected first. "Twelve accepted with change" says the model needs
+watching; "the risk level was corrected in nine of them" says where, and that is
+something to act on.
+
+**On "tool and retrieval versions", stated rather than papered over.** This
+platform has no tool-calling and no embedding retrieval on the AI path: a task's
+inputs are explicit Golden Thread references, already recorded on the event as
+`inputRefs`. There is no retrieval version to record because there is no
+retriever — so nothing was added that would always be null. What was missing and
+is now recorded is the standard version above.
+
+Sixteen tests across the two files.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

@@ -1,4 +1,10 @@
 import { DomainError } from '../core/errors.ts';
+import {
+  CAPABILITY_AREA_LIST,
+  PERMISSION_CODE_LIST,
+  isCapabilityArea,
+  isPermissionCode,
+} from '../identity/roles.ts';
 
 /** One reason an answer was rejected, in the shape `DomainError` carries. */
 export type FieldError = { field: string; message: string };
@@ -72,6 +78,42 @@ export type ContractImpact = {
   statement: string;
 };
 
+/**
+ * When the recommended action has to be done by — §16.3.
+ *
+ * Same shape as an impact and for the same reason. A date is a commitment and a
+ * null is a legitimate answer ("no deadline: this is a standing improvement"),
+ * but silence is not — a recommendation with no date at all is one nobody is
+ * late on, which is how a register of AI findings becomes a list nobody works.
+ */
+export type RequiredBy = {
+  /** ISO date, `YYYY-MM-DD`. Null where no date can honestly be given. */
+  date: string | null;
+  statement: string;
+};
+
+/**
+ * The authority the recommended action needs — §16.3.
+ *
+ * Stated by the model in the *platform's* vocabulary — a capability area and a
+ * permission code out of the real matrix — and refused when it names anything
+ * else. That is the whole reason it is worth asking for: "needs senior sign-off"
+ * is prose, `COMMERCIAL / A` resolves to the people on this estate who can
+ * actually do it.
+ *
+ * **The model never names a person.** It says what authority is needed;
+ * `attributeAccountability` turns that into who holds it, from the same
+ * `ownersFor` the rest of the platform uses. A model naming an accountable
+ * owner would be inventing an org chart, and the name would look checked.
+ */
+export type RequiredAuthority = {
+  /** A capability area from the permission matrix. Null where none is needed. */
+  area: string | null;
+  /** A permission code — R, C, U, A, I, X. Null with the area. */
+  level: string | null;
+  statement: string;
+};
+
 /** A record in the Golden Thread the finding was read from. */
 export type SourceReference = {
   refType: string;
@@ -89,6 +131,10 @@ export type AiOutput = {
   programmeImpact: ProgrammeImpact;
   contractImpact: ContractImpact;
   recommendedAction: string;
+  /** When it must be done by. §16.3. */
+  requiredBy: RequiredBy;
+  /** What authority it takes to do it, in the permission matrix's own words. §16.3. */
+  requiredAuthority: RequiredAuthority;
   /** 0–1. The agent's own confidence floor is applied against this. */
   confidence: number;
   sourceReferences: SourceReference[];
@@ -112,6 +158,13 @@ export const AI_OUTPUT_FIELDS: Array<{ field: keyof AiOutput; asks: string }> = 
   { field: 'programmeImpact', asks: '{ days: signed integer or null, statement: required }. Negative is an acceleration.' },
   { field: 'contractImpact', asks: '{ clause: the clause or mechanism engaged, or null, statement: required }.' },
   { field: 'recommendedAction', asks: 'The single next action, addressed to whoever must take it.' },
+  { field: 'requiredBy', asks: '{ date: an ISO YYYY-MM-DD date or null, statement: required }. When the action must be done by.' },
+  {
+    field: 'requiredAuthority',
+    asks:
+      '{ area: a capability area from this platform\'s permission matrix or null, level: one of R, C, U, A, I, X or null, ' +
+      'statement: required }. What authority the action takes. Never name a person — the platform resolves who holds it.',
+  },
   { field: 'confidence', asks: 'A number between 0 and 1. Your own confidence, not the strength of the consequence.' },
   { field: 'sourceReferences', asks: 'A non-empty array of { refType, refId, note } naming records in this project. Never prose.' },
   { field: 'approvalRequired', asks: 'true where acting on this commits money, time or a contractual position.' },
@@ -152,6 +205,20 @@ export function outputStandardSchema(): Record<string, unknown> {
       programmeImpact: impact('days', 'number'),
       contractImpact: impact('clause', 'string'),
       recommendedAction: { type: 'string', minLength: 1 },
+      requiredBy: {
+        type: 'object',
+        properties: { date: { type: ['string', 'null'] }, statement: { type: 'string', minLength: 1 } },
+        required: ['date', 'statement'],
+      },
+      requiredAuthority: {
+        type: 'object',
+        properties: {
+          area: { type: ['string', 'null'], enum: [...CAPABILITY_AREA_LIST, null] },
+          level: { type: ['string', 'null'], enum: [...PERMISSION_CODE_LIST, null] },
+          statement: { type: 'string', minLength: 1 },
+        },
+        required: ['area', 'level', 'statement'],
+      },
       confidence: { type: 'number', minimum: 0, maximum: 1 },
       sourceReferences: {
         type: 'array',
@@ -166,6 +233,31 @@ export function outputStandardSchema(): Record<string, unknown> {
     },
     required: AI_OUTPUT_FIELDS.map((f) => f.field),
   };
+}
+
+/**
+ * Which version of this standard an answer was held to.
+ *
+ * Derived from the field list the same way `promptVersion` is derived from the
+ * prompt shape, and for the same reason: the standard gains fields — §16.3 has
+ * just added two — and an answer recorded last month was judged against a
+ * different bar. Without this the record says the answer conformed and cannot
+ * say to what, which is a claim that quietly changes meaning every time the
+ * list does.
+ *
+ * The field *names* are hashed, not the wording asked of the model: rephrasing
+ * the instruction for the same field is not a new standard, and treating it as
+ * one would make the version a fingerprint rather than a version — the same
+ * distinction `promptVersionOf` draws about the payload.
+ */
+export function outputStandardVersion(): string {
+  const names = AI_OUTPUT_FIELDS.map((entry) => entry.field).join(',');
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < names.length; index += 1) {
+    hash ^= names.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `aios@${hash.toString(16).padStart(8, '0')}`;
 }
 
 export type Validation =
@@ -214,6 +306,90 @@ function checkImpact(
 }
 
 /**
+ * A date, or an explicit null with a reason — §16.3.
+ *
+ * Anchored `YYYY-MM-DD` and parseable, because a model will happily answer
+ * "end of next month" and "2026-02-30", and both look like dates until
+ * something tries to sort by them.
+ */
+function checkRequiredBy(problems: FieldError[], raw: unknown): RequiredBy | undefined {
+  if (!isObject(raw)) {
+    problems.push({ field: 'requiredBy', message: 'requiredBy must be an object with date and statement' });
+    return undefined;
+  }
+  const statement = text(raw.statement);
+  if (!statement) {
+    problems.push({ field: 'requiredBy.statement', message: 'say when this must be done by, even where there is no date' });
+  }
+  const value = raw.date;
+  if (value === null || value === undefined) return statement ? { date: null, statement } : undefined;
+
+  const date = text(value);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+    problems.push({ field: 'requiredBy.date', message: 'date must be an ISO YYYY-MM-DD date, or null' });
+    return undefined;
+  }
+  // `2026-02-30` parses in some engines and rolls forward in others. Round-trip
+  // it: a date that does not survive being read and written is not a date.
+  if (new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+    problems.push({ field: 'requiredBy.date', message: `${date} is not a real calendar date` });
+    return undefined;
+  }
+  return statement ? { date, statement } : undefined;
+}
+
+/**
+ * An authority out of the real permission matrix — §16.3.
+ *
+ * The check that makes the field worth having. A model will name
+ * `SENIOR_COMMERCIAL_APPROVAL` without hesitation, and a plausible string that
+ * resolves to nobody is worse than no string: it looks like it was checked.
+ * Area and level stand or fall together — an area with no level says who may
+ * touch the subject and not what they may do to it, which cannot be resolved to
+ * a person either.
+ */
+function checkRequiredAuthority(problems: FieldError[], raw: unknown): RequiredAuthority | undefined {
+  if (!isObject(raw)) {
+    problems.push({ field: 'requiredAuthority', message: 'requiredAuthority must be an object with area, level and statement' });
+    return undefined;
+  }
+  const statement = text(raw.statement);
+  if (!statement) {
+    problems.push({
+      field: 'requiredAuthority.statement',
+      message: 'say what authority this takes, even where it needs none',
+    });
+  }
+
+  const area = raw.area === null || raw.area === undefined ? null : text(raw.area) ?? '';
+  const level = raw.level === null || raw.level === undefined ? null : text(raw.level)?.toUpperCase() ?? '';
+
+  if (area === null && level === null) return statement ? { area: null, level: null, statement } : undefined;
+  if (area === null || level === null) {
+    problems.push({
+      field: 'requiredAuthority',
+      message: 'give both an area and a level, or neither — one without the other resolves to nobody',
+    });
+    return undefined;
+  }
+  if (!isCapabilityArea(area)) {
+    problems.push({
+      field: 'requiredAuthority.area',
+      message: `${area} is not a capability area on this platform`,
+    });
+    return undefined;
+  }
+  if (!isPermissionCode(level)) {
+    problems.push({
+      field: 'requiredAuthority.level',
+      message: `level must be one of ${PERMISSION_CODE_LIST.join(', ')}`,
+    });
+    return undefined;
+  }
+  return statement ? { area, level, statement } : undefined;
+}
+
+/**
  * Check a model's answer against the standard.
  *
  * Collects every problem rather than stopping at the first, because the
@@ -252,6 +428,9 @@ export function validateAiOutput(raw: unknown, options: { resolve?: ReferenceRes
 
   const recommendedAction = text(raw.recommendedAction);
   if (!recommendedAction) problems.push({ field: 'recommendedAction', message: 'recommendedAction is required' });
+
+  const requiredBy = checkRequiredBy(problems, raw.requiredBy);
+  const requiredAuthority = checkRequiredAuthority(problems, raw.requiredAuthority);
 
   const confidence = raw.confidence;
   if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
@@ -316,10 +495,66 @@ export function validateAiOutput(raw: unknown, options: { resolve?: ReferenceRes
         statement: text((raw.contractImpact as Record<string, unknown>).statement)!,
       },
       recommendedAction: recommendedAction!,
+      requiredBy: requiredBy!,
+      requiredAuthority: requiredAuthority!,
       confidence: confidence as number,
       sourceReferences: references,
       approvalRequired: raw.approvalRequired as boolean,
     },
+  };
+}
+
+// --- accountability -------------------------------------------------------
+//
+// §16.3's third field, and the one the model must not supply. It says what
+// authority the action takes; this turns that into who on this estate holds it,
+// through the same `ownersFor` every other owner on the platform is resolved
+// by. A model naming a person would be inventing an org chart, and the name
+// would look checked.
+
+/** Who holds an authority here. Injected, exactly as the reference resolver is. */
+export type OwnerResolver = (authority: {
+  area: string;
+  level: string;
+}) => { userId: string; name: string; role: string } | undefined;
+
+/**
+ * Who is accountable for acting on a finding.
+ *
+ * Three answers, and the third is why this is a union rather than an optional
+ * name. `NONE_NEEDED` is a finding that takes no authority to act on.
+ * `UNRESOLVED` is a finding whose authority nobody on this estate holds — a
+ * real and reportable state, and the one a screen must show as a gap rather
+ * than as a blank.
+ */
+export type AccountableOwner =
+  | { resolved: true; userId: string; name: string; role: string }
+  | { resolved: false; because: 'NONE_NEEDED' | 'UNRESOLVED'; statement: string };
+
+export type AttributedAiOutput = AiOutput & { accountableOwner: AccountableOwner };
+
+/** Name the person who holds the authority the finding says it needs. */
+export function attributeAccountability(output: AiOutput, resolve: OwnerResolver): AttributedAiOutput {
+  const { area, level, statement } = output.requiredAuthority;
+  if (area === null || level === null) {
+    return {
+      ...output,
+      accountableOwner: { resolved: false, because: 'NONE_NEEDED', statement },
+    };
+  }
+  const owner = resolve({ area, level });
+  return {
+    ...output,
+    accountableOwner: owner
+      ? { resolved: true, ...owner }
+      : {
+          resolved: false,
+          because: 'UNRESOLVED',
+          // Said plainly. A finding nobody on the estate can act on is a
+          // finding about the estate as much as about the project, and hiding
+          // it behind an empty name would lose both.
+          statement: `Nobody on this estate holds ${area} ${level}, which is what acting on this would take.`,
+        },
   };
 }
 

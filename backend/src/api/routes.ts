@@ -23674,13 +23674,19 @@ export const ROUTES: Route[] = [
       properties: {
         decision: { type: 'string', enum: [...aidisposition.AI_DISPOSITION] },
         reason: { type: 'string' },
+        // The answer as the person is standing behind it — §16.3. Optional: a
+        // screen that does not hold the edited answer still records a real
+        // decision, and refusing it would lose the decision to gain a detail.
+        // Where it is sent, the platform diffs it against what the model
+        // produced and keeps the changed fields.
+        edited: { type: 'object' },
       },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
       aidisposition.disposeAIOutput(projectContext(platform, ctx), {
         executionId: ctx.params.executionId as string,
-        ...body<{ decision: aidisposition.AIDisposition; reason?: string }>(ctx),
+        ...body<{ decision: aidisposition.AIDisposition; reason?: string; edited?: Record<string, unknown> }>(ctx),
       }),
   },
 ];

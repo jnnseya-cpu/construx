@@ -173,6 +173,12 @@ function standardStandIn(request: ProviderRequest): Record<string, unknown> {
     programmeImpact: { days: null, statement: notAssessed },
     contractImpact: { clause: null, statement: notAssessed },
     recommendedAction: 'Configure a reasoning provider, or make this assessment yourself against the records cited.',
+    // No date and no authority, both said out loud rather than left blank. The
+    // stand-in made no assessment, so it has no deadline to give and nothing to
+    // ask anybody to approve — and an invented date here would be the one part
+    // of a non-assessment that looked like an assessment.
+    requiredBy: { date: null, statement: notAssessed },
+    requiredAuthority: { area: null, level: null, statement: notAssessed },
     confidence: 0,
     sourceReferences: (request.standardSources ?? []).map((reference) => ({
       ...reference,

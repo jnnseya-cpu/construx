@@ -749,6 +749,39 @@ function everythingInTheTenancy(): Matrix {
 
 PERMISSION_MATRIX.OWNER = everythingInTheTenancy();
 
+/**
+ * Every capability area the matrix actually grants, and every code it uses.
+ *
+ * Derived from the matrix rather than written beside it, because a second list
+ * of the same names is a second thing to forget: an area added to the matrix
+ * and missing from a hand-kept list would be a permission the platform enforces
+ * and nothing can name. `OWNER` is assigned above from the union of every
+ * tenant role, so it alone carries every area — which is why deriving from the
+ * whole matrix and deriving from `OWNER` give the same answer.
+ *
+ * Used where a caller-supplied area or code has to be checked against the real
+ * vocabulary — an AI answer naming `COMMERCIAL_MAGIC` as the authority its
+ * recommendation needs is a plausible-looking string that means nothing, and
+ * the only thing that catches it is the matrix itself.
+ */
+export const CAPABILITY_AREA_LIST: CapabilityArea[] = [
+  ...new Set(Object.values(PERMISSION_MATRIX).flatMap((matrix) => Object.keys(matrix))),
+].sort() as CapabilityArea[];
+
+export const PERMISSION_CODE_LIST: PermissionCode[] = [
+  ...new Set(Object.values(PERMISSION_MATRIX).flatMap((matrix) => Object.values(matrix).flat())),
+].sort() as PermissionCode[];
+
+/** Whether this string is an area the matrix grants. */
+export function isCapabilityArea(value: unknown): value is CapabilityArea {
+  return typeof value === 'string' && (CAPABILITY_AREA_LIST as string[]).includes(value);
+}
+
+/** Whether this string is a permission code the matrix uses. */
+export function isPermissionCode(value: unknown): value is PermissionCode {
+  return typeof value === 'string' && (PERMISSION_CODE_LIST as string[]).includes(value);
+}
+
 export function rolePermissions(role: Role, area: CapabilityArea): PermissionCode[] {
   return PERMISSION_MATRIX[role]?.[area] ?? [];
 }

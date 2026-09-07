@@ -3,10 +3,12 @@ import { before, describe, it } from 'node:test';
 import {
   AI_OUTPUT_FIELDS,
   RISK_LEVELS,
+  attributeAccountability,
   conformToOutputStandard,
   correctionFor,
   outputStandardInstruction,
   outputStandardSchema,
+  outputStandardVersion,
   validateAiOutput,
 } from '../src/ai/outputstandard.ts';
 import { DomainError } from '../src/core/errors.ts';
@@ -41,6 +43,8 @@ const GOOD = {
   programmeImpact: { days: 14, statement: 'Two weeks on the critical path through the diversion.' },
   contractImpact: { clause: 'NEC4 60.1(1)', statement: 'A compensation event: the Project Manager instructed a change to the Scope.' },
   recommendedAction: 'Serve the early warning today and price the quotation against the revised temporary works.',
+  requiredBy: { date: '2026-03-31', statement: 'The early warning period under the contract closes at the end of March.' },
+  requiredAuthority: { area: 'CONTRACTS_CLAIMS', level: 'A', statement: 'Serving an early warning commits a contractual position.' },
   confidence: 0.78,
   sourceReferences: [{ refType: 'ChangeRequest', refId: 'CR-014', note: 'The instruction being assessed.' }],
   approvalRequired: true,
@@ -309,5 +313,169 @@ describe('an entitlement assessment is held to it end to end', () => {
     assert.equal(provenance.outputStandard, true);
     assert.equal(provenance.standardAttempts, 1);
     assert.equal(provenance.synthetic, true);
+  });
+});
+
+/**
+ * Accountability — §16.3.
+ *
+ * Three fields, and the reason they are three rather than one is who is
+ * entitled to answer each.
+ *
+ * **The model says what authority the action takes**, in the platform's own
+ * vocabulary, and is refused when it names anything else. That refusal is the
+ * whole value of the field: `SENIOR_COMMERCIAL_APPROVAL` is a string a model
+ * will produce without hesitation and it resolves to nobody, which is worse
+ * than nothing because it looks checked.
+ *
+ * **The model never names a person.** `attributeAccountability` turns the
+ * authority into who holds it here, through the same resolver the rest of the
+ * platform names owners with. A model naming an accountable owner would be
+ * inventing an org chart.
+ *
+ * **A finding nobody can act on is reportable, not blank.** Where the authority
+ * is real and nobody on the estate holds it, that is a fact about the estate
+ * and it is said, rather than rendered as an empty name.
+ */
+describe('who is accountable, and by when', () => {
+  it('takes a real capability area and level out of the matrix', () => {
+    const result = validateAiOutput(GOOD);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.deepEqual(result.output.requiredAuthority, {
+      area: 'CONTRACTS_CLAIMS',
+      level: 'A',
+      statement: 'Serving an early warning commits a contractual position.',
+    });
+    assert.equal(result.output.requiredBy.date, '2026-03-31');
+  });
+
+  it('refuses an authority the platform does not have, however plausible it reads', () => {
+    const found = problems(
+      answer({
+        requiredAuthority: { area: 'SENIOR_COMMERCIAL_APPROVAL', level: 'A', statement: 'Needs sign-off.' },
+      }),
+    );
+    assert.ok(found.some((problem) => problem.field === 'requiredAuthority.area'));
+    assert.ok(found.some((problem) => /not a capability area/.test(problem.message)));
+  });
+
+  it('refuses a permission code that is not one', () => {
+    const found = problems(
+      answer({ requiredAuthority: { area: 'CONTRACTS_CLAIMS', level: 'APPROVE', statement: 'Needs sign-off.' } }),
+    );
+    assert.ok(found.some((problem) => problem.field === 'requiredAuthority.level'));
+  });
+
+  it('refuses an area with no level, because half an authority resolves to nobody', () => {
+    const found = problems(
+      answer({ requiredAuthority: { area: 'CONTRACTS_CLAIMS', level: null, statement: 'Needs sign-off.' } }),
+    );
+    assert.ok(found.some((problem) => problem.field === 'requiredAuthority'));
+  });
+
+  it('accepts an action that needs no authority, said out loud', () => {
+    const result = validateAiOutput(
+      answer({
+        requiredAuthority: { area: null, level: null, statement: 'Reading the revised drawing takes no authority.' },
+      }),
+    );
+    assert.equal(result.ok, true);
+  });
+
+  it('refuses an authority with no statement, exactly as an impact with no statement is refused', () => {
+    const found = problems(answer({ requiredAuthority: { area: null, level: null, statement: '  ' } }));
+    assert.ok(found.some((problem) => problem.field === 'requiredAuthority.statement'));
+  });
+
+  it('refuses a date that is not one, and a date that is not a real day', () => {
+    assert.ok(
+      problems(answer({ requiredBy: { date: 'end of next month', statement: 'Soon.' } })).some(
+        (problem) => problem.field === 'requiredBy.date',
+      ),
+    );
+    // `2026-02-30` is well-formed and not a day. It parses in some engines and
+    // rolls forward in others, which is how an impossible deadline becomes a
+    // real one nobody chose.
+    assert.ok(
+      problems(answer({ requiredBy: { date: '2026-02-30', statement: 'End of February.' } })).some((problem) =>
+        /not a real calendar date/.test(problem.message),
+      ),
+    );
+  });
+
+  it('accepts no date where there honestly is none', () => {
+    const result = validateAiOutput(
+      answer({ requiredBy: { date: null, statement: 'No deadline: this is a standing improvement to the method.' } }),
+    );
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.output.requiredBy.date, null);
+  });
+
+  it('names the person who holds the authority, from the platform and never from the model', () => {
+    const result = validateAiOutput(GOOD);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+
+    const attributed = attributeAccountability(result.output, (authority) => {
+      assert.deepEqual(authority, { area: 'CONTRACTS_CLAIMS', level: 'A' });
+      return { userId: 'u-1', name: 'Ama Boateng', role: 'COMMERCIAL_MANAGER' };
+    });
+    assert.deepEqual(attributed.accountableOwner, {
+      resolved: true,
+      userId: 'u-1',
+      name: 'Ama Boateng',
+      role: 'COMMERCIAL_MANAGER',
+    });
+
+    // And the model's own answer never carried a name to begin with.
+    assert.equal('accountableOwner' in result.output, false);
+  });
+
+  it('says so when nobody on the estate holds the authority, rather than showing a blank', () => {
+    const result = validateAiOutput(GOOD);
+    if (!result.ok) return;
+    const attributed = attributeAccountability(result.output, () => undefined);
+    assert.equal(attributed.accountableOwner.resolved, false);
+    if (attributed.accountableOwner.resolved) return;
+    assert.equal(attributed.accountableOwner.because, 'UNRESOLVED');
+    assert.match(attributed.accountableOwner.statement, /Nobody on this estate holds CONTRACTS_CLAIMS A/);
+  });
+
+  it('resolves nobody, and asks nobody, where the action needs no authority', () => {
+    const result = validateAiOutput(
+      answer({ requiredAuthority: { area: null, level: null, statement: 'Takes no authority.' } }),
+    );
+    if (!result.ok) return;
+    let asked = false;
+    const attributed = attributeAccountability(result.output, () => {
+      asked = true;
+      return undefined;
+    });
+    assert.equal(asked, false, 'an authority of none was still looked up');
+    assert.equal(attributed.accountableOwner.resolved, false);
+    if (attributed.accountableOwner.resolved) return;
+    assert.equal(attributed.accountableOwner.because, 'NONE_NEEDED');
+  });
+});
+
+describe('which version of the standard an answer was held to', () => {
+  it('is stable while the field list is, and changes when it is not', () => {
+    // Derived rather than declared, exactly as promptVersion is. Without it the
+    // record says an answer conformed and cannot say to what — a claim that
+    // quietly changes meaning every time a field is added, as two just were.
+    assert.match(outputStandardVersion(), /^aios@[0-9a-f]{8}$/);
+    assert.equal(outputStandardVersion(), outputStandardVersion());
+  });
+
+  it('covers the fields the validator actually requires', () => {
+    // The drift this catches: a field added to the type and the validator but
+    // not to AI_OUTPUT_FIELDS would leave the version unchanged while the bar
+    // moved.
+    const names = AI_OUTPUT_FIELDS.map((entry) => entry.field);
+    assert.ok(names.includes('requiredBy'));
+    assert.ok(names.includes('requiredAuthority'));
+    const schema = outputStandardSchema() as { required: string[] };
+    assert.deepEqual([...schema.required].sort(), [...names].sort());
   });
 });

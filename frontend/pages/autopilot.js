@@ -329,6 +329,29 @@ function dispositionPanel(ai) {
         </div>
       </div>
       ${
+        // Where the model is actually corrected, most-corrected first — §16.3.
+        // "Accepted, then changed" says the model needs watching; this says
+        // where, which is the half somebody can act on.
+        (ai.correctedFields ?? []).length > 0
+          ? html`<div style="margin-top:12px">
+              <h4 style="margin:0 0 6px">What people correct in these answers</h4>
+              <div class="split-list">
+                ${(ai.correctedFields ?? []).slice(0, 8).map(
+                  (entry) => html`<div class="row">
+                    <span class="lbl">${entry.field.replace(/^\//, '').replace(/\//g, ' · ')}</span>
+                    <span class="val">${entry.times}</span>
+                  </div>`,
+                )}
+              </div>
+              <div class="metric-sub" style="margin-top:6px">
+                Read from ${ai.correctionsRecorded ?? 0} correction${(ai.correctionsRecorded ?? 0) === 1 ? '' : 's'} where the
+                amended answer was recorded alongside the decision. A change recorded as a sentence and not as an amended
+                answer is counted above and not here.
+              </div>
+            </div>`
+          : ''
+      }
+      ${
         outstanding.length === 0
           ? html`<div class="metric-sub" style="margin-top:12px">
               All ${ai.disposed ?? 0} of ${ai.executions ?? 0} executions carry a named person's decision — which is what the

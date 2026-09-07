@@ -4,6 +4,7 @@ import {
   correctionFor,
   outputStandardInstruction,
   outputStandardSchema,
+  outputStandardVersion,
   validateAiOutput,
   type AiOutput,
   type FieldError,
@@ -683,6 +684,15 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
       inputRefs: task.inputRefs,
       startedAt: execution.startedAt,
       endedAt: execution.endedAt,
+      // The answer itself, where the task was held to the output standard.
+      //
+      // An audit record of an AI execution that does not contain what the model
+      // said is missing its subject: the provider, the cost and the references
+      // were all there, and the assessment somebody acted on was not. It is
+      // also what makes a field-level diff possible when a person later accepts
+      // the answer with changes — §16.3 — because the original has to still
+      // exist to be diffed against.
+      ...(standard ? { standardOutput: standard, standardVersion: outputStandardVersion() } : {}),
     },
     ai: {
       aiRequestId: run.aiRequest.id,
