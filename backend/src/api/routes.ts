@@ -275,6 +275,7 @@ import * as siteMedia from '../site/media.ts';
 import * as blog from '../site/blog.ts';
 import * as visibility from '../site/visibility.ts';
 import * as conflicts from '../field/conflicts.ts';
+import * as workspace from '../field/workspace.ts';
 import * as outbox from '../notifications/outbox.ts';
 import * as aievaluation from '../ai/evaluation.ts';
 import * as designreview from '../engines/designreview.ts';
@@ -377,6 +378,24 @@ export type Route = {
    * it is about to send would cost.
    */
   ai?: { engine: Engine; taskType: string; capability: ProviderCapability };
+  /**
+   * A control that never belongs on a handset, and which control it is.
+   *
+   * The three field modules each name a short list of web-only controls —
+   * baseline approval, payment certification, adjudication, award, regulatory
+   * submission. Declaring it on the route rather than keeping a list of path
+   * patterns in the field module means a route that moves takes its
+   * classification with it, instead of leaving a stale pattern behind that
+   * nobody notices has stopped matching.
+   *
+   * The string is the control's name in the specification's words, because it
+   * is what the refusal quotes back to the person holding the handset.
+   *
+   * What this can and cannot enforce is set out in `field/modules.ts`: it fires
+   * on a request bound to a device enrolled as MOBILE or TABLET, and cannot see
+   * a session that is not bound to a device at all.
+   */
+  webOnly?: string;
 };
 
 function body<T>(ctx: RequestContext): T {
@@ -11420,6 +11439,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/adjudicate',
+    webOnly: 'Adjudication and ranking',
     description: 'Engine A — adjudicate and select',
     schema: {
       type: 'object',
@@ -11548,6 +11568,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/award',
+    webOnly: 'Bid submission and award',
     description: 'Award the RFQ against an adjudication',
     schema: {
       type: 'object',
@@ -11691,6 +11712,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/baseline',
+    webOnly: 'Baseline edit and approval',
     description: 'Engine B — approve a baseline',
     schema: {
       type: 'object',
@@ -13413,6 +13435,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/commissioning-plans/:planId/baseline',
+    webOnly: 'Commissioning baseline approval',
     description: 'Change the approved baseline, stating the impact on tests, assets and handover',
     schema: {
       type: 'object',
@@ -13893,6 +13916,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/final-accounts',
+    webOnly: 'Final account agreement',
     description: 'Agree the final account against the figures the value chain already holds. The money is not re-entered here',
     schema: {
       type: 'object',
@@ -14254,6 +14278,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/regulatory-packs/:packId/submission',
+    webOnly: 'Formal regulatory application approval',
     description: 'Record that the application was submitted, with the receipt that came back',
     schema: {
       type: 'object',
@@ -16348,6 +16373,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/cvr',
+    webOnly: 'CVR approval',
     ai: { engine: 'RESOURCE_COST', taskType: 'cvr_analysis', capability: 'REASONING' },
     description: 'Engine C — publish the live CVR',
     schema: {
@@ -16435,6 +16461,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/application/:applicationId/certify',
+    webOnly: 'Formal valuation and payment certification',
     description: 'Engine C — certify an application and issue the payment notice',
     schema: {
       type: 'object',
@@ -16457,6 +16484,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/cost/certificate/:certificateId/payment',
+    webOnly: 'Formal valuation and payment certification',
     description: 'Engine C — post a payment against a certificate',
     schema: {
       type: 'object',
@@ -19152,6 +19180,41 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Offline conflicts the engine resolved on its own, and what a person decided about them',
     handler: (platform, ctx) => conflicts.conflictPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/work/:module',
+    readOnly: true,
+    description: 'The field module workspace: stage context, pack freshness, shift, home indicators and tab counts',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      // The sync engine hangs off the platform, not the engine context, so the
+      // device's cursor is resolved here and passed in rather than reaching for
+      // it from inside the read.
+      const deviceId = auth(ctx).deviceId;
+      return workspace.moduleWorkspace(engineCtx, {
+        module: ctx.params.module as string,
+        ...(deviceId
+          ? { deviceCursor: platform.sync.deviceState(deviceId, ctx.params.projectId as string).cursor }
+          : {}),
+        ...(ctx.query.get('today') ? { today: ctx.query.get('today') as string } : {}),
+      });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/work/:module/:tab',
+    readOnly: true,
+    description: 'One tab of the field module workspace, filtered by status, owner, location or due date',
+    handler: (platform, ctx) =>
+      workspace.moduleTab(projectContext(platform, ctx), {
+        module: ctx.params.module as string,
+        tab: ctx.params.tab as string,
+        ...(ctx.query.get('status') ? { status: ctx.query.get('status') as string } : {}),
+        ...(ctx.query.get('owner') ? { owner: ctx.query.get('owner') as string } : {}),
+        ...(ctx.query.get('location') ? { location: ctx.query.get('location') as string } : {}),
+        ...(ctx.query.get('dueBefore') ? { dueBefore: ctx.query.get('dueBefore') as string } : {}),
+      }),
   },
   {
     method: 'POST',

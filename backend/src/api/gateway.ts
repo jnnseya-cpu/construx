@@ -22,9 +22,10 @@ import {
   sendDocument,
 } from './middleware.ts';
 import { resolveLocale } from '../domain/locale.ts';
-import { truncateAddress } from './telemetry.ts';
+import { recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { clientAddress } from './clientaddress.ts';
 import { matchRoute, ROUTES } from './routes.ts';
+import { onFieldSurface, webOnlyRefusal } from '../field/modules.ts';
 import { renderLanding } from '../site/index.ts';
 import { robots, sitemap } from '../site/discovery.ts';
 import { serveStatic } from './static.ts';
@@ -429,6 +430,24 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
         'Platform operators are barred from customer delivery data',
         'ACCOUNT_LAYER_SEPARATION',
       );
+    }
+
+    // A control that never belongs on a handset, refused before the body is
+    // read. The signal is the enrolled device rather than the `?client=`
+    // parameter, which the caller asserts and could simply omit — see
+    // `field/modules.ts` for what this can and cannot see.
+    if (matched.route.webOnly && onFieldSurface(ctx.device)) {
+      recordSecurityEvent({
+        kind: 'AUTHZ_DENY',
+        reason: 'WEB_ONLY_CONTROL',
+        method: ctx.method,
+        path: ctx.routeId ?? ctx.path,
+        traceId: ctx.traceId,
+        correlationId: ctx.correlationId,
+        status: 403,
+        ...(ctx.auth ? { actorId: ctx.auth.actorId, tenantId: ctx.auth.tenantId } : {}),
+      });
+      throw new DomainError('WEB_ONLY_CONTROL', webOnlyRefusal(matched.route.webOnly), 403);
     }
 
     // A follower answers reads and extends nothing. Refused here, before the

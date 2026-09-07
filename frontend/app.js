@@ -114,6 +114,10 @@ export const NAV = [
       // including the principal designer, whose CDM duties do not stop at the
       // design.
       { id: 'field', label: 'Field Execution', area: 'FIELD_EXECUTION', alsoArea: ['SAFETY_RAMS'], icon: 'clipboard' },
+      // The stage-shaped way into field work, one shell for all four modules.
+      // It reads and does not write, so it is gated on the read authority the
+      // field seat already carries rather than on any stage's own area.
+      { id: 'work', label: 'Field Modules', area: 'FIELD_EXECUTION', icon: 'clipboard' },
       // The five registers a site runs on: permits, method statements,
       // inductions, inspection plans and non-conformances. Under SAFETY_RAMS
       // read because that is the area the permit and the method statement live

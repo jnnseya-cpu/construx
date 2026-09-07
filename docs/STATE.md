@@ -7209,6 +7209,83 @@ it does not terminate.
 
 ---
 
+### The shared field module spine
+
+Four stages run work in the field — tender (§9), construction (§10),
+commissioning (§11) and handover (§12) — and their specifications give each of
+them the same workspace: a header carrying stage, project, package/location/
+system context, pack freshness, unsynced count and current shift; six tabs
+(Action Queue, Capture, Plans & Criteria, Records, Evidence, History); lists
+filtered by status, owner, location, due date and offline state; and a short
+list of controls that are **web-only**. Building that four times would be four
+screens that drift apart, so it is built once. `backend/src/field/modules.ts`
+declares all four modules with their home indicators, records, criteria, queue
+types and web-only controls; `backend/src/field/workspace.ts` is the one read;
+`frontend/pages/work.js` is the one screen, with a module picker.
+
+The stage workflows underneath are the ones already built. Nothing here is a
+second copy of any of them — this is the field-shaped way in, and it is what
+the three stages with no site register of their own were missing.
+
+**The surface gate is real, and its limit is stated.** A route may declare
+`webOnly`, naming the control in the specification's own words, and the gateway
+refuses it with 403 `WEB_ONLY_CONTROL` before the body is read, recording an
+`AUTHZ_DENY`. Nine routes carry it: baseline approval, payment certification,
+CVR approval, adjudication, award, commissioning baseline approval, final
+account agreement and regulatory submission approval. The gate reads the
+**enrolled device**, not the `?client=` parameter — `sourceOf` says in its own
+comment that the client asserts that value, so a handset reaching for an
+adjudication screen would simply not send it. A device's platform is fixed at
+enrolment inside an MFA-satisfied session and proved on every request.
+**Its limit:** a session bound to no device cannot be identified as a field
+surface and this gate does not see it. That is a property of
+`config.auth.requireDeviceBinding`, which is **off by default** — with it on the
+gate covers the estate, with it off it catches enrolled field devices and
+nothing else. `fieldsurface.test.ts` drives a real bound device over HTTP and
+pins that limit as its own case, so turning binding on is understood as what
+closes the gap rather than somebody later believing it was always closed.
+
+**Three figures the specification asks for cannot be answered in full, and are
+answered honestly instead.** *Records waiting* is what the reading device has
+not yet pulled, derived from its sync cursor — deliberately not called
+"unsynced", because the number a person on site usually wants is the opposite
+one and **the server cannot know it**: an outbox on a handset with no signal is
+invisible until it arrives, so the application shows its own outbox depth
+beside this. *Pack freshness* is `CURRENT`, `BEHIND`, `NEVER_PULLED` or
+`NO_DEVICE`; a session bound to no device is told the platform cannot see what
+it is holding rather than shown a reassuring "up to date". *Current shift* is
+read from the daily log for the day, the only record in which somebody actually
+declares a shift; with no log, or a log that names none, it is published as not
+stated — defaulting to `DAY` would be wrong by hours on a night shift.
+
+**No indicator invents a status vocabulary.** The tempting shape is a predicate
+like `state.status === 'OPEN'`, and it is wrong: the statuses differ per entity,
+they are not all named `status`, and a guess produces a confident wrong number
+on a screen somebody makes a site decision from. So an indicator counts records
+of declared types and, where the specification asks for a split, names the
+*field* to split on — the groups come from the values the records actually
+hold, and a record that does not carry the field is counted under "not stated"
+rather than dropped, so a breakdown always adds up to the total beside it. An
+indicator nothing yet produces is published as **not measured** with the
+workflow that will produce it named; it never carries a number at all, because
+a zero and an unmeasured figure look identical on a handset and mean opposite
+things.
+
+`GET /v1/projects/:projectId/work/:module` is the workspace and
+`GET /v1/projects/:projectId/work/:module/:tab` one tab, filtered server-side —
+the device asking is the one on the bad connection — and offering only the
+filter values the rows actually carry, so no control can match nothing. The
+Action Queue holds records that name an owner and nothing else: an item nobody
+owns is in nobody's queue. `moduleworkspace.test.ts` covers all of it, and most
+of its assertions are about what the workspace refuses to say.
+
+**What is not built on this spine yet:** the field workflows themselves —
+T-MOB-WF-01…05, CN-MOB-WF-01…14, CM-MOB-WF-01…09 and H-MOB-WF-01…09. The
+spine is the shell, the surface gate and the read; each module's own capture
+flows sit on top of it and are the next work.
+
+---
+
 ### The field fleet: specification E2's six agents
 
 Five new agents in `backend/src/agents/field.ts`, and a sixth extended where it
