@@ -112,34 +112,144 @@ export const MEDIA_SLOTS: readonly MediaSlot[] = [
 /**
  * What a picture has to actually be, by its own first bytes.
  *
- * The three types a browser renders and the site's `img-src 'self'` policy
- * admits. SVG is deliberately absent: an SVG is a document that can carry
+ * Every raster format a current browser renders, and no more. SVG is
+ * deliberately absent and always will be: an SVG is a document that can carry
  * script, and this directory is served from the platform's own origin, so
  * accepting one would be storing cross-site scripting on the marketing site.
- */
-/**
+ *
+ * AVIF and GIF were absent for no reason at all, which was a defect rather
+ * than a decision — every browser renders both, and AVIF is what an export
+ * dialogue now offers by default in several tools. An operator exporting a
+ * plate the way their software suggested had it refused as "not an image".
+ *
  * Exported so an account picture is typed the same way a landing picture is.
  * Two magic-byte tables would be two answers to "is this really a PNG", and the
  * one that drifts is the one an upload gets past.
  */
-export const SIGNATURES: ReadonlyArray<{ extension: string; contentType: string; matches: (bytes: Buffer) => boolean }> = [
+export const SIGNATURES: ReadonlyArray<{ extension: string; contentType: string; label: string; matches: (bytes: Buffer) => boolean }> = [
   {
     extension: '.png',
     contentType: 'image/png',
+    label: 'PNG',
     matches: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
   },
   {
     extension: '.jpg',
     contentType: 'image/jpeg',
+    label: 'JPEG',
     matches: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
   },
   {
     extension: '.webp',
     contentType: 'image/webp',
+    label: 'WebP',
     // RIFF····WEBP. The four bytes between are the length and are not checked.
     matches: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP',
   },
+  {
+    extension: '.avif',
+    contentType: 'image/avif',
+    label: 'AVIF',
+    // An ISO base media file whose brand is `avif` or `avis`. The brand sits
+    // at bytes 8-12, after the box length and `ftyp`; the same container
+    // carries HEIC, which is why the brand rather than the container decides.
+    matches: (b) => b.subarray(4, 8).toString('latin1') === 'ftyp' && ['avif', 'avis'].includes(b.subarray(8, 12).toString('latin1')),
+  },
+  {
+    extension: '.gif',
+    contentType: 'image/gif',
+    label: 'GIF',
+    matches: (b) => ['GIF87a', 'GIF89a'].includes(b.subarray(0, 6).toString('latin1')),
+  },
 ];
+
+/**
+ * Formats that are recognisably pictures and are still refused, each with the
+ * reason and what to do instead.
+ *
+ * Without this every refusal read "that file is not a PNG, JPEG or WebP",
+ * which is true, unhelpful, and the same sentence whether somebody uploaded a
+ * spreadsheet or a photograph straight off their phone. The phone is the case
+ * that matters: an iPhone shoots HEIC by default, no browser renders it, and
+ * an operator whose every photograph bounced had no way to learn that the fix
+ * is one setting in the export dialogue.
+ *
+ * A refusal is still a refusal — nothing here is stored. The difference is
+ * that the person is told which format they have and what to do about it.
+ */
+const REFUSED: ReadonlyArray<{ label: string; article: 'a' | 'an'; because: string; matches: (bytes: Buffer) => boolean }> = [
+  {
+    label: 'HEIC/HEIF',
+    // Carried rather than derived from the first letter: "an SVG" and "a PDF"
+    // both begin with a consonant, and it is how the letter is *said* that
+    // decides. A rule that guesses gets one of them wrong.
+    article: 'a',
+    because:
+      'the format an iPhone shoots by default, which no browser can display. In Settings › Camera › Formats choose ' +
+      '"Most Compatible" to shoot JPEG from now on, or export this one as JPEG and upload that.',
+    matches: (b) =>
+      b.subarray(4, 8).toString('latin1') === 'ftyp' &&
+      ['heic', 'heix', 'hevc', 'heim', 'heis', 'hevm', 'mif1', 'msf1'].includes(b.subarray(8, 12).toString('latin1')),
+  },
+  {
+    label: 'TIFF',
+    article: 'a',
+    because: 'a format no browser displays. Export as JPEG for a photograph or PNG for a screenshot.',
+    matches: (b) => b.subarray(0, 4).equals(Buffer.from([0x49, 0x49, 0x2a, 0x00])) || b.subarray(0, 4).equals(Buffer.from([0x4d, 0x4d, 0x00, 0x2a])),
+  },
+  {
+    label: 'BMP',
+    article: 'a',
+    because: 'a bitmap, which is enormous for what it shows. Export as PNG — the same picture at a fraction of the size.',
+    matches: (b) => b.subarray(0, 2).toString('latin1') === 'BM',
+  },
+  {
+    label: 'PDF',
+    article: 'a',
+    because: 'a document rather than a picture. Export the page, or the image inside it, as PNG or JPEG.',
+    matches: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-',
+  },
+  {
+    label: 'SVG',
+    article: 'an',
+    because:
+      'a document that can carry script, and this directory is served from the platform’s own origin — storing one ' +
+      'would be storing cross-site scripting on the marketing site. Export it as PNG at the size the slot asks for.',
+    // Some SVGs open with an XML declaration or a comment, so the test is
+    // whether an `<svg` tag appears near the start rather than at byte zero.
+    matches: (b) => b.subarray(0, 1024).toString('latin1').toLowerCase().includes('<svg'),
+  },
+];
+
+/** Every format the slots accept, named the way a person would say it. */
+export function acceptedFormats(): string {
+  const labels = SIGNATURES.map((signature) => signature.label);
+  return `${labels.slice(0, -1).join(', ')} or ${labels.at(-1)}`;
+}
+
+/**
+ * The refusal, for bytes that matched no accepted signature.
+ *
+ * Shared because there are three places that store a picture — a landing
+ * slot, a customer's branding logo and a person's account picture — and all
+ * three were carrying their own copy of the sentence "that file is not a PNG,
+ * JPEG or WebP". Adding AVIF and GIF to the table made all three copies wrong
+ * at once, which is what a duplicated sentence is for.
+ */
+export function notAnImage(bytes: Buffer): DomainError {
+  const known = REFUSED.find((candidate) => candidate.matches(bytes));
+  return new DomainError(
+    'NOT_AN_IMAGE',
+    known
+      ? `That is ${known.article} ${known.label} file — ${known.because} ${acceptedFormats()} are accepted.`
+      : `That file is not ${acceptedFormats()}. The format is read from the file's own first bytes rather than from ` +
+        'what the upload claimed, so renaming it changes nothing.',
+    415,
+  );
+}
+
+/** The content types the file picker should offer, from the same table. */
+export const ACCEPTED_CONTENT_TYPES = SIGNATURES.map((signature) => signature.contentType).join(',');
 
 /** Every extension a slot can be stored under, for the presence sweep. */
 const EXTENSIONS = SIGNATURES.map((signature) => signature.extension);
@@ -260,15 +370,11 @@ export function putSlotImage(id: string, bytes: Buffer): { slot: string; file: s
     );
   }
 
+  // Named where it can be named. "Not a PNG, JPEG or WebP" is true of a
+  // photograph off a phone and of a spreadsheet alike, and the person holding
+  // the photograph has no way to tell which of the two they are.
   const signature = SIGNATURES.find((candidate) => candidate.matches(bytes));
-  if (!signature) {
-    throw new DomainError(
-      'NOT_AN_IMAGE',
-      'That file is not a PNG, JPEG or WebP. It is read from the file itself rather than from what the upload ' +
-        'claimed, and an SVG is refused outright because this directory is served from the platform’s own origin.',
-      415,
-    );
-  }
+  if (!signature) throw notAnImage(bytes);
 
   const directory = mediaDir();
   mkdirSync(directory, { recursive: true });

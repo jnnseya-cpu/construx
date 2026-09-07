@@ -127,7 +127,20 @@ async function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer>
     // Refused as it arrives, not after. An oversized upload is rejected part
     // way through rather than buffered to completion and then thrown away.
     if (size > limit) {
-      const error = new ValidationError(`Upload exceeds the ${Math.round(limit / 1_048_576)}MB limit`);
+      // 413 with its own code, not a 400 validation failure.
+      //
+      // A body over the ceiling is not a malformed request — nothing about it
+      // failed a schema — and answering `VALIDATION_FAILED` sent the caller
+      // looking for a bad field. It mattered most on the landing pictures,
+      // where an operator uploading a photograph straight off a camera was
+      // told "validation failed" by a screen that had just offered them a file
+      // picker, with no mention of size anywhere in it.
+      const error = new DomainError(
+        'UPLOAD_TOO_LARGE',
+        `That file is ${(size / 1_048_576).toFixed(1)}MB and the ceiling is ${Math.round(limit / 1_048_576)}MB. ` +
+          'Export it smaller rather than sending the original.',
+        413,
+      );
       // The rest of the body is still arriving and will never be read. Marked
       // here, where it is known, so the error handler can close the connection
       // rather than leave the unread remainder to be parsed as the client's

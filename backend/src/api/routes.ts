@@ -17,7 +17,7 @@ import * as site from '../site/index.ts';
 import { POST_PAGES } from '../site/posts.ts';
 import * as views from '../site/views.ts';
 import * as booking from '../site/booking.ts';
-import { SIGNATURES } from '../site/media.ts';
+import { notAnImage, SIGNATURES } from '../site/media.ts';
 import * as notifications from '../notifications/catalogue.ts';
 import { CATEGORIES, CATEGORY_TITLES, NOTIFICATION_EVENTS } from '../notifications/catalogue.ts';
 import * as notifyEngine from '../notifications/notify.ts';
@@ -788,14 +788,7 @@ async function storeBrandImage(
   }
 
   const signature = SIGNATURES.find((candidate) => candidate.matches(bytes));
-  if (!signature) {
-    throw new DomainError(
-      'NOT_AN_IMAGE',
-      'That file is not a PNG, JPEG or WebP. It is read from the file itself rather than from what the upload ' +
-        'claimed, and an SVG is refused because it is a document that can carry script.',
-      415,
-    );
-  }
+  if (!signature) throw notAnImage(bytes);
 
   // `sha256:…`, the address form the store checks the bytes against. A bare
   // digest was refused as EVIDENCE_HASH_MISMATCH wherever a store holds bytes.
@@ -22030,7 +22023,18 @@ export const ROUTES: Route[] = [
     description: 'The landing page picture slots, what each is for, and which are filled',
     handler: (_platform, ctx) => {
       operatorOnly(ctx, 'see the landing page pictures');
-      return { directory: siteMedia.mediaDir(), maxBytes: config.site.mediaMaxBytes, slots: siteMedia.mediaState() };
+      return {
+        directory: siteMedia.mediaDir(),
+        maxBytes: config.site.mediaMaxBytes,
+        // What the slots take, from the same signature table that decides
+        // whether an upload is accepted. The screen used to name three formats
+        // in its own prose and offer a fourth list to the file picker, so a
+        // format added on the server stayed invisible — and the picker went on
+        // greying out files the platform would have taken.
+        accepts: siteMedia.acceptedFormats(),
+        acceptTypes: siteMedia.ACCEPTED_CONTENT_TYPES,
+        slots: siteMedia.mediaState(),
+      };
     },
   },
   {

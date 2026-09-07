@@ -39,7 +39,7 @@ import { PACKAGES, UNCHARGED_ROLES, type PackageTier } from './billing/seats.ts'
 import * as storage from './billing/storage.ts';
 import { chargesFor, raiseOpeningCharge, settleCharge, writeOffCharge, type SubscriptionCharge } from './billing/collection.ts';
 import { config } from './config.ts';
-import { SIGNATURES } from './site/media.ts';
+import { notAnImage, SIGNATURES } from './site/media.ts';
 import { DomainError, ForbiddenError, NotFoundError } from './core/errors.ts';
 import { hashEvidence } from './core/canonical.ts';
 import { ulid } from './core/ids.ts';
@@ -823,14 +823,7 @@ export class Platform {
     }
 
     const signature = SIGNATURES.find((candidate) => candidate.matches(input.bytes));
-    if (!signature) {
-      throw new DomainError(
-        'NOT_AN_IMAGE',
-        'That file is not a PNG, JPEG or WebP. It is read from the file itself rather than from what the upload ' +
-          'claimed, and an SVG is refused because it is a document that can carry script.',
-        415,
-      );
-    }
+    if (!signature) throw notAnImage(input.bytes);
 
     // The store's own address form (`sha256:…`, `hashEvidence`). A bare hex
     // digest was refused as EVIDENCE_HASH_MISMATCH by every store that

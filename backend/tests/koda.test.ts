@@ -428,8 +428,12 @@ describe('the KODA webhook route', () => {
       body: 'x'.repeat(400 * 1024),
     });
 
-    assert.equal(res.status, 400);
-    const problem = (await res.json()) as { detail?: string };
-    assert.match(String(problem.detail), /limit/i);
+    // 413, not 400. Nothing about the request failed a schema — the body is
+    // simply longer than this route will buffer — and answering
+    // VALIDATION_FAILED sent a caller looking for a bad field.
+    assert.equal(res.status, 413);
+    const problem = (await res.json()) as { title?: string; detail?: string };
+    assert.equal(problem.title, 'UPLOAD_TOO_LARGE');
+    assert.match(String(problem.detail), /ceiling/i);
   });
 });

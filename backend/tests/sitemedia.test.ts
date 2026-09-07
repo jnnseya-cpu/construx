@@ -6,10 +6,20 @@ import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { landing } from '../src/site/landing.ts';
-import { MEDIA_SLOTS, mediaDir, putSlotImage, refreshMedia, removeSlotImage, slotFile } from '../src/site/media.ts';
+import {
+  ACCEPTED_CONTENT_TYPES,
+  acceptedFormats,
+  MEDIA_SLOTS,
+  mediaDir,
+  putSlotImage,
+  refreshMedia,
+  removeSlotImage,
+  SIGNATURES,
+  slotFile,
+} from '../src/site/media.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
-import { completeSignIn } from './helpers.ts';
+import { completeSignIn, throwsCode } from './helpers.ts';
 
 /**
  * Putting a picture on the landing page.
@@ -301,5 +311,75 @@ describe('the registry itself', () => {
     writeFileSync(join(directory, 'visibility-control.png'), PNG);
     refreshMedia();
     assert.equal(slotFile('visibility-control'), 'visibility-control.png');
+  });
+});
+
+/**
+ * Which files a person can actually put in a slot.
+ *
+ * Reported from a live deployment as "all pictures added been rejected", and
+ * the mechanism was not at fault — a PNG went in correctly. What was at fault
+ * was the list: AVIF and GIF are rendered by every browser and were refused
+ * for no reason, and every other refusal, including a photograph straight off
+ * an iPhone, read "that file is not a PNG, JPEG or WebP" with no hint that the
+ * fix was one setting in the camera.
+ */
+const ftyp = (brand: string) =>
+  Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from('ftyp'), Buffer.from(brand), Buffer.alloc(16)]);
+
+describe('the formats a slot takes', () => {
+  beforeEach(() => {
+    for (const slot of MEDIA_SLOTS) removeSlotImage(slot.id);
+  });
+
+  it('takes every raster format a browser renders', () => {
+    const AVIF = ftyp('avif');
+    const GIF = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(16)]);
+
+    assert.equal(putSlotImage('founder', AVIF).file, 'founder.avif');
+    assert.equal(putSlotImage('founder', GIF).file, 'founder.gif');
+    assert.equal(putSlotImage('founder', PNG).file, 'founder.png');
+    assert.equal(putSlotImage('founder', JPEG).file, 'founder.jpg');
+    assert.equal(putSlotImage('founder', WEBP).file, 'founder.webp');
+  });
+
+  it('tells an iPhone photograph what it is and what to do about it', () => {
+    // The case that produced the report: HEIC is what an iPhone shoots by
+    // default and no browser can display it, so it is still refused — but a
+    // refusal that does not name the format leaves the person with no next
+    // step, and they have a camera roll full of them.
+    const refusal = throwsCode(() => putSlotImage('founder', ftyp('heic')), 'NOT_AN_IMAGE');
+    assert.match(refusal.message ?? '', /HEIC/);
+    assert.match(refusal.message ?? '', /iPhone/);
+    assert.match(refusal.message ?? '', /Most Compatible|export this one as JPEG/);
+  });
+
+  it('names every other format it recognises and refuses', () => {
+    for (const [label, bytes] of [
+      ['TIFF', Buffer.concat([Buffer.from([0x49, 0x49, 0x2a, 0x00]), Buffer.alloc(16)])],
+      ['BMP', Buffer.concat([Buffer.from('BM'), Buffer.alloc(16)])],
+      ['PDF', Buffer.concat([Buffer.from('%PDF-1.7'), Buffer.alloc(16)])],
+      ['SVG', Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>')],
+    ] as const) {
+      const refusal = throwsCode(() => putSlotImage('founder', bytes), 'NOT_AN_IMAGE');
+      assert.match(refusal.message ?? '', new RegExp(label), `a ${label} is refused without being named`);
+    }
+  });
+
+  it('still refuses an SVG, which is the one that could carry script', () => {
+    // A widening of the accepted list is exactly when this is worth asserting
+    // again: the directory is served from the platform's own origin.
+    throwsCode(() => putSlotImage('founder', Buffer.from('<svg onload="alert(1)"/>')), 'NOT_AN_IMAGE');
+    assert.equal(slotFile('founder'), undefined, 'nothing was stored');
+  });
+
+  it('says the same thing to the file picker as it does to the upload', () => {
+    // The console offered three types to the picker while the server took
+    // five, so a format the platform would have accepted was greyed out in
+    // the dialogue and never reached it.
+    for (const signature of SIGNATURES) {
+      assert.ok(ACCEPTED_CONTENT_TYPES.includes(signature.contentType), `${signature.label} is not offered to the picker`);
+      assert.ok(acceptedFormats().includes(signature.label), `${signature.label} is not named to the operator`);
+    }
   });
 });

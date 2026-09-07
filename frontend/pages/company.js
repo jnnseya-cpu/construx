@@ -89,8 +89,9 @@ export async function company(root) {
         <div class="metric-sub" style="margin:8px 0 14px">
           Each slot says what it is for and what it has to show, because a picture chosen without knowing where it lands
           is a picture that has to be replaced. Export at the size given and compress; the ceiling is
-          ${Math.round(media.maxBytes / 1_048_576)}MB per picture. PNG, JPEG or WebP — read from the file itself rather
-          than from its name, so renaming something does not get it past.
+          ${Math.round(media.maxBytes / 1_048_576)}MB per picture. ${media.accepts} — read from the file itself rather
+          than from its name, so renaming something does not get it past. A photograph straight off an iPhone is
+          HEIC, which no browser can display: shoot in "Most Compatible" or export it as JPEG first.
         </div>
 
         <div class="split-list">
@@ -109,7 +110,7 @@ export async function company(root) {
                 ${slot.held ? badge('filled', 'ok') : badge('empty', 'warn')}
                 <label class="btn quiet sm" style="cursor:pointer">
                   ${slot.held ? 'Replace' : 'Add picture'}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" data-put="${slot.id}" style="display:none" />
+                  <input type="file" accept="${media.acceptTypes}" data-put="${slot.id}" style="display:none" />
                 </label>
                 ${slot.held ? html`<button class="btn quiet sm" data-clear="${slot.id}">Remove</button>` : ''}
               </span>

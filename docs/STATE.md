@@ -18378,3 +18378,65 @@ carries its own date, that the footer asserts no platform state, and that
 Thirteen tests, and the reason they are worth their runtime is the Terms: a
 stale figure on a landing page is embarrassing, and the same drift inside a
 contractual term is not.
+
+---
+
+## Every picture an operator added was refused
+
+Reported from the live deployment: the five landing slots could not be filled,
+whatever was uploaded. The mechanism was not at fault — driven end to end
+against a running gateway, a PNG went in, was stored, and rendered on the page.
+Three separate things were.
+
+### The accepted list was three formats, not five
+
+AVIF and GIF were absent from the signature table for no reason that survives
+being stated. Every current browser renders both, and AVIF is what several
+export dialogues now offer by default — so a plate exported the way the
+software suggested was refused as "not an image". Both are now accepted, by
+their own magic bytes like the others: AVIF on the ISO base media brand (`avif`
+or `avis`, which is what separates it from HEIC in the same container), GIF on
+`GIF87a`/`GIF89a`.
+
+**SVG stays refused, and always will.** An SVG is a document that can carry
+script and this directory is served from the platform's own origin. Widening
+the list is exactly when that is worth asserting again, so there is now a test
+that uploads `<svg onload=…>` and checks nothing was stored.
+
+### The refusal did not say what the file was
+
+Every rejection read "that file is not a PNG, JPEG or WebP" — true of a
+spreadsheet and of a photograph alike, and useless to somebody holding the
+photograph. The likely cause of the report is the one that message hides:
+**an iPhone shoots HEIC by default and no browser can display it**, so a camera
+roll's worth of pictures bounce with no hint that the fix is one setting.
+
+Recognised-but-refused formats are now named, each with what to do instead:
+HEIC/HEIF (Settings › Camera › Formats › Most Compatible, or export as JPEG),
+TIFF, BMP, PDF and SVG. Nothing is stored that was not stored before; the
+difference is that the person is told which format they have.
+
+### The size refusal was unreadable
+
+A file over the ceiling was answered `400 VALIDATION_FAILED — "Upload exceeds
+the 8MB limit"`, produced at the socket before the module with the good message
+ever ran. Nothing about the request failed a schema, and a screen that had just
+offered a file picker told the operator that validation failed. It is now
+`413 UPLOAD_TOO_LARGE`, naming the file's own size against the ceiling.
+
+### One refusal, not three
+
+The landing slots, a customer's branding logo and a person's account picture
+each carried their own copy of the sentence. Adding two formats made all three
+wrong at once, which is what a duplicated sentence is for. `notAnImage(bytes)`
+in `site/media.ts` is now the single answer, and the console reads the accepted
+formats and the file picker's `accept` list from the same table rather than
+naming three in its own prose while the server took five.
+
+### What the sweep says now
+
+Driven end to end against a running gateway — press *Generate marketing
+library*, upload a picture into all five slots through the real route — the
+site's own sweep reports **100/100, STRONG, every check passing**, and the
+landing page renders five of five images. The two things that were described as
+operator actions are both one press each, and both now work.
