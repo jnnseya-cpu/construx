@@ -86,7 +86,11 @@ describe('the webhook channel', () => {
     requests(100, '500');
     const report = await evaluate(platform, new Date('2026-09-06T09:01:00Z'));
     assert.ok(report.started.includes('server_errors'));
-    for (let attempt = 0; attempt < 40 && posted.length === 0; attempt += 1) {
+    // Wait for the *client* to have recorded the response, not merely for the
+    // server to have received the request. Those are two different moments, and
+    // waiting only for the first made this fail under a loaded suite: the post
+    // had arrived, and `lastStatus` had not been written yet.
+    for (let attempt = 0; attempt < 200 && alertWebhookState().lastStatus === undefined; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert.equal(posted.length, 1, 'one alert, one post');
