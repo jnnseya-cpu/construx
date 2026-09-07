@@ -18694,3 +18694,82 @@ perception task, a real model reading a real invitation remains unverified here.
 
 `.pptx`, the legacy binary `.doc` and `.xls`, and any encrypted container. Each
 is refused by name with the reason rather than reported as an unknown archive.
+
+## Commissioning exceptions and system acceptance, given doors
+
+An audit of CM-WF-07, CM-WF-08, the 10.4 gate and the whole of stage 11 against
+the specification found the rules complete and the product unreachable.
+
+Everything the specification asks for was there and tested: the exception
+raised from the failed reading without re-entry, the refusal to close without a
+passed retest, the impact assessment that must be confirmed before closure, the
+retest pinned to a released pack revision, the safety-critical conditional
+acceptance with its named authority and operating restriction, the dossier
+scored over required records rather than file count, the acceptance no
+unnamed party can give, and the residual obligations read rather than copied.
+Thirty of the thirty-three stage-11 events exist under those names; the other
+three exist under the platform's own (`ASSET_REGISTERED`, `WARRANTY_REGISTERED`,
+`TRAINING_NEEDS_DEFINED`), which the catalogue already documents.
+
+What none of it had was a way in. The Handover screen **read** the exception
+position and the commissioning-close position and offered no control on either.
+The eleven write commands were reachable only through the generated command
+catalogue, whose form asks for an exception id in a text box — which is not a
+door a commissioning manager opens at four o'clock on a Friday with a fan still
+failing its duty test. The same defect as the ITT reader before it got a panel:
+complete on the platform side, absent from the product.
+
+Six curated doors now sit on the **Construction** command bar, with their
+options read off two positions that screen now loads.
+
+They were built on Handover first, and `navreach.test.ts` refused it: a
+SUPERVISOR holds `QUALITY_COMMISSIONING` writes and cannot open a screen gated
+on `HANDOVER_OM`, so putting them there offered a door to somebody who could
+not reach the room. Construction is gated on `SAFETY_RAMS` with
+`QUALITY_COMMISSIONING` alongside it, which is both the screen those people can
+open and the screen they are already on when a test fails.
+
+| Door | What it reaches |
+|---|---|
+| Record corrective action | Containment, corrective action, the evidence, and the change it was made under |
+| Start a retest | Released packs only, because an unreleased one is not a controlled retest |
+| Confirm what it invalidates | The scope an engineer stands behind, one test reference per line |
+| Close an exception | Refused until a retest has passed — closure adds a result, it never edits one |
+| Accept conditionally | Exceptional authority, operating restriction and review date |
+| Accept a system | Operator named, the organisation they act for, and all four parts of a condition |
+
+Split across two capabilities rather than one: recording what was done about a
+failure is `QUALITY_COMMISSIONING U`, and closing it or accepting a system is
+`A`. Offering the approval to somebody holding only the update is offering a
+refusal. The five doors that operate on an existing exception are locked with
+the reason when none is open, rather than opening onto an empty dropdown.
+
+Nothing here re-decides anything. Every refusal still fires in the domain — the
+console just stopped being the reason nobody saw them.
+
+### What this audit found still open
+
+- **11.2's stage workspace is partial.** The action queue and six of the nine
+  header fields are built. Missing: change since baseline, accountable owner and
+  last data cut-off (the *checks* exist inside `handoverOneCutOff` and
+  `ownersFor`; the *values* are not published as fields), the nine tabs, the
+  right rail, and a gate button — `decideGate` has a route and no door anywhere
+  in the console, so its deterministic disable and its condition display do not
+  exist.
+- **The tender field module (specification section 9) is not built.** None of
+  `TENDER_VISIT_PASS_ISSUED`, `BIDDER_CHECKED_IN`, `BIDDER_CHECKED_OUT`,
+  `TENDER_ROUTE_STARTED`, `TENDER_CHECKPOINT_COMPLETED`,
+  `MATERIAL_ROUTE_DEVIATION_RECORDED`, `TENDER_FIELD_CHECK_RECORDED`,
+  `TENDER_ASSUMPTION_CHALLENGED` or `LOGISTICS_CANDIDATE_SUBMITTED` is in the
+  catalogue. `engines/sitevisit.ts` is the opposite workflow — the contractor's
+  own pre-bid walk — and has no notion of visiting bidders, passes, inductions
+  or confidentiality acknowledgement. Four of its hardest parts do exist to
+  build on: `enquiry.bidderView`'s domain-level bidder isolation, the
+  acknowledgement chain traceable to an issue revision, the offline sync
+  contract, and `identity/modules.ts` for the module gate.
+- **No surface gating exists.** The specification names six web-only controls
+  for the tender field module and five for the construction one. Nothing in the
+  platform currently prevents a command reaching a handset, and no
+  `webOnly`/`FIELD_MODULE` concept exists. This is the one item of the three
+  with a security edge, since adjudication data on a field device is precisely
+  what a bidder visit must not expose.

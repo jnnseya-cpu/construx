@@ -86,7 +86,7 @@ export async function construction(root) {
 
   const b = await entityBundle(projectId, ['Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection', 'ToolboxTalk']);
 
-  const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation] =
+  const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation, exceptions, testPacks] =
     await Promise.all([
       api.read(`/v1/projects/${projectId}/quality`, 'QUALITY_COMMISSIONING').catch(() => null),
       api.read(`/v1/projects/${projectId}/cdm`, 'SAFETY_RAMS').catch(() => null),
@@ -103,10 +103,24 @@ export async function construction(root) {
       api.read(`/v1/projects/${projectId}/progress-verification`, 'FIELD_EXECUTION').catch((error) => ({ error })),
       api.read(`/v1/projects/${projectId}/daily-logs`, 'FIELD_EXECUTION').catch((error) => ({ error })),
       api.read(`/v1/projects/${projectId}/mobilisation`, 'FIELD_EXECUTION').catch((error) => ({ error })),
+      // CM-WF-07. The exception chain belongs to the people who hold
+      // `QUALITY_COMMISSIONING`, and this is the screen they can open — a
+      // supervisor holds writes on it and cannot open Handover, which is gated
+      // on `HANDOVER_OM`. Putting these doors there offered them to somebody
+      // who could not reach the room.
+      api.read(`/v1/projects/${projectId}/commissioning-exceptions`, 'QUALITY_COMMISSIONING').catch((error) => ({ error })),
+      api.read(`/v1/projects/${projectId}/test-packs`, 'QUALITY_COMMISSIONING').catch((error) => ({ error })),
     ]);
 
   const now = new Date().toISOString();
   const today = now.slice(0, 10);
+
+  // A commissioning exception that is closed takes no further act, so the five
+  // doors that operate on one are locked with the reason rather than opened
+  // onto an empty dropdown.
+  const openExceptionList = (exceptions?.exceptions ?? []).filter((entry) => entry.status !== 'CLOSED');
+  const openExceptions = openExceptionList.length;
+  const noOpenException = 'No commissioning exception is open on this project';
 
   const approvedRams = b.RAMS.filter((r) => r.status === 'APPROVED');
   const draftRams = b.RAMS.filter((r) => r.status !== 'APPROVED');
@@ -237,6 +251,27 @@ export async function construction(root) {
               permitted: can('QUALITY_COMMISSIONING', 'A') && openNcrs.length > 0,
               reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noOpenNcr,
             },
+            // CM-WF-07 and CM-WF-08. The same authority split the table above
+            // describes: recording what was done about a failure is `U`, and
+            // closing it or accepting a system is `A`. Offering the approval to
+            // somebody who holds only the update is offering a refusal.
+            { id: 'exception-action', label: 'Record corrective action',
+              permitted: can('QUALITY_COMMISSIONING', 'U') && openExceptions > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'U') ? blockedReason('QUALITY_COMMISSIONING', 'U') : noOpenException },
+            { id: 'exception-retest', label: 'Start a retest',
+              permitted: can('QUALITY_COMMISSIONING', 'U') && openExceptions > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'U') ? blockedReason('QUALITY_COMMISSIONING', 'U') : noOpenException },
+            { id: 'exception-impact', label: 'Confirm what it invalidates',
+              permitted: can('QUALITY_COMMISSIONING', 'A') && openExceptions > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noOpenException },
+            { id: 'exception-close', label: 'Close an exception',
+              permitted: can('QUALITY_COMMISSIONING', 'A') && openExceptions > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noOpenException },
+            { id: 'exception-conditional', label: 'Accept conditionally',
+              permitted: can('QUALITY_COMMISSIONING', 'A') && openExceptions > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noOpenException },
+            { id: 'accept-system', label: 'Accept a system',
+              permitted: can('QUALITY_COMMISSIONING', 'A'), reason: blockedReason('QUALITY_COMMISSIONING', 'A') },
           ]))}
         </div>
       </div>
@@ -616,7 +651,161 @@ export async function construction(root) {
     `,
   );
 
+  // CM-WF-07 and CM-WF-08, given doors.
+  //
+  // Every rule below this line was already built, authorised and tested — the
+  // exception chain, the retest against a released pack revision, the dossier
+  // scored over its required records, the acceptance an operator puts their
+  // name to. What none of it had was a way in. The generated command catalogue
+  // could reach each route, but its form asks for an exception id in a text
+  // box, which is not a door a commissioning manager opens at four o'clock on
+  // a Friday with a fan still failing its duty test.
+  //
+  // So the options come from the positions this page already reads. Nothing
+  // here re-decides anything: the platform still refuses a closure with no
+  // succeeding result, a retest before a corrective action, and an acceptance
+  // over an open safety-critical exception. These are the same refusals,
+  // reachable.
+  // Only the ones a retest result can be recorded against: a retest that has
+  // already been decided is not offered a second verdict.
+  const openExceptionOptions = openExceptionList
+    .map((entry) => ({ value: entry.exceptionId, label: `${entry.reference} · ${entry.systemTag}` }));
+  const systemOptions = [...new Set((exceptions?.exceptions ?? []).map((entry) => entry.systemTag))]
+    .map((tag) => ({ value: tag, label: tag }));
+
   const COMMANDS = {
+    'exception-action': {
+      title: 'Record what was done about the failure',
+      intent:
+        'Containment first — what stops it mattering now — then the corrective action, with the evidence behind it. ' +
+        'A retest before this is the same test again, and it fails again.',
+      path: (v) => `/v1/projects/${projectId}/commissioning-exceptions/${v.exceptionId}/corrective-action`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'exceptionId', label: 'Exception', type: 'select', options: openExceptionOptions,
+          hint: openExceptionOptions.length === 0 ? 'No exception is open on this project' : '' },
+        { name: 'containment', label: 'Containment', type: 'textarea', rows: 2,
+          hint: 'What stops this mattering while it is being fixed. Locking a unit off is containment; intending to fix it is not.' },
+        { name: 'corrective', label: 'Corrective action', type: 'textarea', rows: 3 },
+        { name: 'evidenceHash', label: 'The evidence', type: 'file', voice: false },
+        { name: 'changeLinkage', label: 'Change reference', type: 'text', required: false,
+          hint: 'Where the fix was a change rather than a repair, the change it was made under.' },
+        { name: 'completedBy', label: 'Completed by', type: 'text', value: state.session.user.name },
+      ],
+      transform: ({ exceptionId, changeLinkage, ...rest }) => ({ ...rest, ...(changeLinkage ? { changeLinkage } : {}) }),
+    },
+
+    'exception-impact': {
+      title: 'Confirm what else this invalidates',
+      intent:
+        'The tests that assumed this one was right are now unproven, and the ones already passed are the dangerous ones ' +
+        'because they read as complete. The platform will not decide the scope — an engineer confirms it — but it will ' +
+        'not let the exception close until somebody has.',
+      path: (v) => `/v1/projects/${projectId}/commissioning-exceptions/${v.exceptionId}/impact`,
+      submitLabel: 'Confirm the scope',
+      fields: [
+        { name: 'exceptionId', label: 'Exception', type: 'select', options: openExceptionOptions },
+        { name: 'invalidatedTests', label: 'Tests this invalidates', type: 'textarea', rows: 3, required: false,
+          hint: 'One reference per line. Leave blank only if nothing else is affected — and say why below.' },
+        { name: 'rationale', label: 'Why these and not others', type: 'textarea', rows: 3,
+          hint: '"Nothing else is affected" is a finding somebody stands behind, not a default.' },
+        { name: 'confirmedBy', label: 'Confirmed by', type: 'text', value: state.session.user.name },
+      ],
+      transform: ({ exceptionId, invalidatedTests, ...rest }) => ({
+        ...rest,
+        invalidatedTests: String(invalidatedTests ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+      }),
+    },
+
+    'exception-retest': {
+      title: 'Start a controlled retest',
+      intent:
+        'Against a released pack revision, so the retest is a controlled one and the record says which revision it was ' +
+        'run to. Refused before a corrective action has been recorded.',
+      path: (v) => `/v1/projects/${projectId}/commissioning-exceptions/${v.exceptionId}/retest`,
+      submitLabel: 'Start',
+      fields: [
+        { name: 'exceptionId', label: 'Exception', type: 'select', options: openExceptionOptions },
+        { name: 'packId', label: 'Test pack', type: 'select',
+          options: ((testPacks?.packs ?? []).filter((pack) => pack.status === 'RELEASED')
+            .map((pack) => ({ value: pack.packId, label: `${pack.reference} · ${pack.systemTag}` }))),
+          hint: 'Only released packs. An unreleased one is not a controlled retest.' },
+        { name: 'startedBy', label: 'Run by', type: 'text', value: state.session.user.name },
+      ],
+      transform: ({ exceptionId, ...rest }) => rest,
+    },
+
+    'exception-close': {
+      title: 'Close the exception',
+      intent:
+        'Closure adds a verified succeeding result. It changes nothing about the failure — the original reading, its ' +
+        'instrument, its performer and its timestamp all stay exactly where they are, because the history of what ' +
+        'failed is what makes the retest mean anything.',
+      path: (v) => `/v1/projects/${projectId}/commissioning-exceptions/${v.exceptionId}/close`,
+      submitLabel: 'Close it',
+      fields: [
+        { name: 'exceptionId', label: 'Exception', type: 'select', options: openExceptionOptions },
+        { name: 'verifiedBy', label: 'Verified by', type: 'text', value: state.session.user.name },
+        { name: 'verification', label: 'What they saw', type: 'textarea', rows: 3,
+          hint: 'An exception closed on an assurance is the one found again at handover.' },
+      ],
+      transform: ({ exceptionId, ...rest }) => rest,
+    },
+
+    'exception-conditional': {
+      title: 'Accept a safety-critical exception conditionally',
+      intent:
+        'Deliberately harder than a closure. What is being accepted is a system that does not do what it was specified ' +
+        'to do while people are in the building, so it needs an exceptional authority by name, a restriction saying ' +
+        'what may not happen until it clears, and a date it is reviewed by.',
+      path: (v) => `/v1/projects/${projectId}/commissioning-exceptions/${v.exceptionId}/conditional-acceptance`,
+      submitLabel: 'Accept conditionally',
+      fields: [
+        { name: 'exceptionId', label: 'Exception', type: 'select', options: openExceptionOptions },
+        { name: 'authority', label: 'Exceptional authority', type: 'text',
+          hint: 'Signed by the person who raised it is not an exceptional authority.' },
+        { name: 'operatingRestriction', label: 'Operating restriction', type: 'textarea', rows: 2,
+          hint: 'What may not happen while this stands. One with no restriction is an unconditional acceptance.' },
+        { name: 'reviewBy', label: 'Reviewed by', type: 'date', min: todayIso() },
+      ],
+      transform: ({ exceptionId, ...rest }) => rest,
+    },
+
+    'accept-system': {
+      title: 'Accept a system into operation',
+      intent:
+        'The party accepting it is the party running it at three in the morning, so it is named. Blocked over an open ' +
+        'safety-critical exception, and refused while the dossier is missing a record an operator cannot start without.',
+      path: `/v1/projects/${projectId}/system-acceptances`,
+      submitLabel: 'Record the decision',
+      fields: [
+        { name: 'systemTag', label: 'System', type: 'select', options: systemOptions,
+          hint: systemOptions.length === 0 ? 'No system carries an exception on this project yet' : '' },
+        { name: 'decision', label: 'Decision', type: 'select', options: [
+          { value: 'ACCEPTED', label: 'Accepted' },
+          { value: 'CONDITIONAL', label: 'Accepted with conditions' },
+          { value: 'REJECTED', label: 'Rejected' },
+        ] },
+        { name: 'acknowledgedBy', label: 'Operator or owner accepting', type: 'text' },
+        { name: 'acknowledgedForOrganisation', label: 'Acting for', type: 'text' },
+        { name: 'note', label: 'What is being accepted, or why not', type: 'textarea', rows: 2 },
+        // The four parts of a condition, together. A condition missing any of
+        // them becomes permanent, so the platform refuses a partial set — and
+        // the form asks for all four rather than letting somebody discover that.
+        { name: 'operatingLimits', label: 'Operating limits', type: 'textarea', rows: 2, required: false,
+          hint: 'Conditional acceptance only.' },
+        { name: 'riskOwner', label: 'Risk owner', type: 'text', required: false, hint: 'Conditional acceptance only.' },
+        { name: 'expiresOn', label: 'Condition expires', type: 'date', required: false, min: todayIso() },
+        { name: 'closurePlan', label: 'Plan for closing it', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: ({ operatingLimits, riskOwner, expiresOn, closurePlan, ...rest }) => ({
+        ...rest,
+        ...(rest.decision === 'CONDITIONAL'
+          ? { conditions: { operatingLimits, riskOwner, expiresOn, closurePlan } }
+          : {}),
+      }),
+    },
+
     permit: {
       title: 'Issue a permit to work',
       intent:
