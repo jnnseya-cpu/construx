@@ -412,10 +412,43 @@ export function controllerSeat(seat: SeatDefinition): boolean {
 }
 
 /**
+ * Whether a package's Controller seat travels onto another organisation's
+ * project.
+ *
+ * The portable seat is the whole of the cross-organisation model: an external
+ * Controller is admitted on the licence their own organisation already pays
+ * for, and the host is charged nothing. That only holds while "already pays
+ * for" is true.
+ *
+ * It was not checked, and the hole was total. Anybody could sign up for the
+ * free Trial in a minute with no card, make themselves a QS inside their own
+ * £0 tenancy, and be admitted to any paying customer's project as a fully
+ * licensed Controller — indefinitely, for nothing, on a licence the platform
+ * had verified. One free tenancy could seat one person on every project they
+ * were ever invited to, and a group of them could seat a whole company.
+ *
+ * Derived from the price rather than declared per package, so it fails closed:
+ * a free package added later is non-portable without anybody remembering this
+ * rule exists. Every paid package — Solo upward, Enterprise included — is
+ * portable, which is the case the model is for.
+ *
+ * This is about the *package*, not about payment having cleared: an unpaid
+ * subscription is `AWAITING_PAYMENT` or `SUSPENDED` and is already refused by
+ * the status check beside this one.
+ */
+export function portableControllerLicence(tier: PackageTier): boolean {
+  return (PACKAGES[tier]?.monthlyPriceMinor ?? 0) > 0;
+}
+
+/**
  * The Project Controller Pass: a time-limited, one-project Controller licence
  * the host buys for an external person who has no Controller seat of their
  * own. Priced below every full seat because it opens one project and none of
  * the tenancy, and stated once here beside the seats it stands in for.
+ *
+ * It is also the honest answer for a guest whose own organisation is on the
+ * Trial: they hold no portable licence, so the host either buys this or the
+ * person works as a participant.
  */
 export const CONTROLLER_PASS = {
   label: 'Project Controller Pass',

@@ -4,11 +4,12 @@ import { after, before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import * as collection from '../src/billing/collection.ts';
-import { CONTROLLER_PASS, PACKAGES } from '../src/billing/seats.ts';
+import { CONTROLLER_PASS, PACKAGES, portableControllerLicence } from '../src/billing/seats.ts';
 import { decideSponsorship, requestSponsorship, resolveAcu, revokeSponsorship, sponsorshipsFor, usageOf } from '../src/billing/sponsorship.ts';
 import * as invitation from '../src/domain/invitation.ts';
 import {
   changePermissions,
+  checkLicence,
   membershipOf,
   membershipsOfUser,
   passOf,
@@ -619,5 +620,233 @@ describe('over HTTP', () => {
     assert.equal(guest.homeTenantId, abc.tenantId);
     assert.equal(membershipsOfUser(rebuilt, host.tenantId, guest.id).length, 1);
     assert.equal(rebuilt.subscription(host.tenantId).assignedIdentities.length, platform.subscription(host.tenantId).assignedIdentities.length);
+  });
+});
+
+/**
+ * The seat model, attacked rather than demonstrated.
+ *
+ * Everything above proves the structure works for the people it is for. This
+ * block is the other half: what somebody who wants Controller authority
+ * without paying for it, or somebody else's wallet, can actually get.
+ */
+describe('the ways this could be gamed, and are not', () => {
+  const tenancy = (name: string, pkg: Parameters<typeof portableControllerLicence>[0]) =>
+    platform.createTenant({ legalName: name, jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'TEAM', package: pkg, enterpriseName: name });
+
+  it('refuses to mint a Controller licence out of a free trial', () => {
+    // The whole commercial model in one exploit. Anybody can open the free
+    // Trial in a minute with no card. Before this was locked, they could make
+    // themselves a QS inside their own £0 tenancy and be admitted to any
+    // paying customer's project as a fully licensed Controller — indefinitely,
+    // for nothing, on a licence the platform had checked and believed.
+    const free = tenancy('Free Rider Ltd', 'FREE_TRIAL');
+    platform.createUser({ tenantId: free.tenant.id, name: 'Free Rider', email: 'rider@free-rider.example', roles: ['QS'] });
+
+    const subscription = platform.subscription(free.tenant.id);
+    assert.equal(subscription.status, 'ACTIVE', 'a trial tenancy is active, which is why the status check alone was not enough');
+    assert.equal(subscription.assignedIdentities.length, 1, 'and the trial does seat its one identity');
+
+    const verdict = checkLicence(platform, {
+      email: 'rider@free-rider.example',
+      hostTenantId: host.tenantId,
+      projectId: host.projectId,
+      external: true,
+      organisation: 'Free Rider Ltd',
+    });
+    assert.equal(verdict.hasValidHomeControllerSeat, false, 'a £0 trial conferred a portable Controller licence');
+    assert.equal(verdict.hasValidGroupControllerSeat, false);
+
+    // And the host is told the truth about it rather than being quietly
+    // charged or quietly refused: no licence, so the roles are withheld.
+    const preview = previewLicence(
+      platform,
+      { email: 'rider@free-rider.example', hostTenantId: host.tenantId, projectId: host.projectId, external: true, organisation: 'Free Rider Ltd' },
+      ['QS'],
+    );
+    assert.equal(preview.licenceSource, 'NONE');
+    assert.equal(preview.hostBillableSeat, false, 'and the host is not quietly charged for them either');
+  });
+
+  it('still honours a licence from an organisation that pays for one', () => {
+    // The guard has to bite on the free package only. A paying subcontractor
+    // sending their QS onto a main contractor's project is the case the whole
+    // model exists for, and it must not have been caught by the fix.
+    assert.equal(portableControllerLicence('FREE_TRIAL'), false);
+    for (const paid of ['SOLO', 'CORE_PROJECT', 'PROFESSIONAL_DELIVERY', 'ENTERPRISE'] as const) {
+      assert.equal(portableControllerLicence(paid), true, `${paid} should carry a portable licence`);
+      assert.ok(PACKAGES[paid].monthlyPriceMinor > 0, `${paid} is priced, which is what makes it portable`);
+    }
+
+    const verdict = checkLicence(platform, {
+      email: 'jane@abc-engineering.example',
+      hostTenantId: host.tenantId,
+      projectId: host.projectId,
+      external: true,
+      organisation: 'ABC Engineering Ltd',
+    });
+    assert.equal(verdict.hasValidHomeControllerSeat, true, 'a paying organisation’s seat stopped travelling');
+  });
+
+  it('will not let the host propose that somebody else’s wallet be uncapped', () => {
+    // `overageAllowed` does not raise the limit, it removes it: spend runs
+    // past the allowance against the sponsor's wallet until it is empty. A
+    // host asking for one ACU "with overage" and an administrator glancing at
+    // the figure and pressing approve would have signed away their balance.
+    const guest = platform.users(host.tenantId).find((user) => user.email === 'guest@abc-engineering.example')!;
+    const membership = membershipsOfUser(platform, host.tenantId, guest.id)[0]!;
+
+    const asked = requestSponsorship(platform, hostCtx(host.admin), {
+      membershipId: membership.id,
+      sponsorType: 'HOME_ORGANISATION',
+      authorisationType: 'ONE_TIME_EXECUTION',
+      workflow: 'PROGRAMME',
+      maximumMinor: 1,
+      overageAllowed: true,
+      reason: 'A modest allowance, with the cap quietly removed',
+    });
+    assert.equal(asked.status, 'PENDING');
+    assert.equal(asked.overageAllowed, false, 'the host proposed an uncapped allowance against ABC’s wallet');
+
+    // The sponsor can still grant it — on their own money, as their own act.
+    const abcCtx = platform.context(authOf(platform, abc.admin), `${abc.tenantId}-governance`, { source: 'WEB' });
+    const granted = decideSponsorship(platform, abcCtx, {
+      sponsorshipId: asked.id,
+      approve: true,
+      maximumMinor: 500,
+      overageAllowed: true,
+      reason: 'Ours to decide, and we have decided',
+    });
+    assert.equal(granted.overageAllowed, true);
+    assert.equal(granted.maximumMinor, 500);
+  });
+
+  it('confines a guest to their own project when the request names no project at all', async () => {
+    // The gate confines a guest to one project *when the request names one*.
+    // A tenant-scoped read names none, so it had nothing to check and answered
+    // in full: a subcontractor's QS invited onto a single job could list every
+    // project the host was running, every person the host employed with their
+    // address and roles, and the host's package and monthly commitment.
+    //
+    // On a platform where a main contractor's subcontractors are frequently
+    // their competitors, that is the failure the whole model has to avoid.
+    const guest = platform.users(host.tenantId).find((user) => user.email === 'guest@abc-engineering.example')!;
+    const guestToken = tokenFor(guest.id);
+    const held = membershipsOfUser(platform, host.tenantId, guest.id).filter((membership) => membership.status === 'ACTIVE');
+    assert.ok(held.length >= 1, 'the guest holds at least one live membership');
+
+    const projects = await call('GET', '/v1/projects', guestToken);
+    assert.equal(projects.status, 200);
+    const visible = projects.body.projects as Array<{ id: string }>;
+    const allowed = new Set(held.map((membership) => membership.projectId));
+    assert.deepEqual(
+      visible.map((project) => project.id).sort(),
+      [...allowed].sort(),
+      'the guest sees projects they were never invited onto',
+    );
+    assert.ok(
+      structure.liveProjects(platform.ledger, host.tenantId).length > visible.length,
+      'the host has more projects than the guest can see, which is what makes this a real check',
+    );
+
+    // A portfolio is visible only because a project of theirs sits in it.
+    const portfolios = await call('GET', '/v1/portfolios', guestToken);
+    assert.equal(portfolios.status, 200);
+    assert.ok((portfolios.body.portfolios as unknown[]).length <= structure.livePortfolios(platform.ledger, host.tenantId).length);
+
+    // And two reads have no correct subset for a guest at all.
+    for (const path of ['/v1/users', '/v1/billing/seats']) {
+      const refused = await call('GET', path, guestToken);
+      assert.equal(refused.status, 403, `${path} answered a guest`);
+      assert.equal(refused.body.title, 'EXTERNAL_MEMBER_SCOPE', `${path}: ${JSON.stringify(refused.body)}`);
+    }
+
+    // The host's own people are unaffected: this narrows a guest, nothing else.
+    const asHost = await call('GET', '/v1/users', tokenFor(host.admin.actorId));
+    assert.equal(asHost.status, 200);
+    assert.ok((asHost.body.users as unknown[]).length > 1, 'the host lost their own directory');
+    const hostProjects = await call('GET', '/v1/projects', tokenFor(host.admin.actorId));
+    assert.equal((hostProjects.body.projects as unknown[]).length, structure.liveProjects(platform.ledger, host.tenantId).length);
+  });
+
+  it('will not let a guest be made an administrator by editing the identity', async () => {
+    // The third door into an external identity's roles, and the only one with
+    // no rule behind it. `inviteToProject` withholds Controller roles without
+    // a licence and `changePermissions` refuses to make a guest an
+    // administrator — this one checked neither, and skipped the seat charge on
+    // the way past because the identity is flagged external.
+    //
+    // So an administrator could take somebody invited onto one project as a
+    // designer and hand them ENTERPRISE_ADMIN: unlicensed, unbilled, still
+    // counted as a free participant, and holding the governance authority to
+    // revoke the host's own people and spend the host's wallet.
+    const guest = platform.users(host.tenantId).find((user) => user.email === 'guest@abc-engineering.example')!;
+    const before = [...guest.roles];
+
+    const refused = await call('POST', `/v1/users/${guest.id}/roles`, tokenFor(host.admin.actorId), {
+      roles: ['ENTERPRISE_ADMIN', 'OWNER'],
+      reason: 'Quietly making the guest an administrator of the tenancy',
+    });
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+    assert.equal(refused.body.title, 'EXTERNAL_ROLES_VIA_MEMBERSHIP');
+    assert.deepEqual(platform.users(host.tenantId).find((user) => user.id === guest.id)!.roles, before);
+
+    // The host's own people are unaffected: this is about guests.
+    const jane = platform.users(host.tenantId).find((user) => user.email === 'jane@abc-engineering.example');
+    if (jane && !jane.external) {
+      const allowed = await call('POST', `/v1/users/${jane.id}/roles`, tokenFor(host.admin.actorId), {
+        roles: ['PLANNER'],
+        reason: 'An ordinary role change on one of our own people',
+      });
+      assert.ok(allowed.status < 400, JSON.stringify(allowed.body));
+    }
+  });
+
+  it('will not let a guest read another project by asking the generic entity route', async () => {
+    // The typed project routes build a context and are confined by the
+    // membership gate. This one took the project id from the path and filtered
+    // on the tenant alone, so the confinement everything else rests on had a
+    // way around it on a single URL.
+    const guest = platform.users(host.tenantId).find((user) => user.email === 'guest@abc-engineering.example')!;
+    const guestToken = tokenFor(guest.id);
+    const held = membershipsOfUser(platform, host.tenantId, guest.id).filter((membership) => membership.status === 'ACTIVE');
+    const mine = held[0]!.projectId;
+
+    const own = await call('GET', `/v1/projects/${mine}/entities/RiskRegisterItem`, guestToken);
+    assert.ok(own.status < 400, `their own project was refused: ${JSON.stringify(own.body)}`);
+
+    const other = structure
+      .liveProjects(platform.ledger, host.tenantId)
+      .map((record) => record.state as { id: string })
+      .find((project) => !held.some((membership) => membership.projectId === project.id))!;
+    const across = await call('GET', `/v1/projects/${other.id}/entities/RiskRegisterItem`, guestToken);
+    assert.equal(across.status, 403, JSON.stringify(across.body));
+    assert.equal(across.body.title, 'PROJECT_PERMISSION_DENIED');
+
+    // And not the tenancy's own governance chain, where the memberships,
+    // passes and sponsorships live.
+    const governance = await call('GET', `/v1/projects/${host.tenantId}-governance/entities/ControllerPass`, guestToken);
+    assert.equal(governance.status, 403, JSON.stringify(governance.body));
+    assert.equal(governance.body.title, 'EXTERNAL_MEMBER_SCOPE');
+  });
+
+  it('will not sell a pass against an appointment that has ended', () => {
+    // A pass on a dead membership charges the host every month for authority
+    // nobody holds, and the sweep that expires passes skips memberships that
+    // are not active — so nothing would ever end it.
+    const sent = invite({ email: `ended-${Date.now()}@abc-engineering.example`, roles: ['QS'], external: true, organisation: 'ABC Engineering Ltd' });
+    const accepted = invitation.acceptInvitation(platform, hostCtx(host.pm), { invitationId: sent.invitationId });
+    const membership = membershipsOfUser(platform, host.tenantId, accepted.userId)[0]!;
+    revokeMembership(platform, hostCtx(host.admin), { membershipId: membership.id, reason: 'Left the project before the pass was bought' });
+
+    throwsCode(
+      () =>
+        purchasePass(platform, hostCtx(host.admin), {
+          membershipId: membership.id,
+          expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+          reason: 'Buying authority for somebody who is no longer here',
+        }),
+      'MEMBERSHIP_ENDED',
+    );
   });
 });

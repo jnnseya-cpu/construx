@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,130 passing, 0 failing, 0 skipped, across 283 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,144 passing, 0 failing, 0 skipped, across 283 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 317 TypeScript files, 205,483 lines |
 | Application | 78 ES modules, 46,652 lines (including a service worker) |
@@ -18440,3 +18440,129 @@ library*, upload a picture into all five slots through the real route — the
 site's own sweep reports **100/100, STRONG, every check passing**, and the
 landing page renders five of five images. The two things that were described as
 operator actions are both one press each, and both now work.
+
+---
+
+## The seat model, attacked
+
+The cross-organisation structure was reviewed as an attacker rather than
+demonstrated as a feature: somebody who controls one tenancy and wants
+Controller authority without paying, data they should not have, somebody else's
+wallet, or an escape from a revocation. Six holes, each reproduced before it was
+closed and each now named by a test.
+
+### 1 · A £0 trial minted Controller licences — the whole commercial model
+
+`checkLicence` accepted a portable licence from any tenancy whose subscription
+was `ACTIVE`. A free Trial opens `ACTIVE` immediately, needs no card and takes a
+minute.
+
+So anybody could sign up for the Trial, make themselves a QS inside their own
+£0 tenancy, and be admitted to **any paying customer's project as a fully
+licensed Controller** — indefinitely, for nothing, on a licence the platform had
+verified. One free tenancy seats one person on every project they are ever
+invited to; a handful of them seats a company.
+
+`portableControllerLicence(tier)` in `billing/seats.ts` now decides, derived
+from the package price so it fails closed: a free package added later is
+non-portable without anybody remembering the rule. Every paid package, Solo
+upward and Enterprise included, still travels — that case is what the model is
+for and a test holds it.
+
+### 2 · An invitation was a tenancy takeover
+
+Two doors, both open.
+
+**`assignRoles` never looked at `user.external`.** An administrator could take
+somebody invited onto one project as a designer and hand them
+`ENTERPRISE_ADMIN` and `OWNER` — and because `#applyRoles` passes
+`licensedElsewhere` for an external identity, `assignIdentity` skipped the seat
+charge on the way past. Unlicensed, unbilled, still counted as a free
+participant by `seatDashboard`, and holding the governance authority to revoke
+the host's own people, approve sponsorships against the host's wallet and buy
+passes. Guests' roles now change through `changePermissions`, which resolves the
+licence and records who pays.
+
+**`inviteToProject` had no rule about administrative roles at all.** Its only
+test was `worksOnProject`, which any delivery role passes. A site supervisor
+could invite an address they owned as `OWNER`, accept the invitation themselves
+— an invitation is accepted by whoever holds the project, not only by its
+subject — and sign in as an administrator. That walked around both guards
+written to stop exactly this: creating an identity and changing an identity's
+roles each require `ENTERPRISE_ADMIN`. Invitation was the third door.
+
+Handing on an administrative role now takes `ENTERPRISE_ADMIN` or the role
+itself, and `EXTERNAL_CANNOT_ADMINISTER` is checked whatever the caller claims
+about `external` rather than only inside the branch that boolean opens.
+
+**This narrows a behaviour that used to be allowed** — a project manager could
+appoint an `OWNER` — and the old behaviour was the loophole. Staffing is
+untouched: a project manager still appoints quantity surveyors, designers and
+supervisors and is none of them.
+
+### 3 · A guest on one project could read the whole host tenancy
+
+`#externalMemberGate` confines a guest to the project their membership names —
+but only where the request *names a project*. A tenant-scoped read names none,
+so the gate had nothing to check.
+
+Measured against the seeded estate, a subcontractor's QS invited onto one job
+could read all four of the host's projects, all fourteen of the host's people
+with addresses and roles, and the host's Enterprise package at £6,500 a month.
+On a platform where a main contractor's subcontractors are frequently their
+competitors, that is the failure the model has to avoid to be usable.
+
+`Platform.externalScope` now answers what a guest may see — `null` for the
+host's own people, the projects their memberships cover for everybody else. The
+project and portfolio lists filter by it. The staff directory, the seat
+position, the subscription, the sponsorship book and the away-list refuse
+outright: there is no subset of somebody else's employee list or commercial
+position that a guest needs.
+
+The generic entity route `/v1/projects/:projectId/entities/:refType` was the
+same hole by another road — it took the project id from the path and filtered on
+the tenant alone, so a guest could read another project's risks and estimates,
+and the governance chain where memberships, passes and sponsorships live, on one
+URL. It applies the scope now.
+
+### 4 · The host proposed that the sponsor's wallet be uncapped
+
+`overageAllowed` does not raise a sponsorship's limit, it removes it: spend runs
+past the approved allowance against the sponsor's wallet until that wallet is
+empty. It was set by the **host** on the request and inherited on approval, and
+the approval notice never showed it. A host could ask for one ACU "with
+overage", and an administrator glancing at the figure and pressing approve would
+have signed away their balance.
+
+A cross-organisation request can no longer propose it. The sponsor grants
+overage themselves, at approval or later, which is where a decision about
+somebody's own money belongs. A host sponsoring from its own wallet — request
+and approval in one act by one administrator — keeps the flag.
+
+### 5 · A pass could be bought against an appointment that had ended
+
+`purchasePass` checked the tenancy and the project but not whether the person
+was still on the job, and the sweep that expires passes skips memberships that
+are not `ACTIVE`. So a pass on a revoked membership charged the host every month
+for authority nobody held, and nothing would ever have ended it.
+
+### What is reported and not fixed
+
+- **Tokens are not revoked when an identity is deactivated.** Access tokens live
+  fifteen minutes and refresh tokens longer, and `authorise` reads roles from
+  the token rather than the record — so a withdrawn Controller role keeps
+  working until the token expires. On context-building routes the membership
+  gate closes access on the next request; this is the residue. It is a
+  platform-wide property of the session design rather than something the seat
+  model introduced, and fixing it means revoking sessions on deactivation and
+  on a licence lapse.
+- **The sweep grants withheld Controller roles on an unverified email.** If a
+  host declines to buy a pass, a third party can buy a Solo tenancy, create an
+  identity with the same email address, and the hourly sweep will grant the
+  withheld roles. Bounded — the sweep only ever lifts roles the host originally
+  requested, so a participant cannot self-elevate — but it overturns a host's
+  explicit refusal, and it should require the host's act.
+- **One paid tenancy can license unlimited host tenancies you also own.** The
+  five-company cap on a group does not apply to an `EXTERNAL_INVITEE`
+  relationship. Deliberate for the case the model is for; abusable by somebody
+  who owns both ends.

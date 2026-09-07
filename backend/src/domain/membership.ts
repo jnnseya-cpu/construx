@@ -1,6 +1,6 @@
 import { DomainError, ForbiddenError, NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { CONTROLLER_PASS } from '../billing/seats.ts';
+import { CONTROLLER_PASS, portableControllerLicence } from '../billing/seats.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { groupOfTenant, membershipsByEmail } from '../group/directory.ts';
 import {
@@ -235,7 +235,12 @@ export function checkLicence(
   const seated = elsewhere.find((membership) => {
     const subscription = platform.subscription(membership.tenantId);
     return (
+      // Four conditions, and the last of them is what stops this being a way
+      // to mint Controller authority out of nothing. A seat only travels if
+      // somebody is paying for it: the free Trial confers no licence on
+      // anybody's project, however the tenancy holding it was created.
       subscription.status === 'ACTIVE' &&
+      portableControllerLicence(subscription.package) &&
       subscription.assignedIdentities.includes(membership.userId) &&
       accessClassOf(membership.roles as Role[]) === 'CONTROLLER'
     );
@@ -569,6 +574,20 @@ export function purchasePass(
   const at = now.toISOString();
 
   if (input.reason.trim().length < 10) throw new DomainError('REASON_REQUIRED', 'Say why the pass is being bought, in a sentence the invoice can carry');
+  // A pass buys authority for somebody who is here. Bought against an
+  // appointment that has ended it charges the host every month for authority
+  // nobody holds — and the sweep that expires passes skips memberships that
+  // are not ACTIVE, so nothing would ever end it. `requireHostMembership`
+  // checks the tenancy and the project; it does not check that the person is
+  // still on the job.
+  if (membership.status !== 'ACTIVE' && membership.status !== 'PENDING') {
+    throw new DomainError(
+      'MEMBERSHIP_ENDED',
+      `${membership.person.name}'s appointment to this project is ${membership.status.toLowerCase()}. A pass would be ` +
+        'charged every month for authority nobody holds.',
+      409,
+    );
+  }
   if (membership.accessClass !== 'CONTROLLER') {
     throw new DomainError('PROJECT_PASS_NOT_REQUIRED', `${membership.person.name} is a participant here and takes no seat. There is nothing to buy.`, 422);
   }

@@ -469,6 +469,29 @@ function operatorOnly(ctx: RequestContext, action: string): void {
 }
 
 /**
+ * A tenant-scoped read that is the host's own business, not a guest's.
+ *
+ * The membership gate confines somebody invited from another organisation to
+ * the project they were invited onto — but only where the request names a
+ * project. A tenant-scoped read names none, so the gate had nothing to check
+ * and every one of them answered a guest in full.
+ *
+ * Used where there is no correct subset to return: the host's staff directory
+ * and the host's commercial position are theirs, and an invitation onto one
+ * job is not a share in either. Where a subset *is* right — the projects and
+ * portfolios the guest actually works on — the handler filters instead, and
+ * `Platform.externalScope` is what it filters by.
+ */
+function externalsRefused(platform: Platform, actor: AuthContext, what: string): void {
+  if (platform.externalScope(actor)) {
+    throw new ForbiddenError(
+      `You are on this organisation's project as a guest, and ${what} is not part of that.`,
+      'EXTERNAL_MEMBER_SCOPE',
+    );
+  }
+}
+
+/**
  * A context for work that happens before a project exists — the pipeline.
  * Bound to the tenant's governance chain rather than to a project id.
  */
@@ -4516,6 +4539,12 @@ export const ROUTES: Route[] = [
       // parameter: a tenant id in the path would be an invitation to pass
       // somebody else's.
       const actor = auth(ctx);
+      // Not for a guest. This is the host's staff directory — every name,
+      // address and role in the business — and an invitation onto one project
+      // is not a reason to hold it. Refused rather than filtered: there is no
+      // subset of somebody else's employee list that a subcontractor needs,
+      // and the people on their own project reach them through the project.
+      externalsRefused(platform, actor, 'the people directory of this organisation');
       return {
         users: platform.users(actor.tenantId).map((user) => ({
           id: user.id,
@@ -4822,7 +4851,15 @@ export const ROUTES: Route[] = [
     pattern: '/v1/acu-sponsorships',
     readOnly: true,
     description: 'Who pays for whose AI: the sponsorships this organisation has been asked to fund or has funded, and the ones it has raised as a host',
-    handler: (platform, ctx) => sponsorshipPosition(platform, authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId),
+    handler: (platform, ctx) => {
+      // Who this organisation funds and who it has asked to pay — every
+      // external person's allowance, usage and reason, and the name of every
+      // organisation on the other side of a request. A guest is one of the
+      // subjects of this book, not a reader of it.
+      const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      externalsRefused(platform, actor, 'who this organisation funds and who it has asked to pay');
+      return sponsorshipPosition(platform, actor.tenantId);
+    },
   },
   {
     method: 'POST',
@@ -4930,7 +4967,11 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'This organisation’s people on other organisations’ projects, and what it has been asked to pay for each — the home side of an invitation',
     handler: (platform, ctx) => {
+      // The home side: this organisation's own people out on other firms'
+      // projects. A guest reading it would learn which of the host's staff are
+      // working for the host's clients and competitors.
       const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      externalsRefused(platform, actor, 'where this organisation’s own people are working');
       return { memberships: externalMembershipsOf(platform, actor.tenantId), ...sponsorshipPosition(platform, actor.tenantId) };
     },
   },
@@ -6384,6 +6425,11 @@ export const ROUTES: Route[] = [
     description: 'Seats held by this tenant against what the package charges',
     handler: (platform, ctx) => {
       const actor = auth(ctx);
+      // What the host pays and how many seats they hold is the host's
+      // commercial position, and a guest is frequently their subcontractor or
+      // their competitor. `/v1/billing/wallet` already answers a guest with
+      // their own sponsored position; this one has nothing to offer them.
+      externalsRefused(platform, actor, 'what this organisation pays for its seats');
       const subscription = platform.subscription(actor.tenantId);
       const rolesByUser = new Map(platform.users(actor.tenantId).map((u) => [u.id, u.roles]));
       const bought = purchasedSeatEntitlements(platform.ledger, actor.tenantId);
@@ -8374,9 +8420,22 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/portfolios',
     description: 'List portfolios for the tenant',
-    handler: (platform, ctx) => ({
-      portfolios: structure.livePortfolios(platform.ledger, auth(ctx).tenantId).map((r) => r.state),
-    }),
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const scope = platform.externalScope(actor);
+      const all = structure.livePortfolios(platform.ledger, actor.tenantId).map((r) => r.state as { id: string });
+      if (!scope) return { portfolios: all };
+      // The portfolios their own projects sit in, so the console can group
+      // what they are allowed to see — never the shape of the host's estate.
+      const theirs = new Set(
+        structure
+          .liveProjects(platform.ledger, actor.tenantId)
+          .map((r) => r.state as { id: string; portfolioId: string })
+          .filter((project) => scope.projectIds.includes(project.id))
+          .map((project) => project.portfolioId),
+      );
+      return { portfolios: all.filter((portfolio) => theirs.has(portfolio.id)) };
+    },
   },
   {
     method: 'POST',
@@ -8478,9 +8537,15 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/projects',
     description: 'List projects for the tenant',
-    handler: (platform, ctx) => ({
-      projects: structure.liveProjects(platform.ledger, auth(ctx).tenantId).map((r) => r.state),
-    }),
+    handler: (platform, ctx) => {
+      // A guest sees the projects they were invited onto and no others. The
+      // list named no project, so the membership gate had nothing to check and
+      // an external quantity surveyor could read the host's whole portfolio.
+      const actor = auth(ctx);
+      const scope = platform.externalScope(actor);
+      const live = structure.liveProjects(platform.ledger, actor.tenantId).map((r) => r.state as { id: string });
+      return { projects: scope ? live.filter((project) => scope.projectIds.includes(project.id)) : live };
+    },
   },
   {
     method: 'POST',
@@ -10954,6 +11019,23 @@ export const ROUTES: Route[] = [
       const classification = classifyEntity(refType);
       if (!classification) {
         throw new NotFoundError(`No entity type named ${refType}`);
+      }
+
+      // The membership gate, which this route reached around.
+      //
+      // The typed project routes build a context through `platform.context`,
+      // which confines a guest to the project their membership names. This one
+      // takes the project id straight from the path and filters on the tenant
+      // alone — so an external member of project A could read project B's
+      // risks, estimates and memberships, and the host's governance chain with
+      // them, by asking for a different id on this one URL. The confinement the
+      // rest of the model rests on had a way around it.
+      const scope = platform.externalScope(actor);
+      if (scope && !scope.projectIds.includes(projectId)) {
+        throw new ForbiddenError(
+          'You are not a member of this project',
+          projectId === `${actor.tenantId}-governance` ? 'EXTERNAL_MEMBER_SCOPE' : 'PROJECT_PERMISSION_DENIED',
+        );
       }
 
       const decision = evaluateAccess(
@@ -20851,6 +20933,9 @@ export const ROUTES: Route[] = [
     description: 'The subscription: its status, what it may do, every period charged, and how an unpaid one can be paid',
     handler: (platform, ctx) => {
       const actor = authoriseTenant(ctx, 'BILLING_ACU', 'R');
+      // The host's package, status and every charge raised against it. Not a
+      // guest's, for the same reason the seat position is not.
+      externalsRefused(platform, actor, 'what this organisation is charged');
       const subscription = platform.subscription(actor.tenantId);
       const charges = collection.chargesFor(platform, actor.tenantId);
       const due = charges.filter((charge) => charge.status === 'DUE');

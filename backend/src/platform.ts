@@ -1046,6 +1046,32 @@ export class Platform {
     if (input.reason.trim().length < 10) {
       throw new DomainError('ROLE_CHANGE_UNEXPLAINED', 'Say why the roles are changing');
     }
+    // A guest's roles are the membership's to set, never this route's.
+    //
+    // This was the third door into an external identity's roles and the only
+    // one with no rule behind it. `inviteToProject` withholds Controller roles
+    // without a licence; `changePermissions` refuses to make a guest an
+    // administrator and re-resolves the licence. This one checked neither —
+    // and because `#applyRoles` passes `licensedElsewhere` for an external
+    // identity, `assignIdentity` skipped the seat charge on the way past.
+    //
+    // So an administrator could take somebody invited onto one project as a
+    // designer and hand them ENTERPRISE_ADMIN and OWNER: unlicensed,
+    // unbilled, unrecorded on the membership, with the governance authority to
+    // revoke the host's own people, approve sponsorships against the host's
+    // wallet and buy passes. A project invitation became a tenancy takeover,
+    // and `seatDashboard` went on counting them as a free participant because
+    // `accessClass` never moved.
+    //
+    // Membership changes go through `changePermissions`, which does the
+    // licence resolution and writes what it decided.
+    if (user.external) {
+      throw new ForbiddenError(
+        `${user.name} is here on a project membership from another organisation. Their roles are set by changing that ` +
+          'membership, which resolves the licence and says who pays — not by editing the identity directly.',
+        'EXTERNAL_ROLES_VIA_MEMBERSHIP',
+      );
+    }
 
     return this.#applyRoles(user, input.roles, input.reason, { refType: 'User', refId: actor.actorId }, 'WEB');
   }
@@ -1446,6 +1472,34 @@ export class Platform {
    * host's by default, and never anybody's without an approved sponsorship,
    * which is refused here as a 402 with the reason.
    */
+  /**
+   * What an identity is allowed to see of the tenancy it is signed into.
+   *
+   * `null` for the host's own people: the tenancy is theirs and every
+   * tenant-scoped read answers in full. For somebody invited in from another
+   * organisation it is the projects their memberships actually cover, and that
+   * distinction had teeth it was not using.
+   *
+   * `#externalMemberGate` confines a guest to one project when the project is
+   * *named in the request*. It could not confine a read that names no project
+   * at all, and the tenant-scoped reads name none — so a subcontractor's
+   * quantity surveyor invited onto a single job could list every project the
+   * host was running, every person the host employed with their address and
+   * roles, and the host's package and monthly commitment. On a platform where
+   * a main contractor's subcontractors are also their competitors, that is the
+   * confidentiality failure the whole cross-organisation model has to avoid to
+   * be usable at all.
+   *
+   * The membership already carried `scope: 'PROJECT'` for exactly this. It was
+   * written on every record and read by nothing.
+   */
+  externalScope(auth: AuthContext): { projectIds: string[] } | null {
+    const user = this.#users.get(auth.actorId);
+    if (!user?.external) return null;
+    const live = membershipsOfUser(this, auth.tenantId, auth.actorId).filter((membership) => membershipInForce(membership));
+    return { projectIds: [...new Set(live.map((membership) => membership.projectId))] };
+  }
+
   spendingWalletFor(auth: AuthContext, projectId: string): { wallet: ACUWallet; sharedFrom: { tenantId: string; name: string } | null } {
     const position = this.acuPositionFor(auth, projectId, null);
     if (position === null) return this.spendingWallet(auth.tenantId);

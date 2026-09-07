@@ -149,8 +149,30 @@ describe('an external invitee is on the project, not running the business', () =
     }
   });
 
-  it('allows the same roles internally, because that is an ordinary appointment', () => {
-    assert.ok(invitation.inviteToProject(platform, as('pm'), someone({ roles: ['OWNER'] })).invitationId);
+  it('will not let somebody invite an administrator in above themselves, internally either', () => {
+    // This narrows a behaviour that used to be allowed, and the old behaviour
+    // was the loophole. A project manager could invite an address as OWNER,
+    // accept the invitation themselves — an invitation is accepted by whoever
+    // holds the project, not only by its subject — and sign in as an
+    // administrator of the tenancy. Creating an identity and changing an
+    // identity's roles both require ENTERPRISE_ADMIN precisely to stop that;
+    // invitation was the third door and had no such rule.
+    throwsCode(
+      () => invitation.inviteToProject(platform, as('pm'), someone({ roles: ['OWNER'] })),
+      'INVITE_EXCEEDS_OWN_ROLES',
+    );
+  });
+
+  it('still lets an administrator appoint one, which is the ordinary case', () => {
+    assert.ok(invitation.inviteToProject(platform, as('admin'), someone({ roles: ['OWNER'] })).invitationId);
+  });
+
+  it('still lets anybody staff their project with roles they do not hold themselves', () => {
+    // The rule is about administration, not about staffing: a project manager
+    // appoints quantity surveyors, designers and supervisors and is none of
+    // them. Narrowing that would have broken the product to close a hole.
+    assert.ok(invitation.inviteToProject(platform, as('pm'), someone({ roles: ['QS'] })).invitationId);
+    assert.ok(invitation.inviteToProject(platform, as('pm'), someone({ roles: ['DESIGNER'] })).invitationId);
   });
 });
 

@@ -318,6 +318,22 @@ export function requestSponsorship(
 
   const requester = { tenantId: ctx.tenantId, userId: ctx.auth.actorId, name: personName(platform, ctx.auth.actorId) };
   const host = input.sponsorType === 'HOST_ORGANISATION';
+
+  // Overage is the sponsor's to grant, never the asker's to propose.
+  //
+  // `overageAllowed` does not raise the limit — it removes it. Spend continues
+  // past the approved allowance against the sponsor's wallet until that wallet
+  // is empty, which is the whole of the protection this record exists to give.
+  //
+  // Asking for it is therefore an offer the beneficiary writes and the payer
+  // is invited to wave through: a host could request one ACU with overage on,
+  // and an administrator glancing at "1 ACU" and pressing approve would have
+  // signed away their balance. `decideSponsorship` lets the sponsor turn it on
+  // themselves, at approval or later, which is where the decision belongs.
+  //
+  // The host sponsoring from its own wallet is a different act by the same
+  // administrator — request and approval in one — so it keeps the flag.
+  const overageAllowed = host && input.overageAllowed === true;
   const sponsorship: AcuSponsorship = {
     id: ulid(),
     tenantId: sponsorTenantId,
@@ -329,7 +345,7 @@ export function requestSponsorship(
     authorisationType: input.authorisationType,
     workflow: input.authorisationType === 'ONE_TIME_EXECUTION' ? input.workflow!.trim() : null,
     maximumMinor: input.maximumMinor,
-    overageAllowed: input.overageAllowed === true,
+    overageAllowed,
     requestedBy: requester,
     requestedAt: at,
     reason: input.reason,

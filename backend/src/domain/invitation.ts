@@ -190,20 +190,79 @@ export function inviteToProject(
     );
   }
 
-  if (input.external) {
-    if (!input.organisation?.trim()) {
-      throw new DomainError('INVITATION_ORGANISATION_REQUIRED', 'An external invitee has to say which organisation they are with', 422, [
-        { field: 'organisation', message: 'Name the company this person works for' },
-      ]);
-    }
-    const forbidden = input.roles.filter((role) => INTERNAL_ONLY_ROLES.includes(role));
-    if (forbidden.length > 0) {
-      throw new ForbiddenError(
-        `${forbidden.join(' and ')} cannot be given to somebody outside the organisation. ` +
-          'Those roles administer the tenancy — they grant roles, change the package and reach the money.',
-        'EXTERNAL_CANNOT_ADMINISTER',
-      );
-    }
+  // Nobody invites an administrator in above themselves.
+  //
+  // Staffing a project with roles the inviter does not hold is the ordinary
+  // case and stays allowed: a project manager appoints quantity surveyors,
+  // designers and supervisors, and is none of them. The escalation is narrower
+  // and was completely open — the only test was `worksOnProject`, which any
+  // delivery role passes.
+  //
+  // So a site supervisor could invite an address they owned as ENTERPRISE_ADMIN
+  // and OWNER, accept the invitation themselves (an invitation is accepted by
+  // whoever holds the project, not only by its subject), and sign in as an
+  // administrator of the tenancy. That walked around both guards written to
+  // stop exactly this: creating an identity and changing an identity's roles
+  // each require ENTERPRISE_ADMIN. Invitation was the third door.
+  //
+  // These two roles administer the tenancy — they grant roles, change the
+  // package and reach the money — so handing one on requires holding it.
+  const administrative = input.roles.filter((role) => INTERNAL_ONLY_ROLES.includes(role));
+
+  // Never to somebody outside the business, whoever is inviting. Checked
+  // before the rule below so an external invite gets the refusal that names
+  // the actual reason, and checked outside the `external` branch further down
+  // because that branch is entered on a boolean the *caller* supplies — an
+  // inviter who simply said `external: false` about somebody outside the
+  // organisation skipped the guard entirely, which is the one thing it existed
+  // to prevent.
+  if (input.external && administrative.length > 0) {
+    throw new ForbiddenError(
+      `${administrative.join(' and ')} cannot be given to somebody outside the organisation. ` +
+        'Those roles administer the tenancy — they grant roles, change the package and reach the money.',
+      'EXTERNAL_CANNOT_ADMINISTER',
+    );
+  }
+
+  // And nobody invites an administrator in above themselves.
+  //
+  // Staffing a project with roles the inviter does not hold is the ordinary
+  // case and stays allowed: a project manager appoints quantity surveyors,
+  // designers and supervisors, and is none of them. The escalation is narrower
+  // and was completely open — the only test was `worksOnProject`, which any
+  // delivery role passes.
+  //
+  // So a site supervisor could invite an address they owned as OWNER, accept
+  // the invitation themselves (an invitation is accepted by whoever holds the
+  // project, not only by its subject), and sign in as an administrator of the
+  // tenancy. That walked around both guards written to stop exactly this:
+  // creating an identity and changing an identity's roles each require
+  // ENTERPRISE_ADMIN. Invitation was the third door, and it was open.
+  //
+  // This narrows a behaviour that used to be allowed: a project manager could
+  // appoint an OWNER internally. That was the loophole rather than a feature —
+  // the two roles here grant roles, change the package and reach the money, so
+  // handing one on requires holding it.
+  // Who may hand one on: somebody who administers identities, or somebody who
+  // already holds the role being granted. `ENTERPRISE_ADMIN` is the gate the
+  // rest of the platform uses for exactly this — creating an identity and
+  // changing an identity's roles both require it — so the invitation door now
+  // agrees with the other two instead of standing open beside them.
+  const unheld = administrative.filter((role) => !ctx.auth.roles.includes(role));
+  if (unheld.length > 0 && !ctx.auth.roles.includes('ENTERPRISE_ADMIN')) {
+    throw new ForbiddenError(
+      `You cannot invite somebody as ${unheld.join(' or ')}. ${unheld.join(' and ')} ` +
+        `administer${unheld.length === 1 ? 's' : ''} the tenancy — granting roles, changing the package and reaching ` +
+        `the money — so it takes an administrator, or somebody who holds the role already. You hold ` +
+        `${ctx.auth.roles.join(', ')}.`,
+      'INVITE_EXCEEDS_OWN_ROLES',
+    );
+  }
+
+  if (input.external && !input.organisation?.trim()) {
+    throw new DomainError('INVITATION_ORGANISATION_REQUIRED', 'An external invitee has to say which organisation they are with', 422, [
+      { field: 'organisation', message: 'Name the company this person works for' },
+    ]);
   }
 
   // The firm a supplier sign-in belongs to. Refused where the register does
