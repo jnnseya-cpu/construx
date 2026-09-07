@@ -637,6 +637,26 @@ export class GoldenThreadLedger {
     return this.#seenEventIds.has(eventId);
   }
 
+  /**
+   * How many events this project's stream holds — its head, and the version the
+   * next event will take.
+   *
+   * Published because a position is not a length. A device holding a cursor
+   * knows where it is and cannot tell three events behind from nine thousand,
+   * which on a site connection is the difference between finishing the pull now
+   * and going to find signal. The head answers that in one number, with no
+   * second round trip.
+   *
+   * It is also the one value that must never go backwards. If it does, the
+   * stream a device is following is not the stream it was following — a restore
+   * from an older snapshot, or a promotion of a follower that was behind — and
+   * a device that could not see that would sit quietly believing it was
+   * current.
+   */
+  streamVersion(projectId: string): number {
+    return this.#streamVersions.get(projectId) ?? 0;
+  }
+
   get(ref: EntityRef): EntityRecord | undefined {
     return this.#entities.get(entityKey(ref));
   }

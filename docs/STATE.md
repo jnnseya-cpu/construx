@@ -7165,6 +7165,48 @@ set. Whole-file upload is unaffected.
 
 ---
 
+### How far behind a device is — §15.3
+
+The pull answered *where* a device was and never *how far there was to go*. The
+cursor is a position — a timestamp and an event id — and `hasMore` is a boolean
+about the next page, so a phone three events behind and a phone nine thousand
+behind received identical answers. On a site gate's signal that is the
+difference between finishing the pull now and going to find coverage before the
+shift ends, and the device had no way to make the decision.
+
+`GoldenThreadLedger.streamVersion(projectId)` publishes the head — the length of
+the project's stream, and the version the next event will take. It was already
+maintained (`#streamVersions`, rebuilt by counting on every replay); it had no
+reader outside the ledger. The pull now returns two numbers:
+
+- **`streamVersion`** — where this page leaves the device. Absent when the page
+  handed over nothing, because the device did not move and a number for a move
+  that did not happen would be a claim.
+- **`streamHead`** — how long the stream is now. `streamHead - streamVersion` is
+  the backlog, in events, and it is the number a device actually acts on.
+
+**Taken from the page, not from the visible events**, which is the part that
+would have been quietly wrong. A subcontractor seat receives most of a project
+as envelopes without content; reporting the position of the last event it may
+*read* would have told that seat it was permanently behind by every event it is
+not entitled to see, and it would have pulled for ever. Pinned by a test driven
+through a real `SUPPLIER` seat with content genuinely withheld.
+
+**The head is the one value that must never go backwards.** A head lower than
+the one a device last saw means the stream it is following is not the stream it
+was following — a restore from an older snapshot, or a follower promoted while
+behind. Until now a device in that position would have sat quietly believing it
+was current. This is the same coordinate system the offline pack's
+`streamCursor` uses, so a device that activates a pack knows where in the stream
+to resume from.
+
+Five tests, added to the stream-version file rather than a new one. The console
+door is the existing sync-cursor panel on Golden Thread, which now shows the
+position, the head, whether more is waiting and how much arrived as an envelope
+only.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

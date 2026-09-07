@@ -309,7 +309,16 @@ export async function audit(root) {
           'record that exists on a handset and nowhere else.',
         data: sync,
         error: sync?.error,
-        sections: [{ key: 'events', label: 'Since the cursor', empty: 'A device pulling now would receive nothing new.' }],
+        sections: [
+          { key: 'events', label: 'Since the cursor', empty: 'A device pulling now would receive nothing new.' },
+          // A position and a length. "Since the cursor" alone said how much this
+          // page held, not how far there was to go — so a project mid-catch-up
+          // and a project fully current read the same.
+          { key: 'streamVersion', label: 'Where this page leaves the device' },
+          { key: 'streamHead', label: 'Events on this project’s stream' },
+          { key: 'hasMore', label: 'More waiting after this page' },
+          { key: 'withheldCount', label: 'Received as an envelope only' },
+        ],
       })}
 
       ${graphPanel(graph)}

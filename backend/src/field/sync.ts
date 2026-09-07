@@ -116,6 +116,30 @@ export type SyncPullResult = {
    * without guessing.
    */
   withheldCount: number;
+  /**
+   * Where this page leaves the device in the project's stream — §15.3.
+   *
+   * The cursor says *where* the device is; this says *how far along*. Absent on
+   * a pull that handed over nothing, because the device's position did not
+   * move and inventing a number for it would be a claim.
+   */
+  streamVersion?: number;
+  /**
+   * How long the project's stream is now.
+   *
+   * `streamHead - streamVersion` is exactly how many events the device is
+   * behind. `hasMore` said only whether there was another page, so a phone on a
+   * site gate's signal could not tell three events behind from nine thousand —
+   * which is the difference between finishing the pull now and going to find
+   * signal before the shift ends.
+   *
+   * It is also the value that must never go backwards. A head lower than the
+   * one a device last saw means the stream it is following is not the stream it
+   * was following — a restore from an older snapshot, or a follower promoted
+   * while behind — and a device that could not see that would sit quietly
+   * believing it was current.
+   */
+  streamHead: number;
 };
 
 /**
@@ -493,12 +517,20 @@ export class SyncEngine {
     // re-offering them on the next pull would loop forever.
     const seen = visiblePage(auth, projectId, page);
 
+    // Taken from `page`, not from `seen.events`: a withheld event still moved
+    // the device's position, and reporting the last *visible* one would tell a
+    // subcontractor seat it was permanently behind by however many events it is
+    // not entitled to read.
+    const position = page[page.length - 1]?.streamVersion;
+
     return {
       events: seen.events,
       withheldCount: seen.withheldCount,
       cursor,
       hasMore: all.length > page.length,
       serverTime: new Date().toISOString(),
+      ...(position === undefined ? {} : { streamVersion: position }),
+      streamHead: this.#ledger.streamVersion(projectId),
     };
   }
 

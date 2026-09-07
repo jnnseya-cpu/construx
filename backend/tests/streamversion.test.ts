@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { replayProject } from '../src/goldenthread/replay.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -130,5 +131,95 @@ describe('the stream version', () => {
 
     const seen = restored.events({ projectId: seed.projectId });
     assert.equal(seen.at(-1)?.streamVersion, seen.length, 'the last event is not numbered for the whole stream');
+  });
+});
+
+/**
+ * The stream version on the pull — §15.3.
+ *
+ * A cursor is a *position*. It says where a device is and nothing about how far
+ * there is to go, and `hasMore` said only "another page exists" — so a phone
+ * three events behind and a phone nine thousand behind read the same, which on
+ * a site gate's signal is the difference between finishing the pull now and
+ * going to find coverage before the shift ends.
+ *
+ * Two numbers close that, and the second one is the one that would be quietly
+ * wrong. `streamVersion` is where this page leaves the device; `streamHead` is
+ * how long the stream is. The difference is the backlog, in events.
+ *
+ * The trap is the withheld page. A subcontractor seat receives most events as
+ * envelopes without content, and reporting the position of the last *visible*
+ * event would tell that seat it was permanently behind by however many events
+ * it is not entitled to read — a device that would then pull for ever.
+ */
+describe('the stream version on a pull', () => {
+  it('says where the page leaves the device and how far the stream goes', () => {
+    const page = platform.sync.pull(seed.users.pm!.auth, seed.projectId, 'stream-device', undefined, 5);
+    assert.equal(page.streamHead, platform.ledger.streamVersion(seed.projectId));
+    assert.ok(page.streamVersion !== undefined, 'a page that handed over events has a position');
+    assert.equal(page.streamVersion, 5, 'five events in, the device is at version five');
+    assert.equal(page.hasMore, page.streamVersion < page.streamHead);
+
+    // The backlog, which is the number the device actually acts on.
+    assert.equal(page.streamHead - page.streamVersion, page.streamHead - 5);
+  });
+
+  it('advances to the head as the device catches up', () => {
+    let cursor: string | undefined;
+    let last = 0;
+    for (let round = 0; round < 400; round += 1) {
+      const page = platform.sync.pull(seed.users.pm!.auth, seed.projectId, 'catchup-device', cursor, 50);
+      if (page.streamVersion !== undefined) {
+        assert.ok(page.streamVersion > last, 'a page must move the device forward, never back');
+        last = page.streamVersion;
+      }
+      cursor = page.cursor;
+      if (!page.hasMore) break;
+    }
+    assert.equal(last, platform.ledger.streamVersion(seed.projectId), 'a caught-up device is at the head');
+  });
+
+  it('reports the position of the last event on the page, not the last one the caller may read', () => {
+    // The trap. Driven through a seat that has most of the project withheld: if
+    // the position were taken from the visible events, this device would be
+    // told it was behind by every event it is not entitled to see and would
+    // pull for ever.
+    const supplier = platform.createUser({
+      tenantId: seed.tenantId,
+      name: 'Pennine Groundworks',
+      email: `stream-sub-${Math.random().toString(36).slice(2)}@pennine.test`,
+      roles: ['SUPPLIER'],
+    });
+    const person = platform.user(supplier.id);
+    const auth = verifyToken(
+      issueTokens({
+        actorId: person.id,
+        tenantId: person.tenantId,
+        partyId: person.partyId,
+        roles: person.roles,
+        mfaSatisfied: true,
+      }).accessToken,
+    );
+
+    const page = platform.sync.pull(auth, seed.projectId, 'withheld-device', undefined, 5000);
+    assert.ok(page.withheldCount > 0, 'this seat does have content withheld from it');
+    assert.equal(page.streamVersion, page.streamHead, 'a full pull leaves even a restricted seat at the head');
+    assert.equal(page.hasMore, false);
+  });
+
+  it('reports no position at all when it handed over nothing', () => {
+    // Caught up. The device did not move, and inventing a number for where it
+    // moved to would be a claim about something that did not happen.
+    const first = platform.sync.pull(seed.users.pm!.auth, seed.projectId, 'idle-device', undefined, 5000);
+    const again = platform.sync.pull(seed.users.pm!.auth, seed.projectId, 'idle-device', first.cursor, 5000);
+    assert.equal(again.events.length, 0);
+    assert.equal(again.streamVersion, undefined);
+    assert.equal(again.streamHead, platform.ledger.streamVersion(seed.projectId), 'the head is still reported');
+  });
+
+  it('is zero for a project with no stream at all, rather than absent', () => {
+    // A number a device can compare against is worth more than a missing field
+    // it has to special-case, and zero is the true length of an empty stream.
+    assert.equal(platform.ledger.streamVersion('a-project-that-does-not-exist'), 0);
   });
 });
