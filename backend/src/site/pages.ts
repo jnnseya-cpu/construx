@@ -668,9 +668,11 @@ export function developers(): string {
 
     <h2>Communication events</h2>
     <p>
-      ${f.commsEvents} notification events across ${f.commsCategories} categories, fanning out over email, in-app, SMS,
-      push and WhatsApp. ${f.mandatoryNotices} of them are mandatory and override a recipient's preferences, because a
-      person is entitled to be told their account was locked whatever they have muted.
+      ${f.commsEvents} notification events across ${f.commsCategories} categories. Two channels carry them today —
+      email and in-console — and three more are catalogued with no carrier configured: a notice routed to SMS, push or
+      WhatsApp is recorded as dispatched and not transmitted rather than quietly dropped, and the delivery record says
+      so. ${f.mandatoryNotices} of the events are mandatory and override a recipient's preferences, because a person is
+      entitled to be told their account was locked whatever they have muted.
     </p>
 
     <h2>Files in, records out</h2>
@@ -1252,7 +1254,10 @@ export function privacy(): string {
 
     <h2>Communication</h2>
     <p>
-      The platform sends across email, in-app, SMS and push. Most of it is subject to your preferences, which you set
+      The platform delivers by email and in the console. SMS, push and WhatsApp are in the notification catalogue and
+      have no carrier behind them on this deployment: a notice routed to one of those is recorded as dispatched and
+      not transmitted, and you can see that on your own delivery record rather than having to infer it from silence.
+      Most of what is sent is subject to your preferences, which you set
       per category and per channel. A defined set of notices is not: security events, payment failures, compliance
       breaches, and data-protection notices such as a deletion request. You are entitled to be told your account was
       locked whatever you have muted, and a preference control that could suppress that would be a control that harms

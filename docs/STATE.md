@@ -7321,6 +7321,80 @@ already decided that — it changes what it tells the person pressing the button
 
 ---
 
+### Gate 1: the restore rehearsed, the runbook walked, the public pages checked
+
+Three things a release candidate is supposed to have done rather than intend.
+
+**The restore is rehearsed and timed.** `deploy/restore-drill.sh` boots a
+container, and the runbook has always said plainly that it has never been run —
+no Docker in the build sandbox. That is honest and it is not a rehearsal, and a
+backup nobody has restored is a backup nobody has.
+`backend/tests/restoredrill.test.ts` now runs the half that decides whether the
+record survives, on every test run: a real backup ships to an object store,
+comes back part by part, each file is reassembled *in order* and checked against
+the manifest's hash — the runbook's own `cat … part-*` and `sha256sum -c -`, in
+code, so a drift between the documented procedure and the shipped format fails
+here rather than at 3am — and a ledger boots from the result with the same event
+count, the same chain head and the same entity state hashes.
+
+```
+# restore drill: 700 events, 2 files, 1277KB, reassembled and replayed in 146ms
+```
+
+That number is the floor the platform contributes, not a recovery time: it
+excludes provisioning a host, pulling an image and a real network. The same run
+pins the two refusals an operator depends on — a journal with an event removed
+from the middle does not replay, and a torn final line leaves everything before
+it intact.
+
+**The runbook is walked, executably, and it found two real defects.** A runbook
+is read once, at 3am, by somebody who did not write it. Its failure mode is not
+being wrong when written but being right when written and wrong now, and nothing
+about an ordinary change announces that a procedure has stopped describing the
+platform. `backend/tests/runbook.test.ts` asserts every load-bearing *name*: each
+`SHOUTED_NAME` in backticks is either a setting this deployment reads or a code
+this platform raises, never neither; every path it tells an operator to curl
+resolves to a route; every `deploy/` file it names exists. What it found:
+
+- **The failover path named a variable that does not exist.** Standing up a
+  warm standby, the runbook said a token minted by the primary works on the
+  follower "because the two share `AUTH_JWT_SECRET`". The platform has never
+  read that name. An operator following it would have brought the standby up on
+  a different signing key and had every session from the primary refused — the
+  exact opposite of what the sentence promises, discovered during a failover.
+  It is `GATEWAY_JWT_SECRET`.
+- **A boot-error table taught a code nothing raises.** `JOURNAL_STATE_MISMATCH`
+  sat beside two genuine refusals, so it was wrong twice: an operator grepping
+  a log for that string finds nothing, and the placement implied a refusal where
+  the platform actually boots, takes the patched state and reports. The row now
+  carries the message in the words it appears in, and a Boot column separating
+  refuses from continues.
+
+**The public pages claimed a channel with no carrier.** Two pages said the
+platform "sends across email, in-app, SMS and push" and fans out "over email,
+in-app, SMS, push and WhatsApp". Three of those five have no provider —
+`transportFor` answers `sms:no-provider` and the delivery is recorded as
+dispatched-and-not-transmitted. The qualifier existed, on a third page, which is
+not where either sentence was. A customer reading the communication section
+concludes their site manager gets an SMS when a permit expires; they do not, and
+they find out by not being told something. Both sentences now say which two
+channels carry and what happens to the other three, and `sitefacts.test.ts`
+derives the check from `channelStatus()` — so wiring SMS up relaxes it
+automatically and nobody has to remember.
+
+**What the check did not find, and one correction to this file's own history.**
+No public page claims a native app, an app-store listing or a download. And the
+accessibility audit is **done**, not outstanding: it was run against the
+rendered console in a real browser and its failures fixed (see *The
+accessibility audit, actually run* above). A working note in a later session
+recorded §16.5 as never done, which was stale — the public statement and this
+file agree, and both are careful to call it an automated audit at one viewport
+rather than a conformance statement.
+
+Sixteen tests across three files.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

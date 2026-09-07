@@ -287,7 +287,30 @@ Then step 2 above: the `ledger.jsonl*` files onto the volume at
 `LEDGER_JOURNAL_PATH`, `site-media/` into `SITE_MEDIA_PATH`. The evidence is
 already in the object store under its tenancy prefixes and needs no restore.
 
-**Drill it before you need it.** `deploy/restore-drill.sh` takes a backup set,
+**It has been drilled, and timed.** `backend/tests/restoredrill.test.ts` runs
+the procedure below on every test run: a real backup goes to an object store,
+comes back part by part, each file is reassembled in order and checked against
+the manifest's hash, and a ledger boots from the result. It asserts the restored
+record is the same record — same event count, same chain head, same entity state
+hashes — and prints what it took:
+
+```
+# restore drill: 700 events, 2 files, 1277KB, reassembled and replayed in 146ms
+```
+
+That is the fetch, the reassembly, the hash check and the replay. It is not
+the whole recovery: it does not include provisioning a host, pulling the image,
+or the transfer time from a real object store across a real network, and a
+production journal is larger than a seeded one. Treat 146ms as the *floor* the
+platform contributes, and measure the rest on the host the first time the
+script below is run. What it removes is the possibility that a set does not
+restore at all, which is what an untested backup actually risks.
+
+The same run asserts the two refusals an operator depends on: a journal with an
+event removed from the middle does not replay, and a torn final line — a crash
+between the write and the fsync — leaves everything before it intact.
+
+**Drill the container too.** `deploy/restore-drill.sh` takes a backup set,
 boots a second container from the live image against a throwaway volume on a
 port of its own, waits for `/readyz`, reads how many events replayed, and
 removes everything it made. The live container is never touched. Run it after
@@ -304,11 +327,17 @@ it later.
 
 The errors are specific:
 
-| Code | Meaning |
-|---|---|
-| `JOURNAL_CHAIN_BROKEN` | An event is missing, reordered, or the file was altered |
-| `JOURNAL_STATE_MISMATCH` | An event's recorded state hash disagrees with its own patch |
-| `Journal … is corrupt at line N` | Unparseable line that is *not* the last one — real corruption, not a torn write |
+| Code | Boot | Meaning |
+|---|---|---|
+| `JOURNAL_CHAIN_BROKEN` | **refuses** | An event is missing, reordered, or the file was altered |
+| `Journal … is corrupt at line N` | **refuses** | Unparseable line that is *not* the last one — real corruption, not a torn write |
+| `records state hash … but its patch produces …` | continues | An event's recorded after-state hash disagrees with the state its own patch produces, *and its chain hash verifies*. See [State-hash discrepancies on replay](#state-hash-discrepancies-on-replay) — the platform boots, takes the patched state, and reports it |
+
+The third row was tabled as JOURNAL_STATE_MISMATCH until the Gate 1 runbook
+walk. Nothing raises that string, so an operator grepping a log for it would
+have found nothing and concluded the failure was something else — and the row
+sat beside two refusals, implying this one also stops the boot when it does
+not.
 
 ### Clearing what testing left behind
 
@@ -401,7 +430,15 @@ the whole record from the database at boot, then polls the database every
 `LEDGER_FOLLOW_INTERVAL_MS` (default 2000) for what the primary has shipped and
 applies each batch — verifying every hash exactly as a boot does — and rebuilds
 the identities, API keys and branding behind it. It answers every read; a
-token minted by the primary works on it because the two share `AUTH_JWT_SECRET`.
+token minted by the primary works on it because the two share `GATEWAY_JWT_SECRET`.
+(It was written here as AUTH_JWT_SECRET until the Gate 1 runbook walk — no
+backticks on that one, deliberately: it is a variable the platform has never
+read, and the walk asserts that every name in backticks resolves to something
+real. Naming a dead variable as though it were live is the defect, not the
+cure: an operator who set it would have
+stood up a follower on a *different* signing key and every session token from
+the primary would have been refused on it — the exact opposite of what this
+sentence promises, discovered during a failover.)
 It refuses every command with `503 LEDGER_FOLLOWER`, sign-ins included (a
 sign-in records the device it came from), and the ledger itself refuses too, so
 no scheduler on the standby can extend the chain. Its banner says `FOLLOWER`;
@@ -590,7 +627,7 @@ patch beside it cannot reproduce, in two ways. A restarted process held the
 ledger's own state objects in its working maps, and a routine in-place
 change (`user.status = 'SUSPENDED'` on seat revocation) rewrote the
 before-state the next commit diffed against — so the patch omitted the
-change and the hash included it (`JOURNAL_STATE_MISMATCH`, seen on
+change and the hash included it (seen on
 construxvg.com at events 3634–3638, a tenancy closure on a restored
 process). And the hash was taken over the object in memory rather than the
 JSON written, so a `Date` or a `Buffer` in a proposal was hashed as one

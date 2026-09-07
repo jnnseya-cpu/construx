@@ -9,6 +9,7 @@ import { demo, developers, about, getStarted, policies, privacy, terms } from '.
 import { demoInput, renderLanding } from '../src/site/index.ts';
 import { sitemap } from '../src/site/discovery.ts';
 import { config } from '../src/config.ts';
+import { channelStatus } from '../src/notifications/notify.ts';
 
 /**
  * The public site, against the product it describes.
@@ -231,6 +232,59 @@ describe('what a crawler is told about', () => {
     const page = developers();
     for (const term of ['webhook', 'passkey', 'signature scanner']) {
       assert.ok(new RegExp(term, 'i').test(page), `the developers page does not mention ${term}`);
+    }
+  });
+
+  /**
+   * A channel the platform does not carry — the Gate 1 public-pages finding.
+   *
+   * Two pages said the platform "sends across email, in-app, SMS and push" and
+   * fans out "over email, in-app, SMS, push and WhatsApp". Three of those five
+   * have no carrier: `transportFor` answers `sms:no-provider` and the delivery
+   * is recorded as dispatched-and-not-transmitted. The qualifier existed, on a
+   * third page, which is not where either sentence was.
+   *
+   * A customer reading the communication section concludes their site manager
+   * gets an SMS when a permit expires. They do not, and they find out by not
+   * being told something. That is the same defect as a screen showing invented
+   * numbers, in prose.
+   *
+   * Derived from `channelStatus()` rather than a list here, so wiring SMS up
+   * relaxes this automatically and nobody has to remember to.
+   */
+  it('never names a channel as carried unless a carrier is behind it', () => {
+    // Channels with no transport *at all*, not channels whose transport is
+    // unconfigured on this box. Email answers `smtp:unconfigured` in a test
+    // run and `smtp:<host>` in production — that is a deployment setting, and
+    // failing the marketing copy over it would be asserting on the runner
+    // rather than on the product. `sms:no-provider` is the other thing: no
+    // carrier exists to configure.
+    const unwired = channelStatus()
+      .filter((channel) => channel.transport.endsWith(':no-provider'))
+      .map((channel) => channel.channel);
+    assert.ok(unwired.length > 0, 'every channel has a carrier; this assertion has nothing left to protect');
+
+    // The words that make a mention honest. A page may name an unwired channel
+    // as much as it likes — provided it says, near it, that nothing carries it.
+    const qualified = /no carrier|not transmitted|no provider|catalogue|dispatched and not/i;
+
+    for (const [name, page] of [
+      ['privacy', privacy()],
+      ['about', about()],
+      ['terms', terms()],
+      ['get started', getStarted()],
+      ['policies', policies()],
+      ['developers', developers()],
+    ] as const) {
+      for (const channel of unwired) {
+        const spoken = channel === 'INAPP' ? 'in-app' : channel.toLowerCase();
+        const mentions = new RegExp(`\\b${spoken}\\b`, 'i');
+        if (!mentions.test(page)) continue;
+        assert.ok(
+          qualified.test(page),
+          `the ${name} page names ${spoken} and never says nothing carries it — a reader concludes it is delivered`,
+        );
+      }
     }
   });
 });
