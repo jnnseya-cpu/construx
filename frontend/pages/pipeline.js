@@ -94,7 +94,55 @@ const MATRIX_MEANING = {
  * same ACU cost, same events. Rejecting keeps the reading in the record with
  * the reason. Neither is a shortcut around the analyst.
  */
-function ittReadingPanel({ perception, evidence, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
+/** The formats the multimodal reader can be shown. A model that can see needs a picture. */
+const LOOKABLE = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+
+/**
+ * Every held file, and which road reads it as an invitation.
+ *
+ * An ITT arrives in whatever the buyer's portal produces — Word, a spreadsheet,
+ * a CSV of return deliverables, a PDF, a scan. Two roads read it, and which one
+ * applies is a fact about the file rather than a preference:
+ *
+ * - `TEXT` — ingestion got the words out of the bytes. Read on a reasoning
+ *   provider, which most deployments have and which costs less than vision.
+ * - `LOOK` — a scan, or a PDF with no text layer. Only a model that can see.
+ * - `UNREAD` — the bytes are here and nothing has looked at them yet. Ingestion
+ *   is free, deterministic and says what the file actually is, so it goes first
+ *   rather than sending a possibly-renamed executable to a paid model.
+ * - `QUARANTINED` / `UNREADABLE` — no button, and the platform's own reason.
+ *
+ * The decision is made from what the API published about each file. Nothing
+ * here duplicates a rule: `LOOKABLE` is the perception pipeline's own input
+ * list, and every other branch reads the ingestion record's verdict.
+ */
+function heldTenderFiles(evidence, ingestion) {
+  const ingested = new Map((ingestion?.files ?? []).map((file) => [file.hash, file]));
+
+  return (evidence?.entries ?? [])
+    .filter((entry) => entry.held)
+    .map((entry) => {
+      const file = ingested.get(entry.hash);
+      if (!file) return { entry, road: 'UNREAD', says: 'held, not yet looked at' };
+      if (file.status === 'QUARANTINED') {
+        return { entry, file, road: 'QUARANTINED', says: 'quarantined — nothing downstream reads it' };
+      }
+      if (file.extraction?.text) {
+        return {
+          entry,
+          file,
+          road: 'TEXT',
+          says: `${humanise(String(file.kind ?? 'document')).toLowerCase()}, text read from the file itself`,
+        };
+      }
+      if (LOOKABLE.includes(entry.contentType ?? '')) {
+        return { entry, file, road: 'LOOK', says: file.extraction?.reason ?? 'no text layer — a model has to look at it' };
+      }
+      return { entry, file, road: 'UNREADABLE', says: file.extraction?.reason ?? 'nothing here reads this format' };
+    });
+}
+
+function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
   // fixing the wrong thing.
@@ -111,22 +159,32 @@ function ittReadingPanel({ perception, evidence, projectId, projectName, blocked
   const available = perception?.capability?.available === true;
   const published = new Map((perception?.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
   const ittTask = published.get('ITT_REQUIREMENTS');
-  const readable = (evidence?.entries ?? []).filter(
-    (entry) => entry.held && ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(entry.contentType ?? ''),
-  );
   const drafts = (perception?.drafts ?? []).filter((d) => d.task === 'ITT_REQUIREMENTS' && d.status === 'DRAFT');
+  const readable = heldTenderFiles(evidence, ingestion);
 
   return html`
     <div class="card pad0" style="margin-bottom:14px">
       <div style="padding:15px 17px 0">
         <h2>Read an invitation with AI</h2>
         <p class="metric-sub" style="margin-bottom:12px">
-          The invitation as the buyer sent it — a PDF or a scan — read into a compliance matrix, a return register and
-          a commercial assessment. The model is told to quote the document rather than summarise it, to omit anything
-          it does not state rather than infer it, and to list what it left out and why. Nothing it reads reaches the
-          record on its own: a reading is a draft until somebody confirms it, and confirming runs the same commands as
-          typing it in by hand. Filed against <b>${projectName || projectId}</b>.
+          The invitation as the buyer sent it — a Word instruction document, a spreadsheet of return deliverables, a
+          CSV out of a portal, a PDF, a scan — read into a compliance matrix, a return register and a commercial
+          assessment. Where the words are in the bytes the platform reads them itself and the model reasons over the
+          text; where they are a picture of a page, a model that can see is needed. Either way it is told to quote the
+          document rather than summarise it, to omit anything it does not state rather than infer it, and to list what
+          it left out and why. Nothing it reads reaches the record on its own: a reading is a draft until somebody
+          confirms it, and confirming runs the same commands as typing it in by hand. Filed against
+          <b>${projectName || projectId}</b>.
         </p>
+
+        ${
+          !blocked
+            ? html`<div class="actions" style="margin-bottom:12px">
+                <button class="btn" data-upload-tender>Upload a tender document</button>
+                <button class="btn quiet" data-paste-tender>Paste the invitation instead</button>
+              </div>`
+            : ''
+        }
 
         ${
           blocked
@@ -174,16 +232,25 @@ function ittReadingPanel({ perception, evidence, projectId, projectName, blocked
       ${
         !blocked && available
           ? table({
-              headers: ['The document', 'Type', 'Held since', ''],
-              rows: readable.slice(0, 12).map((entry) => [
+              headers: ['The document', 'Type', 'What the platform has read', 'Held since', ''],
+              rows: readable.slice(0, 20).map(({ entry, file, road, says }) => [
                 entry.description,
                 html`<span style="font-size:11.5px;color:var(--text-3)">${entry.contentType}</span>`,
+                html`<span style="font-size:12px;color:var(--text-3)">${says}</span>`,
                 entry.recordedAt ? date(entry.recordedAt) : '—',
-                html`<button class="btn sm" data-read-itt="${entry.hash}">Read this invitation</button>`,
+                road === 'TEXT'
+                  ? html`<button class="btn sm" data-read-itt-text="${file.ingestionId}">Read this invitation</button>`
+                  : road === 'LOOK'
+                    ? html`<button class="btn sm" data-read-itt="${entry.hash}">Read it with a model that can see</button>`
+                    : road === 'UNREAD'
+                      ? html`<button class="btn quiet sm" data-ingest-tender="${entry.hash}" data-name="${entry.description}">
+                          Look at the file first
+                        </button>`
+                      : '',
               ]),
               empty: evidence?.storeConfigured
-                ? 'No invitation document is held against this project yet. Upload the ITT as evidence and it appears here — a hash on its own cannot be read.'
-                : 'This deployment holds no evidence files, so there is nothing to read.',
+                ? 'No tender document is held against this project yet. Upload one above and it appears here — a hash on its own cannot be read.'
+                : 'This deployment holds no evidence files, so there is nothing to read. Paste the invitation instead.',
             })
           : ''
       }
@@ -425,12 +492,16 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence] = projectId
+  const [perception, evidence, ingestion] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
+        // What has been read out of each held file. It decides which road reads
+        // an invitation, and a screen that guessed instead would offer a
+        // vision model a Word document it cannot see.
+        api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
       ])
-    : [null, null];
+    : [null, null, null];
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -552,6 +623,7 @@ export async function pipeline(root) {
       ${ittReadingPanel({
         perception,
         evidence,
+        ingestion,
         projectId,
         projectName: state.project?.name ?? '',
         blocked: readBlocked,
@@ -965,6 +1037,122 @@ export async function pipeline(root) {
   // read. Written out per action rather than assembled from a variable, so each
   // path is a quotable route the door invariant can see.
   root.addEventListener('click', async (event) => {
+    const uploadTender = event.target.closest('[data-upload-tender]');
+    if (uploadTender) {
+      const filed = await command({
+        title: 'Upload a tender document',
+        intent:
+          'A tender pack arrives in whatever the buyer’s portal produces — Word, a spreadsheet, a CSV, a PDF, a ' +
+          'scan. This files the document against the project so its bytes may be stored: it records that a file ' +
+          'with this content arrived as part of this tender, and nothing more. What the document says is read ' +
+          'afterwards, and a person confirms it.',
+        path: `/v1/projects/${projectId}/tender/document`,
+        submitLabel: 'File it',
+        fields: [
+          {
+            name: 'hash',
+            label: 'The document',
+            type: 'file',
+            // The file picker is not the place to argue about formats: the
+            // platform takes the bytes whatever they are, says what it found,
+            // and refuses to *read* what it cannot read — with the reason.
+            voice: false,
+            nameInto: 'filename',
+            hint: 'Hashed in your browser. The hash goes on the record first; the file follows it.',
+          },
+        ],
+      });
+      if (!filed) return;
+      toast(
+        'Filed',
+        `${filed.description}. The file is being stored — refresh in a moment and it can be looked at.`,
+        'ok',
+      );
+      await draw();
+      return;
+    }
+
+    const pasteTender = event.target.closest('[data-paste-tender]');
+    if (pasteTender) {
+      const read = await command({
+        title: 'Paste the invitation',
+        intent:
+          'For the invitation that never arrives as a file: the body of an email, a portal page, a requirements ' +
+          'schedule somebody copied out. The text is read exactly as a document would be, by the same model under ' +
+          'the same instruction to quote rather than summarise, and it produces the same draft for the same person ' +
+          'to confirm. What it does not have is a document behind it, so the reading names where it came from ' +
+          'instead of a file hash — say where, because in three years that sentence is the only provenance there is.',
+        path: `/v1/projects/${projectId}/tender/invitation-text`,
+        submitLabel: 'Read it',
+        aiCost: true,
+        fields: [
+          {
+            name: 'label',
+            label: 'Where this came from',
+            type: 'text',
+            required: false,
+            placeholder: 'Email from the buyer, 4 September',
+            hint: 'Left blank, the record says only that it was pasted.',
+          },
+          {
+            name: 'text',
+            label: 'The invitation',
+            type: 'textarea',
+            rows: 12,
+            hint: 'The requirements as the buyer wrote them. A summary in your own words is a reading, not a document.',
+          },
+        ],
+      });
+      if (!read) return;
+      toast('Read', 'The reading is below, awaiting a person. Nothing is on the record until it is confirmed.', 'ok');
+      await draw();
+      return;
+    }
+
+    const ingestTender = event.target.closest('[data-ingest-tender]');
+    if (ingestTender) {
+      // Free, deterministic and no model involved: what the bytes actually are,
+      // whether their text can be read, and whether they are a renamed
+      // executable. It runs before anything is sent to a provider, which is
+      // both cheaper and the only order in which the quarantine is worth having.
+      ingestTender.disabled = true;
+      ingestTender.textContent = 'Looking…';
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/ingestion`, {
+          hash: ingestTender.dataset.ingestTender,
+          filename: ingestTender.dataset.name,
+        });
+        toast(
+          result.status === 'QUARANTINED' ? 'File quarantined' : 'File read',
+          result.status === 'QUARANTINED'
+            ? `${result.findings} finding(s). The bytes are kept; nothing downstream should use them.`
+            : `Read as ${humanise(result.kind).toLowerCase()}.`,
+          result.status === 'QUARANTINED' ? 'bad' : 'ok',
+        );
+        await draw();
+      } catch (error) {
+        toast('Not read', error.message, 'err');
+        ingestTender.disabled = false;
+        ingestTender.textContent = 'Look at the file first';
+      }
+      return;
+    }
+
+    const readText = event.target.closest('[data-read-itt-text]');
+    if (readText) {
+      readText.disabled = true;
+      readText.textContent = 'Reading…';
+      try {
+        await api.post(`/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, {});
+        await draw();
+      } catch (error) {
+        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        readText.disabled = false;
+        readText.textContent = 'Read this invitation';
+      }
+      return;
+    }
+
     const readIt = event.target.closest('[data-read-itt]');
     if (readIt) {
       readIt.disabled = true;
@@ -977,7 +1165,7 @@ export async function pipeline(root) {
         // deployment or the wallet, so it is shown as it was given.
         toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
         readIt.disabled = false;
-        readIt.textContent = 'Read this invitation';
+        readIt.textContent = 'Read it with a model that can see';
       }
       return;
     }

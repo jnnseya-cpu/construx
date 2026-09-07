@@ -21803,6 +21803,60 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/itt',
+    // Its own task type, from the engine that charges it: the orchestrator
+    // learns a price per task type, and quoting this against the multimodal
+    // reading's history would price reading a paragraph as looking at a scan.
+    ai: {
+      engine: 'TENDER',
+      taskType: perception.textTaskType('ITT_REQUIREMENTS', 'INGESTED_FILE'),
+      capability: 'REASONING',
+    },
+    description: 'Read an ingested file as an invitation to tender, from the text ingestion read out of it — any format the platform can read as text',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => ingestion.ittFromFile(projectContext(platform, ctx), { ingestionId: ctx.params.ingestionId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/document',
+    description: 'File a tender document against the project so its bytes may be uploaded and read',
+    schema: {
+      type: 'object',
+      required: ['hash'],
+      properties: { hash: stringField, filename: { type: 'string', maxLength: 260 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.recordTenderDocument(projectContext(platform, ctx), body<{ hash: string; filename?: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/invitation-text',
+    ai: { engine: 'TENDER', taskType: perception.textTaskType('ITT_REQUIREMENTS', 'PASTED'), capability: 'REASONING' },
+    description: 'Read an invitation to tender from text pasted in, for the ones that arrive in an email or a portal rather than as a file',
+    schema: {
+      type: 'object',
+      required: ['text'],
+      properties: {
+        text: { type: 'string', minLength: 200, maxLength: perception.PASTED_TEXT_MAX },
+        // Where it came from, so the draft and the record say so rather than
+        // leaving somebody to guess at a reading with no document behind it.
+        label: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ text: string; label?: string }>(ctx);
+      return perception.extractFromText(projectContext(platform, ctx), {
+        task: 'ITT_REQUIREMENTS',
+        text: input.text,
+        source: 'PASTED',
+        label: input.label?.trim() || 'Pasted invitation',
+      });
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/ingestion/:ingestionId/tables/:table/measure',
     description: 'Record a table recovered from an ingested bill as measured items on an open measurement schedule, each sourced to the document and page',
     schema: {

@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { deflateRawSync } from 'node:zlib';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { createFederationSet } from '../src/domain/coordination.ts';
 import * as structure from '../src/domain/structure.ts';
@@ -14,6 +13,7 @@ import { diffIfc, IfcParseError, parseIfc } from '../src/engines/ifc.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import { sampleIfc } from './fixtures/ifc.ts';
+import { zipOf } from './fixtures/zip.ts';
 
 /**
  * Reading an IFC, and telling two revisions of it apart.
@@ -123,48 +123,6 @@ describe('two revisions compared', () => {
     assert.match(diff.summary, /1 element added, 1 element removed, 1 element moved or reshaped, 3 unchanged, 1 element renamed\./);
   });
 });
-
-/**
- * A ZIP written by hand: local headers, a central directory and the end record,
- * so the reader's preferred path is exercised. `descriptor` writes zero sizes
- * into the local header the way an archiver streaming its output does, leaving
- * the central directory as the only place the sizes are stated.
- */
-function zipOf(entries: Array<{ name: string; data: Buffer; stored?: boolean }>, options: { descriptor?: boolean } = {}): Buffer {
-  const parts: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const compressed = entry.stored ? entry.data : deflateRawSync(entry.data);
-    const name = Buffer.from(entry.name, 'utf8');
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(options.descriptor ? 8 : 0, 6);
-    local.writeUInt16LE(entry.stored ? 0 : 8, 8);
-    local.writeUInt32LE(options.descriptor ? 0 : compressed.length, 18);
-    local.writeUInt32LE(options.descriptor ? 0 : entry.data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    parts.push(local, name, compressed);
-    const header = Buffer.alloc(46);
-    header.writeUInt32LE(0x02014b50, 0);
-    header.writeUInt16LE(entry.stored ? 0 : 8, 10);
-    header.writeUInt32LE(compressed.length, 20);
-    header.writeUInt32LE(entry.data.length, 24);
-    header.writeUInt16LE(name.length, 28);
-    header.writeUInt32LE(offset, 42);
-    central.push(header, name);
-    offset += 30 + name.length + compressed.length;
-  }
-  const directory = Buffer.concat(central);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...parts, directory, end]);
-}
 
 describe('an .ifczip is the same file in a container', () => {
   it('reads the .ifc entry out of the container and says which entry it read', () => {

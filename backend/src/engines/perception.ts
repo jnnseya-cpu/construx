@@ -1,4 +1,5 @@
 import { SITE_OBSERVATION_CATEGORY, values } from '../../../shared/vocabulary.js';
+import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { config } from '../config.ts';
@@ -7,7 +8,7 @@ import { findByHash } from '../evidence/registry.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import { submitProgress } from '../domain/progressverification.ts';
-import { authorise, currentPhase, runAI, write, type EngineContext } from './context.ts';
+import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
 import { registerDrawing } from './bim.ts';
 import { captureSiteObservation } from './planning.ts';
 import { raiseNCR } from './quality.ts';
@@ -140,6 +141,15 @@ type TaskDefinition = {
   /** What the file has to be. Checked before anything is reserved or charged. */
   accepts: string[];
   acceptsLabel: string;
+  /**
+   * Whether this task can be run over text instead of a file.
+   *
+   * True only where the task is reading what a document *says*. The four site
+   * tasks and the title block read what a page *looks like* — a photograph of
+   * a wall has no text to hand over — so running them on text would be asking
+   * a model to describe a picture nobody showed it.
+   */
+  acceptsText?: true;
   prompt: string;
   responseSchema: Record<string, unknown>;
   /** Whether the model returned enough to be worth showing anybody. */
@@ -330,6 +340,11 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     label: 'Read an invitation to tender',
     accepts: IMAGE_OR_PDF,
     acceptsLabel: 'the invitation as a PDF or scan',
+    // An invitation is words. It can be read from a PDF a provider can see, or
+    // from the text of any document the platform has already ingested, or from
+    // what somebody pasted out of a portal — and the last two are how most of
+    // them actually arrive.
+    acceptsText: true,
     prompt:
       'Read this invitation to tender. Report its reference, the client, and the return deadline exactly as ' +
       'stated. List every requirement the bidder must satisfy, each with its own reference from the document, ' +
@@ -879,6 +894,169 @@ export async function extract(
     throw new DomainError(
       'PERCEPTION_NOT_LEGIBLE',
       `The provider could not read enough from this file to be worth confirming. Draft ${draftId} records what it returned.`,
+      422,
+    );
+  }
+
+  return {
+    draftId,
+    task: input.task,
+    extraction: result.output,
+    confidence: result.output.confidence as number | undefined,
+    acuConsumed: result.acuConsumed,
+  };
+}
+
+/** How long a pasted invitation may be before it is asking too much of one request. */
+export const PASTED_TEXT_MAX = 400_000;
+
+/**
+ * The task type a text reading is charged under.
+ *
+ * Not the file task's own type, and not one shared between the two text doors.
+ * The orchestrator learns a price per task type from what a call actually
+ * cost, and `/v1/ai/quote` prices a door from the task type the door declares
+ * — so a reading charged under the multimodal task's history would quote a bid
+ * manager the price of looking at a scan for the price of reading a paragraph.
+ *
+ * The route declares it and the engine charges it, both from here, so the
+ * quote and the charge that follows it cannot name different things.
+ */
+export function textTaskType(task: PerceptionTask, source: 'PASTED' | 'INGESTED_FILE'): string {
+  return `${PERCEPTION_TASKS[task].taskType}_${source === 'PASTED' ? 'pasted' : 'file_text'}`;
+}
+
+/**
+ * Read an invitation the platform was given as *text* rather than as a file.
+ *
+ * `extract` reads a stored file, needs a multimodal provider, and accepts a
+ * PDF or a scan. That is right for a drawing and wrong for the way an
+ * invitation to tender actually arrives: as a bundle of Word documents,
+ * spreadsheets, plain-text schedules and portal pages, on a deployment whose
+ * provider may reason about text without being able to see a page. A bid team
+ * with the requirements in front of them, in an email or a portal, had no way
+ * in at all — the platform could analyse an invitation only after somebody had
+ * turned it into a PDF, uploaded it on a different screen, and found a
+ * provider that could look at it.
+ *
+ * So this is the same task by the other road. Same engine, same prompt, same
+ * response schema, same draft, same confirmation — a person still reads what
+ * the model returned and files it through the ordinary domain command. What
+ * changes is where the text came from and that the capability is `REASONING`,
+ * which is the whole point: it works where reading a page does not.
+ *
+ * Two sources, and the draft says which. Pasted text carries no document hash
+ * because there is no document; text taken out of an ingested file carries the
+ * file's hash, so the reading is traceable to the bytes exactly as the
+ * multimodal path is.
+ */
+export async function extractFromText(
+  ctx: EngineContext,
+  input: {
+    task: PerceptionTask;
+    text: string;
+    /** Where the text came from, said on the record rather than inferred. */
+    source: 'PASTED' | 'INGESTED_FILE';
+    /** The file the text was read out of, where there was one. */
+    documentHash?: string;
+    evidenceId?: string;
+    /** What to call it on the screen: a filename, or what the analyst pasted it from. */
+    label: string;
+  },
+): Promise<{ draftId: string; task: PerceptionTask; extraction: Record<string, unknown>; confidence?: number; acuConsumed: number }> {
+  const definition = PERCEPTION_TASKS[input.task];
+  if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
+  if (!definition.acceptsText) {
+    throw new DomainError(
+      'PERCEPTION_TEXT_UNSUPPORTED',
+      `${definition.label} reads what a page looks like, not what it says, so it cannot be run on text. ` +
+        'Supply the file itself.',
+      422,
+    );
+  }
+
+  if (definition.module) requireModule(ctx.grantedModules, definition.module);
+  authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
+
+  const text = input.text.trim();
+  if (text.length < 200) {
+    throw new DomainError(
+      'PERCEPTION_TEXT_TOO_SHORT',
+      'That is not enough of an invitation to read. Paste the requirements, the return deliverables and the terms, ' +
+        'or upload the document itself.',
+      422,
+      [{ field: 'text', message: 'Paste the part of the invitation that states what the bidder must do' }],
+    );
+  }
+  if (text.length > PASTED_TEXT_MAX) {
+    throw new DomainError(
+      'PERCEPTION_TEXT_TOO_LONG',
+      `That is ${Math.round(text.length / 1000)}k characters and the ceiling is ${Math.round(PASTED_TEXT_MAX / 1000)}k. ` +
+        'Upload the document instead, or paste the section that states the requirements.',
+      413,
+    );
+  }
+
+  // A draft is evidenced or it is not committed — the catalogue says so, and
+  // the rule is right: a reading nobody can trace back to what was read is an
+  // assertion. Text out of an ingested file already has the file's evidence
+  // record. Pasted text gets one of its own: the digest of the exact
+  // characters that were read, so a copy produced later can be checked against
+  // what the model was actually shown.
+  const documentHash = input.documentHash ?? hashEvidence(text);
+  const evidenceRef =
+    input.evidenceId !== undefined
+      ? { refType: 'EvidenceItem' as const, refId: input.evidenceId }
+      : registerEvidence(ctx, {
+          type: 'PASTED_INVITATION',
+          hash: documentHash,
+          description: `Invitation text (${text.length} characters): ${input.label}`,
+        });
+
+  const draftId = ulid();
+  const result = await runAI(ctx, {
+    engine: definition.engine,
+    taskType: textTaskType(input.task, input.source),
+    // Reasoning, not perception. Nothing is being looked at.
+    capability: 'REASONING',
+    inputRefs: [evidenceRef],
+    request: {
+      task: definition.prompt,
+      payload: { text, source: input.source, ...(input.documentHash ? { documentHash: input.documentHash } : {}) },
+      responseSchema: definition.responseSchema,
+    },
+    toWrites: (output, confidence) => [
+      {
+        eventType: 'PERCEPTION_DRAFT_PRODUCED',
+        entity: { refType: 'PerceptionDraft', refId: draftId },
+        nextState: {
+          id: draftId,
+          projectId: ctx.projectId,
+          task: input.task,
+          // The file's hash where there was a file; the digest of the text
+          // itself where there was not. Either way the reading names what it
+          // was made from.
+          evidenceHash: documentHash,
+          evidenceId: evidenceRef.refId,
+          contentType: 'text/plain',
+          textSource: input.source,
+          textLabel: input.label,
+          textLength: text.length,
+          extraction: output,
+          confidence,
+          status: 'DRAFT',
+          producedAt: new Date().toISOString(),
+          producedFor: ctx.auth.actorId,
+        },
+        evidenceRefs: [evidenceRef],
+      },
+    ],
+  });
+
+  if (!definition.usable(result.output)) {
+    throw new DomainError(
+      'PERCEPTION_NOT_LEGIBLE',
+      `There was not enough in that text to be worth confirming. Draft ${draftId} records what the reading returned.`,
       422,
     );
   }

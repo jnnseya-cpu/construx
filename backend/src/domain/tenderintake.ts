@@ -1,6 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, write, type EngineContext } from '../engines/context.ts';
+import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import { findByHash } from '../evidence/registry.ts';
 import {
   addBusinessDays,
   businessDayOnOrBefore,
@@ -424,6 +425,49 @@ function deadlineClarifications(input: {
   }
 
   return out;
+}
+
+// --- The documents the invitation arrived as ---------------------------------
+
+/**
+ * File a tender document against the project, so its bytes may follow.
+ *
+ * The evidence store's load-bearing rule is that bytes are refused until a
+ * ledger record names their hash. Every other file in the platform gets that
+ * record from the command it is evidence *for* — a permit, a valuation, a
+ * design container. A tender pack has no such command: the invitation record
+ * is made from what the pack says, which nobody can read until the pack is
+ * here. So the pack itself had no way in, and the tender team's only route was
+ * to dress an ITT as a design deliverable on another screen.
+ *
+ * This is that missing record and nothing more. It asserts that a file with
+ * this hash arrived as part of the tender for this project. It reads nothing,
+ * decides nothing and unlocks nothing: what the document *says* still comes
+ * from ingestion and the reading a person confirms.
+ */
+export function recordTenderDocument(
+  ctx: EngineContext,
+  input: { hash: string; filename?: string },
+): { evidenceId: string; hash: string; description: string } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const hash = input.hash.trim();
+  const filename = input.filename?.trim();
+  const description = filename ? `Tender document: ${filename}` : `Tender document ${hash.slice(0, 16)}`;
+
+  // The same file filed twice would put two register entries at one address,
+  // and the second says nothing the first did not.
+  const existing = findByHash(ctx.ledger, ctx.tenantId, hash);
+  if (existing) {
+    throw new DomainError(
+      'EVIDENCE_ALREADY_FILED',
+      `This file is already on the record as "${String(existing.state.description)}". Upload it again and there would be two records at one address.`,
+      409,
+    );
+  }
+
+  const ref = registerEvidence(ctx, { type: 'TENDER_DOCUMENT', hash, description });
+  return { evidenceId: ref.refId, hash, description };
 }
 
 // --- Requirements and the compliance matrix ----------------------------------

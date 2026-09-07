@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { QUANTITY_BASIS, recordItems, type MeasuredItem, type QuantityBasis } from '../domain/measurement.ts';
 import { ingestSpecification } from '../engines/bim.ts';
+import { extractFromText } from '../engines/perception.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { findByHash } from './registry.ts';
 import { ping, scan, scannerAddress, scannerConfigured } from './scanner.ts';
@@ -632,4 +633,35 @@ export async function ingestionPosition(ctx: EngineContext, store: EvidenceStore
     // configured scanner imply the whole register has been checked.
     ingestedUnscanned: files.filter((file) => file.inspection.antivirusScanned !== true).length,
   };
+}
+
+/**
+ * Read an invitation to tender out of a file the platform has already ingested.
+ *
+ * The multimodal path in `perception.extract` reads a PDF or a scan by looking
+ * at it, which needs a provider that can see and refuses everything else. An
+ * invitation does not arrive as one tidy PDF: it is a Word instruction
+ * document, a spreadsheet of return deliverables, a CSV export from a buyer's
+ * portal, a plain-text schedule of requirements. Ingestion has already read the
+ * text out of all of those.
+ *
+ * So this reads the text, on a reasoning provider, and produces the same draft
+ * for the same confirmation. The file's hash travels with it, so the reading is
+ * traceable to the bytes exactly as the multimodal one is — which is what makes
+ * this a second road to the same place rather than a way round the record.
+ */
+export async function ittFromFile(
+  ctx: EngineContext,
+  input: { ingestionId: string },
+): Promise<Awaited<ReturnType<typeof extractFromText>> & { ingestionId: string; documentHash: string; filename: string | null }> {
+  const file = readFile(ctx, input.ingestionId);
+  const draft = await extractFromText(ctx, {
+    task: 'ITT_REQUIREMENTS',
+    text: file.extraction.text,
+    source: 'INGESTED_FILE',
+    documentHash: file.hash,
+    evidenceId: file.evidenceId,
+    label: file.filename ?? file.hash,
+  });
+  return { ...draft, ingestionId: file.ingestionId, documentHash: file.hash, filename: file.filename ?? null };
 }

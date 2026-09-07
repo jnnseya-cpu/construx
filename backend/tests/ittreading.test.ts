@@ -9,12 +9,16 @@ import * as business from '../src/domain/business.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tenderintake from '../src/domain/tenderintake.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
+import { ingestFile, ingestedFiles, ittFromFile } from '../src/evidence/pipeline.ts';
+import { projectRegister } from '../src/evidence/registry.ts';
 import * as perception from '../src/engines/perception.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { grantEnvelope } from '../src/agents/mandate.ts';
 import { runAgents, runAgentsForChanges } from '../src/agents/runtime.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { hashEvidence } from '../src/core/canonical.ts';
+import { docxOf, paragraph, wordTable, xlsxOf } from './fixtures/zip.ts';
 
 /**
  * Reading the invitation to tender.
@@ -142,8 +146,16 @@ const ITT_HASH = hashBytes(ITT_FILE);
  * `ESTIMATE_TENDER` writes are gated to the tender phase, so a fixture that set
  * the phase by hand would be testing around the gate rather than through it.
  */
-async function buildFixture(adapter?: AIProviderAdapter): Promise<void> {
-  platform = new Platform(adapter ? new AIOrchestrator({ perception: adapter }) : undefined, store);
+async function buildFixture(adapter?: AIProviderAdapter, reasoning?: AIProviderAdapter): Promise<void> {
+  // The two roads need two providers. Reading a scan needs one that can see;
+  // reading the text of a Word document or a pasted portal page needs one that
+  // reasons, which is what most deployments actually have.
+  platform = new Platform(
+    adapter || reasoning
+      ? new AIOrchestrator({ ...(adapter ? { perception: adapter } : {}), ...(reasoning ? { reasoning } : {}) })
+      : undefined,
+    store,
+  );
   seed = await seedDemoProject(platform);
 
   const admin = seed.users.admin!.auth;
@@ -506,3 +518,273 @@ function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): vo
     },
   });
 }
+
+// ── The two roads an invitation actually arrives on ─────────────────────────
+//
+// Everything above reads a stored PDF with a provider that can see. That is
+// one road, and it is the least travelled: a tender pack is a Word instruction
+// document and a spreadsheet of return deliverables, and plenty of invitations
+// are an email nobody ever saved as a file.
+//
+// The rule these hold to is that the road changes and nothing else does. Same
+// task, same prompt, same draft, same confirmation, same compliance matrix —
+// and the provenance is never lost on the way, because a reading nobody can
+// trace back to what was read is an assertion with a model's name on it.
+
+/** A provider that reasons over text. What a deployment without vision has. */
+function reasoningStub(output: Record<string, unknown>): AIProviderAdapter {
+  return {
+    name: 'OPENAI',
+    capability: 'REASONING',
+    multimodal: false,
+    transmits: true,
+    estimateCostMinor: () => 25,
+    healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      lastRequest = request;
+      return { provider: 'OPENAI', modelClass: 'reasoning-standard', output, rawCostMinor: 25, latencyMs: 6, confidence: 0.87 };
+    },
+  };
+}
+
+/** The instruction document, as a buyer's Word file is actually laid out. */
+const ITT_DOCX = docxOf(
+  paragraph('INVITATION TO TENDER — YW/2026/SPILLWAY/014') +
+    paragraph('Yorkshire Water Services Limited. Returns 12:00 noon on 20 November 2026 through the portal.') +
+    wordTable([
+      ['Ref', 'Requirement', 'Mandatory', 'Evidence required'],
+      ['SQ 4.1', 'Employer’s liability insurance of not less than £10,000,000', 'Yes', 'Certificate of insurance'],
+      ['SQ 6.2', 'Three-year accident frequency rate below 0.35', 'Yes', 'RIDDOR returns'],
+    ]),
+);
+
+/** The same invitation as somebody would paste it out of a portal page. */
+const PASTED_ITT = [
+  'INVITATION TO TENDER — YW/2026/SPILLWAY/014',
+  'Client: Yorkshire Water Services Limited. Returns 12:00 noon on 20 November 2026 through the portal.',
+  'The contract is NEC4 Option A with Z-clauses. Liquidated damages £45,000 per week, capped at 10 per cent.',
+  'SQ 4.1  Employer’s liability insurance of not less than £10,000,000 per occurrence. Mandatory.',
+  'SQ 6.2  A three-year accident frequency rate below 0.35 per 100,000 hours worked. Mandatory.',
+  'AW 2.4  Local employment and skills plan for the works duration. Scored, weighted 10 per cent.',
+].join('\n');
+
+describe('the document the tender arrived as, filed so its bytes may follow', () => {
+  before(async () => {
+    await buildFixture(undefined, reasoningStub(ITT_READING));
+  });
+
+  it('records the file against the project, named as a tender document and honestly unheld', async () => {
+    const hash = hashBytes(ITT_DOCX);
+    const filed = tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'ITT instructions.docx' });
+    assert.match(filed.description, /ITT instructions\.docx/);
+
+    const register = await projectRegister(platform.ledger, store, seed.tenantId, projectId);
+    const entry = register.find((item) => item.hash === hash)!;
+    assert.equal(entry.type, 'TENDER_DOCUMENT');
+    // The record exists and the bytes do not. That is the state between the
+    // two halves of an upload, and the register says it rather than hiding it.
+    assert.equal(entry.held, false);
+
+    await store.put(seed.tenantId, hash, ITT_DOCX, 'application/zip');
+    const after = await projectRegister(platform.ledger, store, seed.tenantId, projectId);
+    assert.equal(after.find((item) => item.hash === hash)!.held, true);
+  });
+
+  it('refuses the same file twice rather than putting two records at one address', () => {
+    const hash = hashBytes(docxOf(paragraph('A second copy of the same pack')));
+    tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'pack.docx' });
+    assert.throws(
+      () => tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'pack-copy.docx' }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'EVIDENCE_ALREADY_FILED');
+        return true;
+      },
+    );
+  });
+});
+
+describe('an invitation that arrived as a Word document', () => {
+  before(async () => {
+    await buildFixture(undefined, reasoningStub(ITT_READING));
+  });
+
+  it('reads it — the format that used to come back as "nothing here reads application/zip"', async () => {
+    const hash = hashBytes(ITT_DOCX);
+    tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'ITT instructions.docx' });
+    await store.put(seed.tenantId, hash, ITT_DOCX, 'application/zip');
+
+    const ingested = await ingestFile(ctx('qs'), store, { hash, filename: 'ITT instructions.docx' });
+    const file = ingestedFiles(ctx('qs')).find((entry) => entry.ingestionId === ingested.ingestionId)!;
+    assert.equal(file.extraction.method, 'NATIVE', 'the words came out of the bytes, with no model involved');
+    assert.match(String(file.extraction.text), /Employer’s liability insurance/);
+
+    const read = await ittFromFile(ctx('qs'), { ingestionId: ingested.ingestionId });
+    assert.equal(read.task, 'ITT_REQUIREMENTS');
+    assert.equal(read.documentHash, hash, 'the reading names the bytes it was made from');
+
+    const draft = platform.ledger.require({ refType: 'PerceptionDraft', refId: read.draftId });
+    assert.equal(draft.state.status, 'DRAFT', 'a reading is a draft here too');
+    assert.equal(draft.state.textSource, 'INGESTED_FILE');
+    assert.equal(draft.state.evidenceHash, hash);
+    // Text, not media: nothing was shown to anything, so the file must not have
+    // been attached as media at text rates.
+    assert.equal(lastRequest?.media, undefined);
+  });
+
+  it('reads the spreadsheet of return deliverables, which is the other half of a pack', async () => {
+    const workbook = xlsxOf([
+      {
+        name: 'Return Deliverables',
+        rows: [
+          ['Ref', 'Deliverable', 'Mandatory', 'Format', 'Channel'],
+          ['RD-01', 'Completed pricing schedule in the form issued', 'Yes', 'Native spreadsheet, unlocked', 'Portal'],
+          ['RD-02', 'Quality submission, 40 pages maximum', 'Yes', 'PDF', 'Portal'],
+          ['RD-03', 'Parent company guarantee, executed as a deed', 'Yes', 'Signed original', 'Physical'],
+          ['RD-04', 'Programme in Gantt form showing the drawdown season', 'Yes', 'PDF', 'Portal'],
+          ['RD-05', 'Health and safety questionnaire, fully answered', 'Yes', 'PDF', 'Portal'],
+        ],
+      },
+    ]);
+    const hash = hashBytes(workbook);
+    tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'Return deliverables.xlsx' });
+    await store.put(seed.tenantId, hash, workbook, 'application/zip');
+
+    const ingested = await ingestFile(ctx('qs'), store, { hash, filename: 'Return deliverables.xlsx' });
+    const file = ingestedFiles(ctx('qs')).find((entry) => entry.ingestionId === ingested.ingestionId)!;
+    assert.equal(file.extraction.method, 'NATIVE');
+    assert.match(String(file.extraction.text), /Completed pricing schedule/);
+
+    assert.equal((await ittFromFile(ctx('qs'), { ingestionId: ingested.ingestionId })).documentHash, hash);
+  });
+
+  it('refuses a file nothing has read, rather than guessing at what is in it', async () => {
+    await assert.rejects(
+      () => ittFromFile(ctx('qs'), { ingestionId: 'no-such-file' }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'INGESTION_NOT_FOUND');
+        return true;
+      },
+    );
+
+    // A photograph of a page: bytes with no text in them, which is the other
+    // road's job and is said so rather than attempted here.
+    const photo = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('a jpeg of an invitation page')]);
+    const hash = hashBytes(photo);
+    tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'itt-page-1.jpg' });
+    await store.put(seed.tenantId, hash, photo, 'image/jpeg');
+    const ingested = await ingestFile(ctx('qs'), store, { hash, filename: 'itt-page-1.jpg' });
+
+    await assert.rejects(
+      () => ittFromFile(ctx('qs'), { ingestionId: ingested.ingestionId }),
+      (error: Error & { code?: string; message: string }) => {
+        assert.equal(error.code, 'FILE_NOT_READ');
+        assert.match(error.message, /Transcribe it with a model/);
+        return true;
+      },
+    );
+  });
+});
+
+describe('an invitation that was never a file', () => {
+  before(async () => {
+    await buildFixture(undefined, reasoningStub(ITT_READING));
+  });
+
+  it('reads pasted text, names where it came from, and keeps the digest of what it read', async () => {
+    const read = await perception.extractFromText(ctx('qs'), {
+      task: 'ITT_REQUIREMENTS',
+      text: PASTED_ITT,
+      source: 'PASTED',
+      label: 'Portal page, 4 September',
+    });
+
+    const draft = platform.ledger.require({ refType: 'PerceptionDraft', refId: read.draftId });
+    assert.equal(draft.state.status, 'DRAFT');
+    assert.equal(draft.state.textSource, 'PASTED');
+    assert.equal(draft.state.textLabel, 'Portal page, 4 September');
+    assert.equal(draft.state.textLength, PASTED_ITT.length);
+    // There is no file, so the digest of the characters read is the
+    // provenance: a copy produced later can be checked against what the model
+    // was actually shown.
+    assert.equal(draft.state.evidenceHash, hashEvidence(PASTED_ITT));
+
+    const register = await projectRegister(platform.ledger, store, seed.tenantId, projectId);
+    const evidence = register.find((entry) => entry.hash === hashEvidence(PASTED_ITT))!;
+    assert.equal(evidence.type, 'PASTED_INVITATION');
+    assert.match(evidence.description, /Portal page, 4 September/);
+    assert.equal(evidence.held, false, 'there are no bytes, and the register says so rather than implying a file');
+  });
+
+  it('confirms into the same compliance matrix a scanned invitation would produce', async () => {
+    const read = await perception.extractFromText(ctx('qs'), {
+      task: 'ITT_REQUIREMENTS',
+      text: PASTED_ITT,
+      source: 'PASTED',
+      label: 'Email from the buyer',
+    });
+
+    const confirmed = await perception.confirm(ctx('qs'), {
+      draftId: read.draftId,
+      invitationId,
+      estimatedValueMinor: 640_000_000,
+      durationWeeks: 46,
+    });
+
+    assert.equal(confirmed.task, 'ITT_REQUIREMENTS');
+    assert.equal(platform.ledger.require({ refType: 'PerceptionDraft', refId: read.draftId }).state.status, 'CONFIRMED');
+    const analysis = platform.ledger.list(projectId, 'ITTAnalysis').at(-1)!;
+    assert.equal(analysis.state.reference, 'YW/2026/SPILLWAY/014');
+    assert.equal((analysis.state.matrix as unknown[]).length, ITT_READING.requirements.length);
+  });
+
+  it('refuses too little to be an invitation, and names the field to fix', async () => {
+    await assert.rejects(
+      () =>
+        perception.extractFromText(ctx('qs'), {
+          task: 'ITT_REQUIREMENTS',
+          text: 'Please price the works.',
+          source: 'PASTED',
+          label: 'A note',
+        }),
+      (error: Error & { code?: string; message: string }) => {
+        assert.equal(error.code, 'PERCEPTION_TEXT_TOO_SHORT');
+        assert.match(error.message, /not enough of an invitation/i);
+        return true;
+      },
+    );
+  });
+
+  it('refuses more than one request should carry, and says what the ceiling is', async () => {
+    await assert.rejects(
+      () =>
+        perception.extractFromText(ctx('qs'), {
+          task: 'ITT_REQUIREMENTS',
+          text: 'The contractor shall comply. '.repeat(Math.ceil(perception.PASTED_TEXT_MAX / 25)),
+          source: 'PASTED',
+          label: 'The whole pack',
+        }),
+      (error: Error & { code?: string; message: string }) => {
+        assert.equal(error.code, 'PERCEPTION_TEXT_TOO_LONG');
+        assert.match(error.message, /ceiling is/);
+        return true;
+      },
+    );
+  });
+
+  it('refuses to run a task that reads what a page looks like on text that is not a page', async () => {
+    await assert.rejects(
+      () =>
+        perception.extractFromText(ctx('qs'), {
+          task: 'PROGRESS_FROM_IMAGES',
+          text: PASTED_ITT,
+          source: 'PASTED',
+          label: 'A description of a photograph',
+        }),
+      (error: Error & { code?: string; message: string }) => {
+        assert.equal(error.code, 'PERCEPTION_TEXT_UNSUPPORTED');
+        assert.match(error.message, /reads what a page looks like/);
+        return true;
+      },
+    );
+  });
+});

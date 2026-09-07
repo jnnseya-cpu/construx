@@ -18566,3 +18566,131 @@ for authority nobody held, and nothing would ever have ended it.
   five-company cap on a group does not apply to an `EXTERNAL_INVITEE`
   relationship. Deliberate for the case the model is for; abusable by somebody
   who owns both ends.
+
+## The tender pack, in the formats it actually arrives in
+
+The ITT reader was built for one shape of input: a stored PDF or a scan, shown
+to a provider that can see. That is the least common way an invitation to
+tender reaches a bid team. It reaches them as a Word instruction document, a
+spreadsheet of return deliverables, a CSV export from the buyer's portal, and —
+often enough to matter — as the body of an email that was never a file. For
+every one of those the platform had a complete analyst and no way to hand it
+the document.
+
+Three gaps, closed in one vertical.
+
+### `.docx` and `.xlsx` were held, classified, and never read
+
+`extractText` read `text/plain` and a PDF's own text layer. A Word document and
+a spreadsheet both sniff as `application/zip`, and the answer was *"Nothing in
+this platform reads application/zip"* — so the ITT reading, the specification
+clause register and the measurement import were all shut to the majority of a
+real tender pack.
+
+`backend/src/evidence/office.ts` opens the two Office Open XML containers that
+carry words, over the ZIP reader `evidence/zip.ts` already had for IFC
+containers. No dependency, and no second way of getting at bytes.
+
+- **Word** — the body of `word/document.xml`. Paragraph *and table* structure is
+  kept, because a requirement in row three of a compliance table stops being a
+  requirement once the row boundaries are gone: a cell ends in a tab and a row
+  in a newline, which is the same shape a CSV arrives in. Deliberately left
+  out: headers and footers (they repeat on every page), footnotes, comments,
+  field instructions like `PAGE`, tab-stop definitions, phonetic guides, and
+  tracked deletions — feeding a model that has been told to quote the document
+  with text somebody removed is how a requirement gets invented.
+- **Excel** — every worksheet, in the workbook's own sheet order, resolved
+  through `xl/_rels/workbook.xml.rels` rather than by guessing at file names.
+  The shared string table is resolved (without it a spreadsheet reads as a grid
+  of integers), blank cells are held open so the columns after them do not shift
+  left, and a cached formula result is read while the formula itself is not:
+  nothing here calculates, so a workbook saved by something that never
+  calculated reads as the blanks it actually contains. The first sheet becomes
+  `tables`, every sheet becomes `pageTables`, and the note names the sheets and
+  says that formulas were not evaluated.
+
+`.pptx`, a password-protected container and an IFC-ZIP are refused **by name**
+with what to do instead. `readOffice` never throws: a malformed or hostile
+archive is a finding on the ingestion record, not a failed request.
+
+### The reader could not be run on text at all
+
+`perception.extract` reads a stored file on a `PERCEPTION` provider. Added:
+`perception.extractFromText` — the same task, the same prompt, the same
+response schema, the same `PERCEPTION_DRAFT_PRODUCED` draft, and the same
+confirmation, on a **`REASONING`** provider. That is the point: it works on the
+deployments that can reason about text and cannot look at a page, which is most
+of them.
+
+Two sources and the draft says which. `INGESTED_FILE` carries the file's own
+hash. `PASTED` has no file, so the reading registers evidence of its own — the
+digest of the exact characters that were read, with where the analyst said they
+came from — because a draft is evidenced or it is not committed, and a reading
+nobody can trace back to what was read is an assertion with a model's name on
+it. The register reports those bytes as **not held**, which is true.
+
+Each text door charges under its own task type — `perception.textTaskType`,
+called by both the route declaration and the engine so a quote and the charge
+that follows it cannot name different things. The orchestrator learns a price
+per task type, so sharing the multimodal reading's history would have quoted a
+bid manager the price of looking at a scan for the price of reading a
+paragraph; `quote.test.ts` already required one route per task type and caught
+exactly that.
+
+Only tasks that read what a document *says* accept text (`acceptsText` on the
+task definition). The site tasks and the title block read what a page *looks*
+like, and running them on text is refused with `PERCEPTION_TEXT_UNSUPPORTED`
+rather than asking a model to describe a picture nobody showed it. Text under
+200 characters and over 400,000 are refused with what to do instead.
+
+### The tender pack had no way in
+
+The evidence store's load-bearing rule is that bytes are refused until a ledger
+record names their hash. Every other file gets that record from the command it
+is evidence *for*. A tender pack has none — the invitation record is made from
+what the pack says, which nobody can read until the pack is here — so the only
+route was to dress an ITT as a design deliverable on the Design screen.
+
+`tenderintake.recordTenderDocument` is that missing record and nothing more: it
+asserts that a file with this hash arrived as part of this tender. It reads
+nothing and unlocks nothing, and it refuses the same hash twice rather than
+putting two register entries at one address.
+
+### The doors
+
+Three new routes, all on the Pipeline & Bids tender panel:
+
+| Route | What it does |
+|---|---|
+| `POST /v1/projects/:projectId/tender/document` | Files the document so its bytes may follow |
+| `POST /v1/projects/:projectId/ingestion/:ingestionId/itt` | Reads an ingested file's text as an invitation |
+| `POST /v1/projects/:projectId/tender/invitation-text` | Reads pasted text as an invitation |
+
+The panel now lists **every** held file, not only the four formats a vision
+model takes, with a column saying what the platform has read out of each and one
+button per row chosen from that: *Read this invitation* where the text is out,
+*Read it with a model that can see* for a scan, and *Look at the file first*
+where nothing has been read yet — ingestion is free, deterministic and says
+whether the file is a renamed executable, so it runs before anything reaches a
+paid provider. A file that cannot be read carries the platform's own reason and
+no button.
+
+### Verified
+
+`office.test.ts` (16) builds real containers — shared string table, relationship
+file, tracked changes, field instructions, tab stops — and holds the reader to
+structure surviving and non-content staying out. `ittreading.test.ts` gained a
+`REASONING` stub and nine cases: the filing and its duplicate refusal, a Word
+invitation read end to end with the file's hash on the draft and *no media on
+the request*, a spreadsheet of return deliverables, a pasted invitation
+confirming into the same compliance matrix a scanned one produces, and the four
+refusals. The ZIP builder that was local to `ifc.test.ts` moved to
+`tests/fixtures/zip.ts` and is now shared by both suites.
+
+**No provider call has been made from this environment.** As with every other
+perception task, a real model reading a real invitation remains unverified here.
+
+### What is still not read
+
+`.pptx`, the legacy binary `.doc` and `.xls`, and any encrypted container. Each
+is refused by name with the reason rather than reported as an unknown archive.

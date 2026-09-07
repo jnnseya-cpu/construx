@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readOffice } from './office.ts';
 import { readPdfText, SENTENCE_END, type PdfTable } from './pdftext.ts';
 import { zipEntries as readZipEntries } from './zip.ts';
 
@@ -66,11 +67,13 @@ import { zipEntries as readZipEntries } from './zip.ts';
  *
  * ## Extraction is native or it is refused
  *
- * Text comes out of a text-bearing format because the bytes are the text. A PDF
- * or a photograph needs OCR, which needs a model that can see, so the stage
- * reports `NEEDS_OCR` and routes to `engines/perception.ts` — the same refusal
- * discipline as everywhere else. Nothing here guesses at the contents of a
- * scan.
+ * Text comes out of a text-bearing format because the bytes are the text: a
+ * text file, a PDF carrying its words in its content streams, and — through
+ * `office.ts` — a Word document or a spreadsheet, which are XML in a ZIP. A
+ * scanned PDF or a photograph needs OCR, which needs a model that can see, so
+ * the stage reports `NEEDS_OCR` and routes to `engines/perception.ts` — the
+ * same refusal discipline as everywhere else. Nothing here guesses at the
+ * contents of a scan.
  *
  * ## The index is lexical, not semantic
  *
@@ -592,6 +595,31 @@ export function extractText(bytes: Buffer, actualType: string | undefined): Extr
         '. Reading it needs a model that can see the page — the perception pipeline, which refuses when no multimodal ' +
         'provider is configured rather than inventing a reading.',
     };
+  }
+
+  // A tender arrives as Word and Excel far more often than as a tidy PDF, and
+  // both sniff as a ZIP. `office.ts` opens the two that carry words.
+  if (actualType === 'application/zip') {
+    const read = readOffice(bytes);
+    if (read.kind === 'WORD') {
+      const tables = parseDelimited(read.text);
+      return { text: read.text, ...(tables ? { tables } : {}), method: 'NATIVE' };
+    }
+    if (read.kind === 'WORKBOOK') {
+      const notes: string[] = [
+        `${read.sheets.length} sheet${read.sheets.length === 1 ? '' : 's'} read: ${read.sheets.map((sheet) => sheet.name).join(', ')}`,
+      ];
+      if (read.truncated) notes.push('the rows beyond the first 5,000 were not read');
+      notes.push('formulas are not calculated, so a cell shows the result its writer saved, or nothing');
+      return {
+        text: read.text,
+        tables: read.sheets[0]!.rows,
+        pageTables: read.sheets.map((sheet, index) => ({ page: index + 1, rows: sheet.rows })),
+        method: 'NATIVE',
+        note: `${notes.join('; ')}.`,
+      };
+    }
+    return { method: 'UNSUPPORTED', reason: read.reason };
   }
 
   if (actualType?.startsWith('image/')) {
