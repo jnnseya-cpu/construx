@@ -1,3 +1,5 @@
+import { hashFile } from './api.js';
+
 /**
  * The offline outbox.
  *
@@ -176,8 +178,10 @@ export async function queue({ projectId, eventType, entity, nextState, evidenceR
  * the two must come from the same read of the same bytes.
  */
 export async function queueFile(file, projectId) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  const hash = `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+  // The one implementation of "SHA-256 in the form the ledger records", shared
+  // with the part checksums below — two copies of this would be two answers to
+  // what a file's address is.
+  const hash = await hashFile(file);
 
   const db = await open();
   await transact(
@@ -231,7 +235,84 @@ export async function discardFile(hash) {
  * operation was rejected outright waits indefinitely, so `pendingFiles` is
  * exposed for a screen to show what the device is still carrying.
  */
-export async function flushFiles(upload) {
+/**
+ * Above this, a file goes up in parts — §15.2.
+ *
+ * Two megabytes is a compromise between two real costs on a site connection: a
+ * part small enough that losing one is cheap to re-send, and large enough that
+ * a forty-megabyte drawing set is not two hundred round trips. It is also the
+ * threshold, so a file that fits in one part is sent the way it always was
+ * rather than through a protocol it does not need.
+ */
+export const CHUNK_BYTES = 2 * 1_048_576;
+
+/**
+ * The refusals that mean "send that part again", not "this file is wrong".
+ *
+ * Both are 422, and telling them apart is the difference between resuming an
+ * upload and deleting a photograph nobody can retake.
+ */
+const PART_FAILURES = new Set(['EVIDENCE_PART_HASH_MISMATCH', 'EVIDENCE_PART_CORRUPT', 'EVIDENCE_PART_HASH_INVALID']);
+
+/**
+ * One part of a file, as a pure function of the file and the part count.
+ *
+ * Pure on purpose: the platform fixes an upload's part count when its first
+ * part arrives, so a device resuming after a reboot has to cut the file exactly
+ * the way the run before it did. Deriving the boundaries from the count — never
+ * the other way round — is what makes that true without storing anything.
+ */
+function partOf(blob, index, total) {
+  const size = Math.ceil(blob.size / total);
+  return blob.slice(index * size, Math.min((index + 1) * size, blob.size), blob.type);
+}
+
+/**
+ * Send a file in checksummed parts, resuming whatever the platform already has.
+ *
+ * The checksum is the point. Without one, a part that did not survive the
+ * connection is undetectable until the assembled file fails its hash — and then
+ * the *whole* upload is discarded, so a phone at a site gate sends three hundred
+ * megabytes, loses it to one bad chunk, and sends it again to lose it the same
+ * way. With one, the bad part is refused at the part and re-sent alone.
+ */
+async function sendInParts(upload, state, path, blob, chunkBytes) {
+  let total = Math.ceil(blob.size / chunkBytes);
+  let outstanding = [...Array(total).keys()];
+
+  // Where to resume. Asked rather than assumed: the platform is the authority
+  // on what it holds, and a device that guessed would re-send parts that
+  // arrived. A read that fails is not a reason to abandon the upload — it just
+  // means starting from the first part.
+  if (state) {
+    const held = await state(`${path}/chunks`).catch(() => undefined);
+    if (held?.complete) return;
+    if (Number.isInteger(held?.chunks) && held.chunks > 0) {
+      // Continue in the shape the upload was begun in, whatever this build's
+      // chunk size is now. Sending a part from a different split would be
+      // refused, and rightly — two splits of one file cannot be assembled.
+      total = held.chunks;
+      outstanding = Array.isArray(held.missing) ? held.missing : [...Array(total).keys()];
+    }
+  }
+
+  for (const index of outstanding) {
+    const part = partOf(blob, index, total);
+    const query = `chunks=${total}&index=${index}&partHash=${encodeURIComponent(await hashFile(part))}`;
+    try {
+      await upload(`${path}?${query}`, part);
+    } catch (error) {
+      // One retry, here, because the overwhelmingly likely cause is the packet
+      // loss that mangled it in the first place and the part is already in
+      // memory. A second failure is left to the next flush, which resumes from
+      // what the platform holds rather than from the beginning.
+      if (!PART_FAILURES.has(error?.code)) throw error;
+      await upload(`${path}?${query}`, partOf(blob, index, total));
+    }
+  }
+}
+
+export async function flushFiles(upload, options = {}) {
   const files = await pendingFiles();
   if (files.length === 0) return { stored: 0, waiting: 0, rejected: 0 };
 
@@ -241,12 +322,27 @@ export async function flushFiles(upload) {
   const settled = [];
 
   for (const file of files) {
+    const path = `/v1/evidence/${encodeURIComponent(file.hash)}`;
     try {
-      await upload(`/v1/evidence/${encodeURIComponent(file.hash)}`, file.blob);
+      if (file.blob.size > (options.chunkBytes ?? CHUNK_BYTES)) {
+        await sendInParts(upload, options.state, path, file.blob, options.chunkBytes ?? CHUNK_BYTES);
+      } else {
+        await upload(path, file.blob);
+      }
       stored += 1;
       settled.push(file.hash);
     } catch (error) {
-      if (error?.status === 422) {
+      // A 422 discards the file, and which 422 matters enormously.
+      //
+      // `EVIDENCE_HASH_MISMATCH` is about the whole file: these bytes are not
+      // the evidence the record names, which cannot become true later, so
+      // keeping them would strand the wrong file on the handset for ever.
+      //
+      // A *part* checksum failure is also a 422 and is the opposite: the
+      // platform is asking for one chunk again. Discarding the photograph
+      // there would delete the evidence over a dropped packet — so it is kept,
+      // and the next flush resumes from what the platform already holds.
+      if (error?.status === 422 && !PART_FAILURES.has(error?.code)) {
         rejected += 1;
         settled.push(file.hash);
       } else {

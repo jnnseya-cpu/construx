@@ -851,7 +851,13 @@ async function drainOutbox() {
   // Files after operations, never before: an upload is refused unless a ledger
   // record already names its hash, so the record has to land first. A file the
   // platform is not ready for stays on the handset rather than being dropped.
-  const files = await outbox.flushFiles((path, blob) => api.upload(path, blob));
+  // `state` is what makes a large file resumable rather than merely chunked: the
+  // platform is asked what it already holds, and only the missing parts are
+  // sent. Without it the flush still works and re-sends every part, which is the
+  // behaviour this replaces.
+  const files = await outbox.flushFiles((path, blob) => api.upload(path, blob), {
+    state: (path) => api.get(path),
+  });
   if (files.stored > 0) {
     toast('Evidence uploaded', `${files.stored} file${files.stored === 1 ? '' : 's'} now held by the platform`, 'ok');
   }

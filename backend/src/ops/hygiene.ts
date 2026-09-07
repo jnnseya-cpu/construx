@@ -5,6 +5,8 @@ import { pruneExpired as pruneLockouts } from '../identity/lockout.ts';
 import { pruneExpiredChallenges } from '../identity/passkeys.ts';
 import { pruneExpiredStepUps } from '../identity/risk.ts';
 import { pruneExpiredRegistrations } from '../identity/signup.ts';
+import { config } from '../config.ts';
+import type { EvidenceStore } from '../evidence/store.ts';
 
 /**
  * The sweep over operational state that only ever grew.
@@ -34,16 +36,44 @@ export type HygieneReport = {
   rateBuckets: number;
   idempotentReplies: number;
   registrations: number;
+  /**
+   * Parts of resumable uploads nobody came back for — §15.2.
+   *
+   * Unlike everything above this is bytes on a volume rather than entries in a
+   * map, and it is here because it has the same shape: state that only ever
+   * grew, dropped by nothing, invisible to every register. A device switched
+   * off part-way through an upload never returns to finish it, and its parts
+   * are not evidence, not counted against the tenancy and not removable through
+   * the orphan path.
+   */
+  abandonedUploads: number;
+  abandonedUploadBytes: number;
 };
 
 let lastReport: HygieneReport | undefined;
 let timer: NodeJS.Timeout | undefined;
+/**
+ * The evidence store this deployment keeps files on, where it has one.
+ *
+ * Held rather than imported because the store is constructed by the composition
+ * root with the deployment's own root path, and a sweep that built its own would
+ * be sweeping a directory nothing writes to.
+ */
+let evidenceStore: EvidenceStore | undefined;
 
 export const HYGIENE_INTERVAL_MS = 5 * 60_000;
 
 /** One pass. Exported so a test can drive it without a timer, and so an operator can read what the last pass did. */
-export function sweepHygiene(now = Date.now()): HygieneReport {
+export function sweepHygiene(now = Date.now(), store: EvidenceStore | undefined = evidenceStore): HygieneReport {
   const auth = pruneAuth(now);
+  const ttlHours = config.evidence.uploadTtlHours;
+  // Zero switches the sweep off, and no store means nowhere to sweep. Neither
+  // is reported as zero abandoned uploads found — it is reported as zero
+  // removed, which is what it is.
+  const uploads =
+    store && ttlHours > 0
+      ? store.sweepUploads(ttlHours * 3_600_000, now)
+      : { removed: [], bytes: 0 };
   lastReport = {
     at: new Date(now).toISOString(),
     revocations: auth.revocations,
@@ -56,6 +86,8 @@ export function sweepHygiene(now = Date.now()): HygieneReport {
     rateBuckets: rateLimiter.prune(now),
     idempotentReplies: pruneIdempotency(now),
     registrations: pruneExpiredRegistrations(now),
+    abandonedUploads: uploads.removed.length,
+    abandonedUploadBytes: uploads.bytes,
   };
   return lastReport;
 }
@@ -64,7 +96,8 @@ export function lastHygiene(): HygieneReport | undefined {
   return lastReport;
 }
 
-export function startHygiene(intervalMs = HYGIENE_INTERVAL_MS): NodeJS.Timeout {
+export function startHygiene(intervalMs = HYGIENE_INTERVAL_MS, store?: EvidenceStore): NodeJS.Timeout {
+  if (store) evidenceStore = store;
   if (timer) return timer;
   timer = setInterval(() => {
     try {
@@ -80,4 +113,5 @@ export function startHygiene(intervalMs = HYGIENE_INTERVAL_MS): NodeJS.Timeout {
 export function stopHygiene(): void {
   if (timer) clearInterval(timer);
   timer = undefined;
+  evidenceStore = undefined;
 }

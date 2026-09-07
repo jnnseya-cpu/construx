@@ -1,7 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import type { EntityRecord, GoldenThreadLedger } from '../goldenthread/ledger.ts';
-import type { EvidenceStore } from './store.ts';
+import type { EvidenceStore, UnfinishedUpload } from './store.ts';
 
 /**
  * The bridge between the ledger's evidence records and the bytes on disk.
@@ -147,6 +147,17 @@ export type RetentionPosition = {
   /** Bytes at an address no record names. Removable; nothing else is. */
   orphans: Array<{ hash: string; bytes: number; storedAt: string; partial: boolean }>;
   orphanBytes: number;
+  /**
+   * Uploads begun and never finished — §15.2.
+   *
+   * Not orphans and not evidence: parts of a file a device is still carrying.
+   * They are reported separately because the two need opposite handling — an
+   * orphan may be removed now, an unfinished upload is a photograph somebody
+   * still has and is waiting to be resumed, and the hygiene sweep only takes it
+   * off the volume once nobody has touched it for the upload window.
+   */
+  unfinishedUploads: UnfinishedUpload[];
+  unfinishedUploadBytes: number;
   oldestStoredAt?: string;
   policy: string;
   summary: string;
@@ -170,6 +181,8 @@ export async function retentionPosition(
       recordedNotHeld: ledger.listByTenant(tenantId, 'EvidenceItem').length,
       orphans: [],
       orphanBytes: 0,
+      unfinishedUploads: [],
+      unfinishedUploadBytes: 0,
       policy: RETENTION_POLICY,
       summary:
         'No object store is configured, so the platform holds no files at all. Every evidence record is a ' +
@@ -183,6 +196,9 @@ export async function retentionPosition(
   );
   const objects = await store.held(tenantId);
   const orphans = objects.filter((object) => object.partial || !recorded.has(object.hash));
+  // Staged on the local volume whichever store the finished object goes to, so
+  // this is read from the volume rather than from the bucket.
+  const unfinished = store.unfinishedUploads(tenantId);
 
   const held = objects.filter((object) => !object.partial && recorded.has(object.hash));
   const heldHashes = new Set(held.map((object) => object.hash));
@@ -195,6 +211,8 @@ export async function retentionPosition(
     recordedNotHeld,
     orphans,
     orphanBytes: orphans.reduce((sum, object) => sum + object.bytes, 0),
+    unfinishedUploads: unfinished,
+    unfinishedUploadBytes: unfinished.reduce((sum, upload) => sum + upload.bytes, 0),
     oldestStoredAt: held[0]?.storedAt,
     policy: RETENTION_POLICY,
     summary:

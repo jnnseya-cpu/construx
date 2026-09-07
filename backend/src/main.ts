@@ -1,6 +1,6 @@
 import { startGateway } from './api/gateway.ts';
 import { attachRevocationJournal, type RevocationRecord } from './identity/auth.ts';
-import { startHygiene, stopHygiene } from './ops/hygiene.ts';
+import { HYGIENE_INTERVAL_MS, startHygiene, stopHygiene } from './ops/hygiene.ts';
 import { rateLimiter } from './api/middleware.ts';
 import { SharedLimiter } from './api/sharedlimiter.ts';
 import { attachShared as attachSharedLockouts } from './identity/lockout.ts';
@@ -566,8 +566,10 @@ const egressTimer = startEgress();
 // least able to do anything about it.
 const assuranceTimer = follower ? undefined : startAssurance(platform);
 // The sweep over every operational map that only ever grew: expired codes,
-// ceremonies, enrolments, step-ups, lockouts, buckets, replies, registrations.
-startHygiene();
+// ceremonies, enrolments, step-ups, lockouts, buckets, replies, registrations —
+// and the parts of resumable uploads no device ever came back to finish, which
+// is the same shape of leak on a volume rather than in a map.
+startHygiene(HYGIENE_INTERVAL_MS, platform.evidence);
 
 // The commercial chain, escalated on a timer rather than only when somebody
 // opens the position: a break on a project nobody has open is otherwise found

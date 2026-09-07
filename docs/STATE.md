@@ -7095,6 +7095,76 @@ them in the wrong order dies four times over.
 
 ---
 
+### Checksummed parts — §15.2, and the failure the section above still had
+
+The upload could be split. What it could not do was notice that one part had not
+survived the connection. A part was written and its bytes were checked against
+nothing; the first thing that noticed was the whole-file hash after the last
+part arrived, and at that point **every part was discarded**. So a phone at a
+site gate sent three hundred megabytes of video, lost it to one bad chunk, sent
+it again, and lost it again the same way. The gap table's words were "a dropped
+connection loses a whole video, repeatedly", and that is exactly what it was:
+the resumable upload above resumed a *connection*, not a *failure*.
+
+**A part carries its own checksum.** `?partHash=` on the existing route,
+optional so every client that omits it behaves exactly as before, and checked
+against what the platform hashes for itself — a checksum a client supplies and
+nobody recomputes proves nothing. A mismatch is refused at the part and, the
+point of the whole thing, **only that part**: the rest of the upload stays held
+and the device re-sends one chunk. A refusal that took the upload with it would
+have been the same failure with a better error message.
+
+**The chunking is fixed by the first part.** A `session` file beside the parts
+records the count the upload was begun with. A device that reboots and resumes
+with a different chunk size is refused with `EVIDENCE_CHUNK_COUNT_CHANGED`
+naming the count in force, rather than interleaving two splits of one file into
+an assembly that could only ever fail its hash — a failure whose sole symptom
+was everything being thrown away for a reason nobody could see.
+
+**A part that rots on the volume is dropped alone and named.** Assembly checks
+each part against the checksum recorded when it arrived, before concatenating.
+That distinguishes two cases the old code could not tell apart: a part that
+failed in storage (drop that part, ask for it, keep the rest) and parts that are
+each sound but do not compose the claimed file (a wrong upload, discarded — the
+behaviour that was already right and is unchanged).
+
+**`DELETE /v1/evidence/:hash/chunks` abandons an upload**, which is the other
+half of the changed-shape refusal: without it a device that re-split the file
+would be refused for ever with its parts on the volume. Parts only — a completed
+object is evidence and comes off the volume through the registry's orphan check
+or not at all, which is why this is a second path rather than a flag on the
+existing delete.
+
+**Parts were a leak nothing reported.** They are directories rather than
+objects, so `list` never saw them, the meter never counted them and the orphan
+path could not remove them — correct for the first two (a part is not evidence
+and nobody should be billed for one) and a slow fill of the volume for as long
+as the deployment ran. They are now on the retention position beside the
+orphans, marked as what they are ("part-uploaded, still on a device"), and the
+five-minute hygiene sweep takes them off after `EVIDENCE_UPLOAD_TTL_HOURS` —
+fourteen days by default, generous because a phone can be off site for a
+fortnight and still hold the only copy.
+
+**The PWA sends large files in parts now.** `frontend/lib/outbox.js` chunks
+anything over 2MB, asks `/chunks` what the platform already holds, and sends
+only the missing parts with a checksum each. One correctness detail worth
+naming: the outbox discards a file on a 422, and a *part* checksum failure is
+also a 422 — treating the two the same would have deleted a photograph nobody
+can retake over a dropped packet. `PART_FAILURES` separates them, and a part
+failure keeps the file for the next flush.
+
+Twenty-five tests.
+
+**Known limitation, stated rather than implied.** Parts are staged on the local
+volume whichever store the finished object goes to. In the S3-only configuration
+— `OBJECT_STORE_*` set and `EVIDENCE_STORE_PATH` unset — there is no local root,
+and parts are staged relative to the process working directory. That
+configuration is not this deployment's (the volume path is derived from the
+journal), and resumable upload there is not fit for use until a staging path is
+set. Whole-file upload is unaffected.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

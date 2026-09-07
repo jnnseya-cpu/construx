@@ -90,6 +90,60 @@ export type StoredObject = {
   storedAt: string;
 };
 
+/**
+ * One part of an unfinished upload, as the platform holds it.
+ *
+ * The hash is of the *plaintext* part, computed by the platform when the part
+ * arrived — not copied from what the device declared. A checksum a client
+ * supplies and nobody recomputes proves nothing at all.
+ */
+export type UploadPart = {
+  index: number;
+  bytes: number;
+  /**
+   * Absent only on a part written before the platform recorded checksums, where
+   * the length is the encrypted length on the volume. Inventing a hash for one
+   * of those would be a measurement nobody made.
+   */
+  hash?: string;
+};
+
+/**
+ * Where a resumable upload has got to — §15.2.
+ *
+ * `held` keeps its original shape, so every existing caller reads it unchanged;
+ * everything else is additional. `missing` is the list a device actually needs:
+ * it says which parts to send, rather than leaving the device to subtract two
+ * arrays and hope it agreed with the platform about the part count.
+ */
+export type UploadProgress = {
+  held: number[];
+  complete: boolean;
+  parts: UploadPart[];
+  heldBytes: number;
+  /** The part count this upload was begun with, which fixes its shape. */
+  chunks?: number;
+  startedAt?: string;
+  missing?: number[];
+};
+
+/** An unfinished upload on the volume, for the retention position and the sweep. */
+export type UnfinishedUpload = { hash: string; parts: number; chunks?: number; bytes: number; startedAt: string };
+
+/**
+ * The shape an upload was begun with, written beside its parts.
+ *
+ * Recorded rather than re-declared per part because a device that reboots and
+ * resumes with a different chunk size would otherwise mix two splits of the
+ * same file into an assembly that cannot possibly hash correctly — and the only
+ * symptom would be a whole-file hash failure after the last part, which throws
+ * everything away. This turns that into a refusal at the first mismatched part.
+ */
+type ChunkSession = { chunks: number; contentType: string; startedAt: string };
+
+/** The session file's name inside a chunk directory. Not an integer, so it is never read as a part. */
+const CHUNK_SESSION = 'session';
+
 /** Hash bytes the way the browser does, so the two agree. */
 export function hashBytes(bytes: Buffer): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -374,6 +428,153 @@ export class EvidenceStore {
     }
   }
 
+  /**
+   * The checks a part passes before it is written, shared by both forms.
+   *
+   * Shared rather than written twice for the reason the chain body was: a rule
+   * applied at two call sites is a rule with one hole in it, and the two forms
+   * of this upload differ only in whether the disk is awaited.
+   *
+   * Returns the part's own hash, so the caller records what the platform
+   * measured rather than what the device claimed.
+   */
+  #checkedForChunk(index: number, chunks: number, bytes: Buffer, declaredPartHash?: string): string {
+    if (!this.configured) {
+      throw new DomainError(
+        'EVIDENCE_STORE_UNCONFIGURED',
+        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
+          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
+        503,
+      );
+    }
+    if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
+      throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= chunks) {
+      throw new DomainError('EVIDENCE_CHUNK_INDEX_INVALID', `Part ${index} is outside an upload of ${chunks}`, 422);
+    }
+    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty part is not evidence');
+
+    const partHash = hashBytes(bytes);
+
+    // The checksum on the part, and the reason the whole feature exists.
+    //
+    // Without it a truncated or corrupted part is undetectable until every part
+    // is in, the assembled file fails its hash, and the *entire* upload is
+    // discarded — so a phone on a bad link re-sends three hundred megabytes to
+    // lose them the same way again. With it the bad part is refused at the
+    // part, and the device re-sends one chunk.
+    if (declaredPartHash !== undefined) {
+      if (!HASH.test(declaredPartHash)) {
+        throw new DomainError('EVIDENCE_PART_HASH_INVALID', 'A part checksum is a sha256 content hash', 422);
+      }
+      if (declaredPartHash !== partHash) {
+        throw new DomainError(
+          'EVIDENCE_PART_HASH_MISMATCH',
+          `Part ${index} arrived as ${partHash}, not as the ${declaredPartHash} sent with it, so it did not survive ` +
+            'the connection intact. Send this part again; every other part of this upload is still held.',
+          422,
+        );
+      }
+    }
+    return partHash;
+  }
+
+  /** The shape this upload was begun with, or nothing if this is its first part. */
+  #chunkSession(dir: string): ChunkSession | undefined {
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, CHUNK_SESSION), 'utf8')) as ChunkSession;
+      return Number.isInteger(parsed.chunks) && parsed.chunks > 0 ? parsed : undefined;
+    } catch {
+      // Missing, or written by a build before sessions existed. Either way this
+      // upload has no recorded shape, and an upload with no recorded shape is
+      // treated as one being begun now rather than refused — a device part-way
+      // through when the platform was deployed keeps its parts.
+      return undefined;
+    }
+  }
+
+  /**
+   * Fix this upload's shape, or refuse a part that does not fit the one it has.
+   *
+   * Returns the session in force.
+   */
+  #openChunkSession(dir: string, index: number, chunks: number, contentType: string): ChunkSession {
+    const existing = this.#chunkSession(dir);
+    if (existing) {
+      if (existing.chunks !== chunks) {
+        throw new DomainError(
+          'EVIDENCE_CHUNK_COUNT_CHANGED',
+          `This upload was begun in ${existing.chunks} parts and part ${index} arrived as one of ${chunks}. Parts ` +
+            `from two different splits of the same file cannot be assembled. Continue in ${existing.chunks} parts, ` +
+            'or abandon the upload and begin again.',
+          409,
+        );
+      }
+      return existing;
+    }
+    const opened: ChunkSession = { chunks, contentType, startedAt: new Date().toISOString() };
+    writeFileSync(join(dir, CHUNK_SESSION), JSON.stringify(opened));
+    return opened;
+  }
+
+  /** What the platform measured a held part to be, where it recorded it. */
+  #partMeta(dir: string, index: number): { index: number; bytes: number; hash: string } | undefined {
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, `${index}.meta`), 'utf8')) as { bytes: number; hash: string };
+      return typeof parsed.hash === 'string' && HASH.test(parsed.hash) && Number.isInteger(parsed.bytes)
+        ? { index, bytes: parsed.bytes, hash: parsed.hash }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Every held part, with what the platform measured it to be. */
+  #partsOf(dir: string, held: number[]): { parts: UploadPart[]; heldBytes: number } {
+    const parts = held.map((index) => {
+      const meta = this.#partMeta(dir, index);
+      if (meta) return meta;
+      const path = join(dir, String(index));
+      return { index, bytes: existsSync(path) ? statSync(path).size : 0 };
+    });
+    return { parts, heldBytes: parts.reduce((total, part) => total + part.bytes, 0) };
+  }
+
+  #recordPart(dir: string, index: number, bytes: number, hash: string): void {
+    writeFileSync(join(dir, `${index}.meta`), JSON.stringify({ index, bytes, hash }));
+  }
+
+  /**
+   * Assemble, checking every part against the checksum recorded when it arrived.
+   *
+   * A part that no longer matches is dropped **on its own** and named in the
+   * refusal, because the difference between re-sending one chunk and re-sending
+   * the file is the difference between an upload that finishes on a site gate's
+   * signal and one that never does.
+   */
+  #assemble(dir: string, held: number[], pieces: Buffer[]): Buffer {
+    const corrupt: number[] = [];
+    for (let i = 0; i < held.length; i += 1) {
+      const meta = this.#partMeta(dir, held[i]!);
+      if (meta && hashBytes(pieces[i]!) !== meta.hash) corrupt.push(held[i]!);
+    }
+    if (corrupt.length === 0) return Buffer.concat(pieces);
+
+    for (const index of corrupt) {
+      rmSync(join(dir, String(index)), { force: true });
+      rmSync(join(dir, `${index}.meta`), { force: true });
+    }
+    const one = corrupt.length === 1;
+    throw new DomainError(
+      'EVIDENCE_PART_CORRUPT',
+      `Part${one ? '' : 's'} ${corrupt.join(', ')} of this upload ${one ? 'no longer matches' : 'no longer match'} ` +
+        `the checksum recorded when ${one ? 'it' : 'they'} arrived, and ${one ? 'has' : 'have'} been dropped. ` +
+        `Send ${one ? 'that part' : 'those parts'} again; the rest of the upload is still held.`,
+      422,
+    );
+  }
+
   /** `put`, with the disk waited on rather than blocked on. */
   async write(tenantId: string, claimedHash: string, bytes: Buffer, contentType: string): Promise<StoredObject> {
     this.#checkedForWrite(claimedHash, bytes);
@@ -419,22 +620,9 @@ export class EvidenceStore {
     chunks: number,
     bytes: Buffer,
     contentType: string,
-  ): Promise<{ held: number[]; chunks: number; complete: boolean; object?: StoredObject }> {
-    if (!this.configured) {
-      throw new DomainError(
-        'EVIDENCE_STORE_UNCONFIGURED',
-        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
-          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
-        503,
-      );
-    }
-    if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
-      throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);
-    }
-    if (!Number.isInteger(index) || index < 0 || index >= chunks) {
-      throw new DomainError('EVIDENCE_CHUNK_INDEX_INVALID', `Part ${index} is outside an upload of ${chunks}`, 422);
-    }
-    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty part is not evidence');
+    options: { partHash?: string } = {},
+  ): Promise<UploadProgress & { chunks: number; object?: StoredObject }> {
+    const partHash = this.#checkedForChunk(index, chunks, bytes, options.partHash);
 
     const target = this.#pathFor(tenantId, claimedHash);
     const done = await stat(target).catch(() => undefined);
@@ -443,12 +631,16 @@ export class EvidenceStore {
         held: Array.from({ length: chunks }, (_, i) => i),
         chunks,
         complete: true,
+        parts: [],
+        heldBytes: done.size,
+        missing: [],
         object: { hash: claimedHash, bytes: done.size, contentType, storedAt: done.mtime.toISOString() },
       };
     }
 
     const dir = this.#chunkDir(tenantId, claimedHash);
     await mkdir(dir, { recursive: true });
+    const session = this.#openChunkSession(dir, index, chunks, contentType);
     const existing = await this.#heldChunksAsync(dir);
     let alreadyHave = 0;
     for (const i of existing) alreadyHave += (await stat(join(dir, String(i)))).size;
@@ -459,22 +651,37 @@ export class EvidenceStore {
 
     const part = join(dir, String(index));
     if (!(await stat(part).catch(() => undefined))) await writeFile(part, envelope.encrypt(tenantId, bytes));
+    // Recorded whether or not the part was newly written, so a part held from
+    // before checksums existed gains one the next time its device retries.
+    if (!this.#partMeta(dir, index)) this.#recordPart(dir, index, bytes.length, partHash);
 
     const held = await this.#heldChunksAsync(dir);
-    if (held.length < chunks) return { held, chunks, complete: false };
+    if (held.length < chunks) {
+      return {
+        held,
+        chunks,
+        complete: false,
+        ...this.#partsOf(dir, held),
+        startedAt: session.startedAt,
+        missing: Array.from({ length: chunks }, (_, i) => i).filter((i) => !held.includes(i)),
+      };
+    }
 
     const pieces: Buffer[] = [];
     for (const i of held) pieces.push(envelope.decrypt(tenantId, await readFile(join(dir, String(i)))));
+    // Each part against its own checksum first: a part that failed in storage
+    // is dropped alone and named, rather than taking the whole upload with it.
+    const assembled = this.#assemble(dir, held, pieces);
     let object: StoredObject;
     try {
       // Through `store`, so the assembled object lands in the object store
       // where one is configured; the parts are staged on the local disk
       // either way.
-      object = await this.store(tenantId, claimedHash, Buffer.concat(pieces), contentType);
+      object = await this.store(tenantId, claimedHash, assembled, contentType);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-    return { held, chunks, complete: true, object };
+    return { held, chunks, complete: true, parts: [], heldBytes: object.bytes, missing: [], object };
   }
 
   async #heldChunksAsync(dir: string): Promise<number[]> {
@@ -523,22 +730,9 @@ export class EvidenceStore {
     chunks: number,
     bytes: Buffer,
     contentType: string,
-  ): { held: number[]; chunks: number; complete: boolean; object?: StoredObject } {
-    if (!this.configured) {
-      throw new DomainError(
-        'EVIDENCE_STORE_UNCONFIGURED',
-        'This deployment has nowhere to keep files: no object store is configured. The operator sets ' +
-          'EVIDENCE_STORE_PATH to a volume, or the OBJECT_STORE_* settings, and restarts. Records are unaffected.',
-        503,
-      );
-    }
-    if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) {
-      throw new DomainError('EVIDENCE_CHUNK_COUNT_INVALID', `An upload has between 1 and ${MAX_CHUNKS} parts`, 422);
-    }
-    if (!Number.isInteger(index) || index < 0 || index >= chunks) {
-      throw new DomainError('EVIDENCE_CHUNK_INDEX_INVALID', `Part ${index} is outside an upload of ${chunks}`, 422);
-    }
-    if (bytes.length === 0) throw new DomainError('EVIDENCE_EMPTY', 'An empty part is not evidence');
+    options: { partHash?: string } = {},
+  ): UploadProgress & { chunks: number; object?: StoredObject } {
+    const partHash = this.#checkedForChunk(index, chunks, bytes, options.partHash);
 
     const target = this.#pathFor(tenantId, claimedHash);
     // Already complete. A device that missed the answer to its last part gets
@@ -549,12 +743,18 @@ export class EvidenceStore {
         held: Array.from({ length: chunks }, (_, i) => i),
         chunks,
         complete: true,
+        parts: [],
+        heldBytes: stat.size,
+        missing: [],
         object: { hash: claimedHash, bytes: stat.size, contentType, storedAt: stat.mtime.toISOString() },
       };
     }
 
     const dir = this.#chunkDir(tenantId, claimedHash);
     mkdirSync(dir, { recursive: true });
+    // The shape is fixed by the first part, so a device that resumes with a
+    // different chunk size is refused here rather than after the last part.
+    const session = this.#openChunkSession(dir, index, chunks, contentType);
 
     // The running total is checked as parts arrive, not only at the end: a
     // device that would exceed the limit is told at the part that crosses it,
@@ -575,24 +775,43 @@ export class EvidenceStore {
     // volume for however long it takes the device to come back.
     const part = join(dir, String(index));
     if (!existsSync(part)) writeFileSync(part, envelope.encrypt(tenantId, bytes));
+    // Recorded whether or not the part was newly written, so a part held from
+    // before checksums existed gains one the next time its device retries.
+    if (!this.#partMeta(dir, index)) this.#recordPart(dir, index, bytes.length, partHash);
 
     const held = this.#heldChunks(dir);
-    if (held.length < chunks) return { held, chunks, complete: false };
+    if (held.length < chunks) {
+      return {
+        held,
+        chunks,
+        complete: false,
+        ...this.#partsOf(dir, held),
+        startedAt: session.startedAt,
+        missing: Array.from({ length: chunks }, (_, i) => i).filter((i) => !held.includes(i)),
+      };
+    }
 
-    // Every part is in. Assemble in index order and hand the whole thing to
-    // `put`, which re-checks the hash — the parts were never trusted, only the
-    // assembled bytes are, and that is the guard that makes the chain worth
-    // having.
-    const assembled = Buffer.concat(held.map((i) => envelope.decrypt(tenantId, readFileSync(join(dir, String(i))))));
+    // Every part is in. Each is checked against the checksum recorded when it
+    // arrived — a part that failed in storage is dropped alone and named, so
+    // the device re-sends one chunk rather than the file — and the assembled
+    // bytes then go to `put`, which re-checks the whole hash. The parts were
+    // never trusted; only the assembled bytes are, and that is the guard that
+    // makes the chain worth having.
+    const assembled = this.#assemble(
+      dir,
+      held,
+      held.map((i) => envelope.decrypt(tenantId, readFileSync(join(dir, String(i))))),
+    );
     let object: StoredObject;
     try {
       object = this.put(tenantId, claimedHash, assembled, contentType);
     } finally {
-      // Removed either way. A set of parts that does not hash to its address is
-      // not a partial upload to resume; it is one to start again.
+      // Removed either way. A set of parts that each match their own checksum
+      // but do not assemble into the claimed file is not a partial upload to
+      // resume; it is one to start again.
       rmSync(dir, { recursive: true, force: true });
     }
-    return { held, chunks, complete: true, object };
+    return { held, chunks, complete: true, parts: [], heldBytes: object.bytes, missing: [], object };
   }
 
   /**
@@ -601,11 +820,127 @@ export class EvidenceStore {
    * Answers for a completed object too: `complete: true` and nothing left to
    * send, which is the answer a device that lost the last response needs.
    */
-  uploadState(tenantId: string, hash: string): { held: number[]; complete: boolean } {
-    if (!this.configured) return { held: [], complete: false };
-    if (existsSync(this.#pathFor(tenantId, hash))) return { held: [], complete: true };
+  uploadState(tenantId: string, hash: string): UploadProgress {
+    if (!this.configured) return { held: [], complete: false, parts: [], heldBytes: 0 };
+    const target = this.#pathFor(tenantId, hash);
+    if (existsSync(target)) {
+      return { held: [], complete: true, parts: [], heldBytes: statSync(target).size, missing: [] };
+    }
     const dir = this.#chunkDir(tenantId, hash);
-    return { held: existsSync(dir) ? this.#heldChunks(dir) : [], complete: false };
+    if (!existsSync(dir)) return { held: [], complete: false, parts: [], heldBytes: 0 };
+
+    const held = this.#heldChunks(dir);
+    const session = this.#chunkSession(dir);
+    return {
+      held,
+      complete: false,
+      ...this.#partsOf(dir, held),
+      // A device resuming needs the part count it began with and the parts still
+      // to send. Both are absent where the upload predates the session file
+      // rather than guessed at from the parts present, which would report a
+      // three-part upload as complete after its first three parts arrived.
+      ...(session ? { chunks: session.chunks, startedAt: session.startedAt } : {}),
+      ...(session
+        ? { missing: Array.from({ length: session.chunks }, (_, i) => i).filter((i) => !held.includes(i)) }
+        : {}),
+    };
+  }
+
+  /**
+   * Give up on an unfinished upload and take its parts off the volume.
+   *
+   * The one honest answer to `EVIDENCE_CHUNK_COUNT_CHANGED`: a device that has
+   * re-split the file cannot continue the upload it began, and without this its
+   * parts would sit on the volume until a sweep found them while every retry was
+   * refused. Removes nothing but parts — a completed object is evidence, and
+   * evidence is removed through the registry's orphan check or not at all.
+   */
+  abandonUpload(tenantId: string, hash: string): { abandoned: boolean; parts: number; bytes: number } {
+    if (!this.configured) return { abandoned: false, parts: 0, bytes: 0 };
+    const dir = this.#chunkDir(tenantId, hash);
+    if (!existsSync(dir)) return { abandoned: false, parts: 0, bytes: 0 };
+    const held = this.#heldChunks(dir);
+    const { heldBytes } = this.#partsOf(dir, held);
+    rmSync(dir, { recursive: true, force: true });
+    return { abandoned: true, parts: held.length, bytes: heldBytes };
+  }
+
+  /**
+   * Uploads this tenancy began and never finished.
+   *
+   * Invisible to `list` and to the meter, because parts are directories rather
+   * than objects — which is correct for both (a part is not evidence and nobody
+   * should be billed for one) and leaves a phone that lost signal at part four
+   * of nine holding a claim on the volume that nothing reports. This is what
+   * reports it.
+   */
+  unfinishedUploads(tenantId: string): UnfinishedUpload[] {
+    if (this.#root === '') return [];
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
+      throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
+    }
+    const root = join(this.#root, tenantId);
+    if (!existsSync(root)) return [];
+
+    const found: UnfinishedUpload[] = [];
+    for (const first of readdirSync(root, { withFileTypes: true })) {
+      if (!first.isDirectory()) continue;
+      for (const second of readdirSync(join(root, first.name), { withFileTypes: true })) {
+        if (!second.isDirectory()) continue;
+        const level = join(root, first.name, second.name);
+        for (const entry of readdirSync(level, { withFileTypes: true })) {
+          if (!entry.isDirectory() || !entry.name.endsWith('.chunks')) continue;
+          const digest = entry.name.slice(0, -'.chunks'.length);
+          if (!/^[0-9a-f]{64}$/.test(digest)) continue;
+          const dir = join(level, entry.name);
+          const held = this.#heldChunks(dir);
+          const session = this.#chunkSession(dir);
+          found.push({
+            hash: `sha256:${digest}`,
+            parts: held.length,
+            ...(session ? { chunks: session.chunks } : {}),
+            bytes: this.#partsOf(dir, held).heldBytes,
+            // The directory's own timestamp where no session was recorded: an
+            // upload begun before sessions existed still has an age, and a
+            // sweep that could not date it could never remove it.
+            startedAt: session?.startedAt ?? statSync(dir).mtime.toISOString(),
+          });
+        }
+      }
+    }
+    return found.sort((a, b) => (a.startedAt < b.startedAt ? -1 : 1));
+  }
+
+  /**
+   * Remove the parts of uploads nobody came back for.
+   *
+   * A device that is switched off part-way through an upload never returns to
+   * finish it, and its parts are not reachable through any register, not counted
+   * against the tenancy and not removable through the orphan path — so without
+   * this they stay on the volume for the life of the deployment. The window is
+   * generous on purpose: a phone can be off site for a week and still be the
+   * only copy of the photographs, and re-sending three hundred megabytes because
+   * a sweep was impatient is the failure this whole feature exists to prevent.
+   */
+  sweepUploads(
+    olderThanMs: number,
+    now = Date.now(),
+  ): { removed: Array<UnfinishedUpload & { tenantId: string }>; bytes: number } {
+    if (this.#root === '' || !existsSync(this.#root)) return { removed: [], bytes: 0 };
+    const removed: Array<UnfinishedUpload & { tenantId: string }> = [];
+    for (const entry of readdirSync(this.#root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!/^[0-9A-Za-z_-]{1,64}$/.test(entry.name)) continue;
+      for (const upload of this.unfinishedUploads(entry.name)) {
+        if (now - Date.parse(upload.startedAt) < olderThanMs) continue;
+        this.abandonUpload(entry.name, upload.hash);
+        // The tenancy is on the row because an operator reading "twelve
+        // abandoned uploads removed" needs to know whose photographs those
+        // were before deciding whether the window is right.
+        removed.push({ ...upload, tenantId: entry.name });
+      }
+    }
+    return { removed, bytes: removed.reduce((total, upload) => total + upload.bytes, 0) };
   }
 
   /** Part indices present, in order. */

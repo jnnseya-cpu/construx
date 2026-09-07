@@ -511,6 +511,18 @@ export const config = {
      * says so in the posture rather than reporting "encryption: on".
      */
     masterKey: str('EVIDENCE_MASTER_KEY', ''),
+
+    /**
+     * How long the parts of an unfinished upload are kept before the hygiene
+     * sweep removes them — §15.2.
+     *
+     * Fourteen days, and generous on purpose. A phone that lost signal at part
+     * four of nine can be off site for a fortnight and still hold the only copy
+     * of the photographs; a sweep that ran impatiently would make that device
+     * re-send everything, which is the exact failure resumable upload exists to
+     * prevent. Zero switches the sweep off and lets the parts accumulate.
+     */
+    uploadTtlHours: num('EVIDENCE_UPLOAD_TTL_HOURS', 14 * 24),
   },
 
   /**

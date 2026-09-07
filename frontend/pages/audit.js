@@ -73,6 +73,18 @@ export async function audit(root) {
             path: (v) => `/v1/evidence/${v.hash}/chunks`,
             sections: [
               { key: 'held', label: 'Parts already held', empty: 'Nothing of this file has arrived yet.' },
+              // What the device is actually asked for. "Parts held" alone left
+              // whoever read it subtracting one list from another and guessing
+              // at the part count; the platform knows both, so it says both.
+              { key: 'missing', label: 'Parts still to come', empty: 'Every part has arrived.' },
+              { key: 'chunks', label: 'Parts this upload was begun in' },
+              { key: 'heldBytes', label: 'Bytes held so far' },
+              {
+                key: 'parts',
+                label: 'What each held part is',
+                empty: 'No part has been measured yet.',
+                columns: ['index', 'bytes', 'hash'],
+              },
             ],
           };
 

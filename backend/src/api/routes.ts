@@ -22277,6 +22277,13 @@ export const ROUTES: Route[] = [
       // configured, which the synchronous `put` never did.
       const chunks = Number(ctx.query.get('chunks') ?? 0);
       if (chunks > 0) {
+        // The part's own checksum, where the device sends one — §15.2. Optional
+        // because every existing client omits it, and load-bearing when present:
+        // without it a part that did not survive the connection is undetectable
+        // until the assembled file fails its hash, at which point the *whole*
+        // upload is discarded and a phone on a site gate's signal re-sends
+        // everything to lose it the same way again.
+        const partHash = ctx.query.get('partHash') ?? undefined;
         const state = await platform.evidence.writeChunk(
           actor.tenantId,
           ctx.params.hash as string,
@@ -22284,6 +22291,7 @@ export const ROUTES: Route[] = [
           chunks,
           incoming,
           mediaType(ctx.contentType),
+          partHash === undefined ? {} : { partHash },
         );
         return { ...state, evidenceId: record.refId, projectId: record.projectId };
       }
@@ -22311,6 +22319,31 @@ export const ROUTES: Route[] = [
       const { record } = evidenceUploadTarget(platform, ctx, actor);
       return {
         ...platform.evidence.uploadState(actor.tenantId, ctx.params.hash as string),
+        evidenceId: record.refId,
+        projectId: record.projectId,
+      };
+    },
+  },
+  {
+    method: 'DELETE',
+    pattern: '/v1/evidence/:hash/chunks',
+    description: 'Give up an unfinished upload and take its parts off the volume',
+    // No body. A closed empty object refuses a stray one rather than ignoring it.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
+      }
+      // The same target check the upload makes, so a caller can only abandon an
+      // upload against evidence their project actually names.
+      const { record } = evidenceUploadTarget(platform, ctx, actor);
+      // Parts only. A completed object is evidence, and evidence comes off the
+      // volume through the registry's orphan check or not at all — which is
+      // what `DELETE /v1/evidence/:hash` is for and why this is a second path
+      // rather than a flag on that one.
+      return {
+        ...platform.evidence.abandonUpload(actor.tenantId, ctx.params.hash as string),
         evidenceId: record.refId,
         projectId: record.projectId,
       };

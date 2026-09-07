@@ -427,6 +427,16 @@ export async function operations(root) {
           { key: 'heldObjects', label: 'Objects held' },
           { key: 'recordedNotHeld', label: 'Named in the record, not held' },
           { key: 'orphans', label: 'Held but named by nothing', empty: 'Every stored object is named by a record.' },
+          // Separate from orphans, because the two need opposite handling. An
+          // orphan is a file being kept for nobody and may be removed now; an
+          // unfinished upload is a photograph somebody is still carrying, and
+          // taking its parts off the volume makes their phone start again.
+          {
+            key: 'unfinishedUploads',
+            label: 'Part-uploaded, still on a device',
+            empty: 'No upload is part-way through.',
+            columns: ['hash', 'parts', 'chunks', 'bytes', 'startedAt'],
+          },
         ],
       })}
     `,
