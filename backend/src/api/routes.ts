@@ -276,6 +276,7 @@ import * as blog from '../site/blog.ts';
 import * as visibility from '../site/visibility.ts';
 import * as conflicts from '../field/conflicts.ts';
 import * as workspace from '../field/workspace.ts';
+import * as pack from '../field/pack.ts';
 import * as outbox from '../notifications/outbox.ts';
 import * as aievaluation from '../ai/evaluation.ts';
 import * as designreview from '../engines/designreview.ts';
@@ -19180,6 +19181,94 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Offline conflicts the engine resolved on its own, and what a person decided about them',
     handler: (platform, ctx) => conflicts.conflictPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/offline-packs',
+    readOnly: true,
+    description: 'Offline packs issued on this project, which devices hold them and what has expired',
+    handler: (platform, ctx) => pack.packPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/offline-packs/estimate',
+    // A read that takes a scope in its body. `readOnly` so the gateway answers
+    // 200 rather than 201 and nothing is recorded: a device asking what a
+    // download would cost has not been issued anything.
+    readOnly: true,
+    description: 'What an offline pack would contain and cost to download, without issuing one',
+    schema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string', maxLength: 40 },
+        classes: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 40 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pack.estimatePack(projectContext(platform, ctx), body<{ module?: string; classes?: string[] }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/offline-packs',
+    description: 'Cut and sign an offline pack for one device',
+    schema: {
+      type: 'object',
+      required: ['deviceId'],
+      properties: {
+        deviceId: stringField,
+        module: { type: 'string', maxLength: 40 },
+        classes: { type: 'array', maxItems: 20, items: { type: 'string', maxLength: 40 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pack.issuePack(projectContext(platform, ctx), body<{ deviceId: string; module?: string; classes?: string[] }>(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/offline-packs/:packId/manifest',
+    readOnly: true,
+    description: 'The signed manifest a device downloads and verifies its content against',
+    handler: (platform, ctx) => pack.packManifest(projectContext(platform, ctx), ctx.params.packId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/offline-packs/:packId/receipt',
+    description: 'What the device reports it verified, and whether it activated the pack',
+    schema: {
+      type: 'object',
+      required: ['deviceId', 'entitiesVerified', 'filesVerified', 'activated'],
+      properties: {
+        deviceId: stringField,
+        entitiesVerified: { type: 'integer', minimum: 0 },
+        filesVerified: { type: 'integer', minimum: 0 },
+        activated: { type: 'boolean' },
+        note: { type: 'string', maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pack.recordPackReceipt(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ deviceId: string; entitiesVerified: number; filesVerified: number; activated: boolean; note?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/offline-packs/:packId/revoke',
+    description: 'Withdraw a pack from a device, with a reason somebody can answer for',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      pack.revokePack(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ reason: string }>(ctx),
+      }),
   },
   {
     method: 'GET',

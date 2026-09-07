@@ -7209,6 +7209,58 @@ it does not terminate.
 
 ---
 
+### The offline pack: a bounded, verified working set
+
+§14.6's lifecycle — estimate, authorise scope, sign a manifest, download, verify,
+activate atomically. `backend/src/field/pack.ts`, six routes, doors on the Field
+Modules screen. Every field module depends on it: a device with no pack has
+nothing to work from and a device with an unbounded pack has copied the estate.
+
+**What the signature is for, stated honestly.** The manifest is signed with
+`signFor`, which is an HMAC, so **a device cannot verify it** — that would need
+the key, and a key on every handset is not a key. The signature is not "the
+device checks the pack came from the platform"; TLS already does that. It buys
+the other direction: a manifest handed *back* to the platform can be proven to
+be one the platform issued, unaltered, which stops a handset asserting a scope
+it was never granted. The device's verification is the **hashes** — every entity
+carries its `stateHash` and every file its content hash — and that needs no key.
+
+**Expiry is per class, not per pack.** A drawing derivative, a permit and an
+asset register do not go stale at the same rate, and one pack expiry would take
+the loosest and call a fortnight-old permit current. Six classes carry their own
+freshness — permits at 12 hours, safety at 24, criteria at 72, information and
+work at a week, assets at a fortnight — and the pack expires when its shortest
+class does. Nothing exceeds §16.5's fourteen-day ceiling.
+
+**A new pack never destroys the last valid one.** The obvious implementation
+revokes the previous pack on issue, and it is wrong: a download that dies
+halfway then leaves a crew with nothing. The superseded pack stays live until
+the new one's receipt lands. Tested at exactly that moment — two packs issued,
+neither verified, the first still serving its manifest.
+
+**The receipt is a report, not a fact.** The platform never watched a device
+hash 4,000 files, and a field called `verified` would say it had. What it does
+enforce: a device cannot receipt a pack issued to another device, cannot receipt
+twice (the first receipt is the record a dispute turns on), cannot activate a
+revoked pack, and cannot claim activation while reporting fewer verified records
+than the manifest marks required — permits and method statements. A pack
+activated without those would let a shift start against authorisations nobody
+checked.
+
+**Device-side rules are stated, not claimed.** That a purge never removes
+unsynced or referenced evidence, and that revocation invalidates local keys and
+hides content, happen on a handset with no signal. Nothing in this module can
+enforce them and it does not pretend to.
+
+A side-effect worth recording: adding a `Purpose` exposed that `LEGACY_KEY` was
+a total map, which would have given a brand-new purpose a legacy verification
+path for signatures that could never have been legitimately produced. It is now
+`Partial` and `verifyFor` skips the legacy pass where a purpose has no entry.
+
+`offlinepack.test.ts` — 30 tests.
+
+---
+
 ### The stream version: telling "nothing new" from "I missed one"
 
 `GoldenThreadEvent.streamVersion` is the event's position in its project's

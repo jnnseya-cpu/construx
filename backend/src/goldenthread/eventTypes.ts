@@ -787,6 +787,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // either way, because every resolution has a losing side. These two make the
   // loss a record with a queue behind it rather than a line in a payload.
   //
+  // --- The offline pack (§14.6) ---------------------------------------------
+  // A pack is a grant of controlled information to a handset, so issuing one is
+  // a CREATE rather than a read, and every one of these is closed to an AI
+  // actor: no agent decides what leaves the platform on somebody's phone.
+  def('OFFLINE_PACK_ISSUED', 'OfflinePack', 'CREATE', 'DELIVERY', { creates: true }),
+  def('OFFLINE_PACK_ACTIVATED', 'OfflinePack', 'UPDATE', 'DELIVERY'),
+  def('OFFLINE_PACK_SUPERSEDED', 'OfflinePack', 'UPDATE', 'DELIVERY'),
+  def('OFFLINE_PACK_REVOKED', 'OfflinePack', 'UPDATE', 'DELIVERY'),
   // Raised by the sync engine, never by a person: it is the mechanical fact
   // that two writes disagreed. Resolving it is the human act.
   def('SYNC_CONFLICT_RAISED', 'SyncConflict', 'CREATE', 'DELIVERY', { creates: true }),

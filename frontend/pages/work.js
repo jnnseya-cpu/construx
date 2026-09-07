@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, notice, raw, render, statusTone, table } from '../lib/ui.js';
 import { draw, state } from '../app.js';
 
@@ -44,7 +45,7 @@ import { draw, state } from '../app.js';
  */
 
 /** Which module is open, and which tab of it. Module-level so a redraw keeps the place. */
-const chosen = { module: 'construction', tab: 'ACTION_QUEUE', status: '', owner: '', location: '' };
+const chosen = { module: 'construction', tab: 'ACTION_QUEUE', status: '', owner: '', location: '', manifestPackId: '' };
 
 const MODULES = [
   { slug: 'tender', label: 'Tender' },
@@ -134,6 +135,18 @@ export async function work(root) {
   const contents = await api
     .read(`/v1/projects/${projectId}/work/${chosen.module}/${chosen.tab}${suffix}`, 'FIELD_EXECUTION')
     .catch((error) => ({ error }));
+
+  const packs = await api
+    .read(`/v1/projects/${projectId}/offline-packs`, 'FIELD_EXECUTION')
+    .catch((error) => ({ error }));
+
+  // The manifest is a lookup, not a position: it cannot answer until somebody
+  // says which pack. Fetched only once one is chosen.
+  const manifest = chosen.manifestPackId
+    ? await api
+        .read(`/v1/projects/${projectId}/offline-packs/${chosen.manifestPackId}/manifest`, 'FIELD_EXECUTION')
+        .catch((error) => ({ error }))
+    : null;
 
   const header = position.header;
   const rows = contents.rows ?? [];
@@ -254,6 +267,86 @@ export async function work(root) {
             })}
       </section>
 
+      <section class="card" style="margin-top:14px" aria-labelledby="wk-pack-h">
+        <h2 id="wk-pack-h">Offline packs</h2>
+        <p class="metric-sub">
+          A bounded working set a device carries. Each class expires on its own clock — a permit at twelve hours, an
+          asset register at two weeks — and the pack is stale as soon as any part of it is. Issuing a new pack does not
+          withdraw the one before it: the old pack stays live until the new one is verified, so a download that fails
+          halfway does not leave a crew with nothing.
+        </p>
+        <div class="actions cmd-bar" style="margin:10px 0">
+          ${commandBar([
+            { id: 'pack-estimate', label: 'Estimate a pack', tone: 'quiet' },
+            { id: 'pack-issue', label: 'Issue a pack' },
+            { id: 'pack-receipt', label: 'Record a device receipt', tone: 'quiet' },
+            { id: 'pack-revoke', label: 'Withdraw a pack', tone: 'quiet' },
+          ])}
+        </div>
+        ${
+          packs.error
+            ? notice(packs.error.detail ?? 'The pack register could not be read.', 'bad')
+            : html`
+                <p class="metric-sub">
+                  <b>${String(packs.live ?? 0)}</b> live · ${String(packs.expired ?? 0)} expired ·
+                  ${String(packs.revoked ?? 0)} withdrawn · ${String((packs.devices ?? []).length)} devices holding one
+                </p>
+                <div class="actions" style="gap:12px;flex-wrap:wrap;align-items:flex-end;margin:10px 0">
+                  <label class="field" style="min-width:260px">
+                    <span>Inspect a manifest</span>
+                    <select data-pack-manifest>
+                      <option value="">Choose a pack</option>
+                      ${raw(
+                        (packs.packs ?? [])
+                          .map(
+                            (entry) =>
+                              `<option value="${entry.id}"${entry.id === chosen.manifestPackId ? ' selected' : ''}>${entry.id.slice(-8)} — ${entry.deviceId}</option>`,
+                          )
+                          .join(''),
+                      )}
+                    </select>
+                  </label>
+                </div>
+                ${
+                  manifest === null
+                    ? ''
+                    : manifest.error
+                      ? notice(manifest.error.detail ?? 'That manifest could not be read.', 'warn')
+                      : html`
+                          <div class="notice info" style="margin-bottom:10px">
+                            <b>Manifest v${String(manifest.version)}</b> for ${manifest.deviceId} · cut at stream
+                            position ${String(manifest.streamCursor)} · expires ${date(manifest.expiresAt)} ·
+                            ${String(manifest.entities.length)} records, ${String(manifest.files.length)} files ·
+                            signed under key ${manifest.signature.kid}.
+                            <br />
+                            Classes: ${manifest.classes.map((entry) => `${entry.label} (${entry.freshnessHours}h)`).join(' · ')}
+                          </div>
+                        `
+                }
+                ${table({
+                  headers: ['Pack', 'Device', 'Status', 'Records', 'Files', 'Expires', 'Receipt'],
+                  rows: (packs.packs ?? []).map((entry) => [
+                    entry.id.slice(-8),
+                    entry.deviceId,
+                    badge(
+                      entry.expired && entry.status !== 'REVOKED' ? 'Expired' : humanise(entry.status),
+                      entry.status === 'REVOKED' ? 'bad' : entry.expired ? 'warn' : statusTone(entry.status),
+                    ),
+                    String(entry.entities),
+                    String(entry.files),
+                    date(entry.expiresAt),
+                    entry.receipt
+                      ? `${entry.receipt.activated ? 'Activated' : 'Verified only'} — ${String(
+                          entry.receipt.entitiesVerified,
+                        )} records, ${String(entry.receipt.filesVerified)} files`
+                      : 'Not yet reported',
+                  ]),
+                  empty: 'No pack has been issued on this project.',
+                })}
+              `
+        }
+      </section>
+
       ${position.webOnly.length > 0
         ? notice(
             `Not done from a field device: ${position.webOnly.join(', ')}. These decide money, a baseline or an ` +
@@ -263,6 +356,89 @@ export async function work(root) {
         : ''}
     `,
   );
+
+  const packOptions = (packs.packs ?? []).map((entry) => ({
+    value: entry.id,
+    label: `${entry.id.slice(-8)} — ${entry.deviceId} (${humanise(entry.status)})`,
+  }));
+  const deviceOptions = [...new Set((packs.packs ?? []).map((entry) => entry.deviceId))].map((id) => ({
+    value: id,
+    label: id,
+  }));
+
+  const COMMANDS = {
+    'pack-estimate': () =>
+      command({
+        title: 'Estimate a pack',
+        intent:
+          'What this module would cost a device to download, before anything is issued. The total is a floor where ' +
+          'the platform holds no byte count for a file, and the answer says how many those are.',
+        path: `/v1/projects/${projectId}/offline-packs/estimate`,
+        submitLabel: 'Estimate',
+        fields: [{ name: 'module', label: 'Field module', type: 'select', options: MODULES.map((m) => ({ value: m.slug, label: m.label })), value: chosen.module }],
+      }),
+    'pack-issue': () =>
+      command({
+        title: 'Issue a pack',
+        intent:
+          'Cuts and signs a working set for one device. The pack it replaces stays live until this one is verified, ' +
+          'so a failed download never leaves a crew without one.',
+        path: `/v1/projects/${projectId}/offline-packs`,
+        submitLabel: 'Issue',
+        fields: [
+          { name: 'deviceId', label: 'Device', required: true, hint: 'The handset this pack is granted to.' },
+          { name: 'module', label: 'Field module', type: 'select', options: MODULES.map((m) => ({ value: m.slug, label: m.label })), value: chosen.module },
+        ],
+      }),
+    'pack-receipt': () =>
+      command({
+        title: 'Record a device receipt',
+        intent:
+          'What the device reports it verified. The platform did not watch it hash the files, so this is recorded as ' +
+          'a report — and a pack cannot be activated reporting fewer verified records than it carries as required.',
+        path: (values) => `/v1/projects/${projectId}/offline-packs/${values.packId}/receipt`,
+        submitLabel: 'Record',
+        fields: [
+          { name: 'packId', label: 'Pack', type: 'select', options: packOptions, required: true },
+          { name: 'deviceId', label: 'Device', type: 'select', options: deviceOptions, required: true },
+          { name: 'entitiesVerified', label: 'Records verified', type: 'number', required: true },
+          { name: 'filesVerified', label: 'Files verified', type: 'number', required: true },
+          { name: 'activated', label: 'Activated on the device', type: 'checkbox' },
+          { name: 'note', label: 'Note', type: 'textarea' },
+        ],
+        transform: (values) => ({
+          deviceId: values.deviceId,
+          entitiesVerified: Number(values.entitiesVerified),
+          filesVerified: Number(values.filesVerified),
+          activated: values.activated === true || values.activated === 'on',
+          ...(values.note ? { note: values.note } : {}),
+        }),
+      }),
+    'pack-revoke': () =>
+      command({
+        title: 'Withdraw a pack',
+        intent:
+          'Refuses the manifest from here on. A device that loses its working set mid-shift stops work, so the ' +
+          'reason is required and is recorded against whoever withdrew it.',
+        path: (values) => `/v1/projects/${projectId}/offline-packs/${values.packId}/revoke`,
+        submitLabel: 'Withdraw',
+        fields: [
+          { name: 'packId', label: 'Pack', type: 'select', options: packOptions, required: true },
+          { name: 'reason', label: 'Reason', type: 'textarea', required: true, hint: 'At least ten characters.' },
+        ],
+        transform: (values) => ({ reason: values.reason }),
+      }),
+  };
+
+  root.querySelector('.cmd-bar')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-cmd]');
+    if (button && COMMANDS[button.dataset.cmd]) COMMANDS[button.dataset.cmd]();
+  });
+
+  root.querySelector('[data-pack-manifest]')?.addEventListener('change', (event) => {
+    chosen.manifestPackId = event.target.value;
+    draw();
+  });
 
   root.querySelectorAll('[data-work-module]').forEach((button) => {
     button.addEventListener('click', () => {
