@@ -7155,13 +7155,22 @@ failure keeps the file for the next flush.
 
 Twenty-five tests.
 
-**Known limitation, stated rather than implied.** Parts are staged on the local
-volume whichever store the finished object goes to. In the S3-only configuration
-— `OBJECT_STORE_*` set and `EVIDENCE_STORE_PATH` unset — there is no local root,
-and parts are staged relative to the process working directory. That
-configuration is not this deployment's (the volume path is derived from the
-journal), and resumable upload there is not fit for use until a staging path is
-set. Whole-file upload is unaffected.
+**Where parts are staged.** Always locally, whichever store the finished object
+goes to: an upload is assembled and hashed before anything is stored, so the
+pieces have to land somewhere a process can read back. The volume where there is
+one; a named temporary directory where there is not.
+
+That second branch was a defect for a day. In the S3-only configuration —
+`OBJECT_STORE_*` set and `EVIDENCE_STORE_PATH` unset, which is a legitimate
+deployment — `#chunkDir` joined against an empty root, so parts staged
+**relative to the process working directory**: customer photography in whatever
+directory the container started in, where nothing lists it, nothing sweeps it
+and nobody expects it. It was written up here as a known limitation instead of
+being fixed, on the reasoning that the configuration is not this deployment's.
+That was the wrong call — the fix is four lines, and "not our configuration" is
+not a reason to ship a data-placement bug. `#stagingRoot` now answers it, the
+register and the sweep look there, and a test asserts the sweep never walks the
+process's own directory.
 
 ---
 
@@ -7436,10 +7445,12 @@ discarding it. The next flush sends exactly two parts — resume, not restart.
   root, so customer photography landed in whatever directory the container
   started in — where nothing lists it, nothing sweeps it and nobody expects it.
   This was **recorded as a known limitation** in the §15.2 section above rather
-  than fixed, which was the wrong call: it is four lines. Parts now stage under a
-  named temporary directory when there is no volume, the register and the sweep
-  look there, and a test asserts the sweep never walks the process's own
-  directory. That paragraph above is now superseded.
+  than fixed, which was the wrong call: it is four lines, and "not our
+  configuration" is not a reason to ship a data-placement bug. Parts now stage
+  under a named temporary directory when there is no volume, the register and the
+  sweep look there, and a test asserts the sweep never walks the process's own
+  directory. The §15.2 paragraph has been corrected in place rather than left to
+  contradict this one.
 
 **What is still not drilled.** `deploy/restore-drill.sh` boots a container, and
 the sandbox has a Docker CLI with no daemon, so it remains unrun — the runbook
