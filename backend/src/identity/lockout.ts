@@ -116,7 +116,36 @@ function noteFallback(error: unknown): void {
   };
 }
 
-function mirror(subject: string, state: { failures: number; windowFrom: number; lockedUntil?: number } | undefined): void {
+/**
+ * Ordering for the mirror, because the replies do not arrive in order.
+ *
+ * Every exchange with the backend is issued a number, and a reply is applied
+ * only if no later exchange has already been applied for that subject. Without
+ * it, two failures in quick succession fire two round-trips, and if the reply
+ * carrying `failures: 1` arrives after the reply carrying `failures: 2` the
+ * mirror ends up at 1 — the count goes *backwards* on the control that exists
+ * precisely for a burst of attempts, and the replica lets more through than the
+ * policy allows. The same race resurrects a cleared count when a failure reply
+ * lands after a successful sign-in.
+ *
+ * The number is taken before the round-trip is issued, never after it returns,
+ * so an exchange that started later always outranks one that started earlier.
+ * One counter serves every subject — `refreshAll` reads subjects it does not
+ * know the names of until the reply arrives, and a shared counter lets it take
+ * its number up front like everything else. `applied` is per subject: the last
+ * exchange whose reply reached the map.
+ */
+let exchanges = 0;
+const applied = new Map<string, number>();
+
+function nextExchange(): number {
+  exchanges += 1;
+  return exchanges;
+}
+
+function mirror(subject: string, exchange: number, state: { failures: number; windowFrom: number; lockedUntil?: number } | undefined): void {
+  if ((applied.get(subject) ?? 0) > exchange) return;
+  applied.set(subject, exchange);
   if (!state) {
     subjects.delete(subject);
     return;
@@ -132,8 +161,11 @@ function mirror(subject: string, state: { failures: number; windowFrom: number; 
  */
 export async function refresh(subject: string): Promise<void> {
   if (!shared) return;
+  // Numbered before the read is issued: a push reply that was already in flight
+  // when this read left is older than what the read comes back with.
+  const exchange = nextExchange();
   try {
-    mirror(subject, await shared.state(subject, windowMs()));
+    mirror(subject, exchange, await shared.state(subject, windowMs()));
     sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
   } catch (error) {
     noteFallback(error);
@@ -144,7 +176,8 @@ export async function refresh(subject: string): Promise<void> {
 export async function refreshAll(): Promise<void> {
   if (!shared) return;
   try {
-    for (const entry of await shared.subjects(windowMs())) mirror(entry.subject, entry.state);
+    const exchange = nextExchange();
+    for (const entry of await shared.subjects(windowMs())) mirror(entry.subject, exchange, entry.state);
     sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
   } catch (error) {
     noteFallback(error);
@@ -155,10 +188,16 @@ export async function refreshAll(): Promise<void> {
 function push(subject: string, change: 'FAILURE' | 'CLEAR'): void {
   if (!shared) return;
   const backend = shared;
+  const exchange = nextExchange();
   const outcome =
     change === 'CLEAR'
-      ? backend.clear(subject).then(() => undefined)
-      : backend.recordFailure(subject, windowMs(), lockMs(), config.auth.maxIdentityFailures).then((reply) => mirror(subject, reply.state));
+      ? // The clear takes the watermark as well as emptying the map, so a
+        // failure reply still in flight from before the successful sign-in
+        // cannot land afterwards and put the count back.
+        backend.clear(subject).then(() => mirror(subject, exchange, undefined))
+      : backend
+          .recordFailure(subject, windowMs(), lockMs(), config.auth.maxIdentityFailures)
+          .then((reply) => mirror(subject, exchange, reply.state));
   outcome
     .then(() => {
       sharedState = { ...sharedState, roundTrips: sharedState.roundTrips + 1 };
@@ -254,6 +293,7 @@ export function lockedSubjects(now = Date.now()): Array<{ subject: string; retry
 /** Test isolation only. Never called by the running platform. */
 export function reset(): void {
   subjects.clear();
+  applied.clear();
 }
 
 /** Test isolation only: forget the tallies without detaching. */
@@ -273,6 +313,7 @@ export function pruneExpired(now = Date.now()): number {
     const windowOver = now - record.windowFrom > windowMs();
     if (lockOver && windowOver) {
       subjects.delete(subject);
+      applied.delete(subject);
       dropped += 1;
     }
   }

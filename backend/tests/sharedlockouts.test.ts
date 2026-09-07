@@ -209,3 +209,84 @@ describe('the module, mirroring the shared count', () => {
     assert.equal(lockout.lockState('local-only').failures, 1);
   });
 });
+
+/**
+ * Replies that come back in the wrong order.
+ *
+ * Two failures in quick succession are two round-trips in flight at once, and
+ * nothing guarantees the first one answers first — a retried connection, an
+ * uneven event loop, a slow replica. Against a real Redis the ordering is
+ * usually right and occasionally not, which is the worst kind of defect to own:
+ * it passes locally and lets an attacker through in production. So the backend
+ * here answers deliberately backwards, on a stub rather than a server, and the
+ * assertion is deterministic.
+ *
+ * What must not happen is the mirror going *backwards*. A reply carrying one
+ * failure landing after a reply carrying two would leave the replica believing
+ * the identity has one failure against it, on the control that exists precisely
+ * for a burst of attempts.
+ */
+describe('the mirror, when the backend answers out of order', () => {
+  const originalAuth = { ...config.auth };
+  afterEach(() => {
+    Object.assign(config.auth as object, originalAuth);
+    lockout.attachShared(undefined);
+    lockout.reset();
+  });
+
+  /** A backend whose replies are released by hand, in whatever order the test wants. */
+  function stub() {
+    const pending: Array<() => void> = [];
+    let count = 0;
+    const backend = new SharedLockouts({ url: 'redis://127.0.0.1:1', connectTimeoutMs: 50 });
+    Object.assign(backend, {
+      recordFailure: (subject: string) => {
+        count += 1;
+        const mine = count;
+        return new Promise((resolve) => {
+          pending.push(() =>
+            resolve({ state: { subject, failures: mine, windowFrom: Date.now() }, justLocked: false }),
+          );
+        });
+      },
+      clear: () => Promise.resolve(),
+      state: () => Promise.resolve(undefined),
+    });
+    return { backend, release: (index: number) => pending[index]?.(), settle: async () => {
+      for (let attempt = 0; attempt < 20; attempt += 1) await Promise.resolve();
+    } };
+  }
+
+  it('keeps the later count when an earlier reply arrives after it', async () => {
+    Object.assign(config.auth as object, { maxIdentityFailures: 3, failureWindowMinutes: 5, lockoutMinutes: 5 });
+    const { backend, release, settle } = stub();
+    lockout.attachShared(backend);
+    lockout.recordFailure('out-of-order');
+    lockout.recordFailure('out-of-order');
+
+    // The second exchange answers first, then the first — the order that used
+    // to leave the map reporting one failure where two had been made.
+    release(1);
+    await settle();
+    release(0);
+    await settle();
+
+    assert.equal(lockout.lockState('out-of-order').failures, 2, 'the stale reply must not lower the count');
+    backend.close();
+  });
+
+  it('does not let a failure reply resurrect a count a successful sign-in cleared', async () => {
+    Object.assign(config.auth as object, { maxIdentityFailures: 3, failureWindowMinutes: 5, lockoutMinutes: 5 });
+    const { backend, release, settle } = stub();
+    lockout.attachShared(backend);
+    lockout.recordFailure('cleared');
+    // The person proves who they are while the failure is still in flight.
+    lockout.clearFailures('cleared');
+    await settle();
+    release(0);
+    await settle();
+
+    assert.equal(lockout.lockState('cleared').failures, 0, 'the clear is the later word and stands');
+    backend.close();
+  });
+});

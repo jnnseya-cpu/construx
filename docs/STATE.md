@@ -12244,13 +12244,24 @@ never reached is visible; the per-address limiter sharing the backend is
 already refusing the login route during that outage. Stated: the mirror is
 at most one round-trip behind, so at the threshold a run across *n*
 replicas can land up to *n* extra attempts before every replica sees the
-lock. `sharedlockouts.test.ts` runs the scripts against a real
+lock. **Replies are applied in the order they were issued, not the order
+they arrive.** Two failures in quick succession are two round-trips in
+flight at once, and a reply carrying one failure landing after a reply
+carrying two used to leave the mirror reporting one — the count going
+backwards on the control that exists precisely for a burst of attempts, and
+the same race resurrecting a count a successful sign-in had cleared. Every
+exchange now takes a number before it is issued and a reply is dropped where
+a later one has already been applied for that subject. It was found as an
+intermittent failure in the suite below and is a real defect, not a flaky
+test. `sharedlockouts.test.ts` runs the scripts against a real
 `redis-server` the run starts (skipping loudly where none exists, never
 passing silently): the threshold crossing reported once, the lock lifting
 with a clean slate, the window, the listing, a second replica seeing and
 completing the first's count, the operator's view of another replica's lock,
-and the counted fallback. Verified against Redis 7.0.15 in this
-environment.
+and the counted fallback. Ordering is proved separately on a stub backend
+that releases its replies backwards by hand, because a real server gets the
+order right most of the time and a test that only sometimes catches the
+defect is not a test. Verified against Redis 7.0.15 in this environment.
 
 ### A snapshot beside the journal, so boot replays only the tail
 
