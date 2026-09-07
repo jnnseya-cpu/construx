@@ -7275,6 +7275,52 @@ Sixteen tests across the two files.
 
 ---
 
+### What running this would disclose, and to whom — §16.1
+
+The commercial rule was already enforced and pinned: no AI action runs without
+showing its estimated cost first. The privacy half was not. A person pressing an
+AI button on their own commercial record was told what it would cost and **not
+that it was about to leave the company** — and the platform knew, because
+clearance routing had needed the answer since the day it was built.
+
+Both facts now arrive on the one call the console already makes before the
+button. The quote carries a `disclosure`:
+
+- **`leavesPlatform`**, read from the adapter's own `transmits` rather than
+  inferred from a vendor's name. The local deterministic adapter opens no
+  socket, so nothing is disclosed however sensitive the material is — and a
+  screen that said "sent to OPENAI" about a run that never left the process
+  would be a lie in the safe direction, which is still a lie.
+- **The sensitivity the routing decision was made against**, derived once and
+  used twice. Two derivations of "how sensitive is this" would eventually
+  disagree, and the disagreement would be between what was checked and what was
+  shown.
+- **The vendor's clearance**, so a refusal is visible before the commitment
+  rather than after it.
+- **The retention route**, declared by the operator against the contract:
+  `AI_PROVIDER_RETENTION=OPENAI:ZERO:0:eu-west:no-training`. Route, days,
+  region, and whether training is excluded.
+- **A sentence**, written server-side. Wording it in the browser would create a
+  second account of what a vendor does with customer data, and that is the one
+  place two accounts disagreeing is a data-protection problem rather than a copy
+  problem.
+
+**An undeclared vendor says so, on every panel.** The temptation is to default
+to something reassuring; the deployments that most need this are exactly the
+ones where nobody has read the vendor's terms yet, and a default of "keeps
+nothing" would put a promise on a customer's screen with no contract behind it.
+`sensitivity.ts` already said the platform cannot know a retention promise and
+must be told — this is that sentence turned into a setting and a screen.
+
+The AI engine screen carries the same facts per vendor and counts the ones whose
+retention nobody has declared, because a vendor sitting in the failover chain is
+one a customer's commercial record reaches on the day the primary is unhealthy.
+
+Five tests. Nothing here changes what the platform *sends* — clearance routing
+already decided that — it changes what it tells the person pressing the button.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

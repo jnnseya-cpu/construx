@@ -155,6 +155,62 @@ function parseClearance(raw: string): Record<string, DataSensitivity> {
   return out;
 }
 
+/** How long a vendor keeps what is sent to it, as the operator has declared it. */
+export type RetentionRoute = 'ZERO' | 'TRANSIENT' | 'RETAINED' | 'NOT_DECLARED';
+
+const RETENTION_ROUTES: RetentionRoute[] = ['ZERO', 'TRANSIENT', 'RETAINED', 'NOT_DECLARED'];
+
+export type ProviderRetention = {
+  route: RetentionRoute;
+  /** Days the vendor keeps it, where the route is TRANSIENT or RETAINED. */
+  days?: number;
+  /** Where it is processed, e.g. `eu-west`. Absent where nobody has said. */
+  region?: string;
+  /** Whether the contract excludes the material from model training. */
+  trainingExcluded?: boolean;
+};
+
+/**
+ * What each vendor does with what it is sent, as
+ * `OPENAI:ZERO:0:eu-west:no-training,ANTHROPIC:TRANSIENT:30:us-east`.
+ *
+ * The same argument as `providerClearance` one step further. Clearance says
+ * what a vendor *may* be handed; this says what happens to it afterwards, which
+ * is the half a person pressing an AI button on their own commercial data
+ * actually wants to know and the platform has no way to discover. It is a fact
+ * about a contract, so it is declared, and where it has not been declared the
+ * answer shown is "nobody has said" rather than anything reassuring.
+ *
+ * An entry with an unrecognised route is dropped rather than guessed at: a
+ * typo that silently became `ZERO` would put a promise on the screen that no
+ * contract behind it supports.
+ */
+function parseRetention(raw: string): Record<string, ProviderRetention> {
+  const out: Record<string, ProviderRetention> = {};
+  for (const entry of raw.split(',')) {
+    const parts = entry.split(':').map((part) => part.trim());
+    const provider = (parts[0] ?? '').toUpperCase();
+    const route = (parts[1] ?? '').toUpperCase() as RetentionRoute;
+    if (!provider || !RETENTION_ROUTES.includes(route)) continue;
+
+    const days = Number(parts[2]);
+    const region = parts[3] ?? '';
+    // Anything after the region that says training is excluded. Spelled out
+    // rather than positional-boolean, because `...:eu-west:true` reads as a
+    // claim about the region to whoever next edits the file.
+    const training = (parts[4] ?? '').toLowerCase();
+
+    out[provider] = {
+      route,
+      ...(Number.isFinite(days) && days >= 0 ? { days } : {}),
+      ...(region ? { region } : {}),
+      ...(training === 'no-training' ? { trainingExcluded: true } : {}),
+      ...(training === 'trains' ? { trainingExcluded: false } : {}),
+    };
+  }
+  return out;
+}
+
 /**
  * Per-task confidence thresholds, as `title_block_extraction:0.9,clause:0.85`.
  *
@@ -900,6 +956,16 @@ export const config = {
      * here uses the default above.
      */
     confidenceThresholds: parseThresholds(str('AI_CONFIDENCE_THRESHOLDS', '')),
+    /**
+     * What each vendor does with what it is sent — §16.1.
+     *
+     * `AI_PROVIDER_RETENTION=OPENAI:ZERO:0:eu-west:no-training,ANTHROPIC:TRANSIENT:30:us-east`.
+     * Shown before the button, beside the price, so somebody about to send a
+     * commercial record to a third party knows that is what they are doing.
+     * A vendor absent from this is reported as `NOT_DECLARED` — an answer, and
+     * deliberately not a comfortable one.
+     */
+    providerRetention: parseRetention(str('AI_PROVIDER_RETENTION', '')),
   },
 
   /**

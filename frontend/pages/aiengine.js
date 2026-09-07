@@ -33,6 +33,15 @@ export async function aiengine(root) {
   }
 
   const providers = plane.available ?? [];
+
+  /** What a vendor keeps, short enough for a badge. */
+  const retentionLabel = (retention) => {
+    if (!retention) return 'retention unknown';
+    if (retention.route === 'ZERO') return 'keeps nothing';
+    if (retention.route === 'TRANSIENT') return retention.days ? `keeps ${retention.days}d` : 'keeps briefly';
+    if (retention.route === 'RETAINED') return retention.days ? `retains ${retention.days}d` : 'retains';
+    return 'retention undeclared';
+  };
   const healthy = providers.filter((provider) => provider.healthy);
   const drift = evaluation.error ? [] : (evaluation.drift?.changed ?? []);
   const latest = evaluation.error ? null : evaluation.latest;
@@ -96,10 +105,32 @@ export async function aiengine(root) {
                 <span class="val">
                   ${badge(humanise(provider.role), provider.role === 'FAILOVER' ? 'info' : 'ai')}
                   ${badge(provider.healthy ? 'live' : 'unhealthy', provider.healthy ? 'ok' : 'bad')}
+                  ${
+                    // What happens to a customer's record once this vendor has
+                    // it — §16.1. Beside the health badge because an operator
+                    // reading this list is deciding which vendors to keep, and
+                    // "reachable" was never the whole question.
+                    provider.transmits === false
+                      ? badge('stays here', 'ok')
+                      : badge(retentionLabel(provider.retention), provider.retention?.route === 'NOT_DECLARED' ? 'warn' : 'info')
+                  }
                 </span>
               </div>`,
             )}
           </div>
+          ${
+            (plane.undeclaredRetention ?? []).length > 0
+              ? html`<div class="notice warn" style="margin-top:12px">
+                  <div>
+                    <b>${plane.undeclaredRetention.length} vendor${plane.undeclaredRetention.length === 1 ? '' : 's'}
+                    can be sent customer records under terms nobody here has declared.</b><br />
+                    ${plane.undeclaredRetention.join(', ')}. Every AI panel says so before the button, which is honest
+                    and is not a substitute for reading the agreement. Set <code>AI_PROVIDER_RETENTION</code> once it is
+                    known — it is a statement about a contract, so the platform cannot discover it.
+                  </div>
+                </div>`
+              : ''
+          }
           <div class="metric-sub" style="margin-top:12px">
             A <b>failover</b> engine is one nothing routes to until a primary fails. It is still a vendor the platform
             can spend money with, which is why it is listed rather than hidden — the bill arrives whether or not the

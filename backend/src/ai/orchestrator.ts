@@ -1,6 +1,6 @@
-import { config } from '../config.ts';
+import { config, type ProviderRetention } from '../config.ts';
 import type { DataSensitivity } from '../identity/abac.ts';
-import { clearanceFor, mayReceive, sensitivityOf } from './sensitivity.ts';
+import { clearanceFor, mayReceive, retentionFor, retentionStatement, sensitivityOf } from './sensitivity.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import { DomainError, ForbiddenError , NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -308,6 +308,42 @@ export type CostQuote = {
    */
   blockedBy?: 'BALANCE' | 'CAP';
   capBreach?: CapBreach;
+  /**
+   * What running this would disclose, and to whom — §16.1.
+   *
+   * Beside the price rather than on a settings screen somewhere, because they
+   * are the same decision. Somebody about to spend forty pence of a prepaid
+   * balance is also about to send a commercial record to a third party, and the
+   * platform knew both facts and published only one of them.
+   *
+   * Every field here is either measured (the adapter's own `transmits`, the
+   * sensitivity derived from the inputs) or declared by the operator against a
+   * contract. Nothing is inferred from a vendor's name.
+   */
+  disclosure: RunDisclosure;
+};
+
+/** What a run would send, where, and what happens to it there. */
+export type RunDisclosure = {
+  /** The vendor that would answer. */
+  provider: string;
+  capability: ProviderCapability;
+  /**
+   * Whether project data would leave this process at all.
+   *
+   * Read from the adapter's own declaration rather than from the provider name:
+   * the local deterministic adapter opens no socket, so nothing is disclosed
+   * however sensitive the material is.
+   */
+  leavesPlatform: boolean;
+  /** The most sensitive class among the records this run would carry. */
+  sensitivity: DataSensitivity;
+  /** The most sensitive class this vendor is cleared to receive. */
+  clearance: DataSensitivity;
+  /** What the vendor does with it, as the operator has declared. */
+  retention: ProviderRetention;
+  /** The same, in a sentence, so every surface says it the same way. */
+  statement: string;
 };
 
 function median(sortedAscending: number[]): number {
@@ -476,7 +512,11 @@ export class AIOrchestrator {
      */
     inputRefs?: readonly EntityRef[];
   }): CostQuote {
-    const adapter = this.adapterFor(input.capability, sensitivityOf(input.inputRefs ?? []));
+    // Derived once and used twice: the adapter chosen must be one cleared for
+    // this material, and the disclosure below has to name the same level the
+    // choice was made against.
+    const sensitivity = sensitivityOf(input.inputRefs ?? []);
+    const adapter = this.adapterFor(input.capability, sensitivity);
     const observed = input.wallet.observedRawCosts(input.engine, input.taskType);
 
     // The floor: what the adapter charges for this capability with nothing to
@@ -507,6 +547,15 @@ export class AIOrchestrator {
       blockedReason: priced.blockedReason,
       blockedBy: priced.blockedBy,
       capBreach: priced.capBreach,
+      disclosure: {
+        provider: adapter.name,
+        capability: input.capability,
+        leavesPlatform: adapter.transmits,
+        sensitivity,
+        clearance: clearanceFor(adapter.name),
+        retention: adapter.transmits ? retentionFor(adapter.name) : { route: 'ZERO' },
+        statement: retentionStatement(adapter.name, adapter.transmits),
+      },
     };
   }
 
@@ -697,19 +746,59 @@ export class AIOrchestrator {
      * platform can actually fall back to. A third vendor that nothing mentions
      * is a third vendor nobody knows they are paying for.
      */
-    available: Array<{ provider: AIProvider; healthy: boolean; role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' }>;
+    available: Array<{
+      provider: AIProvider;
+      healthy: boolean;
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER';
+      /** The most sensitive material this vendor may be handed. */
+      clearance: DataSensitivity;
+      /** What it does with it once handed, as the operator has declared. §16.1. */
+      retention: ProviderRetention;
+      /** Whether using it puts project data outside this process at all. */
+      transmits: boolean;
+    }>;
     routingMatrix: typeof ROUTING_MATRIX;
     engineContracts: typeof ENGINE_CONTRACTS;
+    /**
+     * Vendors that could serve a request and whose retention nobody has
+     * declared — §16.1.
+     *
+     * Counted rather than left for an operator to notice in a list. A vendor in
+     * the failover chain with no declared retention is one a customer's
+     * commercial record could reach on the day the primary is unhealthy, under
+     * terms nobody at this company has read.
+     */
+    undeclaredRetention: AIProvider[];
   } {
-    const available: Array<{ provider: AIProvider; healthy: boolean; role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' }> = [
-      { provider: this.#reasoning.name, healthy: this.#reasoning.healthy(), role: 'REASONING' },
-    ];
+    const described = (
+      adapter: AIProviderAdapter,
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER',
+    ): {
+      provider: AIProvider;
+      healthy: boolean;
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER';
+      clearance: DataSensitivity;
+      retention: ProviderRetention;
+      transmits: boolean;
+    } => ({
+      provider: adapter.name,
+      healthy: adapter.healthy(),
+      role,
+      clearance: clearanceFor(adapter.name),
+      // A vendor that opens no socket discloses nothing, so its retention is
+      // zero by construction rather than by declaration — and saying
+      // NOT_DECLARED about it would be scarier than the truth.
+      retention: adapter.transmits ? retentionFor(adapter.name) : { route: 'ZERO' },
+      transmits: adapter.transmits,
+    });
+
+    const available = [described(this.#reasoning, 'REASONING')];
     if (this.#perception.name !== this.#reasoning.name) {
-      available.push({ provider: this.#perception.name, healthy: this.#perception.healthy(), role: 'PERCEPTION' });
+      available.push(described(this.#perception, 'PERCEPTION'));
     }
     for (const spare of this.#spares) {
       if (available.some((entry) => entry.provider === spare.name)) continue;
-      available.push({ provider: spare.name, healthy: spare.healthy(), role: 'FAILOVER' });
+      available.push(described(spare, 'FAILOVER'));
     }
 
     return {
@@ -722,6 +811,9 @@ export class AIOrchestrator {
       // to the phase rather than offering it and failing. `runAI` enforces the
       // same table, so the interface holds no rule the API does not publish.
       engineContracts: ENGINE_CONTRACTS,
+      undeclaredRetention: available
+        .filter((entry) => entry.transmits && entry.retention.route === 'NOT_DECLARED')
+        .map((entry) => entry.provider),
     };
   }
 }

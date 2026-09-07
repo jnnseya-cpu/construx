@@ -1,4 +1,4 @@
-import { config } from '../config.ts';
+import { config, type ProviderRetention } from '../config.ts';
 import type { DataSensitivity } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import type { AIProvider } from '../goldenthread/types.ts';
@@ -104,6 +104,57 @@ export function sensitivityOf(refs: readonly EntityRef[]): DataSensitivity {
 export function clearanceFor(provider: AIProvider | string): DataSensitivity {
   const configured = config.ai.providerClearance[provider];
   return configured ?? config.ai.defaultClearance;
+}
+
+/**
+ * What this vendor does with what it is sent — §16.1.
+ *
+ * The other half of the same declaration, and the half a person pressing the
+ * button cares about. Clearance decides whether the platform *may* send a
+ * record; this says what happens to it once it has. Both are facts about a
+ * contract rather than about the software, so both are told to the platform
+ * rather than discovered by it.
+ *
+ * An undeclared vendor is `NOT_DECLARED`, which is an answer. The temptation is
+ * to default to something reassuring; the deployments that most need this are
+ * exactly the ones where nobody has read the vendor's terms yet, and a default
+ * of "zero retention" would put a promise on a screen with no contract behind
+ * it.
+ */
+export function retentionFor(provider: AIProvider | string): ProviderRetention {
+  return config.ai.providerRetention[provider] ?? { route: 'NOT_DECLARED' };
+}
+
+/**
+ * The same fact in a sentence a person can read.
+ *
+ * Written here rather than in the browser because it is a statement about a
+ * contract the platform holds, and two wordings of it — one in the console, one
+ * in an export — would eventually say different things about the same vendor.
+ */
+export function retentionStatement(provider: AIProvider | string, leavesPlatform: boolean): string {
+  if (!leavesPlatform) {
+    return 'Nothing leaves this platform: the local stand-in answered, no external provider was called.';
+  }
+  const held = retentionFor(provider);
+  const where = held.region ? ` Processed in ${held.region}.` : '';
+  const training =
+    held.trainingExcluded === true
+      ? ' The contract excludes it from model training.'
+      : held.trainingExcluded === false
+        ? ' The contract does not exclude it from model training.'
+        : '';
+
+  switch (held.route) {
+    case 'ZERO':
+      return `Sent to ${provider}, which keeps nothing under the agreement in place.${where}${training}`;
+    case 'TRANSIENT':
+      return `Sent to ${provider}, which keeps it for ${held.days ?? 'a stated period of'} day${held.days === 1 ? '' : 's'} and then deletes it.${where}${training}`;
+    case 'RETAINED':
+      return `Sent to ${provider}, which retains it${held.days ? ` for ${held.days} days` : ''} under the agreement in place.${where}${training}`;
+    default:
+      return `Sent to ${provider}. Nobody has declared what ${provider} does with it — the operator sets AI_PROVIDER_RETENTION once the agreement with this vendor is known.`;
+  }
 }
 
 /**

@@ -551,8 +551,60 @@ export function costBlock(quote) {
       </div>
     </div>
     <div class="metric-sub">${esc(quoteBasisText(quote))}</div>
+    ${disclosureBlock(quote.disclosure)}
     ${blocked ? `<div class="notice warn">${esc(quoteBlockedText(quote))}</div>` : ''}
   </div>`;
+}
+
+/**
+ * What running this would disclose, and to whom — §16.1.
+ *
+ * Beside the price rather than on a settings screen, because they are the same
+ * decision. Somebody about to spend forty pence of a prepaid balance is also
+ * about to send a commercial record to a third party, and the platform knew
+ * both facts and showed only one.
+ *
+ * The sentence comes from the server. Wording it here would create a second
+ * account of what a vendor does with customer data, and two accounts of that
+ * eventually disagree — which is the one place a disagreement is a
+ * data-protection problem rather than a copy problem.
+ *
+ * An undeclared retention route is marked, deliberately. It is the honest state
+ * of a deployment where nobody has read the vendor's terms yet, and rendering
+ * it quietly would make "we have not checked" look like "it is fine".
+ */
+function disclosureBlock(disclosure) {
+  if (!disclosure) return '';
+
+  const stays = !disclosure.leavesPlatform;
+  const undeclared = disclosure.retention?.route === 'NOT_DECLARED';
+  const tone = stays ? 'ok' : undeclared ? 'warn' : '';
+
+  return `<div class="cost-disclosure">
+    <div class="split-list">
+      <div class="row">
+        <span class="lbl">Where this runs</span>
+        <span class="val">${esc(stays ? 'On this platform' : disclosure.provider)}</span>
+      </div>
+      <div class="row">
+        <span class="lbl">What it carries</span>
+        <span class="val">${esc(sensitivityText(disclosure.sensitivity))}</span>
+      </div>
+    </div>
+    <div class="notice ${tone}" style="margin-top:8px">${esc(disclosure.statement)}</div>
+  </div>`;
+}
+
+/** The sensitivity class in the words the rest of the console uses for it. */
+function sensitivityText(level) {
+  const said = {
+    PUBLIC: 'Public information',
+    INTERNAL: 'Ordinary project information',
+    SAFETY_L2: 'Safety information',
+    COMMERCIAL_L3: 'Commercial in confidence',
+    LEGAL_L4: 'Legally privileged',
+  };
+  return said[level] ?? level ?? 'Unclassified';
 }
 
 /**

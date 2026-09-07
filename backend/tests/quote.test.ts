@@ -464,3 +464,132 @@ describe('every AI route can be quoted, and only those', () => {
     assert.ok(reply.status === 403 || reply.status === 404, `got ${reply.status}`);
   });
 });
+
+/**
+ * What running this would disclose, and to whom — §16.1.
+ *
+ * The commercial rule was already enforced: nothing runs without showing its
+ * cost. The privacy rule was not. A person pressing an AI button on their own
+ * commercial record was told what it would cost and not that it was about to
+ * leave the company — and the platform knew, because clearance routing had
+ * needed the answer since it was built.
+ *
+ * Both facts now arrive together, on the one call the console already makes
+ * before the button. Three properties are worth pinning.
+ *
+ * **`leavesPlatform` is read from the adapter, not inferred from a name.** The
+ * local deterministic adapter opens no socket, so nothing is disclosed however
+ * sensitive the material is — and a screen that said "sent to OPENAI" about a
+ * run that never left the process would be a lie in the safe direction, which
+ * is still a lie.
+ *
+ * **An undeclared vendor says so.** The temptation is to default to something
+ * reassuring; the deployments that most need this are the ones where nobody has
+ * read the vendor's terms yet, and a default of "keeps nothing" would put a
+ * promise on a customer's screen with no contract behind it.
+ *
+ * **The sensitivity shown is the one the routing decision was made against.**
+ * Two derivations of "how sensitive is this" would eventually disagree, and the
+ * disagreement would be between what was checked and what was displayed.
+ */
+describe('what a run would disclose', () => {
+  it('reports the local stand-in as leaving nothing, and says so in words', () => {
+    const wallet = new ACUWallet(seed.tenantId);
+    wallet.topUp(100_000);
+    const orchestrator = new AIOrchestrator();
+
+    const quote = orchestrator.quote({
+      capability: 'REASONING',
+      engine: 'COMMERCIAL',
+      taskType: 'impact_assessment',
+      wallet,
+      projectId: seed.projectId,
+    });
+
+    // On a deployment with no provider keyed — which is what a test run is —
+    // the adapter is the deterministic local one.
+    assert.equal(quote.disclosure.leavesPlatform, false);
+    assert.equal(quote.disclosure.retention.route, 'ZERO');
+    assert.match(quote.disclosure.statement, /Nothing leaves this platform/);
+  });
+
+  it('names the sensitivity the routing decision was made against', () => {
+    const wallet = new ACUWallet(seed.tenantId);
+    wallet.topUp(100_000);
+    const orchestrator = new AIOrchestrator();
+
+    // A contract clause is LEGAL_L4; an inspection is not. The disclosure has
+    // to move with the inputs, or it is describing a different request.
+    const ordinary = orchestrator.quote({
+      capability: 'REASONING',
+      engine: 'COMMERCIAL',
+      taskType: 'impact_assessment',
+      wallet,
+      projectId: seed.projectId,
+      inputRefs: [],
+    });
+    assert.equal(ordinary.disclosure.sensitivity, 'INTERNAL', 'an empty input set is not PUBLIC');
+
+    const privileged = orchestrator.quote({
+      capability: 'REASONING',
+      engine: 'COMMERCIAL',
+      taskType: 'impact_assessment',
+      wallet,
+      projectId: seed.projectId,
+      // An unmapped type is LEGAL_L4 by the fail-closed rule in sensitivity.ts.
+      inputRefs: [{ refType: 'SomethingNobodyHasClassified', refId: 'x' }],
+    });
+    assert.equal(privileged.disclosure.sensitivity, 'LEGAL_L4');
+  });
+
+  it('carries the clearance beside it, so the refusal is visible before the button', () => {
+    const wallet = new ACUWallet(seed.tenantId);
+    wallet.topUp(100_000);
+    const quote = new AIOrchestrator().quote({
+      capability: 'REASONING',
+      engine: 'COMMERCIAL',
+      taskType: 'impact_assessment',
+      wallet,
+      projectId: seed.projectId,
+    });
+    assert.ok(quote.disclosure.clearance, 'no clearance on the disclosure');
+    assert.equal(typeof quote.disclosure.provider, 'string');
+    assert.equal(quote.disclosure.capability, 'REASONING');
+  });
+
+  it('reaches the console through the route the console actually calls', async () => {
+    const answer = await call('/v1/ai/quote', {
+      token: tokenFor('qs'),
+      body: { method: 'POST', path: `/v1/projects/${seed.projectId}/changes/CR-1/assess` },
+    });
+    // Whatever the route resolves to, a quote that came back must carry the
+    // disclosure — a field the server computes and the client never sees is
+    // the same as not having built it.
+    if (answer.status === 200) {
+      assert.ok(answer.body.disclosure, JSON.stringify(answer.body).slice(0, 300));
+      assert.equal(typeof answer.body.disclosure.statement, 'string');
+      assert.equal(typeof answer.body.disclosure.leavesPlatform, 'boolean');
+    }
+  });
+});
+
+describe('what the control plane says about each vendor', () => {
+  it('reports retention and whether the vendor transmits at all', () => {
+    const plane = new AIOrchestrator().controlPlaneStatus();
+    assert.ok(plane.available.length > 0);
+    for (const vendor of plane.available) {
+      assert.equal(typeof vendor.transmits, 'boolean');
+      assert.ok(vendor.retention, `${vendor.provider} has no retention`);
+      assert.ok(vendor.clearance, `${vendor.provider} has no clearance`);
+    }
+    // A vendor that opens no socket is ZERO by construction rather than by
+    // declaration — reporting NOT_DECLARED about it would be scarier than true.
+    for (const vendor of plane.available.filter((entry) => !entry.transmits)) {
+      assert.equal(vendor.retention.route, 'ZERO');
+    }
+    assert.deepEqual(
+      plane.undeclaredRetention,
+      plane.available.filter((v) => v.transmits && v.retention.route === 'NOT_DECLARED').map((v) => v.provider),
+    );
+  });
+});
