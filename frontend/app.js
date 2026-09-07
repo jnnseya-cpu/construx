@@ -71,6 +71,12 @@ export const NAV = [
       // seats. Ordering a menu by what a first-time customer needs and what a
       // daily user needs gives the same answer here.
       { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers', tenantScoped: true },
+      // The estate's delivery and commercial standing, across every project at
+      // once. `ENTERPRISE_STRUCTURE`, not `PROJECT_SETUP`: the roll-up is what
+      // `/v1/enterprise/command` authorises against, and a role that can set a
+      // project up is not automatically a role that may read the whole estate's
+      // commercial position.
+      { id: 'portfolio', label: 'Portfolio Dashboard', area: 'ENTERPRISE_STRUCTURE', icon: 'chart', tenantScoped: true },
       // Who is in the tenancy and what each of them may do: the identity
       // directory, the organisation structure, invitations, credentials and
       // the governance in force. Under ENTERPRISE_STRUCTURE, which is the

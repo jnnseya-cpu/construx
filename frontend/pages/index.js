@@ -1,6 +1,7 @@
 import { account } from './account.js';
 import { security } from './security.js';
 import { permissions } from './permissions.js';
+import { portfolio } from './portfolio.js';
 import { admin } from './admin.js';
 import { aiengine } from './aiengine.js';
 import { alerts } from './alerts.js';
@@ -70,6 +71,7 @@ export const PAGES = {
   copilot,
   autopilot,
   enterprise,
+  portfolio,
   team,
   group,
   pipeline,

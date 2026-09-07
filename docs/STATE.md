@@ -18773,3 +18773,58 @@ console just stopped being the reason nobody saw them.
   `webOnly`/`FIELD_MODULE` concept exists. This is the one item of the three
   with a security edge, since adjudication data on a field device is precisely
   what a bidder visit must not expose.
+
+## Portfolio Dashboard
+
+A dedicated screen for the question the Enterprise & Portfolio screen was not
+built to answer. That one says what the estate consists of and who is in it;
+this says how it is going — and answering it meant opening twelve project
+screens in sequence.
+
+Nothing new server-side. `/v1/enterprise/command` already computed the estate,
+the financial position, the delivery standing, the regional breakdown and the
+risk register under `ENTERPRISE_STRUCTURE R`, with per-project access evaluated
+as it goes; the screen reads it. Recomputing any of it in the browser would
+produce a console that disagrees with the platform, and a director acting on
+the disagreement.
+
+**Filters are portfolio, sector and region** — the three dimensions
+`ProjectRow` actually carries. Manager and department are absent because
+CONSTRUX has neither: roles are held against a tenancy rather than a project,
+so there is no accountable manager per project to group by, and inventing one
+from whoever last touched a record would be a dimension that looked real and
+was not. Filtering happens in the browser over rows the server already
+access-filtered, which is safe here in the way client-side filtering usually is
+not — nothing is hidden that the caller was not already entitled to see, and
+`withheld` names anything policy removed before it arrived.
+
+**Coverage is rendered as prominently as the totals it qualifies, and that is
+the whole difference between this and a spreadsheet.** A dashboard reporting
+"£7.42M actual against £12.80M budget" over twelve projects implies twelve
+projects reported. Here three may have published a CVR and the rest nothing. So
+every roll-up carries how many projects it was computed from, a project with no
+measured progress reads **not measured** rather than 0%, one with no baseline
+reads **no baseline** rather than on track, and the delivery chart carries a
+fourth bar for the unmeasured. Figures that are a plain sum of a per-project
+value are recomputed under the filter; derived ones — forecast variance,
+unapproved exposure, the risk register — stay as the platform reported them for
+the whole estate and say so, because a subset of a derived figure is not that
+figure.
+
+Gated on `ENTERPRISE_STRUCTURE` rather than `PROJECT_SETUP`: a role that can set
+a project up is not automatically one that may read the estate's commercial
+position, and the route authorises the former.
+
+### What the reference dashboard has and this does not
+
+Named rather than approximated:
+
+- **Multi-project Gantt and a milestone tracker.** Both exist per project;
+  aggregating them across the estate needs a baseline roll-up that
+  `enterpriseCommand` does not publish. `portfolioForecast` publishes P50/P80
+  per project and is the natural source when this is built.
+- **Monthly progress trend.** There is no portfolio-level time series. CVR
+  snapshots are per project and per period; a trend line would have to be
+  assembled from them, and one drawn over the three projects that report would
+  not be an estate trend.
+- **Resource workload by department.** No department dimension exists.
