@@ -7068,7 +7068,65 @@ export const ROUTES: Route[] = [
         // one project's context: a view across the estate is a governance
         // capability, not the sum of project-level access.
         platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        // So an accountable manager resolves to a name rather than an id. The
+        // project record stores only the identity; the name is looked up here,
+        // which is why a change of name does not have to be written back to
+        // every project that person runs.
+        platform.users(auth(ctx).tenantId),
       ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/accountable-manager',
+    description: 'Name the person accountable for a project, from the identities that can actually run one',
+    schema: {
+      type: 'object',
+      required: ['userId', 'reason'],
+      properties: { userId: stringField, reason: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const projectId = ctx.params.projectId as string;
+      // Resolved from the ownership model rather than a list of acceptable
+      // roles kept beside it: the people who may be made accountable for a
+      // project are exactly the people who can run one.
+      const eligible = ownersFor(platform.users(actor.tenantId), 'PROJECT_SETUP', 'U').map((owner) => ({
+        userId: owner.userId,
+        name: owner.name,
+        role: owner.role,
+      }));
+      return structure.assignAccountableManager(platform.context(actor, projectId, { correlationId: ctx.correlationId }), eligible, {
+        projectId,
+        ...body<{ userId: string; reason: string }>(ctx),
+      });
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/accountable-manager/candidates',
+    readOnly: true,
+    description: 'Who may be made accountable for this project, and who currently is',
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      const projectId = ctx.params.projectId as string;
+      const engineCtx = platform.context(actor, projectId, { correlationId: ctx.correlationId });
+      authorise(engineCtx, 'PROJECT_SETUP', 'R');
+      const record = platform.ledger.require({ refType: 'Project', refId: projectId });
+      const current = record.state.accountableManager as { userId: string; assignedAt: string; reason: string } | undefined;
+      const identities = platform.users(actor.tenantId);
+      const named = current ? identities.find((entry) => entry.id === current.userId) : undefined;
+      return {
+        current: current
+          ? { ...current, name: named?.name ?? 'No longer on the estate', role: named?.roles[0] ?? '' }
+          : null,
+        candidates: ownersFor(identities, 'PROJECT_SETUP', 'U').map((owner) => ({
+          userId: owner.userId,
+          name: owner.name,
+          role: owner.role,
+        })),
+      };
+    },
   },
   {
     method: 'GET',

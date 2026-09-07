@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { scopesForRoles } from '../src/identity/scopes.ts';
+import { ownersFor } from '../src/identity/ownership.ts';
 import { changeWindow, enterpriseCommand, portfolioForecast } from '../src/domain/portfolio.ts';
 import * as structure from '../src/domain/structure.ts';
 import { Platform } from '../src/platform.ts';
@@ -367,5 +368,169 @@ describe('completion confidence across the estate', () => {
       { source: 'WEB' },
     );
     throwsCode(() => portfolioForecast(supervisor, fixedSimulation(300, 400)), 'ACCESS_DENIED');
+  });
+});
+
+/**
+ * Who is accountable for each project.
+ *
+ * The estate could be grouped by portfolio, sector and region and by nothing
+ * about who runs each job — so the first question a director asks had no
+ * answer, and a portfolio report had to leave the column out or invent it from
+ * whoever last touched a record.
+ *
+ * The tests that carry the weight are the refusals. A free-text name is a
+ * dimension that drifts the first time somebody spells it differently, and an
+ * accountability given to somebody who cannot open the project is one nobody
+ * can discharge — so both are refused rather than accepted and reported.
+ */
+describe('the accountable manager', () => {
+  const eligible = () =>
+    ownersFor(platform.users(seed.tenantId), 'PROJECT_SETUP', 'U').map((owner) => ({
+      userId: owner.userId,
+      name: owner.name,
+      role: owner.role,
+    }));
+
+  const adminCtx = () =>
+    platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
+
+  it('records the appointment against the project, with the reason', () => {
+    const manager = eligible()[0]!;
+    const result = structure.assignAccountableManager(adminCtx(), eligible(), {
+      projectId: seed.projectId,
+      userId: manager.userId,
+      reason: 'Ran the two previous reservoir schemes for this client.',
+    });
+
+    assert.equal(result.userId, manager.userId);
+    assert.equal(result.previousUserId, undefined, 'nobody was accountable before');
+
+    const state = platform.ledger.require({ refType: 'Project', refId: seed.projectId }).state;
+    const recorded = state.accountableManager as { userId: string; reason: string; assignedBy: string };
+    assert.equal(recorded.userId, manager.userId);
+    assert.match(recorded.reason, /reservoir schemes/);
+    assert.equal(recorded.assignedBy, seed.users.admin!.id, 'the record names who appointed them');
+  });
+
+  it('resolves to a name on the estate row rather than leaving an id', () => {
+    const manager = eligible()[0]!;
+    const row = enterpriseCommand(adminCtx(), platform.users(seed.tenantId)).projects.find(
+      (entry) => entry.projectId === seed.projectId,
+    )!;
+    assert.equal(row.accountableManager?.userId, manager.userId);
+    assert.equal(row.accountableManager?.name, manager.name);
+  });
+
+  it('reports no manager rather than guessing one, where nobody was named', () => {
+    const other = enterpriseCommand(adminCtx(), platform.users(seed.tenantId)).projects.find(
+      (entry) => entry.projectId !== seed.projectId,
+    )!;
+    assert.equal(other.accountableManager, undefined);
+  });
+
+  it('refuses somebody who cannot run a project', () => {
+    // A supervisor holds real authority on site and none over a project's
+    // setup. Making them accountable would be an accountability they cannot
+    // discharge, and the platform says so rather than recording it.
+    const supervisor = platform.users(seed.tenantId).find((user) => user.roles.includes('SUPERVISOR'));
+    if (!supervisor) return;
+    const error = throwsCode(
+      () =>
+        structure.assignAccountableManager(adminCtx(), eligible(), {
+          projectId: seed.projectId,
+          userId: supervisor.id,
+          reason: 'They are on site most days and know the job well.',
+        }),
+      'MANAGER_NOT_ELIGIBLE',
+    );
+    assert.match(String(error.message), /cannot be made accountable/);
+  });
+
+  it('refuses an identity that is not in the tenancy at all', () => {
+    throwsCode(
+      () =>
+        structure.assignAccountableManager(adminCtx(), eligible(), {
+          projectId: seed.projectId,
+          userId: 'somebody-who-does-not-exist',
+          reason: 'A name typed into a box by somebody in a hurry.',
+        }),
+      'MANAGER_NOT_ELIGIBLE',
+    );
+  });
+
+  it('refuses an appointment with no reason behind it', () => {
+    const manager = eligible()[1] ?? eligible()[0]!;
+    throwsCode(
+      () =>
+        structure.assignAccountableManager(adminCtx(), eligible(), {
+          projectId: seed.projectId,
+          userId: manager.userId,
+          reason: 'because',
+        }),
+      'REASON_REQUIRED',
+    );
+  });
+
+  it('refuses naming the person who already holds it', () => {
+    const current = platform.ledger.require({ refType: 'Project', refId: seed.projectId }).state
+      .accountableManager as { userId: string };
+    throwsCode(
+      () =>
+        structure.assignAccountableManager(adminCtx(), eligible(), {
+          projectId: seed.projectId,
+          userId: current.userId,
+          reason: 'Confirming the appointment that already stands.',
+        }),
+      'ALREADY_ACCOUNTABLE',
+    );
+  });
+
+  it('keeps the previous holder on the chain when the job changes hands', () => {
+    const candidates = eligible();
+    const current = platform.ledger.require({ refType: 'Project', refId: seed.projectId }).state
+      .accountableManager as { userId: string };
+    const successor = candidates.find((entry) => entry.userId !== current.userId);
+    if (!successor) return;
+
+    const result = structure.assignAccountableManager(adminCtx(), candidates, {
+      projectId: seed.projectId,
+      userId: successor.userId,
+      reason: 'Handed over on the previous manager moving to the framework bid.',
+    });
+    assert.equal(result.previousUserId, current.userId);
+
+    // Append-only: who was accountable in March is a question a dispute in year
+    // three turns on, so the prior appointment is still readable from the
+    // chain. The event carries the patch that made it, not a copy of the state.
+    const appointments = platform.ledger
+      .eventsForEntity({ refType: 'Project', refId: seed.projectId })
+      .filter((event) => event.eventType === 'PROJECT_MANAGER_ASSIGNED');
+    assert.equal(appointments.length, 2);
+    assert.ok(
+      JSON.stringify(appointments[0]!.diff).includes(current.userId),
+      'the first appointment is still on the record',
+    );
+    assert.ok(
+      JSON.stringify(appointments[1]!.diff).includes(successor.userId),
+      'and the second names who took it over',
+    );
+  });
+
+  it('refuses a role that cannot approve a project appointment', () => {
+    const pmCtx = platform.context(
+      { ...seed.users.pm!.auth, roles: ['SUPERVISOR'] },
+      `${seed.tenantId}-governance`,
+      { source: 'WEB' },
+    );
+    throwsCode(
+      () =>
+        structure.assignAccountableManager(pmCtx, eligible(), {
+          projectId: seed.projectId,
+          userId: eligible()[0]!.userId,
+          reason: 'Naming myself accountable for the job I am working on.',
+        }),
+      'ACCESS_DENIED',
+    );
   });
 });

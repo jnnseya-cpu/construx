@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { command } from '../lib/command.js';
 import { badge, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
 import { barChart, kpiCard, pieChart, proportionBar } from '../lib/charts.js';
 import { draw, navigate, openProject } from '../app.js';
@@ -29,10 +30,15 @@ import { draw, navigate, openProject } from '../app.js';
  * progress shows *not measured* rather than 0%.
  *
  * **The filters are the dimensions the platform actually has.** Portfolio,
- * sector and region are on every `ProjectRow` already. Manager and department
- * are not dimensions in CONSTRUX — roles are held against a tenancy and the
- * platform has no per-project accountable manager to group by — so they are
- * absent rather than faked from whoever last touched a record.
+ * sector, region and accountable manager, all on `ProjectRow`. Department is
+ * still absent because CONSTRUX has no department: inventing one would be a
+ * dimension that looked real and was not.
+ *
+ * The manager is a real appointment rather than an inference — somebody with
+ * `PROJECT_SETUP A` named a person who can run a project, and gave a reason.
+ * Projects nobody has named show as **not assigned**, which is a state worth
+ * seeing: an estate with six unassigned projects has six projects nobody is
+ * accountable for.
  *
  * Filtering is client-side over rows the server has already access-filtered.
  * That is safe in a way client-side filtering usually is not: nothing is
@@ -58,6 +64,11 @@ const REGION = {
 function regionOf(row) {
   const code = row.location?.continentCode;
   return code ? (REGION[code] ?? code) : 'Region not set';
+}
+
+/** The accountable manager's name, or the honest absence of one. */
+function managerOf(row) {
+  return row.accountableManager?.name ?? 'Not assigned';
 }
 
 /** Options for one filter, with the count beside each so an empty one is visible before it is chosen. */
@@ -92,7 +103,7 @@ function select(id, label, chosen, entries) {
  * from the URL would make it shareable and is a different feature; this is the
  * simplest thing that answers the question.
  */
-const chosen = { portfolio: '', sector: '', region: '' };
+const chosen = { portfolio: '', sector: '', region: '', manager: '' };
 
 export async function portfolio(root) {
   const [command, portfolios] = await Promise.all([
@@ -123,7 +134,8 @@ export async function portfolio(root) {
     (row) =>
       (!chosen.portfolio || row.portfolioId === chosen.portfolio) &&
       (!chosen.sector || row.sectorType === chosen.sector) &&
-      (!chosen.region || regionOf(row) === chosen.region),
+      (!chosen.region || regionOf(row) === chosen.region) &&
+      (!chosen.manager || managerOf(row) === chosen.manager),
   );
   const filtered = rows.length !== all.length;
   const currency = command.estate?.currency ?? 'GBP';
@@ -166,6 +178,7 @@ export async function portfolio(root) {
           ${select('portfolio', 'Portfolio', chosen.portfolio, options(all, (row) => row.portfolioId, portfolioName))}
           ${select('sector', 'Sector', chosen.sector, options(all, (row) => row.sectorType, humanise))}
           ${select('region', 'Region', chosen.region, options(all, regionOf))}
+          ${select('manager', 'Accountable manager', chosen.manager, options(all, managerOf))}
           ${filtered ? html`<button class="btn quiet sm" data-filter-clear>Clear</button>` : ''}
         </div>
         ${
@@ -319,10 +332,14 @@ export async function portfolio(root) {
           showing it as 0% would report work that has not been assessed as work that has not been done.
         </p>
         ${table({
-          headers: ['Project', 'Portfolio', 'Sector', 'Phase', 'Complete', 'Delivery', 'Commercial', 'Risk', 'Open', 'Contract value'],
-          align: ['', '', '', '', 'num', '', '', 'num', 'num', 'num'],
+          headers: ['Project', 'Manager', 'Portfolio', 'Sector', 'Phase', 'Complete', 'Delivery', 'Commercial', 'Risk', 'Open', 'Contract value'],
+          align: ['', '', '', '', '', 'num', '', '', 'num', 'num', 'num'],
           rows: rows.map((row) => [
             html`<button class="btn quiet sm" data-open-project="${row.projectId}">${row.name}</button>`,
+            row.accountableManager
+              ? html`${row.accountableManager.name}
+                  <span style="font-size:11.5px;color:var(--text-3)">${humanise(row.accountableManager.role ?? '')}</span>`
+              : html`<button class="btn quiet sm" data-assign="${row.projectId}" data-name="${row.name}">Not assigned</button>`,
             html`<span style="font-size:12px;color:var(--text-3)">${portfolioName(row.portfolioId)}</span>`,
             html`<span style="font-size:12px;color:var(--text-3)">${humanise(row.sectorType ?? '')}</span>`,
             badge(humanise(row.phase ?? ''), ''),
@@ -402,7 +419,52 @@ export async function portfolio(root) {
       chosen.portfolio = '';
       chosen.sector = '';
       chosen.region = '';
+      chosen.manager = '';
       await draw();
+      return;
+    }
+
+    const assign = event.target.closest('[data-assign]');
+    if (assign) {
+      const projectId = assign.dataset.assign;
+      // The candidates are the people who can actually run a project, resolved
+      // by the platform rather than listed here. A dropdown built in the
+      // browser from every user would offer names the server then refuses.
+      const position = await api
+        .get(`/v1/projects/${projectId}/accountable-manager/candidates`)
+        .catch((error) => ({ error, candidates: [] }));
+      const accepted = await command({
+        title: `Who is accountable for ${assign.dataset.name}?`,
+        intent:
+          'A named person who can run the job, and the reason they were chosen. Accountability recorded as a string ' +
+          'nobody can open the project drifts the first time it is spelled differently, so this is an identity — and ' +
+          'a successor reading the record in two years needs why, not just who.',
+        path: `/v1/projects/${projectId}/accountable-manager`,
+        submitLabel: 'Record the appointment',
+        fields: [
+          {
+            name: 'userId',
+            label: 'Accountable manager',
+            type: 'select',
+            options: (position.candidates ?? []).map((candidate) => ({
+              value: candidate.userId,
+              label: `${candidate.name} · ${humanise(candidate.role)}`,
+            })),
+            hint:
+              (position.candidates ?? []).length === 0
+                ? 'Nobody in this tenancy holds a role that can run a project. Grant one on Team & Access first.'
+                : 'Only identities holding a role that can run a project.',
+          },
+          {
+            name: 'reason',
+            label: 'Why this person',
+            type: 'textarea',
+            rows: 2,
+            hint: 'Sector experience, continuity from the bid, proximity — whatever actually decided it.',
+          },
+        ],
+      });
+      if (accepted) await draw();
       return;
     }
 

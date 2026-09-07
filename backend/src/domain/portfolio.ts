@@ -56,6 +56,16 @@ export type ProjectRow = {
    */
   portfolioId: string;
   location?: { continentCode?: string; countryCode?: string; city?: string };
+  /**
+   * Who is accountable for this project, resolved to a name at read time.
+   *
+   * Only the identity is stored on the project; the name and role are looked up
+   * as the row is built, so a promotion or a change of name does not leave a
+   * stale copy on every project that person runs. Absent where nobody has been
+   * named — which is a real state and reads as *not assigned* rather than being
+   * filled in from whoever last touched a record.
+   */
+  accountableManager?: { userId: string; name: string; role: string; assignedAt: string };
 };
 
 /** One region of the estate, with what is committed in it. */
@@ -384,7 +394,17 @@ function scheduleStatus(delayDays: number, severity: string): 'ON_TRACK' | 'AT_R
  * rather than any project's — a delivery role holding project access does not
  * thereby hold a view across every project in the business.
  */
-export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
+export function enterpriseCommand(
+  ctx: EngineContext,
+  /**
+   * The tenancy's identities, so an accountable manager resolves to a name.
+   *
+   * Passed in rather than read here: this module computes a position from the
+   * ledger and does not own the identity store. Defaulted to empty so every
+   * existing caller keeps working and simply reports the manager as unresolved.
+   */
+  identities: ReadonlyArray<{ id: string; name: string; roles: readonly string[] }> = [],
+): EnterpriseCommand {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
 
   const projects = liveProjects(ctx.ledger, ctx.tenantId);
@@ -430,6 +450,21 @@ export function enterpriseCommand(ctx: EngineContext): EnterpriseCommand {
       portfolioId: String(state.portfolioId ?? ''),
       location: state.location as ProjectRow['location'],
     };
+
+    const manager = state.accountableManager as { userId: string; assignedAt: string } | undefined;
+    if (manager) {
+      const identity = identities.find((entry) => entry.id === manager.userId);
+      row.accountableManager = {
+        userId: manager.userId,
+        // An identity that has since been removed keeps its id on the record —
+        // the appointment happened — and reports as no longer on the estate
+        // rather than vanishing, which would read as a project nobody was ever
+        // accountable for.
+        name: identity?.name ?? 'No longer on the estate',
+        role: identity ? (identity.roles[0] ?? '') : '',
+        assignedAt: manager.assignedAt,
+      };
+    }
 
     // --- Commercial ---------------------------------------------------------
     const cvr = latest(ctx, projectId, 'CVR');

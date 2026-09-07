@@ -328,6 +328,114 @@ export function isLiveProject(state: Record<string, unknown>): boolean {
   return state.status !== 'DELETED';
 }
 
+/** The accountable manager as the project record carries it. */
+export type AccountableManager = {
+  userId: string;
+  assignedAt: string;
+  assignedBy: string;
+  /** Why this person, which is the part a successor actually needs. */
+  reason: string;
+};
+
+/**
+ * Name the person accountable for a project.
+ *
+ * The estate could be grouped by portfolio, sector and region and by nothing
+ * about **who runs each job** — so the one question a director asks first
+ * ("whose is this?") had no answer, and every portfolio report had to leave the
+ * column out or invent it from whoever last touched a record.
+ *
+ * Three things make this a real dimension rather than a text field:
+ *
+ * **It is an identity, not a name.** A string typed into a box is a dimension
+ * that looks real and drifts the first time somebody spells it differently.
+ * The person has to be somebody the platform knows, in this tenancy.
+ *
+ * **They have to be able to run the job.** Naming somebody accountable who
+ * cannot open the project is an accountability nobody can discharge, so the
+ * person must hold a role carrying `PROJECT_SETUP U` — read from the same
+ * ownership resolution every other "who owns this" answer uses rather than a
+ * second list of acceptable roles kept here.
+ *
+ * **It is an approval, and it carries a reason.** Naming who carries a job is a
+ * governance act, not an edit, so it takes `PROJECT_SETUP A`. Reassignment is
+ * allowed and expected — people move — and the ledger keeps every prior holder
+ * because the chain is append-only. Who was accountable in March is a question
+ * a dispute in year three turns on.
+ *
+ * Only the identity is stored. The name and the role are resolved when the
+ * record is read, so a promotion or a change of name does not leave a stale
+ * copy on every project that person runs.
+ */
+export function assignAccountableManager(
+  ctx: EngineContext,
+  eligible: ReadonlyArray<{ userId: string; name: string; role: string }>,
+  input: { projectId: string; userId: string; reason: string },
+): { projectId: string; userId: string; previousUserId?: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const record = ctx.ledger.require({ refType: 'Project', refId: input.projectId });
+  if (record.tenantId !== ctx.tenantId) {
+    throw new DomainError('PROJECT_NOT_FOUND', `No project ${input.projectId}`, 404);
+  }
+  if (!isLiveProject(record.state)) {
+    throw new DomainError(
+      'PROJECT_DELETED',
+      `${String(record.state.name)} was deleted. A deleted project keeps its record and takes no new decisions.`,
+      409,
+    );
+  }
+
+  if (input.reason.trim().length < 10) {
+    throw new DomainError(
+      'REASON_REQUIRED',
+      'Say why this person. A successor reading the record in two years needs the reason, not just the name.',
+      422,
+      [{ field: 'reason', message: 'Give the reason for the appointment' }],
+    );
+  }
+
+  const candidate = eligible.find((entry) => entry.userId === input.userId);
+  if (!candidate) {
+    throw new DomainError(
+      'MANAGER_NOT_ELIGIBLE',
+      'That person cannot be made accountable for a project: they are not an identity in this tenancy holding a role ' +
+        'that can run one. Accountability nobody can discharge is worse than none — give them the role first.',
+      422,
+      [{ field: 'userId', message: 'Not a role that can run a project' }],
+    );
+  }
+
+  const previous = record.state.accountableManager as AccountableManager | undefined;
+  if (previous?.userId === input.userId) {
+    throw new DomainError(
+      'ALREADY_ACCOUNTABLE',
+      `${candidate.name} is already accountable for ${String(record.state.name)}.`,
+      409,
+    );
+  }
+
+  const manager: AccountableManager = {
+    userId: input.userId,
+    assignedAt: new Date().toISOString(),
+    assignedBy: ctx.auth.actorId,
+    reason: input.reason.trim(),
+  };
+
+  write(ctx, {
+    projectId: input.projectId,
+    eventType: 'PROJECT_MANAGER_ASSIGNED',
+    entity: { refType: 'Project', refId: input.projectId },
+    nextState: { ...record.state, accountableManager: manager },
+  });
+
+  return {
+    projectId: input.projectId,
+    userId: input.userId,
+    ...(previous ? { previousUserId: previous.userId } : {}),
+  };
+}
+
 /** The tenancy's projects that have not been deleted. What every listing and rollup should read. */
 export function liveProjects(ledger: EngineContext['ledger'], tenantId: string): ReturnType<EngineContext['ledger']['listByTenant']> {
   return ledger.listByTenant(tenantId, 'Project').filter((record) => isLiveProject(record.state));

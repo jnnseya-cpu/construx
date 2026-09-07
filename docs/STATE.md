@@ -18828,3 +18828,48 @@ Named rather than approximated:
   assembled from them, and one drawn over the three projects that report would
   not be an estate trend.
 - **Resource workload by department.** No department dimension exists.
+
+## An accountable manager on a project
+
+The estate could be grouped by portfolio, sector and region and by nothing at
+all about **who runs each job**. So the first question a director asks — whose
+is this? — had no answer, and the portfolio report either left the column out
+or would have had to invent it from whoever last touched a record.
+
+`PROJECT_MANAGER_ASSIGNED` and `structure.assignAccountableManager`. Three
+things make it a real dimension rather than a text field:
+
+**It is an identity, not a name.** A string typed into a box drifts the first
+time somebody spells it differently, and then the estate cannot be grouped by
+it. The person has to be somebody the platform knows, in this tenancy.
+
+**They have to be able to run the job.** The candidate list is
+`ownersFor(identities, 'PROJECT_SETUP', 'U')` — the same ownership resolution
+every other "who owns this" answer uses, rather than a second list of
+acceptable roles kept beside it. Naming somebody who cannot open the project is
+an accountability nobody can discharge, and it is refused
+(`MANAGER_NOT_ELIGIBLE`) rather than recorded and reported.
+
+**It is an approval and it carries a reason.** `PROJECT_SETUP A`, with a reason
+of at least ten characters, because a successor reading the record in two years
+needs why and not just who. Reassignment is expected — people move — and every
+prior holder stays on the chain, which is what a dispute in year three turns
+on.
+
+Only the identity is stored. The name and role are resolved as the estate row
+is built, so a promotion or a change of name does not leave a stale copy on
+every project that person runs. An identity since removed keeps its id on the
+record — the appointment happened — and reports as *no longer on the estate*
+rather than vanishing, which would read as a project nobody was ever
+accountable for.
+
+The Portfolio Dashboard gains a manager column and a fourth filter. A project
+nobody has named reads **Not assigned** and the cell is the door to naming
+somebody, so the gap is both visible and closeable from where it is seen. An
+estate with six unassigned projects has six projects nobody is accountable for,
+and that is worth putting on the screen.
+
+Department remains absent, because CONSTRUX still has no department and
+inventing one would be a dimension that looked real and was not.
+
+Covered by nine tests in `portfolio.test.ts`, seven of them refusals.

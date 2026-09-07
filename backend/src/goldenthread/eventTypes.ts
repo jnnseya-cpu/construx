@@ -274,6 +274,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROJECT_CREATED', 'Project', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_PHASE_TRANSITIONED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   def('PROJECT_DELETED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
+  // Who is accountable for this project, by name. A governance act rather than
+  // an edit: the estate cannot be reported by manager until somebody has said
+  // who each manager is, and the answer has to be a person the platform knows
+  // rather than a string somebody typed.
+  def('PROJECT_MANAGER_ASSIGNED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),
   def('WORKPACKAGE_CREATED', 'WorkPackage', 'CREATE', 'PROJECT_CONTROL'),
 
