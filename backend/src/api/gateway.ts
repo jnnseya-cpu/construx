@@ -11,6 +11,7 @@ import {
   authenticate,
   buildTrace,
   header,
+  ifMatch,
   logRequest,
   readIdempotent,
   sendHtml,
@@ -200,6 +201,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     query: url.searchParams,
     body: undefined,
     idempotencyKey: header(req, 'idempotency-key'),
+    ...ifMatch(header(req, 'if-match')),
     // The webhook signatures, captured unconditionally: the alternative is the
     // gateway knowing which routes are webhooks, and each costs one header read.
     webhookSignature: header(req, 'stripe-signature'),

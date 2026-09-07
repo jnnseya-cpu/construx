@@ -13,6 +13,11 @@ export type ProblemDetail = {
   traceId?: string;
   correlationId?: string;
   errors?: Array<{ field: string; message: string }>;
+  /** On a 409 only — §15.1's version-conflict contract. */
+  currentVersion?: number;
+  expectedVersion?: number;
+  entity?: { refType: string; refId: string };
+  permittedResolutions?: string[];
 };
 
 export class DomainError extends Error {
@@ -26,6 +31,37 @@ export class DomainError extends Error {
     this.code = code;
     this.status = status;
     this.fieldErrors = fieldErrors;
+  }
+}
+
+/**
+ * A write refused because the caller was looking at an older version — §15.1.
+ *
+ * A subclass rather than a `DomainError` with a bag of extras, for the reason
+ * `ValidationError` is one: the fields it carries are not decoration, they are
+ * what the caller needs in order to do anything about it. A 409 that says only
+ * "conflict" leaves a device with no choice to offer but "try again", which is
+ * the one thing that will fail identically.
+ */
+export class VersionConflictError extends DomainError {
+  readonly currentVersion: number;
+  readonly expectedVersion: number;
+  readonly entity: { refType: string; refId: string };
+  readonly permittedResolutions: readonly string[];
+
+  constructor(input: {
+    message: string;
+    currentVersion: number;
+    expectedVersion: number;
+    entity: { refType: string; refId: string };
+    permittedResolutions: readonly string[];
+  }) {
+    super('VERSION_CONFLICT', input.message, 409);
+    this.name = 'VersionConflictError';
+    this.currentVersion = input.currentVersion;
+    this.expectedVersion = input.expectedVersion;
+    this.entity = input.entity;
+    this.permittedResolutions = input.permittedResolutions;
   }
 }
 
@@ -125,6 +161,15 @@ export function toProblem(error: unknown, instance: string, traceId: string, cor
       correlationId,
     };
     if (error.fieldErrors.length > 0) problem.errors = error.fieldErrors;
+    // §15.1: a 409 carries the current version and what the caller may do about
+    // it. Without these a device can offer only "try again", which is the one
+    // response guaranteed to fail the same way.
+    if (error instanceof VersionConflictError) {
+      problem.currentVersion = error.currentVersion;
+      problem.expectedVersion = error.expectedVersion;
+      problem.entity = error.entity;
+      problem.permittedResolutions = [...error.permittedResolutions];
+    }
     return problem;
   }
   return {

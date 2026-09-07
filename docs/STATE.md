@@ -7209,6 +7209,49 @@ it does not terminate.
 
 ---
 
+### Optimistic concurrency: two editors conflict rather than overwrite
+
+§15.1. A write may carry `If-Match: <version>`; where the entity has moved on,
+`write` refuses with 409 `VERSION_CONFLICT` carrying `currentVersion`,
+`expectedVersion`, the entity, and the resolutions the platform will accept.
+
+**Why the header rather than the body.** `If-Match` is a precondition on the
+state the caller believes it is amending, which is exactly what this is, and it
+means seven hundred route schemas do not have to learn about a new field.
+
+**Enforced in `write`, the one path every material change takes.** A rule
+applied at each command is a rule with holes in it, and this proved the point
+immediately: threading the precondition through `projectContext` alone left the
+**twenty-nine routes that build their own engine context silently exempt**.
+`engineOptions(ctx)` is now the one place those options are assembled, and every
+one of them calls it.
+
+Two design decisions worth stating.
+
+**A malformed precondition is ignored, not refused.** Every existing caller
+sends no `If-Match`, and some libraries send `*`. Turning either into a 400
+would break working clients for no safety gain — a caller who does not send a
+usable version is in the position they are in today. The gap closes by routes
+requiring the header, not by rejecting the ones that do not.
+
+**The 409 has to be actionable.** A conflict that says only "conflict" leaves a
+device with nothing to offer but "try again", which is the one response
+guaranteed to fail identically. Resolutions are `RELOAD_AND_RETRY`, `AMEND` and
+`DISCARD_MINE` — reduced to `AMEND` alone on a record whose status is sealed
+(submitted, issued, approved, accepted, witnessed, certified, closed,
+superseded, executed), because MOB-005 makes those correctable only by
+amendment and offering a retry would be offering a second refusal.
+
+Found while building it: the helper's `EventSource` annotation was silently
+resolving to the **DOM's** `EventSource`, since `routes.ts` never imported the
+platform's. It typechecked and meant nothing. Now imported.
+
+`versionconflict.test.ts` — 8 tests, driven over HTTP because the header is half
+the feature: a unit test of `write` would pass whether or not `If-Match` ever
+reached it.
+
+---
+
 ### The offline pack: a bounded, verified working set
 
 §14.6's lifecycle — estimate, authorise scope, sign a manifest, download, verify,

@@ -47,6 +47,16 @@ export type RequestContext = {
   device?: DeviceRecord;
   idempotencyKey?: string;
   /**
+   * The entity version the caller believes it is amending — §15.1.
+   *
+   * Read from `If-Match`, which is the header this already is: an optimistic
+   * concurrency precondition. Carrying it here rather than in each route's body
+   * schema means every material write gets the check without seven hundred
+   * schemas learning about it, and a caller that omits it is simply not using
+   * the precondition rather than failing validation.
+   */
+  expectedVersion?: number;
+  /**
    * The signature on an inbound webhook, for the routes that take one.
    *
    * Captured at the edge because a handler cannot reach the raw request, and
@@ -94,6 +104,29 @@ const TRACE_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
 function safeTrace(value: string | undefined): string | undefined {
   return value !== undefined && TRACE_ID.test(value) ? value : undefined;
+}
+
+/**
+ * The entity version an `If-Match` asserts — §15.1's optimistic concurrency.
+ *
+ * `If-Match` is the header this already is: a precondition on the state the
+ * caller believes it is amending. A weak or quoted ETag form is accepted and
+ * unquoted, because a client library that adds the quotes is doing the
+ * conventional thing and should not be punished for it.
+ *
+ * Anything that is not a whole number is **ignored rather than refused**. A
+ * malformed precondition means the caller is not using one, and turning that
+ * into a 400 would break every existing client that sends `If-Match: *` — while
+ * a caller who genuinely wants the check and mistypes it gets the same outcome
+ * they get today, which is the last write winning. The gap is closed by the
+ * routes that require the header, not by rejecting the ones that do not.
+ */
+export function ifMatch(raw: string | undefined): { expectedVersion?: number } {
+  if (raw === undefined) return {};
+  const unquoted = raw.trim().replace(/^W\//, '').replace(/^"(.*)"$/, '$1');
+  if (!/^\d+$/.test(unquoted)) return {};
+  const version = Number(unquoted);
+  return Number.isSafeInteger(version) && version > 0 ? { expectedVersion: version } : {};
 }
 
 export function buildTrace(req: IncomingMessage): { traceId: string; correlationId: string } {

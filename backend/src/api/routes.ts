@@ -24,6 +24,7 @@ import * as notifyEngine from '../notifications/notify.ts';
 import { PLATFORM_BRANDING } from '../notifications/render.ts';
 import * as preferences from '../notifications/preferences.ts';
 import * as notificationRender from '../notifications/render.ts';
+import type { EventSource } from '../goldenthread/types.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
@@ -564,6 +565,23 @@ function tenantContext(platform: Platform, ctx: RequestContext) {
   });
 }
 
+/**
+ * The engine options every route hands `platform.context`.
+ *
+ * One helper because there are twenty-nine direct call sites, and §15.1's
+ * precondition proved the point: adding `expectedVersion` to `projectContext`
+ * alone left the routes that build their own context silently exempt from the
+ * conflict check — which is precisely the hole a rule applied at many call
+ * sites gets. A field added here reaches all of them.
+ */
+function engineOptions(ctx: RequestContext): { correlationId: string; source: EventSource; expectedVersion?: number | undefined } {
+  return {
+    correlationId: ctx.correlationId,
+    source: sourceOf(ctx),
+    ...(ctx.expectedVersion === undefined ? {} : { expectedVersion: ctx.expectedVersion }),
+  };
+}
+
 function projectContext(platform: Platform, ctx: RequestContext, overrideProjectId?: string) {
   const projectId = overrideProjectId ?? ctx.params.projectId;
   if (!projectId) throw new NotFoundError('Project id missing from path');
@@ -605,7 +623,7 @@ function projectContext(platform: Platform, ctx: RequestContext, overrideProject
     );
   }
 
-  return platform.context(auth(ctx), projectId, { correlationId: ctx.correlationId, source: sourceOf(ctx) });
+  return platform.context(auth(ctx), projectId, engineOptions(ctx));
 }
 
 function sourceOf(ctx: RequestContext): 'WEB' | 'PWA' | 'ANDROID' | 'IOS' | 'SYSTEM' {
@@ -6168,7 +6186,7 @@ export const ROUTES: Route[] = [
       if (actor.roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
       }
-      authorise(platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }), 'ENTERPRISE_STRUCTURE', 'R');
+      authorise(platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)), 'ENTERPRISE_STRUCTURE', 'R');
       return teamPosition(platform, actor.tenantId);
     },
   },
@@ -6318,7 +6336,7 @@ export const ROUTES: Route[] = [
       if (actor.roles.includes('PLATFORM_ADMIN')) {
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
       }
-      authorise(platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }), 'ENTERPRISE_STRUCTURE', 'R');
+      authorise(platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)), 'ENTERPRISE_STRUCTURE', 'R');
       const userId = ctx.params.userId as string;
       const person = platform.user(userId);
       if (person.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${userId}`);
@@ -7087,7 +7105,7 @@ export const ROUTES: Route[] = [
         // Enterprise scope, on the tenant governance pseudo-project. Not any
         // one project's context: a view across the estate is a governance
         // capability, not the sum of project-level access.
-        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, engineOptions(ctx)),
         // So an accountable manager resolves to a name rather than an id. The
         // project record stores only the identity; the name is looked up here,
         // which is why a change of name does not have to be written back to
@@ -7116,7 +7134,7 @@ export const ROUTES: Route[] = [
         name: owner.name,
         role: owner.role,
       }));
-      return structure.assignAccountableManager(platform.context(actor, projectId, { correlationId: ctx.correlationId }), eligible, {
+      return structure.assignAccountableManager(platform.context(actor, projectId, engineOptions(ctx)), eligible, {
         projectId,
         ...body<{ userId: string; reason: string }>(ctx),
       });
@@ -7130,7 +7148,7 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const actor = auth(ctx);
       const projectId = ctx.params.projectId as string;
-      const engineCtx = platform.context(actor, projectId, { correlationId: ctx.correlationId });
+      const engineCtx = platform.context(actor, projectId, engineOptions(ctx));
       authorise(engineCtx, 'PROJECT_SETUP', 'R');
       const record = platform.ledger.require({ refType: 'Project', refId: projectId });
       const current = record.state.accountableManager as { userId: string; assignedAt: string; reason: string } | undefined;
@@ -7161,10 +7179,10 @@ export const ROUTES: Route[] = [
       // its own context, so a project the caller cannot read the programme of
       // is refused there and reported as not simulated — not silently included.
       return portfolio.portfolioForecast(
-        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)),
         (projectId, iterations, contractualDurationDays) =>
           planning.simulateProgramme(
-            platform.context(actor, projectId, { correlationId: ctx.correlationId }),
+            platform.context(actor, projectId, engineOptions(ctx)),
             { iterations, contractualDurationDays },
           ),
         ctx.query.get('iterations') ? Number(ctx.query.get('iterations')) : undefined,
@@ -7184,7 +7202,7 @@ export const ROUTES: Route[] = [
       const from =
         ctx.query.get('from') ?? new Date(Date.parse(to) - 7 * 86_400_000).toISOString();
       return portfolio.changeWindow(
-        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, engineOptions(ctx)),
         from,
         to,
       );
@@ -7221,7 +7239,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       structure.createPortfolio(
-        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, engineOptions(ctx)),
         body(ctx),
       ),
   },
@@ -8527,7 +8545,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       structure.deletePortfolio(
-        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, engineOptions(ctx)),
         { portfolioId: ctx.params.portfolioId as string, reason: body<{ reason: string }>(ctx).reason },
       ),
   },
@@ -8543,7 +8561,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       structure.createProgramme(
-        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(auth(ctx), `${auth(ctx).tenantId}-governance`, engineOptions(ctx)),
         body(ctx),
       ),
   },
@@ -8606,7 +8624,7 @@ export const ROUTES: Route[] = [
       // project's chain is the project's creation.
       const projectId = undefined;
       return structure.createProject(
-        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)),
         { ...body<Parameters<typeof structure.createProject>[1]>(ctx), projectId },
       );
     },
@@ -21832,7 +21850,7 @@ export const ROUTES: Route[] = [
         if (!actor.roles.includes('PLATFORM_ADMIN')) {
           throw new DomainError('QUOTE_SCOPE', 'AI actions are quoted against a project', 400);
         }
-        const platformCtx = platform.context(actor, blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+        const platformCtx = platform.context(actor, blog.BLOG_PROJECT_ID, engineOptions(ctx));
         authorise(platformCtx, 'AI_EXECUTION', 'X');
         return platform.orchestrator.quote({
           capability: matched.route.ai.capability,
@@ -22120,7 +22138,7 @@ export const ROUTES: Route[] = [
       // `I` rather than `R`: this reads across every project in the tenancy at
       // once, which is the export-shaped permission rather than the read one.
       authorise(
-        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)),
         'EVIDENCE_AUDIT',
         'I',
       );
@@ -22141,7 +22159,7 @@ export const ROUTES: Route[] = [
       // whose upload is about to be refused should be able to find out why
       // without asking an administrator.
       authorise(
-        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)),
         'BILLING_ACU',
         'R',
       );
@@ -22211,7 +22229,7 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Platform operators are barred from customer delivery data', 'ACCOUNT_LAYER_SEPARATION');
       }
       authorise(
-        platform.context(actor, `${actor.tenantId}-governance`, { correlationId: ctx.correlationId }),
+        platform.context(actor, `${actor.tenantId}-governance`, engineOptions(ctx)),
         'EVIDENCE_AUDIT',
         'I',
       );
@@ -22474,7 +22492,7 @@ export const ROUTES: Route[] = [
     },
     handler: async (platform, ctx) => {
       operatorOnly(ctx, 'draft a blog post');
-      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, engineOptions(ctx));
       return blog.draftPost(context, platform, body(ctx));
     },
   },
@@ -22497,7 +22515,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'write a blog post');
-      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, engineOptions(ctx));
       return blog.writePost(context, platform, body(ctx));
     },
   },
@@ -22520,7 +22538,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'edit a blog post');
-      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, engineOptions(ctx));
       return blog.revisePost(context, platform, ctx.params.postId as string, body(ctx));
     },
   },
@@ -22531,7 +22549,7 @@ export const ROUTES: Route[] = [
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'publish a blog post');
-      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, engineOptions(ctx));
       return blog.publishPost(context, platform, ctx.params.postId as string);
     },
   },
@@ -22547,7 +22565,7 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => {
       operatorOnly(ctx, 'withdraw a blog post');
-      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, { correlationId: ctx.correlationId });
+      const context = platform.context(auth(ctx), blog.BLOG_PROJECT_ID, engineOptions(ctx));
       return { post: blog.withdrawPost(context, platform, ctx.params.postId as string, body<{ reason: string }>(ctx).reason) };
     },
   },
@@ -23671,7 +23689,7 @@ function sessionTenant(platform: Platform, ctx: RequestContext, hash: string): s
   const record = evidence.findByHash(platform.ledger, actor.tenantId, hash);
   if (!record) throw new NotFoundError('No evidence record in this tenancy references that hash');
 
-  const engineCtx = platform.context(actor, record.projectId, { correlationId: ctx.correlationId });
+  const engineCtx = platform.context(actor, record.projectId, engineOptions(ctx));
   authorise(engineCtx, 'EVIDENCE_AUDIT', 'R');
   return actor.tenantId;
 }

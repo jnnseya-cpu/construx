@@ -10,7 +10,7 @@ import {
 } from '../ai/outputstandard.ts';
 import type { ProviderCapability, ProviderRequest } from '../ai/providers/types.ts';
 import { config } from '../config.ts';
-import { DomainError } from '../core/errors.ts';
+import { DomainError, VersionConflictError } from '../core/errors.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
@@ -39,6 +39,16 @@ export type EngineContext = {
   auth: AuthContext;
   source: EventSource;
   correlationId: string;
+  /**
+   * The entity version the caller asserted, from `If-Match` — §15.1.
+   *
+   * Optional, and its absence is not a failure: a caller that does not send the
+   * precondition is not using optimistic concurrency, which is the position
+   * every existing client is in. Where it *is* sent, `write` refuses a stale
+   * amendment with a 409 carrying the current version and the resolutions the
+   * platform will accept.
+   */
+  expectedVersion?: number;
   tenantId: string;
   projectId: string;
   /**
@@ -156,12 +166,76 @@ export function currentPhase(ctx: EngineContext): LifecyclePhase | undefined {
 }
 
 /** Commit a human- or system-authored state change. */
+/**
+ * What a caller may do about a version conflict — §15.1's permitted resolutions.
+ *
+ * Sent with the 409 so a device can offer a real choice rather than the word
+ * "conflict". `AMEND` is always available; `RETRY` only where the record is
+ * still in a state that accepts an ordinary update, because a submitted or
+ * approved record does not (MOB-005) and offering to retry into one would be
+ * offering something the platform will refuse a second time.
+ */
+export const CONFLICT_RESOLUTIONS = ['RELOAD_AND_RETRY', 'AMEND', 'DISCARD_MINE'] as const;
+export type ConflictResolution = (typeof CONFLICT_RESOLUTIONS)[number];
+
+/** Record states that no longer accept an ordinary update. */
+const SEALED_STATES = new Set([
+  'SUBMITTED',
+  'ISSUED',
+  'APPROVED',
+  'ACCEPTED',
+  'WITNESSED',
+  'CERTIFIED',
+  'CLOSED',
+  'SUPERSEDED',
+  'EXECUTED',
+]);
+
+function resolutionsFor(state: Record<string, unknown> | undefined): ConflictResolution[] {
+  const status = typeof state?.status === 'string' ? state.status : undefined;
+  // A sealed record is corrected by an amendment and nothing else. Offering a
+  // retry there would be offering a second refusal.
+  if (status && SEALED_STATES.has(status)) return ['AMEND'];
+  return ['RELOAD_AND_RETRY', 'AMEND', 'DISCARD_MINE'];
+}
+
+/**
+ * Refuse a write whose caller was looking at an older version of the record.
+ *
+ * The whole of §15.1's optimistic concurrency, in one place, because `write` is
+ * the one path every material change takes. Without it two people editing the
+ * same record from two devices both succeed and the later one silently wins —
+ * which for a progress quantity or an inspection result is a number nobody
+ * agreed, sitting in a valuation.
+ *
+ * A create is never a conflict: there is nothing to be stale about.
+ */
+function assertVersion(ctx: EngineContext, entity: EntityRef): void {
+  if (ctx.expectedVersion === undefined) return;
+  const held = ctx.ledger.get(entity);
+  if (!held) return;
+
+  if (held.version !== ctx.expectedVersion) {
+    throw new VersionConflictError({
+      message:
+        `This ${entity.refType} has moved on since you read it — it is at version ${held.version} and you are ` +
+        `amending version ${ctx.expectedVersion}. Somebody else has changed it. Read it again before deciding ` +
+        'what should stand.',
+      currentVersion: held.version,
+      expectedVersion: ctx.expectedVersion,
+      entity: { refType: entity.refType, refId: entity.refId },
+      permittedResolutions: resolutionsFor(held.state),
+    });
+  }
+}
+
 export function write(
   ctx: EngineContext,
   input: Omit<CommitInput, 'tenantId' | 'projectId' | 'actor' | 'source' | 'correlationId'> &
     Partial<Pick<CommitInput, 'actor' | 'projectId'>>,
 ): { event: GoldenThreadEvent; state: Record<string, unknown> } {
   assertMayWrite(ctx);
+  assertVersion(ctx, input.entity);
 
   // The spread comes first and the defaults after. The other way round, a
   // caller passing `actor: undefined` — which is what an optional field looks

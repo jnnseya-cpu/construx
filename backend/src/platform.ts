@@ -3884,7 +3884,11 @@ export class Platform {
   }
 
   /** Build a per-request engine context. */
-  context(auth: AuthContext, projectId: string, options: { source?: EventSource; correlationId?: string } = {}): EngineContext {
+  context(
+    auth: AuthContext,
+    projectId: string,
+    options: { source?: EventSource; correlationId?: string; expectedVersion?: number } = {},
+  ): EngineContext {
     // The account-layer boundary, enforced here rather than left to an accident.
     //
     // It used to hold for a reason nobody chose: the operator tenancy had no
@@ -3931,6 +3935,9 @@ export class Platform {
       auth,
       source: options.source ?? 'WEB',
       correlationId: options.correlationId ?? ulid(),
+      // §15.1's precondition, carried from `If-Match`. Absent means the caller
+      // is not using optimistic concurrency, which is every caller today.
+      ...(options.expectedVersion === undefined ? {} : { expectedVersion: options.expectedVersion }),
       tenantId: auth.tenantId,
       projectId,
       // Resolved once, here, rather than at each write. `#subscriptions.get`
