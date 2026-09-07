@@ -7395,6 +7395,60 @@ Sixteen tests across three files.
 
 ---
 
+### The outbox, driven in a real browser — and two defects it found
+
+`frontend/lib/outbox.js` was the one load-bearing path with no executable
+coverage. The backend suite proves the server half of resumable upload
+thoroughly and reads the frontend only as *text*, for the doors and bindings
+invariants. Nothing ran it. So the code deciding whether a supervisor's
+photograph survives a dropped connection was reasoned about rather than
+observed, on the exact path a field tester uses first.
+
+It cannot be a `node --test` file: the outbox is IndexedDB, `Blob.slice`,
+`crypto.subtle` and `fetch` against a live session, and a stub of any of those
+would be testing the stub. `tools/outbox.mjs` drives Chromium against a real
+gateway, imports the real module, and asserts on what the *server* ends up
+holding — following `tools/walk.mjs`'s arrangement, so `playwright-core` stays
+out of `package.json` and the zero-dependency decision stands.
+
+```
+a file larger than the chunk threshold          5 ok
+a connection that dies between parts            5 ok
+the next flush resumes rather than restarting   3 ok   (2 sent, 2 missing, 1 already held)
+a file below the threshold                      2 ok
+the page itself                                 no console or page errors
+```
+
+The middle two are the ones worth having. A 5MB capture goes up in three parts;
+the connection is killed after the first; the platform still holds part 0, names
+parts 1 and 2 as missing, and **the device keeps the file** rather than
+discarding it. The next flush sends exactly two parts — resume, not restart.
+
+**Two real defects, both found by writing it.**
+
+- **`tools/walk.mjs` had been selecting nobody.** Its default identity was
+  `'Project Manager'`; the seed's role chips read `PM`. An argument-less run hung
+  on the picker until it timed out. Both tools now select by email — an
+  identifier — rather than by display text, which moves.
+- **Upload parts were staged relative to the working directory** in the
+  bucket-only configuration. `OBJECT_STORE_*` set with `EVIDENCE_STORE_PATH`
+  unset is a legitimate deployment, and `#chunkDir` joined against an empty
+  root, so customer photography landed in whatever directory the container
+  started in — where nothing lists it, nothing sweeps it and nobody expects it.
+  This was **recorded as a known limitation** in the §15.2 section above rather
+  than fixed, which was the wrong call: it is four lines. Parts now stage under a
+  named temporary directory when there is no volume, the register and the sweep
+  look there, and a test asserts the sweep never walks the process's own
+  directory. That paragraph above is now superseded.
+
+**What is still not drilled.** `deploy/restore-drill.sh` boots a container, and
+the sandbox has a Docker CLI with no daemon, so it remains unrun — the runbook
+still says so. Everything it would prove about the *record* is proven by
+`restoredrill.test.ts`; what stays unproven is the image and the compose
+topology.
+
+---
+
 ### The batch contract the native field apps are built against
 
 `CONSTRUX Field` — the native Android and iOS apps — pushes work in batches from

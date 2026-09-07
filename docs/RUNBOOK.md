@@ -310,6 +310,22 @@ The same run asserts the two refusals an operator depends on: a journal with an
 event removed from the middle does not replay, and a torn final line — a crash
 between the write and the fsync — leaves everything before it intact.
 
+**The browser half is drilled too.** `tools/outbox.mjs` boots a gateway, opens
+Chromium, signs in and drives `frontend/lib/outbox.js` — the real module, in a
+real browser, against a real server. It captures a 5MB file, kills the
+connection between parts, and asserts the platform still holds the parts that
+arrived, names the ones it wants, and that the *device keeps the file*; then
+that the next flush sends only the missing parts. It needs a driver that is not
+a project dependency:
+
+```bash
+npm install --no-save playwright-core
+node tools/outbox.mjs
+```
+
+That path had no executable coverage at all until it was written: the backend
+suite proves the server half and reads the frontend only as text.
+
 **Drill the container too.** `deploy/restore-drill.sh` takes a backup set,
 boots a second container from the live image against a throwaway volume on a
 port of its own, waits for `/readyz`, reads how many events replayed, and

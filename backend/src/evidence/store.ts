@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DomainError } from '../core/errors.ts';
 import { config } from '../config.ts';
@@ -315,6 +316,18 @@ export class EvidenceStore {
   }
 
   #pathFor(tenantId: string, hash: string): string {
+    return this.#fanout(this.#root, tenantId, hash);
+  }
+
+  /**
+   * The tenant-scoped, fanned-out path for an address under some root.
+   *
+   * Taken as a parameter because objects and the parts of an unfinished upload
+   * do not necessarily live on the same volume — see `#stagingRoot`. The
+   * validation is here rather than at each call site: this is the only thing
+   * standing between a caller-supplied string and a path join.
+   */
+  #fanout(root: string, tenantId: string, hash: string): string {
     if (!HASH.test(hash)) throw new DomainError('EVIDENCE_HASH_INVALID', 'Not a sha256 content hash');
     if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
       throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
@@ -322,7 +335,29 @@ export class EvidenceStore {
     const digest = hash.slice('sha256:'.length);
     // Two levels of fan-out. A single directory holding a million objects is
     // slow to list and, on some filesystems, slow to open.
-    return join(this.#root, tenantId, digest.slice(0, 2), digest.slice(2, 4), digest);
+    return join(root, tenantId, digest.slice(0, 2), digest.slice(2, 4), digest);
+  }
+
+  /**
+   * Where the parts of an unfinished upload are staged.
+   *
+   * Parts are always local, whichever store the finished object goes to: an
+   * upload is assembled and hashed before anything is stored, so the pieces
+   * have to land somewhere a process can read back.
+   *
+   * The volume where there is one. Where there is not — `OBJECT_STORE_*`
+   * configured and `EVIDENCE_STORE_PATH` unset, which is a legitimate
+   * deployment — the previous code joined against an empty root and staged
+   * parts **relative to the process working directory**. That put customer
+   * photography in whatever directory the container happened to start in, where
+   * nothing lists it, nothing sweeps it and nothing expects it. A named
+   * temporary directory is the honest answer: it is somewhere parts are
+   * supposed to be, the sweep can find it, and losing it on a restart costs a
+   * device one re-send of an upload it had not finished anyway.
+   */
+  get #stagingRoot(): string {
+    if (this.#root !== '') return this.#root;
+    return this.#remote ? join(tmpdir(), 'construx-upload-staging') : '';
   }
 
   /**
@@ -713,7 +748,7 @@ export class EvidenceStore {
 
   /** Where the parts of an unfinished upload are kept. */
   #chunkDir(tenantId: string, hash: string): string {
-    return `${this.#pathFor(tenantId, hash)}.chunks`;
+    return `${this.#fanout(this.#stagingRoot, tenantId, hash)}.chunks`;
   }
 
   /**
@@ -875,11 +910,12 @@ export class EvidenceStore {
    * reports it.
    */
   unfinishedUploads(tenantId: string): UnfinishedUpload[] {
-    if (this.#root === '') return [];
+    const staging = this.#stagingRoot;
+    if (staging === '') return [];
     if (!/^[0-9A-Za-z_-]{1,64}$/.test(tenantId)) {
       throw new DomainError('EVIDENCE_TENANT_INVALID', 'Not a tenant identifier');
     }
-    const root = join(this.#root, tenantId);
+    const root = join(staging, tenantId);
     if (!existsSync(root)) return [];
 
     const found: UnfinishedUpload[] = [];
@@ -926,9 +962,10 @@ export class EvidenceStore {
     olderThanMs: number,
     now = Date.now(),
   ): { removed: Array<UnfinishedUpload & { tenantId: string }>; bytes: number } {
-    if (this.#root === '' || !existsSync(this.#root)) return { removed: [], bytes: 0 };
+    const staging = this.#stagingRoot;
+    if (staging === '' || !existsSync(staging)) return { removed: [], bytes: 0 };
     const removed: Array<UnfinishedUpload & { tenantId: string }> = [];
-    for (const entry of readdirSync(this.#root, { withFileTypes: true })) {
+    for (const entry of readdirSync(staging, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       if (!/^[0-9A-Za-z_-]{1,64}$/.test(entry.name)) continue;
       for (const upload of this.unfinishedUploads(entry.name)) {

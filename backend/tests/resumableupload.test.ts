@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
+import { S3Client } from '../src/store/s3.ts';
 import { retentionPosition } from '../src/evidence/registry.ts';
 import { sweepHygiene } from '../src/ops/hygiene.ts';
 import { issueTokens } from '../src/identity/auth.ts';
@@ -298,10 +299,44 @@ describe('what an unfinished upload is to the platform', () => {
     assert.equal(s.sweepUploads(14 * 24 * 3_600_000).removed.length, 1);
   });
 
-  it('is left alone by a store with no volume, rather than sweeping a relative path', () => {
+  it('is left alone by a store with no volume and no bucket, rather than sweeping a relative path', () => {
     const nowhere = new EvidenceStore('', { secret: 'x' });
     assert.deepEqual(nowhere.unfinishedUploads('u5'), []);
     assert.deepEqual(nowhere.sweepUploads(1).removed, []);
+  });
+
+  it('stages parts somewhere real when the objects go to a bucket and there is no volume', () => {
+    // The configuration this got wrong: `OBJECT_STORE_*` set and
+    // `EVIDENCE_STORE_PATH` unset is legitimate, and the chunk directory was
+    // then joined against an empty root — so parts landed relative to the
+    // process working directory, where nothing lists them, nothing sweeps them
+    // and nobody expects to find customer photography.
+    //
+    // Driven through a store with a configured-looking remote and no volume.
+    // The assertion is about *where*, not about the upload succeeding: the
+    // bucket is not reachable from a test and does not need to be.
+    const bucketOnly = new EvidenceStore('', {
+      secret: 'x',
+      objects: new S3Client({
+        endpoint: 'http://127.0.0.1:1',
+        region: 'eu-west-2',
+        bucket: 'construx',
+        accessKeyId: 'AKIDTESTONLY',
+        secretAccessKey: 'not-a-real-credential',
+        pathStyle: true,
+        timeoutMs: 50,
+      }),
+    });
+
+    // Reading the staging position must not throw, and must not answer about
+    // the working directory.
+    assert.deepEqual(bucketOnly.unfinishedUploads('u6'), [], 'a bucket-only store reports no parts before any arrive');
+
+    // And the sweep addresses the staging root rather than the process's
+    // directory — which it would have walked, and could have removed from.
+    const before = readdirSync(process.cwd()).length;
+    bucketOnly.sweepUploads(1);
+    assert.equal(readdirSync(process.cwd()).length, before, 'the sweep touched the working directory');
   });
 });
 

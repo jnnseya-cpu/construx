@@ -21,7 +21,11 @@ const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 
 const ALL = ['overview','copilot','autopilot','enterprise','pipeline','programme','field','design','commercial','procurement','contracts','control','risk','handover','audit','billing','admin','newsletter'];
 const BASE = process.env.WALK_BASE ?? 'http://localhost:8123';
-const ROLE = process.argv[2] ?? 'Project Manager';
+// The seed's role chips read `PM`, `QS`, `SUPERVISOR` — not `Project Manager`,
+// which this defaulted to and which matches no identity, so an argument-less run
+// hung on the picker until it timed out. Found while building `tools/outbox.mjs`.
+// An email is an identifier; a role label is display text that moves.
+const ROLE = process.argv[2] ?? 'pm@meridian.example';
 const PAGES = process.argv[3] ? process.argv[3].split(',') : ALL;
 const SHOT = process.argv[4] === 'shots';
 /** Prefix so a second role's capture does not overwrite the first's. */
