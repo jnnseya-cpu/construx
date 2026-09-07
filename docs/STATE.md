@@ -7209,6 +7209,57 @@ it does not terminate.
 
 ---
 
+### The stream version: telling "nothing new" from "I missed one"
+
+`GoldenThreadEvent.streamVersion` is the event's position in its project's
+stream — 1 for the first, one more for each after it, no gaps.
+
+Ordering and **completeness** are different questions and the ledger only
+answered the first. `(timestamp, eventId)` says which event comes next; it
+cannot tell a device holding event 41 whether the next one it is handed, 43,
+means the platform skipped nothing or the device missed one. A handset back
+from a fortnight offline needs that answer, and until now "nothing new" and
+"I lost something" looked identical. §15.3's mobile event envelope names
+`projectStreamVersion` for exactly this reason.
+
+**It is deliberately outside the chain hash.** `chainBody` excludes it beside
+`chainHash` and `previousChainHash`: all three are positional metadata about
+the chain rather than claims about content, and including it would have changed
+the canonical body of every event ever written and invalidated every chain hash
+on disk. Nothing is weakened — reordering or removing an event is precisely
+what the chain hash detects — and the number is recomputed by counting the
+chain on every replay rather than trusted from the record, so an event written
+before the field existed gets one and an event carrying a wrong one is
+corrected.
+
+**The snapshot needed no format change.** `restoreFromSnapshot` already has the
+journal prefix in hand — it is what the chain heads are rebuilt from — so the
+versions are derived there the same way. A snapshot written before this existed
+restores correctly with no migration.
+
+**What it cost, and the defect it exposed.** The rule for which fields the
+chain covers existed in **four** places: `ledger.ts`, `replay.ts`, and two
+tests, each with its own hand-written destructure. Adding a field to one made
+the others recompute a different hash, and the REPLAYABLE gate clause failed
+across the platform. `chainBody` is now exported and is the single definition;
+the other three call it. That duplication was a latent defect independent of
+this change — any future field on an event would have broken replay the same
+way, silently, in a hash comparison nobody would have thought to look at.
+
+`streamversion.test.ts` pins the four properties: gapless and 1-based per
+project, counted per project so two projects both start at one, in agreement
+with the order the ledger replays in, and recomputed rather than trusted. The
+third is the one that would fail silently: append order and `(timestamp,
+eventId)` order agree only because nothing in the platform backdates a commit,
+and if something ever does the platform would hold two contradictory answers
+about sequence. The assertion runs over the whole seeded project.
+
+**Not yet built on it:** nothing publishes the version to a client. The sync
+pull cursor is still `<timestamp>|<eventId>`, which is a correct resume point;
+gap detection needs the version on the wire, and that is the next step.
+
+---
+
 ### The shared field module spine
 
 Four stages run work in the field — tender (§9), construction (§10),

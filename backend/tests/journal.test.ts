@@ -6,7 +6,8 @@ import { after, before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { canonicalize, EMPTY_STATE_HASH, sha256 } from '../src/core/canonical.ts';
 import { Journal } from '../src/goldenthread/journal.ts';
-import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import { chainBody, GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import type { GoldenThreadEvent } from '../src/goldenthread/types.ts';
 import { replayProject } from '../src/goldenthread/replay.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
@@ -503,9 +504,9 @@ describe('the state hash is taken over what is written', () => {
     const heads = new Map<string, string>();
     for (const held of events) {
       const previous = heads.get(held.projectId as string) ?? EMPTY_STATE_HASH;
-      const { chainHash: _c, previousChainHash: _p, ...body } = held;
+      // The ledger owns which fields the chain covers.
       held.previousChainHash = previous;
-      held.chainHash = sha256(`${previous}\n${canonicalize(body)}`);
+      held.chainHash = sha256(`${previous}\n${chainBody(held as unknown as GoldenThreadEvent)}`);
       heads.set(held.projectId as string, held.chainHash as string);
     }
     const resealed = nextPath();

@@ -2,7 +2,7 @@ import { EMPTY_STATE_HASH, hashState, sha256, canonicalize, stateRootHash } from
 import { applyPatch } from '../core/jsonpatch.ts';
 import { validate } from '../core/validate.ts';
 import { lookupEventType } from './eventTypes.ts';
-import { getEntitySchema, type GoldenThreadLedger } from './ledger.ts';
+import { chainBody, getEntitySchema, type GoldenThreadLedger } from './ledger.ts';
 import type { EntityRef, EventVerification, GoldenThreadEvent, VerificationStatus } from './types.ts';
 
 /**
@@ -98,8 +98,9 @@ function verifyOne(
   // would make every downstream hash comparison meaningless.
   let chainVerified = false;
   if (event.chainHash) {
-    const { chainHash: _c, previousChainHash: _p, ...body } = event;
-    const expectedChain = sha256(`${previousChainHash}\n${canonicalize(body)}`);
+    // The ledger owns which fields the chain covers; recomputing it here from
+    // a second list is how the two drifted apart.
+    const expectedChain = sha256(`${previousChainHash}\n${chainBody(event)}`);
     if (expectedChain !== event.chainHash) {
       return { status: 'FAILED_CHAIN', detail: 'Chain hash does not match recomputed value' };
     }

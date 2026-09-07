@@ -133,6 +133,32 @@ export type GoldenThreadEvent = {
    */
   chainHash?: string;
   previousChainHash?: string;
+  /**
+   * This event's position in its project's stream: 1 for the first event on a
+   * project, and one more for each after it, with no gaps.
+   *
+   * **Why a number when the ledger already orders events.** Ordering and
+   * *completeness* are different questions. `(timestamp, eventId)` says which
+   * event comes next; it cannot tell a consumer holding event 41 whether the
+   * next one it receives, 43, means the platform skipped nothing or the
+   * consumer missed one. A device coming back from a fortnight offline needs
+   * that answer, and until now it could not have it: "nothing new" and "I lost
+   * something" looked identical.
+   *
+   * **Deliberately outside the chain hash.** `chainBody` excludes it alongside
+   * `chainHash` and `previousChainHash`, for the same reason those are
+   * excluded: it is positional metadata about the chain, not a claim about
+   * content. Including it would change the canonical body of every event and
+   * invalidate every chain hash already written. Nothing is lost by leaving it
+   * out — reordering or deleting an event is exactly what the chain hash
+   * already detects, and the stream version is recomputed by counting the
+   * chain on every replay rather than trusted from the record.
+   *
+   * Absent on events written before this field existed, and on those the
+   * ledger recomputes it during replay. Nothing is backfilled onto an event
+   * that is already hash-chained.
+   */
+  streamVersion?: number;
   /** Device timestamp preserved verbatim when the record originated offline. */
   deviceTimestamp?: string;
   /**

@@ -117,8 +117,25 @@ function deepFreeze<T>(value: T): T {
 }
 
 /** Canonical body used for chain hashing — excludes the chain fields themselves. */
-function chainBody(event: GoldenThreadEvent): string {
-  const { chainHash: _chain, previousChainHash: _previous, ...body } = event;
+/**
+ * The canonical body a chain hash is taken over.
+ *
+ * **Exported because there were two copies of this rule and they drifted.**
+ * `replay.ts` carried its own destructure of the same fields, so adding
+ * `streamVersion` here made every replay recompute a different hash and the
+ * REPLAYABLE gate clause failed across the platform. Which fields the chain
+ * covers is one fact; it now has one definition, and a field added here is
+ * automatically excluded there.
+ */
+export function chainBody(event: GoldenThreadEvent): string {
+  // `streamVersion` joins the two chain fields in being excluded, and for the
+  // same reason: all three are positional metadata about the chain rather than
+  // claims about content. Including the version would also change the canonical
+  // body of every event ever written and invalidate every chain hash on disk.
+  // Nothing is weakened — reordering or removing an event is precisely what the
+  // chain hash detects, and the version is recomputed by counting on replay
+  // rather than trusted from the record.
+  const { chainHash: _chain, previousChainHash: _previous, streamVersion: _stream, ...body } = event;
   return canonicalize(body);
 }
 
@@ -181,6 +198,13 @@ export class GoldenThreadLedger {
   }
   /** Head of the hash chain, per project. Tenants never share a chain. */
   readonly #chainHeads = new Map<string, string>();
+
+  /**
+   * How many events each project's stream holds, which is the version the next
+   * one takes. Kept beside `#chainHeads` because it is the same shape of fact
+   * about the same chain, and rebuilt the same way on every replay.
+   */
+  readonly #streamVersions = new Map<string, number>();
   readonly #subscribers: LedgerSubscriber[] = [];
   /** eventId de-duplication — replayed sync batches must be idempotent. */
   readonly #seenEventIds = new Set<string>();
@@ -360,6 +384,9 @@ export class GoldenThreadLedger {
 
     const previousChainHash = this.#chainHeads.get(input.projectId) ?? EMPTY_STATE_HASH;
     event.previousChainHash = previousChainHash;
+    // Assigned before the chain hash is taken, and excluded from the body it
+    // hashes, so the order of these two lines cannot matter.
+    event.streamVersion = (this.#streamVersions.get(input.projectId) ?? 0) + 1;
     event.chainHash = sha256(`${previousChainHash}\n${chainBody(event)}`);
 
     const record: EntityRecord = {
@@ -382,6 +409,7 @@ export class GoldenThreadLedger {
     this.#seenEventIds.add(eventId);
     this.#index(key, record);
     this.#chainHeads.set(input.projectId, event.chainHash);
+    this.#streamVersions.set(input.projectId, event.streamVersion);
 
     for (const subscriber of this.#subscribers) {
       // A misbehaving projection must not roll back a committed event.
@@ -489,6 +517,14 @@ export class GoldenThreadLedger {
         version: (existing?.version ?? 0) + 1,
       });
       this.#chainHeads.set(event.projectId, event.chainHash);
+      // Counted, not read. An event written before this field existed carries
+      // no version, and one that carries a wrong version must not be believed
+      // — the chain is the authority for position and counting it is how the
+      // number is derived everywhere. The replayed event is stamped so the
+      // reads below see the same value a fresh commit would have given it.
+      const version = (this.#streamVersions.get(event.projectId) ?? 0) + 1;
+      this.#streamVersions.set(event.projectId, version);
+      event.streamVersion = version;
     }
 
     this.#discrepancies.push(...discrepancies);
@@ -574,6 +610,15 @@ export class GoldenThreadLedger {
       this.#index(entityKey(record), { ...record, state: deepFreeze(record.state) });
     }
     for (const [projectId, head] of snapshot.chainHeads) this.#chainHeads.set(projectId, head);
+    // Derived from the journal prefix the snapshot summarises rather than
+    // stored in the snapshot, so a snapshot written before stream versioning
+    // existed restores correctly with no format change and no migration. The
+    // prefix is in hand here — the same events `heads` was just built from.
+    for (const event of prefix) {
+      const version = (this.#streamVersions.get(event.projectId) ?? 0) + 1;
+      this.#streamVersions.set(event.projectId, version);
+      event.streamVersion = version;
+    }
     for (const [key, hash] of snapshot.recordedHashes) this.#recordedHashes.set(key, hash);
     this.#discrepancies.push(...snapshot.discrepancies);
 

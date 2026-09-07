@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, before } from 'node:test';
 import { throwsCode } from './helpers.ts';
-import { GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
+import { chainBody, GoldenThreadLedger } from '../src/goldenthread/ledger.ts';
 import { canonicalize, sha256 } from '../src/core/canonical.ts';
 import { replayProject } from '../src/goldenthread/replay.ts';
 import { EVENT_TYPES, lookupEventType } from '../src/goldenthread/eventTypes.ts';
@@ -111,8 +111,10 @@ describe('a committed event is nobody else’s to change', () => {
 
     // The point of all of the above: the chain hash still recomputes from the
     // event's own body, which is what replay and the assurance sweep do.
-    const { chainHash, previousChainHash, ...body } = event;
-    assert.equal(chainHash, sha256(`${previousChainHash}\n${canonicalize(body)}`));
+    // `chainBody` rather than a destructure written out here: which fields the
+    // chain covers is the ledger's rule, and a copy of it in a test is a copy
+    // that silently stops matching the day a field is added.
+    assert.equal(event.chainHash, sha256(`${event.previousChainHash}\n${chainBody(event)}`));
   });
 });
 
