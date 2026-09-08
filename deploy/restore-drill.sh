@@ -21,10 +21,17 @@
 #   CONSTRUX_DRILL_PORT   the host port for the drill  (default 18080)
 #   CONSTRUX_DRILL_WAIT   seconds to wait for /readyz  (default 300)
 #
-# This script needs Docker on the host. It was written against the compose
-# deployment in this directory and has not been run in the build sandbox,
-# which has no Docker; run it on the deployment host, and the first run is
-# the drill.
+# This script needs Docker on the host, and it has not been run end to end.
+# The build sandbox has a working Docker daemon but no route to a registry —
+# `docker pull node:22.18-bookworm-slim` is refused at the blob fetch — so no
+# image can be built there and the container half of this drill is unproven.
+# What has been proven there, on 2026-09-08, is everything the container is a
+# wrapper around: a set cut from a live journal (700 events), staged into an
+# empty directory, booted with the exact environment list below and answering
+# `/readyz` in 1.3s with "700 events restored into 530 entities, 14 users
+# across 2 tenancies, 45 ACU entries". That says the set restores and the
+# environment list is sufficient. It does not say the image boots. Run this on
+# the deployment host, and the first run is the drill.
 
 set -euo pipefail
 

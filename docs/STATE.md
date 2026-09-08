@@ -7452,11 +7452,92 @@ discarding it. The next flush sends exactly two parts — resume, not restart.
   directory. The §15.2 paragraph has been corrected in place rather than left to
   contradict this one.
 
-**What is still not drilled.** `deploy/restore-drill.sh` boots a container, and
-the sandbox has a Docker CLI with no daemon, so it remains unrun — the runbook
-still says so. Everything it would prove about the *record* is proven by
-`restoredrill.test.ts`; what stays unproven is the image and the compose
-topology.
+**What is still not drilled, and what since has been.** The earlier note here
+said the sandbox had a Docker CLI with no daemon. That was true when it was
+written and is no longer the reason: a daemon starts and runs
+(29.3.1, overlayfs). What blocks the container drill now is the registry —
+`docker pull node:22.18-bookworm-slim` is refused at the blob fetch
+(`production.cloudfront.docker.com` → 403), so the deployment image cannot be
+built or pulled here at all.
+
+So the drill was run without the container, which is worth stating precisely
+because it proves more than `restoredrill.test.ts` does and less than the
+script would. A gateway was booted on an empty journal path, seeded, and
+stopped; its `/data` files were copied out with a stamp exactly as
+`deploy/autodeploy.sh` cuts a backup set; the set was staged into an empty
+directory the way the script stages its volume; and a second process was booted
+against it with the **environment list read out of `restore-drill.sh` itself**
+rather than a hand-written one. It answered `/readyz` in 1.3 s with
+
+```
+Ledger  …/restored/ledger.jsonl — 700 events restored into 530 entities,
+        14 users across 2 tenancies, 45 ACU entries, 0 brandings
+```
+
+That establishes two things the in-process test cannot: a set cut the way the
+deploy script cuts one restores, and the sixteen variables the drill script
+passes are sufficient for the process to boot in `NODE_ENV=production` — if
+that list were missing one the platform refuses to start without, the drill
+would have failed on the day rather than here. It establishes nothing about the
+image, the entrypoint, the volume's uid-1000 ownership or the compose topology.
+The script's header now says exactly this instead of the stale claim.
+
+Rewriting that runbook paragraph also broke the invariant that guards it — the
+sentence reflowed around a `**`, and `runbook.test.ts` matched the file as
+written. That is a false failure: it says nothing about whether the claim is
+still there. The assertion now strips emphasis and collapses whitespace before
+matching, so it tests the sentence rather than the line breaks.
+
+---
+
+### The console sweep, and the design-system class that was never defined
+
+Eighteen screens driven as six identities — `PM`, `SUPERVISOR`, `QS`, `OWNER`,
+`SAFETY` and the platform operator — in Chromium against a live gateway. Two
+defects came out of it, and they share a cause worth naming: **a class name is
+a contract with the stylesheet, and nothing was checking it.**
+
+**A positive criterion painted red.** Project Control's clause notice rendered
+`.notice.err` carrying the text "Every mandatory input is present, validated
+and tied to its source version" — on every role. The clause *titles* assert the
+good state, because that is what a criterion is; the table beside them carries a
+met/not-met badge, and the notice carried none. So a failing clause read as a
+red box stating the thing was fine. The notice now leads with the state —
+**Not met** or **Cannot assess** — before the criterion.
+
+**A header class that does not exist.** `enterprise` timed out for
+`SUPERVISOR`, `QS` and `SAFETY` — the three roles that reach the refused-estate
+branch. That branch rendered `<div class="page-head">`; `app.css` defines
+`view-head` and has never defined `page-head`. The three roles with least
+authority got the one unstyled header in the console. One word.
+
+**So the check became an invariant.** `consolebindings.test.ts` now reads every
+`class="…"` in `frontend/pages/`, and any name shaped like a structural
+design-system class — `head`, `card`, `notice`, `metric`, `split-list`,
+`table-wrap`, `view`, `page`, with an optional prefix or suffix — must exist in
+`frontend/app.css` or be produced by `frontend/lib/ui.js`. It found 39 more the
+moment it was written:
+
+- `metric-label` (×18) and `metric-value` (×18) in `frontend/pages/work.js` —
+  the field module workspace. The labels sat inside `.metric`, which is 25px
+  mono, so the caption and the figure rendered at identical weight and size
+  with no hierarchy at all. Rebuilt on `card` / `h2` / `metric` / `metric-sub`.
+- `centre-card` (×3) in `frontend/pages/centre.js` — a no-op sitting beside
+  `card`. Removed.
+
+This is the same discipline as `doors`, `navreach` and `runbook`: the rule
+lives in one place and a test enforces it, rather than living in the care of
+whoever writes the next page.
+
+**What the sweep does not call a defect.** Non-owner roles produce a browser
+console line — `Failed to load resource: 403 (Forbidden)` — from optional reads
+the role may not have (`/v1/supply-chain`, `/v1/acu-sponsorships`,
+`/v1/company/subscription/items`). Each is a deliberate `catch` with the null
+case rendered, and the enterprise page answers a refusal with the structure-only
+view rather than an empty estate. Chromium logs any refused response; that is
+the browser reporting, not the console failing. Likewise `handover` shows 59
+`.empty` panels on the demo project, which is in construction and has no
+handover record yet — an empty state saying so is the correct answer.
 
 ---
 

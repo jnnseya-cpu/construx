@@ -331,9 +331,19 @@ boots a second container from the live image against a throwaway volume on a
 port of its own, waits for `/readyz`, reads how many events replayed, and
 removes everything it made. The live container is never touched. Run it after
 the first backup and then on a calendar; a set that does not restore is a
-finding, and the drill is where it should be found. The script was written
-against this compose deployment and has not been run in the build sandbox,
-which has no Docker: the first run on the host is the first drill.
+finding, and the drill is where it should be found.
+
+The script was written against this compose deployment, and
+**the first run on the host is the first drill** — the build sandbox has a
+working Docker daemon but no route to a registry, so the image cannot be built
+or pulled there. What
+was proven there instead, on 2026-09-08, is the drill without the container: a
+set cut the way the deploy script cuts one, staged into an empty directory, and
+booted with the environment list read out of `restore-drill.sh` itself. It
+answered `/readyz` in 1.3 s having restored 700 events into 530 entities, 14
+users across 2 tenancies and 45 ACU entries. So the set restores and that
+environment list is sufficient to boot in production mode; the image, the
+entrypoint and the volume's ownership are what the host run still proves.
 
 Boot verifies as it replays: every chain hash recomputed from its predecessor,
 every state hash from the applied patch. **A journal that has been altered

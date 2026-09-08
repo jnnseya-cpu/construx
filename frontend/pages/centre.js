@@ -40,7 +40,7 @@ function money(minor) {
 
 function card(entry) {
   return html`
-    <article class="card centre-card">
+    <article class="card">
       <div class="row">
         ${raw(badge(entry.severity, TONE[entry.severity] ?? 'info'))}
         ${entry.dueBy ? html`<span class="muted small">due ${entry.dueBy}</span>` : ''}

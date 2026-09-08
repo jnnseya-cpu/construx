@@ -225,3 +225,55 @@ describe('no array holes in the console', () => {
     assert.deepEqual(found, [], `array holes, which are valid JavaScript and shift every element after them:\n  ${found.join('\n  ')}`);
   });
 });
+
+/**
+ * A layout class the design system never defined.
+ *
+ * `enterprise.js` rendered its refused-estate branch inside
+ * `<div class="page-head">`. Every other header in the console is `view-head`,
+ * `app.css` styles `view-head` and has never heard of `page-head`, and the one
+ * occurrence in the whole console was on the branch a Supervisor, a QS or an
+ * HSE manager sees when they open Enterprise & Portfolio — so those three roles
+ * got an unstyled header: no flex, no h1 sizing, no margin, no subtitle colour.
+ * It had been shipping.
+ *
+ * Nothing caught it because a class name is a string. The bindings check above
+ * proves every *name* a page calls exists; this proves every structural class a
+ * page paints exists too, which is the same question asked of the stylesheet.
+ *
+ * **Deliberately narrow.** Only the structural families the design system owns
+ * — a header, a card, a notice, a metric, a table wrapper. State and utility
+ * classes are generated, composed and toggled at run time, and a check that
+ * tried to follow them would guess. `frontend/app.css` and `frontend/lib/ui.js`
+ * are the two places a class may be defined, because those are the two places
+ * the design system lives.
+ */
+describe('no console class the design system never defined', () => {
+  it('paints only structural classes app.css or ui.js actually carries', () => {
+    const css = readFileSync(join(FRONTEND, 'app.css'), 'utf8');
+    const ui = readFileSync(join(FRONTEND, 'lib', 'ui.js'), 'utf8');
+
+    // The families worth policing: each is a layout decision the stylesheet has
+    // to make, so a name outside it renders as an unstyled div.
+    const structural = /^(?:[a-z]+-)?(?:head|card|notice|metric|split-list|table-wrap|view|page)(?:-[a-z]+)?$/;
+
+    const found: string[] = [];
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/class="([^"$`]+)"/g)) {
+        for (const name of match[1]!.split(/\s+/).filter(Boolean)) {
+          if (!structural.test(name)) continue;
+          if (css.includes(`.${name}`) || ui.includes(name)) continue;
+          const line = source.slice(0, match.index).split('\n').length;
+          found.push(`${file.replace(FRONTEND, 'frontend')}:${line}: class="${name}"`);
+        }
+      }
+    }
+
+    assert.deepEqual(
+      found,
+      [],
+      `structural classes the design system never defined, so they render unstyled:\n  ${found.join('\n  ')}`,
+    );
+  });
+});

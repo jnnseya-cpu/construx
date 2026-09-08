@@ -224,8 +224,14 @@ describe('what the runbook says this deployment does not have', () => {
     // the hash check and the replay — everything that decides whether the
     // record survives. It does not rehearse Docker, and the runbook must go on
     // saying so until somebody runs the script on the host.
+    // Matched against the prose with its line breaks and emphasis removed. The
+    // first version of this read the file as written and broke the moment the
+    // sentence was reflowed around a `**` — a failure that says nothing about
+    // the claim, which is what this test is for. A sentence is a sentence
+    // wherever the paragraph happens to wrap.
+    const prose = runbook.replace(/\*+/g, '').replace(/\s+/g, ' ');
     assert.match(
-      runbook,
+      prose,
       /has not been run in the build sandbox|first run on the host is the first drill/,
       'the runbook has stopped saying the container drill is unrun; it is either untrue or the note was lost',
     );

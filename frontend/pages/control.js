@@ -357,9 +357,21 @@ export async function control(root) {
               ${gate.clauses
                 .filter((clause) => clause.blocking.length > 0)
                 .map(
+                  // The state first, then the criterion.
+                  //
+                  // The clause titles are written as assertions of the good
+                  // state — "Every mandatory input is present, validated and
+                  // tied to its source version". In the table above, a badge
+                  // beside each one says met / not met / cannot assess, so the
+                  // sentence reads correctly. Here there was no badge: an
+                  // unmet clause put that same sentence, alone and in bold,
+                  // inside a red box. The words said the criterion was
+                  // satisfied and the colour said it was not, on every role and
+                  // every project, which reads as the screen being broken
+                  // rather than as the gate being unmet.
                   (clause) => html`<div style="padding:12px 17px 0"><div class="notice ${raw(clause.state === 'FAIL' ? 'err' : 'warn')}">
                     <div>
-                      <b>${clause.title}</b><br>
+                      <b>${clause.state === 'FAIL' ? 'Not met' : 'Cannot assess'}</b> — ${clause.title}<br>
                       ${clause.blocking.map((item) => html`${item}<br>`)}
                     </div>
                   </div></div>`,

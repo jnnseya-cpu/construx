@@ -79,27 +79,40 @@ function filterSelect(name, label, current, values) {
   `;
 }
 
+/**
+ * One indicator on the module home.
+ *
+ * Built out of the design system's own three parts rather than out of invented
+ * ones: a `card` to sit in, `metric` for the figure, `metric-sub` for what it
+ * is and what it is drawn from.
+ *
+ * It previously wrapped everything in `.metric` and put the label inside as
+ * `.metric-label` — a class `app.css` has never defined. `.metric` is 25px
+ * monospace, so the label inherited it and every tile rendered its caption at
+ * the same size and weight as its number, with no hierarchy between them. Both
+ * invented classes did nothing; the one real style did too much.
+ */
 function indicatorCard(indicator) {
   if (!indicator.measured) {
     return html`
-      <div class="metric">
-        <span class="metric-label">${indicator.label}</span>
-        <span class="metric-value" style="font-size:1rem">Not measured</span>
-        <span class="metric-sub">${indicator.pending ?? 'Nothing in the platform produces this figure yet.'}</span>
+      <div class="card">
+        <h2>${indicator.label}</h2>
+        <div class="metric info" style="font-size:16px">Not measured</div>
+        <div class="metric-sub">${indicator.pending ?? 'Nothing in the platform produces this figure yet.'}</div>
       </div>
     `;
   }
 
   const top = (indicator.breakdown ?? []).slice(0, 3);
   return html`
-    <div class="metric">
-      <span class="metric-label">${indicator.label}</span>
-      <span class="metric-value">${String(indicator.total)}</span>
-      <span class="metric-sub">
+    <div class="card">
+      <h2>${indicator.label}</h2>
+      <div class="metric">${String(indicator.total)}</div>
+      <div class="metric-sub">
         ${top.length > 0
           ? raw(top.map((entry) => `${humanise(entry.key)} ${entry.count}`).join(' · '))
           : 'No breakdown recorded on these records.'}
-      </span>
+      </div>
     </div>
   `;
 }
@@ -175,41 +188,41 @@ export async function work(root) {
       <section class="card" style="margin-bottom:14px" aria-labelledby="wk-head-h">
         <h2 id="wk-head-h">Before you walk out</h2>
         <div class="grid g4">
-          <div class="metric">
-            <span class="metric-label">Stage</span>
-            <span class="metric-value" style="font-size:1rem">${humanise(header.phase)}</span>
-            <span class="metric-sub">
+          <div class="card">
+            <h2>Stage</h2>
+            <div class="metric" style="font-size:16px">${humanise(header.phase)}</div>
+            <div class="metric-sub">
               ${header.openNow
                 ? 'This module is open in the phase the project is in.'
                 : `The project is in ${humanise(header.phase)}. This module belongs to ${header.opensIn
                     .map(humanise)
                     .join(', ')} — what follows is the record, not live work.`}
-            </span>
+            </div>
           </div>
-          <div class="metric">
-            <span class="metric-label">Records waiting</span>
-            <span class="metric-value">${String(header.pack.recordsWaiting)}</span>
-            <span class="metric-sub">${header.pack.note}</span>
+          <div class="card">
+            <h2>Records waiting</h2>
+            <div class="metric">${String(header.pack.recordsWaiting)}</div>
+            <div class="metric-sub">${header.pack.note}</div>
           </div>
-          <div class="metric">
-            <span class="metric-label">Pack</span>
-            <span class="metric-value" style="font-size:1rem">
+          <div class="card">
+            <h2>Pack</h2>
+            <div class="metric" style="font-size:16px">
               ${badge(humanise(header.pack.freshness), PACK_TONE[header.pack.freshness] ?? 'neutral')}
-            </span>
-            <span class="metric-sub">
+            </div>
+            <div class="metric-sub">
               ${header.pack.projectLastChangedAt
                 ? `Project last changed ${date(header.pack.projectLastChangedAt)}.`
                 : 'Nothing has been recorded on this project yet.'}
-            </span>
+            </div>
           </div>
-          <div class="metric">
-            <span class="metric-label">Shift</span>
-            <span class="metric-value" style="font-size:1rem">
+          <div class="card">
+            <h2>Shift</h2>
+            <div class="metric" style="font-size:16px">
               ${header.shift.shift ? humanise(header.shift.shift) : 'Not stated'}
-            </span>
-            <span class="metric-sub">
+            </div>
+            <div class="metric-sub">
               ${header.shift.unknownBecause ?? `From the daily log for ${header.shift.diaryDate}.`}
-            </span>
+            </div>
           </div>
         </div>
 

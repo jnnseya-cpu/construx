@@ -87,7 +87,7 @@ function structureOnly(refusal, portfolios, enterprises, gates) {
   }
 
   return html`
-    <div class="page-head">
+    <div class="view-head">
       <h1>Enterprise &amp; Portfolio</h1>
       <p>Where the business operates, and the gates every project is held to.</p>
     </div>
