@@ -183,6 +183,15 @@ export class PostgresLedgerStore {
   #stored = 0;
   #sequence = 0;
   #shipped = 0;
+  /**
+   * The lease that says this process may extend the chain, where one is in use.
+   *
+   * Optional: a deployment with no lease behaves exactly as it always has — the
+   * file writer lock and the chain trigger. With one, the ship path asks it
+   * before every batch, so a process that lost the lease during a pause stops
+   * at the queue instead of at the database.
+   */
+  #lease: { assertHeld: () => number } | undefined;
   #lastShippedAt: string | undefined;
   #lastError: string | undefined;
   #halted: string | undefined;
@@ -419,6 +428,17 @@ export class PostgresLedgerStore {
   }
 
   /**
+   * Bind the writer lease this store ships under.
+   *
+   * Separate from the constructor because the lease is taken at boot, after the
+   * store exists and before anything is shipped, and because a follower has no
+   * lease until the moment it is promoted.
+   */
+  useLease(lease: { assertHeld: () => number } | undefined): void {
+    this.#lease = lease;
+  }
+
+  /**
    * Follow a ledger. `history` is what the ledger holds now, in commit order —
    * the journal's contents — and everything beyond the database's position is
    * queued first, so a crash between a commit and its ship loses nothing.
@@ -542,6 +562,12 @@ export class PostgresLedgerStore {
       while (this.#queue.length > 0 && !this.#closed && !this.#halted) {
         const head = this.#queue[0]!;
         try {
+          // Before the batch, not after. A process whose lease lapsed during a
+          // pause must find out at its own queue rather than at the database —
+          // by then it has already sent the statement, and "the trigger refused
+          // it" is a worse sentence than "this process no longer holds the
+          // lease" for the person reading the log at 3am.
+          this.#lease?.assertHeld();
           await this.#ship(head.sequence, head.event);
         } catch (error) {
           const state = unretryable(error);

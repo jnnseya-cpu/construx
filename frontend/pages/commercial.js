@@ -642,7 +642,7 @@ function integrationPanel(position) {
 export async function commercial(root) {
   const projectId = state.session.projectId;
 
-  const [bundle, ledger, forward, commercialControl, settlements, integration, intermediation, exposure, cisMonths] = await Promise.all([
+  const [bundle, ledger, forward, commercialControl, settlements, integration, intermediation, exposure, cisMonths, feeds] = await Promise.all([
     entityBundle(projectId, [
       'CVR',
       'EarnedValueSnapshot',
@@ -679,6 +679,11 @@ export async function commercial(root) {
     // Tax months with CIS payments on this project. The board is cheap; the
     // return itself is fetched only for the month somebody opened.
     api.read(`/v1/projects/${projectId}/cis/returns`, 'PAYMENT_APPLICATIONS', 'COMMERCIAL_L3').catch(() => null),
+    // What outside sources this deployment can read, what it cannot and why.
+    // Listed even when nothing is configured: a screen showing only the feeds
+    // that work leaves the person who could turn one on unaware there is
+    // anything to turn on.
+    api.read(`/v1/projects/${projectId}/feeds`, 'BUDGET_COST', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   // Retention held against the main contract, and what has fallen due. Fetched
@@ -840,6 +845,57 @@ export async function commercial(root) {
       </div>
 
       <div id="commercial-insight" style="margin-bottom:14px"></div>
+
+      <div class="card" style="margin-bottom:14px">
+        <h2>Outside sources</h2>
+        <div class="metric-sub" style="margin-bottom:11px">
+          A reading is what a source said, at a moment, with the response’s own hash beside it — not a fact and not a
+          decision. Citing one is still an act somebody takes.
+        </div>
+        ${table({
+          headers: ['Feed', 'Answers', 'Status', 'Read', ''],
+          rows: (feeds?.feeds ?? []).map((feed) => [
+            feed.label,
+            feed.answers,
+            feed.configured
+              ? badge('Configured', 'ok')
+              : html`<span title="${feed.reason ?? ''}">${badge('Not configured', 'warn')}</span>`,
+            feed.lastReadAt ? `${feed.readings} · ${feed.lastReadAt.slice(0, 10)}` : String(feed.readings),
+            feed.configured
+              ? html`<button class="btn quiet sm" data-feed="${feed.code}" data-label="${feed.label}">Read now</button>`
+              : '',
+          ]),
+          empty: 'No feeds are declared, which cannot happen — the catalogue is closed and holds three.',
+        })}
+        ${
+          (feeds?.feeds ?? []).every((feed) => !feed.configured)
+            ? html`<div class="notice" style="margin-top:11px">
+                <b>No outside source is configured on this deployment.</b> Nothing is invented in the meantime: the
+                platform reads no price, no forecast and no credit score rather than a plausible one. Each row’s status
+                names the variable that turns it on.
+              </div>`
+            : ''
+        }
+        ${
+          (feeds?.recent ?? []).length > 0
+            ? html`<div style="margin-top:13px">
+                ${table({
+                  headers: ['Read at', 'Feed', 'Observations', 'Source', 'Response'],
+                  rows: feeds.recent.slice(0, 6).map((reading) => [
+                    reading.readAt.slice(0, 16).replace('T', ' '),
+                    reading.feed,
+                    reading.observations
+                      .slice(0, 3)
+                      .map((o) => `${o.measure} ${o.value}`)
+                      .join(' · ') + (reading.observations.length > 3 ? ` (+${reading.observations.length - 3})` : ''),
+                    reading.source.endpoint,
+                    `${reading.source.responseHash.slice(0, 18)}…`,
+                  ]),
+                })}
+              </div>`
+            : ''
+        }
+      </div>
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
@@ -1706,6 +1762,46 @@ export async function commercial(root) {
     areas: ['BUDGET_COST', 'PAYMENT_APPLICATIONS', 'CHANGE_VARIATION', 'CONTRACTS_CLAIMS'],
     subject: 'the commercial position',
     onChange: draw,
+  });
+
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-feed]');
+    if (!button) return;
+    const result = await command({
+      title: `Read ${button.dataset.label}`,
+      intent:
+        'The query below is sent to the endpoint this deployment has configured for this feed, and nothing else — no ' +
+        'project name and no record. What the source answers is recorded with its own hash, so the reading can be ' +
+        'checked against the response it came from. It changes nothing on its own.',
+      path: `/v1/projects/${projectId}/feeds/${button.dataset.feed}/read`,
+      submitLabel: 'Read the source',
+      transform: (collected) => ({
+        query: Object.fromEntries(
+          String(collected.query ?? '')
+            .split('&')
+            .map((pair) => pair.split('='))
+            .filter(([key, value]) => key && value !== undefined)
+            .map(([key, value]) => [key.trim(), String(value).trim()]),
+        ),
+      }),
+      fields: [
+        {
+          name: 'query',
+          label: 'Query',
+          type: 'text',
+          required: false,
+          hint: 'The source’s own parameters, as key=value&key=value. Leave blank to call the endpoint as configured.',
+        },
+      ],
+    });
+    if (!result) return;
+    toast(
+      'Source read',
+      `${result.observations.length} observation(s) from ${result.source.endpoint} in ${result.source.latencyMs}ms. ` +
+        `Recorded against ${result.source.responseHash.slice(0, 18)}….`,
+      'ok',
+    );
+    await draw();
   });
 
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {

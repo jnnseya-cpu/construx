@@ -368,6 +368,25 @@ export const config = {
    * instance and is exactly why the application tier cannot be replicated: two
    * containers on separate volumes each hold half the evidence.
    */
+  /**
+   * External data feeds: commodity pricing, weather, credit reference.
+   *
+   * Every one is off by default and every one is a URL rather than a vendor.
+   * The platform integrates no named data provider — a customer arrives with
+   * whichever subscription they already pay for, and hard-coding one would make
+   * that choice for them. Unset means the feed is refused with the variable
+   * named; it never means an invented number, which for a price, a forecast or
+   * a credit score is the one thing worse than no reading at all.
+   */
+  feeds: {
+    COMMODITY_PRICE: { url: str('FEED_COMMODITY_URL', ''), key: str('FEED_COMMODITY_KEY', '') },
+    WEATHER_FORECAST: { url: str('FEED_WEATHER_URL', ''), key: str('FEED_WEATHER_KEY', '') },
+    CREDIT_REFERENCE: { url: str('FEED_CREDIT_URL', ''), key: str('FEED_CREDIT_KEY', '') },
+    /** The ceiling on one response body. A feed is a reading, not a bulk import. */
+    maxBytes: num('FEED_MAX_BYTES', 1_000_000),
+    timeoutMs: num('FEED_TIMEOUT_MS', 15_000),
+  },
+
   objectStore: {
     endpoint: str('OBJECT_STORE_ENDPOINT', ''),
     region: str('OBJECT_STORE_REGION', 'us-east-1'),

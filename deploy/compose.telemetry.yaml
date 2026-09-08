@@ -1,0 +1,80 @@
+# A collector to point the telemetry at.
+#
+# `backend/src/ops/otlp.ts` has always been able to ship counters, the latency
+# histogram and the security stream to any OTLP collector over HTTP, and
+# `tests/otlp.test.ts` proves the payload against a receiver that really
+# answers. What `docs/STATE.md` recorded as absent was the other end: a
+# collector to send it to. This is that, as part of the deployment rather than
+# as a paragraph telling somebody to go and build one.
+#
+# Usage — an overlay on the base file, never on its own:
+#
+#     docker compose -f deploy/compose.yaml \
+#                    -f deploy/compose.telemetry.yaml \
+#                    --env-file .env up -d
+#
+# ## What it does and does not give you
+#
+# It gives the platform somewhere to send telemetry that **outlives the
+# container**, which is the actual failure the boot banner reports today
+# ("local only — counters and the security stream die with this container").
+# The collector writes to Prometheus' scrape format and to its own log; both are
+# on a named volume.
+#
+# It does **not** give you a Grafana. That is a deliberate stop: a dashboard is
+# a thing somebody designs against the questions they actually ask, and shipping
+# a default one would be shipping panels nobody chose. The platform's own
+# operator screens — Operations and System — already answer "is telemetry
+# reaching a collector, what is queued, what has been dropped" from
+# `/v1/admin/telemetry/egress`, and this is what makes the answer yes.
+#
+# ## Why the collector is not exposed
+#
+# No `ports:`. The collector is reachable only from the compose network, which
+# is where the only thing that talks to it lives. An OTLP endpoint on the
+# public internet is an endpoint anybody can write metrics into, and metrics
+# somebody else wrote are worse than no metrics — they are wrong metrics that
+# look right.
+
+name: construx
+
+services:
+  construx:
+    environment:
+      # The service name compose gives the container below, on the shared
+      # network. Not a host, not an IP: a container's address changes on every
+      # recreate and the name does not.
+      OPS_OTLP_ENDPOINT: http://otel-collector:4318
+      # How often the queue is drained. The default is fine; named here because
+      # a deployment that shipped telemetry once an hour would report an
+      # incident after it was over.
+      OPS_OTLP_INTERVAL_SECONDS: ${OPS_OTLP_INTERVAL_SECONDS:-30}
+      # The collector below needs no credential — it is unreachable from
+      # outside the compose network. A hosted collector does, and this is where
+      # it goes, out of .env and never in this file.
+      OPS_OTLP_HEADERS: ${OPS_OTLP_HEADERS:-}
+    depends_on:
+      # Only that it has started. The platform queues telemetry it cannot ship
+      # and reports the queue, so a collector that is slow to come up costs
+      # nothing — but starting the platform first would drop the first
+      # interval's worth for no reason.
+      - otel-collector
+
+  otel-collector:
+    container_name: construx-otel
+    # Pinned. `:latest` on a telemetry collector is a component whose config
+    # schema can change under a deployment nobody touched, and the first sign
+    # is a collector that will not start on the morning of an incident.
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ['--config=/etc/otel/config.yaml']
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+      - telemetry:/var/lib/otel
+    restart: unless-stopped
+    # It holds the record of what the platform was doing, not the record of
+    # what the platform did. Losing it loses observability, not evidence — so
+    # a shorter grace period than the platform's own is correct.
+    stop_grace_period: 10s
+
+volumes:
+  telemetry:

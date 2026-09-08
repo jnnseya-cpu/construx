@@ -1,0 +1,78 @@
+# The front door: TLS, a real certificate, and nothing else exposed.
+#
+# `docs/STATE.md` recorded "no Terraform, gateway or infrastructure topology
+# exists" under what is not built. `compose.edge.yaml` already covers the case
+# where a proxy is *already* on the host and this platform joins it. This is the
+# other case, and the more common one on a fresh VPS: there is no proxy, and the
+# deployment needs one.
+#
+# Usage — an overlay on the base file:
+#
+#     CONSTRUX_DOMAIN=construxvg.com CONSTRUX_TLS_EMAIL=you@example.com \
+#     docker compose -f deploy/compose.yaml \
+#                    -f deploy/compose.gateway.yaml \
+#                    --env-file .env up -d
+#
+# Use this **or** `compose.edge.yaml`, never both: two things cannot own port
+# 443, and the failure is a container that will not start on the day of a
+# deploy rather than at a convenient moment.
+#
+# ## Why Caddy
+#
+# It obtains and renews the certificate by itself, from a config file with no
+# certificate paths in it. The alternative on a single host is nginx plus certbot
+# plus a renewal timer plus a reload hook — four things to get right, of which
+# the renewal hook is the one that fails silently ninety days later.
+#
+# ## What this does not do
+#
+# It is one host. There is no load balancer, no second availability zone and no
+# health-checked pool, because there is one writer extending one chain
+# (`goldenthread/lease.ts` explains why) and a pool in front of one writer is a
+# pool with one member. What it does give is TLS, HTTP/2, compression, real
+# access logs, and the platform never listening on a public port itself.
+
+name: construx
+
+services:
+  construx:
+    ports: !reset []
+    # Nothing published. The gateway reaches the platform by container name on
+    # the compose network, which means there is no port on the host for
+    # anything else to find — including the plain-HTTP one that the base file
+    # deliberately binds to loopback.
+    expose:
+      - '8080'
+
+  gateway:
+    container_name: construx-gateway
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      # The only two ports this deployment opens. 80 is not a redirect nobody
+      # needs: it is how the certificate is issued and renewed.
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      # Required. A gateway with no domain would serve a self-signed
+      # certificate that every browser refuses, which reads as an outage.
+      CONSTRUX_DOMAIN: ${CONSTRUX_DOMAIN:?set CONSTRUX_DOMAIN to the domain this deployment serves}
+      # Where the certificate authority writes about expiry. Optional in the
+      # sense that issuance works without it; wanted, because the one warning
+      # that matters arrives by email.
+      CONSTRUX_TLS_EMAIL: ${CONSTRUX_TLS_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and its account key. On a volume, because losing them
+      # means re-issuing on every restart and being rate-limited by the
+      # authority for doing so.
+      - gateway-data:/data
+      - gateway-config:/config
+    depends_on:
+      - construx
+    stop_grace_period: 10s
+
+volumes:
+  gateway-data:
+  gateway-config:

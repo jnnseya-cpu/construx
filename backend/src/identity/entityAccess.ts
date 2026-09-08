@@ -674,6 +674,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // it is classified with the evidence it describes rather than more loosely.
   // A specification and a without-prejudice letter go through the same pipeline.
   IngestedFile: { area: 'EVIDENCE_AUDIT', sensitivity: 'LEGAL_L4' },
+  // A feed reading is somebody else's published data plus the query that asked
+  // for it. COMMERCIAL rather than INTERNAL because a credit reference on a
+  // named firm is exactly the kind of reading that should not be readable by
+  // everyone with a login, and one classification covers the family.
+  FeedReading: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
   NotificationDispatch: { area: 'PLATFORM_ADMINISTRATION' },
   // The queue holds the rendered payload and the recipients' addresses until it
   // settles, so it is classified with the delivery record rather than with the

@@ -326,6 +326,78 @@ node tools/outbox.mjs
 That path had no executable coverage at all until it was written: the backend
 suite proves the server half and reads the frontend only as text.
 
+### Telemetry that outlives the container
+
+The boot banner says `Telemetry local only — counters and the security stream
+die with this container` until a collector is configured. To give it one:
+
+```bash
+docker compose -f deploy/compose.yaml \
+               -f deploy/compose.telemetry.yaml \
+               --env-file .env up -d
+```
+
+That adds an OTLP collector on the compose network and points
+`OPS_OTLP_ENDPOINT` at it. It is deliberately **not** published to the host: an
+OTLP endpoint anybody can reach is an endpoint anybody can write metrics into,
+and metrics somebody else wrote look exactly like yours. It writes Prometheus'
+scrape format on `9464` inside the network and a rotating JSON record on a
+volume.
+
+No dashboard is shipped. The platform's own Operations and System screens
+already answer "is telemetry reaching a collector, what is queued, what has been
+dropped" from `/v1/admin/telemetry/egress`; point whatever you use at the
+Prometheus endpoint for the rest.
+
+### A front door with TLS
+
+For a host that has no reverse proxy yet:
+
+```bash
+CONSTRUX_DOMAIN=your.domain CONSTRUX_TLS_EMAIL=you@example.com \
+docker compose -f deploy/compose.yaml \
+               -f deploy/compose.gateway.yaml \
+               --env-file .env up -d
+```
+
+Caddy obtains and renews the certificate itself. Port 80 is open because that is
+how issuance and renewal work, not as a courtesy redirect — closing it breaks
+renewal ninety days later, silently.
+
+**Use this or `compose.edge.yaml`, never both.** Two things cannot own 443.
+`compose.edge.yaml` is for the other case: a proxy that already exists on the
+host, which this platform joins by container name.
+
+Under the gateway the platform publishes nothing to the host at all — there is
+no port for anything else to find, including the plain-HTTP one the base file
+binds to loopback. Set `GATEWAY_TRUSTED_PROXIES` so the platform reads the
+forwarded client address; without it every request appears to come from the
+gateway and one abusive client rate-limits everybody.
+
+### Failover: the writer lease
+
+With `LEDGER_POSTGRES_MODE` set to `primary` or `follower`, which process may
+extend the chain is decided by a lease in the database rather than by the file
+beside the journal. Read it with:
+
+```sql
+SELECT holder, token, host, pid, expires_at FROM writer_lease WHERE id = 'ledger';
+```
+
+- **`expires_at` in the future** — that host is the writer. A follower will not
+  take over while it keeps renewing.
+- **`expires_at` in the past** — the writer stopped without releasing. The next
+  standby to poll takes it, on a **higher token**, and starts writing without a
+  restart. Nothing needs doing.
+- **`token` jumped and you did not plan a failover** — a primary lost its lease
+  and something else took it. Look at why the primary stopped renewing: a long
+  pause, a network partition, or a host that was killed. The old primary is
+  fenced out by number and cannot write, whatever it believes.
+
+A process that finds it has lost the lease logs `LEDGER_LEASE_LOST` and refuses
+writes with 503 while continuing to answer reads. That is the safe state, not an
+outage to work around: restart it and it comes up as a follower.
+
 **Drill the container too.** `deploy/restore-drill.sh` takes a backup set,
 boots a second container from the live image against a throwaway volume on a
 port of its own, waits for `/readyz`, reads how many events replayed, and

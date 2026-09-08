@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,330 passing, 0 failing, 0 skipped, across 292 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,418 passing, 0 failing, 0 skipped, across 296 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 321 TypeScript files, 209,969 lines |
+| Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
-| API routes | 1,135 — 777 writes, 358 reads (51 public across both) |
-| Event types | 761 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 342, all classified for access |
+| API routes | 1,139 — 779 writes, 360 reads (51 public across both) |
+| Event types | 763 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 343, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -7490,6 +7490,164 @@ matching, so it tests the sentence rather than the line breaks.
 
 ---
 
+### Outside sources: commodity price, weather, credit reference
+
+Three feeds, a closed catalogue, and one rule that decides the whole shape of
+the module: **a reading is what a source said, not a fact and not a decision.**
+`EXTERNAL_FEED_READ` records that a source answered these values at this moment
+against this request, with the SHA-256 of the exact bytes it returned. Nothing
+downstream acts on it by itself — a rate that cites a reading is still a rate
+somebody set, a supplier record updated from one is still an act with an actor's
+name on it. A third party's number that silently changed a project record would
+be a change nobody made and nobody could defend.
+
+**No vendor is in the code.** Every feed is a URL, a small response mapping and
+a credential, all configured. A customer arrives with whichever subscription
+they already pay for, and hard-coding one would make that choice for them.
+
+**Unset is a supported state, and it is loud.** No endpoint means a 501 naming
+the variable — `FEED_COMMODITY_URL`, `FEED_WEATHER_URL`, `FEED_CREDIT_URL` —
+and the same sentence wherever it is reported. The Cost & Value screen lists
+the unconfigured feeds *with* their reason rather than hiding them, because a
+screen showing only what works leaves the person who could turn one on unaware
+there is anything to turn on. Nothing is invented: for a price, a forecast or a
+credit score, a plausible invented number is the only thing worse than none.
+
+**What is refused, and why each one is a real failure rather than defensiveness**
+— the source erred (names status and host); the body was not JSON (what a lapsed
+subscription actually returns is a 200 and an HTML login page); the body was
+over the ceiling; the source hung; and the one that matters most, **valid JSON
+the mapper could read nothing out of**. That last is a vendor shape change: the
+call returns 200, an empty reading goes on the record, and a screen shows a
+blank where a price used to be with nothing anywhere saying why. It refuses.
+
+**The credential never reaches the ledger.** Provenance records host and path,
+never the query string — some APIs take a credential that way, and the ledger is
+append-only, so a credential written into it cannot be redacted afterwards on
+any deployment, ever. A test asserts the whole reading is free of it.
+
+*A defect found by writing the tests:* `{key}` substitution matched only the
+percent-encoded form. `new URL` encodes braces in a path but leaves them alone
+in a query string, so the common case — `?key={key}` — never substituted and the
+vendor was called with the literal string `{key}` as its credential. It answers
+401, which reads as a bad key rather than as a platform bug.
+
+Twenty tests, driven against a real HTTP source rather than a stubbed `fetch`,
+because the failures that happen to a feed are HTTP failures and a stub written
+by the same hand as the mapper proves only that the two agree.
+
+---
+
+### Semantic embeddings, and the one thing they must never do
+
+`EMBEDDING` is a third `ProviderCapability` beside reasoning and perception, and
+every part of that is load-bearing: its own vendor endpoints, its own price
+table (input tokens only, ~2 per million against reasoning's 150 + 600 — charging
+it through the reasoning table would over-bill by two orders of magnitude), and
+**no fallback to a chat model, ever**.
+
+That last was a live bug in the routing. `adapterFor` read
+`capability === 'PERCEPTION' ? perception : reasoning`, which resolves *every
+other capability* to the reasoning adapter. An embedding call would have been
+answered by a chat model, and prose coerced into a float array is a row of noise
+sitting in the index looking exactly like a real one. Replaced with a
+`chainFor()` lookup whose `EMBEDDING` chain is embedding adapters only.
+
+**There is no local stand-in**, and that is the point of the entry this closes.
+A deterministic hash presented as an embedding is precisely the overclaim the
+`lexicalVector` naming was defending against — it finds near-duplicates, which
+the lexical index already does for free, while every screen above it says
+"semantic". Unconfigured returns 501 naming `AI_EMBEDDING_PROVIDER`.
+
+Anthropic is **absent from the table** rather than mapped onto another vendor's
+endpoint — the mistake the reasoning adapter's own comment records having made
+once, where every name that was not OPENAI resolved to Gemini and the ledger
+billed the wrong vendor for every pound.
+
+Rows carry the vendor and model that made them, because **two rows embedded by
+different models are in different spaces**: cosine between them is a number, it
+is just not a similarity. The search compares only rows in one space and reports
+how many it skipped rather than quietly returning half a register.
+
+---
+
+### The writer, elected and fenced
+
+Two things `docs/STATE.md` named as not done under horizontal scale, closed by
+`goldenthread/lease.ts`:
+
+**The writer lock was load-bearing and advisory.** `writerlock.ts` is a file on
+a volume — correct for the accident it was built for, and it says so, but wrong
+the moment two hosts do not share a filesystem or two clocks disagree. The lease
+is held in the same database that holds the record, taken with one conditional
+UPDATE, so two processes racing it are serialised by the database and exactly one
+sees a row come back. There is no read-then-write window.
+
+**Promotion was a restart somebody starts.** A follower already holds the whole
+record in memory; what it lacked was permission to write. It now takes that the
+moment the lease lapses — in-process, no restart, nobody woken.
+
+**The fencing token is what makes this safe rather than merely probable.** A
+lease with an expiry has a famous failure: the holder stops the world for a long
+GC pause, its lease expires, a standby promotes, and the original wakes and
+carries on writing, believing correctly as far as it knows that it still holds
+it. Both are now extending one chain. So every *new* acquisition takes a
+monotonically increasing token and the writer must present it; the woken process
+holds a lower one and is refused **by number rather than by timing**. A release
+expires the row rather than deleting it, because a deleted row would start the
+next holder at 1 again and un-fence exactly the process this exists to fence out.
+`tests/lease.test.ts` stages the paused primary directly, which a live server
+cannot be made to do on cue.
+
+The store asks the lease before each batch rather than after, so a process whose
+lease lapsed finds out at its own queue — "this process no longer holds the
+writer lease" is a better sentence at 3am than "the trigger refused it".
+
+**What this is still not:** one writer. Two processes extending one hash chain
+would each need the other's in-memory record, which is the rewrite `pgstore.ts`
+explains is not worth its cost. The single writer is now *elected and fenced*
+instead of assumed, and the standby takes over by itself.
+
+---
+
+### The deployment topology, and a collector to point at
+
+Four compose files that merge, all four validated with `docker compose config`:
+the base, a **TLS gateway** (Caddy — issuance and renewal from a config with no
+certificate paths in it, the real client address forwarded so rate limiting
+works, and the platform publishing nothing at all), the existing **edge overlay**
+for a host whose proxy already exists, and a **telemetry overlay**.
+
+The gateway and the edge overlay are alternatives and the file says so: two
+things cannot own 443, and the failure is a container that will not start on the
+day of a deploy.
+
+**The collector** is what the telemetry entry was actually missing. The egress
+was already built and already verified against a receiver that really answers;
+the dashboards already existed on Operations and System. What did not exist was
+somewhere to send it that outlives the container — which is what the boot banner
+has been reporting all along. It is pinned, memory-bounded (a collector that
+OOMs during an incident takes the record of the incident with it), rotates what
+it writes because it shares a disk with the journal, and is unpublished: an OTLP
+endpoint on the internet is one anybody can write metrics into, and metrics
+somebody else wrote are worse than none because they look right.
+
+No Grafana is shipped, deliberately. A dashboard is designed against the
+questions somebody actually asks; a default one is panels nobody chose.
+
+**23 invariants in `tests/topology.test.ts`** hold the topology to the decisions
+that, quietly reversed, produce a deployment that starts perfectly and is wrong:
+the record on a volume, fsync on, the published port on loopback, `ports: !reset
+[]` under the gateway (a plain `ports: []` would *concatenate* with the base
+file's entry and leave the platform reachable beside the gateway), the signing
+secret and the domain required rather than defaulted, and the collector pinned
+and unpublished.
+
+**What is still absent:** Terraform and managed services — Kong, MSK, RDS, S3 as
+infrastructure-as-code. This is one host with compose, and it says so.
+
+---
+
 ### The console sweep, and the design-system class that was never defined
 
 Eighteen screens driven as six identities — `PM`, `SUPERVISOR`, `QS`, `OWNER`,
@@ -9991,23 +10149,44 @@ parsing work, not wiring.
   deployment with no multimodal provider the scan is still refused, and no
   provider call has been made from this environment, so the transcription path
   is proven against a stub and not against a real model reading a real page
-- **Any semantic embedding** — the document index is feature hashing over words
-  and word pairs, and the field is named `lexicalVector` because it finds a
-  near-duplicate revision, not a paraphrase
+- ~~**Any semantic embedding**~~ — **built**; see *Semantic embeddings* below.
+  `EMBEDDING` is a third provider capability with its own vendor endpoints, its
+  own price table and — the load-bearing part — **no fallback to a chat model**
+  and no local stand-in. The lexical index stays exactly as it was, beside it and
+  still named `lexicalVector`, because the two answer different questions and one
+  of them costs nothing. What remains true on the same terms as every other
+  provider capability: no call has been made to either vendor from here, so the
+  *quality* of an embedding is unproven; the wire contract is
 - ~~**A plant register**~~ — built; see *The plant register* below. Plant on
   hire is recorded with its hirer, rate, basis and dates, and utilisation is
   derived from the site diary's plant lines and the equipment reading's
   sightings rather than entered a second time. What is not built: matching is
   by description, stated on the result, not by a tag the machine carries; and
   the hire is a record, not a contract with the hirer
-- **Deployment topology** — Terraform, Kong, MSK, RDS, S3
+- **Deployment topology** — *partly closed.* There is now a real topology in
+  `deploy/`, in four compose files that merge: the base, a **TLS gateway**
+  (`compose.gateway.yaml` + `Caddyfile` — Caddy, certificate issuance and
+  renewal, real client address forwarded so rate limiting works, nothing else
+  published), an **edge overlay** for a host whose proxy already exists, and a
+  **telemetry overlay** (below). All four combinations were validated with
+  `docker compose config`, and 23 invariants in `tests/topology.test.ts` hold
+  them to the properties that matter — the record on a volume, fsync on, the
+  collector unpublished, the signing secret and the domain required rather than
+  defaulted. What is still absent is **Terraform and managed services**:
+  Kong, MSK, RDS and S3 as infrastructure-as-code. This is one host with
+  compose, and it says so
 - **Native Android and iOS clients** — the installed PWA covers the field case
   today, including offline capture, and the `ANDROID`/`IOS` event sources exist
   server-side for when a native client arrives. Two things a PWA cannot do that
   a store app can, and neither is worked around here: background sync while the
   application is closed, and camera or location capture beyond what the browser
   grants
-- **External data feeds** — commodity pricing, weather, credit reference
+- ~~**External data feeds**~~ — **built**; see *Outside sources* below.
+  Commodity pricing, weather and credit reference, as a closed catalogue of
+  three with provenance on every reading, a refusal naming the variable where
+  nothing is configured, and **no vendor in the code** — every feed is a URL. A
+  reading is evidence of what a source said, not a fact and not a decision:
+  nothing downstream changes on its own
 - **Horizontal scale in production** — every piece now exists and none of it has
   been run at scale. The **schema** is verified against a real Postgres 16
   (`deploy/postgres/verify.sh`, 19 checks) and the **client** is verified against
@@ -10024,9 +10203,31 @@ parsing work, not wiring.
   on a second host, live*. What is **not** done is a second writer:
   `goldenthread/ledger.ts` still answers every read from memory and one process
   extends the chain at a time, so the writer lock is still load-bearing, the
-  database's chain trigger is what catches its failure, and promotion is a
-  restart somebody starts rather than an election
-- **A metrics store and dashboards** — the *egress* is built. `ops/otlp.ts`
+  database's chain trigger is what catches its failure, and restart in primary mode — **or, now, no restart at
+  all**: `goldenthread/lease.ts` holds the writer lease in the same database
+  that holds the record, taken with one conditional UPDATE so exactly one
+  process wins, and a standby promotes itself the moment the lease lapses. Every
+  acquisition carries a **monotonically increasing fencing token**, which is
+  what makes it safe rather than merely probable: the classic failure here is a
+  primary that pauses for a long GC, has its lease expire, and wakes up still
+  believing it holds it — with a token it is refused by number rather than by
+  timing. `tests/lease.test.ts` stages exactly that, which a live server cannot
+  be made to do on cue. What is still **not** done, and is the same rewrite
+  `pgstore.ts` describes: two processes extending one chain concurrently. The
+  writer is now *elected and fenced* instead of assumed, and the standby takes
+  over by itself — but it is still one writer
+- ~~**A metrics store and dashboards**~~ — **closed**, and it was closer than
+  the entry below suggested. The egress was already verified against a receiver
+  that really answers (`tests/otlp.test.ts`, 19 tests), and the dashboards
+  already existed on the Operations and System screens, reading
+  `/v1/admin/telemetry/egress`. What was genuinely missing was the collector to
+  point at, and `deploy/compose.telemetry.yaml` + `deploy/otel-collector.yaml`
+  are it: pinned, memory-bounded, rotating what it writes because it shares a
+  disk with the journal, and reachable only from the compose network. No
+  Grafana is shipped, deliberately — a dashboard is designed against the
+  questions somebody actually asks, and a default one is panels nobody chose.
+  The original entry, kept because a register that quietly loses an entry is a
+  register nobody can audit: the *egress* is built. `ops/otlp.ts`
   ships counters, the latency histogram and the security stream to any OTLP
   collector over HTTP with the JSON encoding, on an interval, from a bounded
   queue that drops the oldest and **exports its own drop count** so a lossy

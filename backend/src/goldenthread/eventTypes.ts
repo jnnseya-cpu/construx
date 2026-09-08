@@ -1222,6 +1222,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // `aiAllowed` is true, and it is the one place in this block where it is: the
   // whole content of the event is what a provider returned.
   def('FILE_EMBEDDED', 'IngestedFile', 'UPDATE', 'GOVERNANCE', { aiAllowed: true }),
+  // What an external source said, when, and in answer to what.
+  //
+  // A reading, not a fact. The event records that a commodity feed, a weather
+  // service or a credit agency returned these values at this moment against
+  // this request, with the response's own hash beside them. Nothing downstream
+  // treats it as a decision: a rate that cites a reading is still a rate
+  // somebody set, and a supplier record updated from one is still an act with
+  // an actor's name on it. A third party's number that silently changed a
+  // project record would be a change nobody made and nobody could defend.
+  def('EXTERNAL_FEED_READ', 'FeedReading', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUED', 'NotificationOutbox', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUE_SETTLED', 'NotificationOutbox', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),

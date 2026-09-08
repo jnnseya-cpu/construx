@@ -1,0 +1,61 @@
+# What the collector accepts, what it does with it, and where it puts it.
+#
+# Deliberately small. A collector is a pipe, and every processor added to it is
+# something that can drop or reshape a measurement between the platform saying
+# it and somebody reading it — which is the one thing an observability component
+# must not do quietly.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        # The platform ships JSON over HTTP, not gRPC. Only the protocol in use
+        # is opened: a listener nothing sends to is a listener nobody watches.
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bound the collector's own memory before it becomes the reason the host is
+  # unhealthy. A collector that OOMs during an incident takes the record of the
+  # incident with it.
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+    spike_limit_mib: 64
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+
+exporters:
+  # Scrapeable, so anything that speaks Prometheus can read it without this
+  # deployment choosing which. No dashboard is imposed; the door is opened.
+  prometheus:
+    endpoint: 0.0.0.0:9464
+    # The platform's own resource attributes carried through as labels rather
+    # than flattened away — `service.name` and `deployment.environment` are how
+    # two deployments' metrics are told apart once they reach one place.
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # The security stream and the platform's log records, on the volume. Rotated
+  # by size so a busy week cannot fill the disk the journal is also on.
+  file:
+    path: /var/lib/otel/records.jsonl
+    rotation:
+      max_megabytes: 64
+      max_backups: 8
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, file]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [file]
+  telemetry:
+    logs:
+      # The collector's own log, at the level that says something is wrong
+      # without narrating every batch.
+      level: warn

@@ -1,0 +1,65 @@
+# The gateway's whole configuration.
+#
+# Read with `deploy/compose.gateway.yaml`. Everything that varies between
+# deployments is an environment variable, so this file is the same on every host
+# and there is nothing in it to edit by hand at 11pm.
+
+{
+	# Where the certificate authority sends expiry warnings. Empty is valid and
+	# issuance still works — the certificate simply renews with nobody told if
+	# it stops being able to.
+	email {$CONSTRUX_TLS_EMAIL}
+
+	# Caddy's own log. `warn` because an access log at info level on a busy day
+	# is the thing that fills the disk the journal is also on.
+	log {
+		level warn
+	}
+}
+
+{$CONSTRUX_DOMAIN} {
+	# One upstream, by container name. Not an IP: a container's address changes
+	# on every recreate, and a deploy that silently 502s afterwards is the
+	# failure this avoids.
+	reverse_proxy construx:8080 {
+		# The platform reads these to resolve the real client address for rate
+		# limiting — see `GATEWAY_TRUSTED_PROXIES` in `.env.example`. Without
+		# them every request appears to come from the gateway, and one abusive
+		# client would rate-limit everybody.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+
+		# A journal replay on a large record takes longer than a default
+		# gateway will wait. The platform's readiness probe is what decides
+		# when traffic may arrive; this is what stops the gateway giving up on
+		# a request that is simply doing work.
+		transport http {
+			response_header_timeout 120s
+		}
+	}
+
+	# Compression on the way out. The console is plain ES modules and the API
+	# answers JSON; both compress by roughly a factor of four, and on a site
+	# visited from a phone on site that is the difference people feel.
+	encode zstd gzip
+
+	header {
+		# HSTS. Only meaningful once the certificate is real, which it is by
+		# the time this file is serving anything.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# The platform sets its own CSP and frame policy per response; these
+		# are the ones a gateway is the right place for.
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		# Caddy's version, off. It tells an attacker what to look up.
+		-Server
+	}
+
+	# Access log as structured JSON on stdout, so `docker logs` and the
+	# collector see the same records rather than two formats of the same thing.
+	log {
+		output stdout
+		format json
+	}
+}

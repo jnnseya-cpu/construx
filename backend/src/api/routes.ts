@@ -271,6 +271,8 @@ import { estateOverview } from '../billing/overview.ts';
 import { isPlatformGovernanceEvent } from '../goldenthread/eventTypes.ts';
 import * as evidence from '../evidence/registry.ts';
 import * as ingestion from '../evidence/pipeline.ts';
+import * as feeds from '../feeds/read.ts';
+import { FEED_CODES } from '../feeds/registry.ts';
 import * as plant from '../domain/plant.ts';
 import * as siteMedia from '../site/media.ts';
 import * as blog from '../site/blog.ts';
@@ -22028,6 +22030,37 @@ export const ROUTES: Route[] = [
         ingestionId: ctx.params.ingestionId as string,
         ...body<{ sectionRef: string; title: string; revision: string }>(ctx),
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/feeds',
+    description: 'Which external data feeds this deployment can read, which it cannot and why, and what has been read on this project',
+    handler: (platform, ctx) => feeds.feedPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/feeds/:feed/read',
+    description: 'Read an external feed — commodity price, weather or credit reference — and record what the source said, with the response’s hash beside it',
+    schema: {
+      type: 'object',
+      properties: {
+        // Free-form because the parameters are the source's, not this
+        // platform's: one commodity API takes `symbols`, another `commodity`,
+        // and a schema naming either would break the feed it did not name.
+        query: { type: 'object', additionalProperties: { type: 'string', maxLength: 200 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const feed = ctx.params.feed as string;
+      if (!FEED_CODES.includes(feed as never)) {
+        throw new DomainError('NO_SUCH_FEED', `${feed} is not a feed this platform reads. It reads ${FEED_CODES.join(', ')}.`, 404);
+      }
+      return feeds.readFeed(projectContext(platform, ctx), {
+        feed: feed as never,
+        ...body<{ query?: Record<string, string> }>(ctx),
+      });
+    },
   },
   {
     method: 'POST',
