@@ -899,6 +899,19 @@ export const config = {
     mode: str('AI_MODE', 'local') as AIMode,
     reasoningProvider: str('AI_REASONING_PROVIDER', 'OPENAI'),
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
+    /**
+     * Which vendor embeds text for semantic search, or empty for none.
+     *
+     * Empty is the default and a supported state, unlike the two above: a
+     * deployment with no embedding provider has no semantic search, says so on
+     * the screen, and keeps the lexical index it always had. Defaulting this to
+     * a vendor would mean every deployment silently started spending on
+     * embeddings the moment a key was set for something else.
+     *
+     * Only OPENAI and GEMINI are accepted. Anthropic publishes no embedding
+     * endpoint, and mapping it onto another vendor's would bill the wrong one.
+     */
+    embeddingProvider: str('AI_EMBEDDING_PROVIDER', ''),
     openaiKey: str('OPENAI_API_KEY', ''),
     geminiKey: str('GEMINI_API_KEY', ''),
     anthropicKey: str('ANTHROPIC_API_KEY', ''),
@@ -1649,6 +1662,15 @@ export function assertProductionSafety(): string[] {
       if (!['OPENAI', 'GEMINI', 'ANTHROPIC'].includes(value)) {
         warnings.push(`${key} is "${value}", which is not a provider this platform can call — the default is being used instead`);
       }
+    }
+    // Set but unusable is worse than unset here, because unset is an announced
+    // state ("semantic search is off") and this one looks configured while
+    // every embedding call is refused.
+    if (config.ai.embeddingProvider !== '' && !['OPENAI', 'GEMINI'].includes(config.ai.embeddingProvider)) {
+      warnings.push(
+        `AI_EMBEDDING_PROVIDER is "${config.ai.embeddingProvider}", which publishes no embedding endpoint this ` +
+          'platform can call — semantic search is off. Set OPENAI or GEMINI, or leave it unset',
+      );
     }
     // Which vendors may hold which material. Silence here is not neutral: it
     // means every provider is capped at INTERNAL, so any engine touching a

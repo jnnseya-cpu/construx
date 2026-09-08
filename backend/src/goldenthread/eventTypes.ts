@@ -1211,6 +1211,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('FILE_INGESTED', 'IngestedFile', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('FILE_EXTRACTED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
   def('FILE_QUARANTINED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
+  // A fourth: the file's text sent to an embedding provider and a semantic
+  // vector recorded against it. Separate from `FILE_EXTRACTED` because it is a
+  // separate fact with a separate cost and a separate provider — the extraction
+  // happened in this process for nothing, and this left the platform and was
+  // billed. The event carries the vendor and the model, because two rows
+  // embedded by different models are in different spaces and must never be
+  // compared; without the model on the record there is no way to know.
+  //
+  // `aiAllowed` is true, and it is the one place in this block where it is: the
+  // whole content of the event is what a provider returned.
+  def('FILE_EMBEDDED', 'IngestedFile', 'UPDATE', 'GOVERNANCE', { aiAllowed: true }),
   def('NOTIFICATION_QUEUED', 'NotificationOutbox', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NOTIFICATION_QUEUE_SETTLED', 'NotificationOutbox', 'UPDATE', 'GOVERNANCE'),
   def('NOTIFICATION_DISPATCHED', 'NotificationDispatch', 'ISSUE', 'GOVERNANCE', { creates: true }),

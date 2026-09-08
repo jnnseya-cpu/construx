@@ -3,7 +3,8 @@ import { ulid } from '../core/ids.ts';
 import { QUANTITY_BASIS, recordItems, type MeasuredItem, type QuantityBasis } from '../domain/measurement.ts';
 import { ingestSpecification } from '../engines/bim.ts';
 import { extractFromText } from '../engines/perception.ts';
-import { authorise, write, type EngineContext } from '../engines/context.ts';
+import { authorise, runAI, write, type EngineContext } from '../engines/context.ts';
+import { EMBEDDING_DIMENSIONS, meanVector, passagesOf } from '../ai/providers/embedding.ts';
 import { findByHash } from './registry.ts';
 import { ping, scan, scannerAddress, scannerConfigured } from './scanner.ts';
 import type { EvidenceStore } from './store.ts';
@@ -59,6 +60,25 @@ export type IngestedFileState = {
   extraction: Extraction;
   /** Lexical, not semantic — see `ingest.ts`. Absent where no text was read. */
   lexicalVector?: number[];
+  /**
+   * The document's embedding, where one has been made. Genuinely semantic.
+   *
+   * Beside the lexical vector rather than replacing it, because they answer
+   * different questions and the lexical one costs nothing: "is this the same
+   * document again" is a near-duplicate question the hash index answers well,
+   * and "what else on this job says this" is the one that needs a model.
+   */
+  semanticVector?: number[];
+  /**
+   * The vendor and model that produced it, and when.
+   *
+   * On the record because **two rows embedded by different models are in
+   * different spaces**. Cosine between them is a number, it is just not a
+   * similarity, and without the model recorded there is no way for the search
+   * to know it must not compare them. It also answers the question the
+   * retention rules raise: which vendor was sent this document's text.
+   */
+  semanticModel?: { provider: string; modelClass: string; dimensions: number; passages: number; embeddedAt: string };
   status: 'INGESTED' | 'QUARANTINED';
   ingestedBy: string;
   ingestedAt: string;
@@ -352,6 +372,225 @@ export async function specificationFromFile(
     source: 'INGESTED_FILE',
   });
   return { ...result, ingestionId: file.ingestionId, documentHash: file.hash };
+}
+
+// --- The semantic index -----------------------------------------------------
+
+export type EmbeddingResult = {
+  ingestionId: string;
+  hash: string;
+  /** How many passages the document was split into and sent as one batch. */
+  passages: number;
+  provider: string;
+  modelClass: string;
+  dimensions: number;
+  /** What the tenancy was charged, so the screen can show it beside the result. */
+  chargedMinor: number;
+};
+
+/**
+ * Embed a read document, so the register can be searched by meaning.
+ *
+ * This is what closes "**Any semantic embedding**" in `docs/STATE.md`'s not-built
+ * register. Four things make it a governed act rather than a background job:
+ *
+ *   - **It is charged.** The text leaves the platform and a vendor bills for it,
+ *     so it runs through `runAI` like every other provider call: quoted, held
+ *     against the wallet, settled on success, released on failure.
+ *   - **It is authorised.** `EVIDENCE_AUDIT` with `I` — importing an index over
+ *     the evidence register is an act on it, on the same terms as ingestion.
+ *   - **It is recorded**, with the vendor and model, because a row cannot be
+ *     compared safely without knowing which space it is in.
+ *   - **It is refused where it cannot be honest.** No embedding provider means a
+ *     501 naming the variable, not a hash dressed up as an embedding.
+ *
+ * Re-embedding a file already embedded by the same model is refused rather than
+ * repeated: same bytes, same model, same vector, and a second charge for it.
+ * Re-embedding under a *different* model is allowed and replaces the row,
+ * because the old row is in a space nothing else on the project is in any more.
+ */
+export async function embedFile(ctx: EngineContext, input: { ingestionId: string }): Promise<EmbeddingResult> {
+  authorise(ctx, 'EVIDENCE_AUDIT', 'I');
+
+  const file = readFile(ctx, input.ingestionId);
+  const passages = passagesOf(file.extraction.text);
+  if (passages.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_EMBED',
+      `${file.filename ?? file.hash} was read but produced no text worth embedding.`,
+      409,
+    );
+  }
+
+  // What this deployment would use, resolved before anything is held. Asking
+  // now means the refusal for an unconfigured deployment costs nothing and
+  // says which variable turns it on, rather than surfacing as a wallet hold
+  // that is then released.
+  const intended = ctx.orchestrator.adapterFor('EMBEDDING');
+  const already = file.semanticModel;
+  if (already && already.provider === intended.name) {
+    throw new DomainError(
+      'ALREADY_EMBEDDED',
+      `${file.filename ?? file.hash} was already embedded by ${already.provider} on ${already.embeddedAt.slice(0, 10)}. ` +
+        'The bytes have not changed, so the vector would not either, and embedding it again would be charged twice.',
+      409,
+    );
+  }
+
+  const result = await runAI(ctx, {
+    // The engine that already owns reading documents. There is no `DOC_INTEL`
+    // in the closed engine list and adding one for this would give the routing
+    // matrix, the engine contracts and the phase gates a ninth member for a
+    // task that is squarely BIM_TWIN's: interpreting a drawing, a model or a
+    // document is what it does.
+    engine: 'BIM_TWIN',
+    taskType: 'document_embedding',
+    capability: 'EMBEDDING',
+    inputRefs: [{ refType: 'IngestedFile', refId: file.ingestionId }],
+    request: {
+      task: 'document_embedding',
+      // The passages themselves. There is no prompt: an embedding endpoint is
+      // handed text, not an instruction, and anything else in this payload
+      // would be text the customer is billed to embed.
+      payload: { passages },
+      modelClass: 'embedding-standard',
+    },
+    toWrites: (output) => {
+      const vectors = (output as { vectors?: number[][] }).vectors ?? [];
+      const mean = meanVector(vectors);
+      if (mean.length !== EMBEDDING_DIMENSIONS) {
+        // Reached only if an adapter returned a batch the endpoint's own reader
+        // would have refused. Belt and braces on the way into an append-only
+        // record: a malformed row here is permanent.
+        throw new DomainError(
+          'AI_EMBEDDING_MALFORMED',
+          `The embedding returned ${mean.length} dimensions; this index is built at ${EMBEDDING_DIMENSIONS}.`,
+          502,
+        );
+      }
+      return [
+        {
+          eventType: 'FILE_EMBEDDED',
+          entity: { refType: 'IngestedFile', refId: file.ingestionId },
+          nextState: {
+            ...file,
+            semanticVector: mean,
+            semanticModel: {
+              provider: intended.name,
+              modelClass: 'embedding-standard',
+              dimensions: mean.length,
+              passages: passages.length,
+              embeddedAt: new Date().toISOString(),
+            },
+          },
+        },
+      ];
+    },
+  });
+
+  return {
+    ingestionId: file.ingestionId,
+    hash: file.hash,
+    passages: passages.length,
+    provider: result.provider,
+    modelClass: result.modelClass ?? 'embedding-standard',
+    dimensions: EMBEDDING_DIMENSIONS,
+    chargedMinor: result.acuConsumed,
+  };
+}
+
+export type SemanticMatch = SimilarFile & {
+  /** Which model's space this comparison was made in. */
+  model: string;
+};
+
+export type SemanticSearch = {
+  /** Whether this deployment can embed at all, and why not where it cannot. */
+  available: boolean;
+  reason?: string;
+  /** Documents embedded in the same space as the subject, and therefore comparable. */
+  matches: SemanticMatch[];
+  /** Documents read but never embedded — the queue this search is missing. */
+  notEmbedded: number;
+  /**
+   * Documents embedded by a *different* model, and therefore skipped.
+   *
+   * Counted and named rather than silently dropped. A search that quietly
+   * ignores half the register looks like a register with half as much in it,
+   * and the remedy — re-embed them under the current model — is only obvious
+   * if somebody is told the rows exist.
+   */
+  otherSpace: number;
+};
+
+/**
+ * Other documents that *mean* the same as this one.
+ *
+ * The counterpart to `similarFiles`, and deliberately a separate function
+ * rather than a flag on it. They are different searches with different costs
+ * and different failure modes, and merging them behind one call would leave a
+ * caller unable to say which answer they got — which matters most where there
+ * is no embedding provider at all and the honest answer is "this deployment
+ * cannot do that", not a quietly lexical result.
+ *
+ * 0.75 is the floor, higher than the lexical 0.6: embeddings put almost
+ * everything written in one professional register above 0.6, so a lower
+ * threshold here returns the whole project.
+ */
+export function semanticNeighbours(ctx: EngineContext, ingestionId: string, threshold = 0.75): SemanticSearch {
+  authorise(ctx, 'EVIDENCE_AUDIT', 'R');
+
+  const all = filesOf(ctx);
+  const subject = all.find((file) => file.ingestionId === ingestionId);
+  if (!subject) throw new DomainError('NO_SUCH_INGESTION', `No ingested file ${ingestionId} on this project`, 404);
+
+  const readable = all.filter((file) => file.status === 'INGESTED' && file.extraction.text !== undefined);
+  const notEmbedded = readable.filter((file) => !file.semanticVector).length;
+
+  if (!subject.semanticVector || !subject.semanticModel) {
+    // Not an error: a document nobody has embedded yet is the ordinary state,
+    // and the answer is the reason plus what it would take.
+    return {
+      available: false,
+      reason: embeddingUnavailable(ctx) ?? 'This document has not been embedded yet. Embed it to search by meaning.',
+      matches: [],
+      notEmbedded,
+      otherSpace: 0,
+    };
+  }
+
+  const space = subject.semanticModel.provider;
+  const comparable = readable.filter(
+    (file) => file.ingestionId !== ingestionId && file.semanticVector && file.semanticModel,
+  );
+
+  return {
+    available: true,
+    matches: comparable
+      .filter((file) => file.semanticModel!.provider === space)
+      .map((file) => ({
+        ingestionId: file.ingestionId,
+        hash: file.hash,
+        ...(file.filename ? { filename: file.filename } : {}),
+        kind: file.classification.kind,
+        similarity: similarity(subject.semanticVector!, file.semanticVector!),
+        model: file.semanticModel!.provider,
+      }))
+      .filter((match) => match.similarity >= threshold)
+      .sort((a, b) => b.similarity - a.similarity),
+    notEmbedded,
+    otherSpace: comparable.filter((file) => file.semanticModel!.provider !== space).length,
+  };
+}
+
+/** Why this deployment cannot embed, or undefined where it can. */
+function embeddingUnavailable(ctx: EngineContext): string | undefined {
+  try {
+    ctx.orchestrator.adapterFor('EMBEDDING');
+    return undefined;
+  } catch (error) {
+    return error instanceof DomainError ? error.message : 'No embedding provider is available.';
+  }
 }
 
 export type BillImport = {

@@ -22031,6 +22031,22 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/embedding',
+    ai: { engine: 'BIM_TWIN', taskType: 'document_embedding', capability: 'EMBEDDING' },
+    description: 'Embed an ingested file so the register can be searched by meaning rather than by shared vocabulary',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      ingestion.embedFile(projectContext(platform, ctx), { ingestionId: ctx.params.ingestionId as string }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/semantic',
+    description: 'Documents on this project that mean the same as this one — or the reason this deployment cannot answer that',
+    handler: (platform, ctx) =>
+      ingestion.semanticNeighbours(projectContext(platform, ctx), ctx.params.ingestionId as string),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/ingestion/:ingestionId/itt',
     // Its own task type, from the engine that charges it: the orchestrator
     // learns a price per task type, and quoting this against the multimodal

@@ -6,7 +6,15 @@ import type { AIProvider } from '../../goldenthread/types.ts';
  * change, not a rewrite — this is the no-vendor-lock-in requirement made real.
  */
 
-export type ProviderCapability = 'REASONING' | 'PERCEPTION';
+/**
+ * `EMBEDDING` is not a third flavour of the first two and must not be treated
+ * as one. A reasoning or perception adapter answers a question; an embedding
+ * adapter returns a vector from a different endpoint at a hundredth of the
+ * price, and a chat model asked for one produces prose. So the orchestrator
+ * never fails an embedding over to the other two, and there is no local
+ * stand-in for it — see `embedding.ts`.
+ */
+export type ProviderCapability = 'REASONING' | 'PERCEPTION' | 'EMBEDDING';
 
 export type ProviderRequest = {
   /** What the engine wants done, in structured form. Never raw user prose. */

@@ -326,7 +326,19 @@ export async function documents(root) {
                         ? html`<button class="btn quiet sm" data-specify="${file.ingestionId}" data-name="${file.filename ?? file.hash.slice(0, 18)}">Read as specification</button>`
                         : ''
                     }
-                    ${file.lexicalVector ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>` : ''}`,
+                    ${file.lexicalVector ? html`<button class="btn quiet sm" data-similar="${file.ingestionId}">Find duplicates</button>` : ''}
+                    ${
+                      // Two different searches, two different doors, and the
+                      // labels say which is which. "Find duplicates" is the
+                      // lexical index and costs nothing; this one sends the
+                      // text to a provider and is charged, so it is never the
+                      // silent upgrade of the button beside it.
+                      file.status === 'INGESTED' && file.extraction.text !== undefined
+                        ? file.semanticVector
+                          ? html`<button class="btn quiet sm" data-meaning="${file.ingestionId}">Find by meaning</button>`
+                          : html`<button class="btn quiet sm" data-embed="${file.ingestionId}" data-name="${file.filename ?? file.hash.slice(0, 18)}">Index for meaning</button>`
+                        : ''
+                    }`,
                   ]),
                 ],
                 empty: evidence?.storeConfigured
@@ -802,6 +814,60 @@ export async function documents(root) {
       if (!target) return;
       target.hidden = !target.hidden;
       rows.textContent = target.hidden ? 'Show rows' : 'Hide rows';
+      return;
+    }
+
+    const embed = event.target.closest('[data-embed]');
+    if (embed) {
+      const result = await command({
+        title: `Index ${embed.dataset.name} for meaning`,
+        intent:
+          'The text read out of this file is split into passages and sent to the configured embedding provider, which returns a ' +
+          'vector for each. Their mean is recorded against the file with the vendor and model that made it. This leaves the ' +
+          'platform and is charged. The lexical index, which finds near-duplicates, needs none of this and already works.',
+        path: `/v1/projects/${projectId}/ingestion/${embed.dataset.embed}/embedding`,
+        submitLabel: 'Index it',
+        aiCost: true,
+        fields: [],
+      });
+      if (!result) return;
+      toast(
+        'Indexed for meaning',
+        `${result.passages} passage${result.passages === 1 ? '' : 's'} embedded by ${result.provider} at ` +
+          `${result.dimensions} dimensions. "Find by meaning" now searches this document.`,
+        'ok',
+      );
+      return;
+    }
+
+    const meaning = event.target.closest('[data-meaning]');
+    if (meaning) {
+      const found = await api
+        .get(`/v1/projects/${projectId}/ingestion/${meaning.dataset.meaning}/semantic`)
+        .catch(() => null);
+      // A refusal is shown as a refusal. `available: false` carries the reason —
+      // no provider configured, or this document not embedded — and reporting
+      // it as "nothing found" would describe an unequipped deployment as an
+      // empty project.
+      if (found && found.available === false) {
+        toast('Cannot search by meaning', found.reason ?? 'Semantic search is not available here.', 'warn');
+        return;
+      }
+      const matches = found?.matches ?? [];
+      const aside = [
+        found?.notEmbedded ? `${found.notEmbedded} read but not indexed` : '',
+        found?.otherSpace ? `${found.otherSpace} indexed by another model, not comparable` : '',
+      ].filter(Boolean).join(' · ');
+      toast(
+        matches.length === 0 ? 'Nothing close enough' : `${matches.length} document(s) mean the same`,
+        (matches.length === 0
+          ? 'Nothing else indexed on this project is close enough in meaning to report.'
+          : matches
+              .slice(0, 4)
+              .map((match) => `${match.filename ?? match.hash.slice(0, 14)} — ${Math.round(match.similarity * 100)}%`)
+              .join(' · ')) + (aside ? ` — ${aside}` : ''),
+        matches.length === 0 ? 'warn' : 'ok',
+      );
       return;
     }
 

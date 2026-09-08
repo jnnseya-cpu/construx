@@ -6,6 +6,7 @@ import { DomainError, ForbiddenError , NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { ACUWallet, CapBreach } from '../billing/acu.ts';
 import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
+import { configuredEmbeddingAdapter } from './providers/embedding.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
 import { remotePerception, remoteReasoning, spareAdapters } from './providers/remote.ts';
 import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderResponse } from './providers/types.ts';
@@ -358,6 +359,13 @@ export class AIOrchestrator {
   readonly #executions = new Map<string, AIExecutionRecord>();
   #reasoning: AIProviderAdapter;
   #perception: AIProviderAdapter;
+  /**
+   * The embedding vendor, where one is configured. Optional on purpose: unlike
+   * the other two there is no local stand-in, because a deterministic hash
+   * presented as an embedding is the overclaim `lexicalVector` was named to
+   * prevent. Absent means semantic search is off and every caller says so.
+   */
+  #embedding: AIProviderAdapter | undefined;
 
   /**
    * Providers beyond the two primaries, available when both are failing.
@@ -368,10 +376,14 @@ export class AIOrchestrator {
    */
   readonly #spares: AIProviderAdapter[];
 
-  constructor(overrides: { reasoning?: AIProviderAdapter; perception?: AIProviderAdapter } = {}) {
+  constructor(
+    overrides: { reasoning?: AIProviderAdapter; perception?: AIProviderAdapter; embedding?: AIProviderAdapter } = {},
+  ) {
     const live = config.ai.mode !== 'local';
     this.#reasoning = overrides.reasoning ?? (live ? remoteReasoning : mockReasoning);
     this.#perception = overrides.perception ?? (live ? remotePerception : mockPerception);
+    // No `live ? … : mock` third arm. There is nothing to fall back to.
+    this.#embedding = overrides.embedding ?? configuredEmbeddingAdapter();
     this.#spares = live && !overrides.reasoning && !overrides.perception ? spareAdapters('REASONING') : [];
   }
 
@@ -422,12 +434,33 @@ export class AIOrchestrator {
     capability: ProviderCapability,
     sensitivity: DataSensitivity,
   ): Array<{ provider: AIProvider; clearance: DataSensitivity }> {
-    const primary = capability === 'PERCEPTION' ? this.#perception : this.#reasoning;
-    const fallback = capability === 'PERCEPTION' ? this.#reasoning : this.#perception;
-    return [primary, fallback, ...this.#spares]
-      .filter((adapter, index, all) => all.findIndex((other) => other.name === adapter.name) === index)
+    return this.#chainFor(capability)
       .filter((adapter) => !mayReceive(adapter, sensitivity))
       .map((adapter) => ({ provider: adapter.name, clearance: clearanceFor(adapter.name) }));
+  }
+
+  /**
+   * Every vendor that could serve this capability, in the order it is tried.
+   *
+   * A method rather than the pair of ternaries this replaces, because those
+   * read `capability === 'PERCEPTION' ? perception : reasoning` — which resolves
+   * *every other capability* to the reasoning adapter. With a third capability
+   * that is not a style point: an embedding call would have been answered by a
+   * chat model, which returns prose, and the coercion of prose to a float array
+   * is a row of noise sitting in the index looking exactly like a real one.
+   *
+   * `EMBEDDING` therefore has a chain of its own with **no cross-capability
+   * fallback and no spares**. Where nothing is configured the chain is empty
+   * and `adapterFor` refuses by name.
+   */
+  #chainFor(capability: ProviderCapability): AIProviderAdapter[] {
+    const chain =
+      capability === 'EMBEDDING'
+        ? (this.#embedding ? [this.#embedding] : [])
+        : capability === 'PERCEPTION'
+          ? [this.#perception, this.#reasoning, ...this.#spares]
+          : [this.#reasoning, this.#perception, ...this.#spares];
+    return chain.filter((adapter, index, all) => all.findIndex((other) => other.name === adapter.name) === index);
   }
 
   /**
@@ -445,14 +478,26 @@ export class AIOrchestrator {
    * "AI unavailable" is not.
    */
   adapterFor(capability: ProviderCapability, sensitivity: DataSensitivity = 'INTERNAL'): AIProviderAdapter {
-    const primary = capability === 'PERCEPTION' ? this.#perception : this.#reasoning;
-    const fallback = capability === 'PERCEPTION' ? this.#reasoning : this.#perception;
-
     // The order the chain is tried in, unchanged. What changes is that an
     // uncleared vendor is not in it at all.
-    const chain = [primary, fallback, ...this.#spares].filter(
-      (adapter, index, all) => all.findIndex((other) => other.name === adapter.name) === index,
-    );
+    const chain = this.#chainFor(capability);
+
+    // Nothing configured at all, which only `EMBEDDING` can be. Named
+    // separately from the clearance and health refusals below because the
+    // remedy is different and neither of those messages would say it: this
+    // deployment has not turned semantic search on.
+    if (chain.length === 0) {
+      throw new DomainError(
+        'AI_EMBEDDING_NOT_CONFIGURED',
+        'Semantic search is off on this deployment: no embedding provider is configured. Set ' +
+          'AI_EMBEDDING_PROVIDER to OPENAI or GEMINI with that vendor\'s key, and AI_MODE to staging or ' +
+          'production. The lexical index, which finds near-duplicates, works either way.',
+        // 501, not 503. Nothing is down and retrying will never help — the
+        // capability is not installed on this deployment.
+        501,
+      );
+    }
+
     const cleared = chain.filter((adapter) => mayReceive(adapter, sensitivity));
 
     if (cleared.length === 0) {
@@ -746,10 +791,19 @@ export class AIOrchestrator {
      * platform can actually fall back to. A third vendor that nothing mentions
      * is a third vendor nobody knows they are paying for.
      */
+    /**
+     * Whether this deployment can embed text, and with whom.
+     *
+     * Reported rather than left to be inferred from the `available` list. Off
+     * is the default and it changes what the document register can do, so an
+     * operator looking at this screen needs to see it stated — not work it out
+     * from the absence of a row.
+     */
+    embedding: { configured: boolean; provider?: AIProvider; healthy?: boolean; reason?: string };
     available: Array<{
       provider: AIProvider;
       healthy: boolean;
-      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER';
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' | 'EMBEDDING';
       /** The most sensitive material this vendor may be handed. */
       clearance: DataSensitivity;
       /** What it does with it once handed, as the operator has declared. §16.1. */
@@ -772,11 +826,11 @@ export class AIOrchestrator {
   } {
     const described = (
       adapter: AIProviderAdapter,
-      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER',
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' | 'EMBEDDING',
     ): {
       provider: AIProvider;
       healthy: boolean;
-      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER';
+      role: 'REASONING' | 'PERCEPTION' | 'FAILOVER' | 'EMBEDDING';
       clearance: DataSensitivity;
       retention: ProviderRetention;
       transmits: boolean;
@@ -800,11 +854,31 @@ export class AIOrchestrator {
       if (available.some((entry) => entry.provider === spare.name)) continue;
       available.push(described(spare, 'FAILOVER'));
     }
+    // The embedding vendor belongs in this list even where it is already there
+    // as the reasoning primary: the same name against a different endpoint is
+    // a different contract, a different price and — for retention — a different
+    // question. But it is not added twice under two roles, so where the name is
+    // already present the existing row stands and only `embedding` below says
+    // the capability is on.
+    if (this.#embedding && !available.some((entry) => entry.provider === this.#embedding!.name)) {
+      available.push(described(this.#embedding, 'EMBEDDING'));
+    }
 
     return {
       mode: config.ai.mode,
       reasoning: { provider: this.#reasoning.name, healthy: this.#reasoning.healthy() },
       perception: { provider: this.#perception.name, healthy: this.#perception.healthy() },
+      embedding: this.#embedding
+        ? { configured: true, provider: this.#embedding.name, healthy: this.#embedding.healthy() }
+        : {
+            configured: false,
+            reason:
+              config.ai.mode === 'local'
+                ? 'AI_MODE is local, so no provider is called and there is no embedding to make. The lexical index still works.'
+                : config.ai.embeddingProvider === ''
+                  ? 'AI_EMBEDDING_PROVIDER is unset. Semantic search is off; the lexical index, which finds near-duplicates, still works.'
+                  : `AI_EMBEDDING_PROVIDER is "${config.ai.embeddingProvider}", which publishes no embedding endpoint this platform can call.`,
+          },
       available,
       routingMatrix: ROUTING_MATRIX,
       // Published so the console can grey out an engine that is not applicable
