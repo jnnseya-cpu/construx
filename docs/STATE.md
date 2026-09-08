@@ -15,18 +15,18 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,144 passing, 0 failing, 0 skipped, across 283 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,330 passing, 0 failing, 0 skipped, across 292 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 317 TypeScript files, 205,483 lines |
-| Application | 78 ES modules, 46,652 lines (including a service worker) |
-| API routes | 1,119 — 768 writes, 351 reads (49 public across both) |
-| Event types | 726 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 335, all classified for access |
+| Backend | 321 TypeScript files, 209,969 lines |
+| Application | 80 ES modules, 48,259 lines (including a service worker) |
+| API routes | 1,135 — 777 writes, 358 reads (51 public across both) |
+| Event types | 761 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 342, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
-Counted from the tree on 6 September 2026 (`npm test`, `wc`, and the
+Counted from the tree on 8 September 2026 (`npm test`, `wc`, and the
 `ROUTES`, `EVENT_TYPES`, `ENTITY_ACCESS` and `AGENTS` tables at import). The
 figures drift as the work below lands; the Blueprint screen counts the same
 tables from the running process and is the live figure.
