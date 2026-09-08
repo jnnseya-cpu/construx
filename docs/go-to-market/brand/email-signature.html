@@ -1,0 +1,138 @@
+<!--
+  CONSTRUX email signature — primary.
+
+  Built for mail clients, not for browsers, and every decision below follows
+  from that:
+
+    * Tables, not flexbox or grid. Outlook on Windows renders through Word's
+      HTML engine, which supports neither. A signature that only holds together
+      in Gmail is a signature that arrives broken at exactly the buyers who
+      still run Outlook — which in UK construction is most of them.
+    * Inline styles only. Every mail client strips <style> blocks somewhere:
+      Gmail strips them on forward, Outlook.com strips them on receipt.
+    * Web-safe font stack. IBM Plex is the brand face and it is not installed on
+      a recipient's machine, and a webfont @import is stripped or blocked.
+      Arial/Helvetica is what actually renders, so the brand is carried by
+      colour, spacing and the letterspaced wordmark instead of by the typeface.
+    * One image, and it is not load-bearing. Most clients block remote images by
+      default until the recipient allows them, so the logo has an alt text that
+      reads correctly on its own and the signature is complete without it.
+    * No web fonts, no background images, no dark-mode media query — clients
+      that invert do so on their own terms and a fixed dark panel would fight
+      them. Light ground, dark text: legible in both.
+
+  Fill in every [SQUARE BRACKET] before use. Nothing here is a placeholder that
+  can be left in: an unfilled bracket in a signature reads as a company that
+  does not check its own outbound mail.
+
+  To install:
+    Outlook (desktop) — open this file in a browser, select all, copy, then
+      File → Options → Mail → Signatures → New, and paste.
+    Outlook (web) / Gmail — same: open in a browser, select all, copy, paste
+      into the signature editor. Do not paste the HTML source itself.
+    Apple Mail — paste into the signature box with "Always match my default
+      message font" UNTICKED, or the formatting is discarded.
+
+  Then send one to yourself and read it on a phone before it goes to a customer.
+-->
+<table cellpadding="0" cellspacing="0" border="0" role="presentation"
+       style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;color:#14161A;max-width:520px;">
+  <tr>
+    <!-- The orange spine. A 3px table cell rather than a border-left, because
+         Word's engine drops border-left on a <td> often enough to matter, and
+         a coloured cell of fixed width it renders correctly everywhere. -->
+    <td width="3" bgcolor="#FF6A1A" style="width:3px;background-color:#FF6A1A;font-size:0;line-height:0;">&nbsp;</td>
+    <td width="16" style="width:16px;font-size:0;line-height:0;">&nbsp;</td>
+
+    <td style="padding:2px 0;">
+      <!-- Name and role -->
+      <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse;">
+        <tr>
+          <td style="font-family:Arial,Helvetica,sans-serif;font-size:17px;line-height:22px;font-weight:bold;color:#14161A;letter-spacing:-0.2px;">
+            [FULL NAME]<span style="font-weight:normal;color:#6C7684;">&nbsp;[POST-NOMINALS]</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:18px;color:#4A5361;padding-top:2px;">
+            [JOB TITLE]
+          </td>
+        </tr>
+
+        <!-- Wordmark row. The logo is optional weight; the letterspaced
+             wordmark is what carries the brand when images are blocked. -->
+        <tr>
+          <td style="padding-top:12px;">
+            <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse;">
+              <tr>
+                <!-- alt is empty on purpose. The wordmark beside it already
+                     says CONSTRUX in live text, so descriptive alt text makes
+                     an images-off recipient read the name twice — and a screen
+                     reader announce it twice. The mark is decorative here
+                     because the text carries the meaning. -->
+                <td style="vertical-align:middle;padding-right:9px;font-size:0;line-height:0;">
+                  <img src="https://construxvg.com/icons/icon-192.png" width="26" height="26" alt=""
+                       style="display:block;width:26px;height:26px;border:0;outline:none;text-decoration:none;">
+                </td>
+                <td style="vertical-align:middle;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:20px;font-weight:bold;letter-spacing:2.4px;color:#14161A;">
+                  CONSTRU<span style="color:#FF6A1A;">X</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- The line that does the selling. One sentence, no adjectives. -->
+        <tr>
+          <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:17px;color:#6C7684;padding-top:5px;">
+            The construction operating system with the golden thread built in
+          </td>
+        </tr>
+
+        <!-- Hairline. A 1px cell, for the same reason the spine is one. -->
+        <tr>
+          <td style="padding:12px 0 11px 0;font-size:0;line-height:0;">
+            <table cellpadding="0" cellspacing="0" border="0" role="presentation" width="100%" style="border-collapse:collapse;">
+              <tr><td height="1" bgcolor="#E3E7EC" style="height:1px;background-color:#E3E7EC;font-size:0;line-height:0;">&nbsp;</td></tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Contact. Telephone links included: half of these are read on a
+             phone, and a number that is not tappable is a call not made. -->
+        <tr>
+          <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px;color:#4A5361;">
+            <a href="tel:[PHONE_E164]" style="color:#4A5361;text-decoration:none;">[PHONE]</a>
+            <span style="color:#C3CAD3;">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+            <a href="mailto:[EMAIL]" style="color:#4A5361;text-decoration:none;">[EMAIL]</a>
+            <span style="color:#C3CAD3;">&nbsp;&nbsp;|&nbsp;&nbsp;</span>
+            <a href="https://construxvg.com" style="color:#FF6A1A;text-decoration:none;font-weight:bold;">construxvg.com</a>
+          </td>
+        </tr>
+
+        <!-- One call to action, styled as a link rather than a button: a
+             table-cell "button" is the single most common thing a mail client
+             mangles, and a mangled button is worse than a plain link. -->
+        <tr>
+          <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;padding-top:9px;">
+            <a href="https://construxvg.com/demo" style="color:#14161A;text-decoration:none;font-weight:bold;border-bottom:2px solid #FF6A1A;padding-bottom:1px;">See the record work&nbsp;&rarr;</a>
+            <span style="color:#8A93A0;font-weight:normal;">&nbsp;&nbsp;15 minutes, on your own project</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+<!--
+  Optional footer. Add it only where it is actually required — a legal or
+  regulatory obligation, or a company policy. A confidentiality notice longer
+  than the signature it hangs off makes every email look like a solicitor's,
+  and nobody has ever read one.
+-->
+<table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse:collapse;max-width:520px;margin-top:10px;">
+  <tr>
+    <td style="font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:14px;color:#98A1AD;">
+      [COMPANY LEGAL NAME] · Registered in England and Wales, company number [NUMBER] · Registered office [ADDRESS]
+    </td>
+  </tr>
+</table>
