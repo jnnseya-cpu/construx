@@ -1,5 +1,5 @@
 import { api, session } from '../lib/api.js';
-import { can, state } from '../app.js';
+import { can, enrolmentSatisfied, state } from '../app.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, notice, raw, render, table, time, toast } from '../lib/ui.js';
 import { barChart, donutChart, gauge, kpiCard, lineChart, proportionBar, treemap } from '../lib/charts.js';
@@ -278,6 +278,9 @@ async function enrolAuthenticator(root) {
       if (result.accessToken) {
         session.set({ ...session.get(), accessToken: result.accessToken, refreshToken: result.refreshToken });
         state.session = session.get();
+        // A session that was held to this one act is no longer held to it, so
+        // the rest of the console opens again.
+        enrolmentSatisfied();
       }
       showRecoveryCodes(root, result.recoveryCodes, 'Enrolled. These are your recovery codes — the only time they are shown.');
     } catch (error) {

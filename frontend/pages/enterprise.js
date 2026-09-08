@@ -225,14 +225,14 @@ export async function enterprise(root) {
     // The supply-chain register, so an external supplier can be invited as a
     // named firm's person rather than a stranger with a supplier role. Null
     // where the reader may not see the register; the invitation still works.
-    api.get('/v1/supply-chain?all=true').catch(() => null),
+    api.read('/v1/supply-chain?all=true', 'PROCUREMENT_AWARD').catch(() => null),
     // Everybody appointed to this project, with whose licence covers them and
     // who pays for their AI — the members table the commercial rule is read
     // from. Null where the reader may not see it.
     api.get(`/v1/projects/${state.session.projectId}/members`).catch(() => null),
     // Who this organisation has asked to pay for a guest's AI, and what it
     // has agreed to pay itself.
-    api.get('/v1/acu-sponsorships').catch(() => null),
+    api.read('/v1/acu-sponsorships', 'BILLING_ACU').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the

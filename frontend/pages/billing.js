@@ -32,7 +32,7 @@ export async function billing(root) {
     api.get('/v1/storage').catch(() => null),
     // The subscription as line items: the product with its seats and every
     // restricted module the company holds (enterprise specification §9).
-    api.get('/v1/company/subscription/items').catch(() => null),
+    api.read('/v1/company/subscription/items', 'ENTERPRISE_STRUCTURE').catch(() => null),
   ]);
   // The subscription itself: what the platform costs, whether it is paid, and
   // how an unpaid period can be paid. Read after the rest so a refusal here —

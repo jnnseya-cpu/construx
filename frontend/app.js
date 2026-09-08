@@ -573,7 +573,27 @@ function currentRoute() {
   return { page: page || (isOperator() ? 'admin' : 'overview'), params: rest };
 }
 
+/**
+ * A session held to enrolment, until it is not.
+ *
+ * In memory rather than on the stored session, deliberately. A stored flag
+ * that failed to clear — enrolment completed by some route this file did not
+ * anticipate — would trap somebody on Security with a session that works,
+ * which is the same shape of failure as the stale refresh token above. Held
+ * here, a reload clears it and the gateway is asked again.
+ */
+let heldToEnrolment = false;
+
+/** The second factor is in hand: everything this session may do, it may do. */
+export function enrolmentSatisfied() {
+  heldToEnrolment = false;
+}
+
 export function navigate(page, params = []) {
+  // Every route but Security's is refused for this session, and a screen that
+  // asks anyway paints its whole complement of refusals before the guard in
+  // `api.js` can bounce it. Sent to the one place it can act instead.
+  if (heldToEnrolment && page !== 'security') page = 'security';
   const path = ['/app', page, ...params].join('/').replace(/\/+$/, '');
   history.pushState({}, '', path);
   void draw();
@@ -657,6 +677,7 @@ async function establishSession(verified) {
     state.gate = null;
     state.wallet = null;
     forgetPermissions();
+    heldToEnrolment = true;
     navigate('security');
     return;
   }
@@ -712,6 +733,33 @@ export async function signIn(identity) {
     { actorId: challenge.actorId, challengeId: challenge.challengeId, code },
     { anonymous: true },
   );
+
+  // The organisation requires a second factor this account does not hold. The
+  // session is real and may do exactly one thing — enrol — so nothing else is
+  // asked for: not the demonstration bootstrap, and not the screen this
+  // identity would otherwise land on.
+  //
+  // `establishSession` has always done this for the credentialled path. This
+  // one did not, and it is the path the console is actually opened by: the
+  // operator signed in, landed on the command centre, and its fifteen parallel
+  // reads were every one of them refused `MFA_ENROLMENT_REQUIRED` before the
+  // enrolment guard could bounce the screen to Security. The refusals were
+  // correct and the destination was correct; asking at all was the defect.
+  if (verified.enrolmentRequired) {
+    session.set({
+      accessToken: verified.accessToken,
+      refreshToken: verified.refreshToken,
+      user: verified.user,
+    });
+    state.session = session.get();
+    state.project = null;
+    state.gate = null;
+    state.wallet = null;
+    forgetPermissions();
+    heldToEnrolment = true;
+    navigate('security');
+    return;
+  }
 
   const bootstrap = await api.post('/v1/console/identities', {}, { anonymous: true });
 

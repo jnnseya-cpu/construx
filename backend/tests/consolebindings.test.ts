@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
+import { CAPABILITY_AREA_LIST } from '../src/identity/roles.ts';
 
 /**
  * A console page that references a name it never bound.
@@ -274,6 +275,56 @@ describe('no console class the design system never defined', () => {
       found,
       [],
       `structural classes the design system never defined, so they render unstyled:\n  ${found.join('\n  ')}`,
+    );
+  });
+});
+
+/**
+ * A capability area a page names that the permission matrix has never heard of.
+ *
+ * `api.read(path, area, sensitivity)` exists so a screen does not fire a read
+ * its role will certainly be refused: the shell answers from the published
+ * matrix and the request is never sent. That decision is
+ * `matrix[role]?.[area] ?? []`, so a misspelt area is not a loud failure — it
+ * is an empty permission list, which reads as "no role holds R here", which
+ * withholds the panel from *every* role for ever, with no request in the
+ * network tab to explain it. The screen simply has a hole in it.
+ *
+ * The same string is a plain data attribute in the navigation model, where the
+ * consequence is a menu entry nobody can ever reach.
+ *
+ * Checked against `CAPABILITY_AREA_LIST` — the same closed list the API
+ * publishes — rather than a copy, so an area added or renamed on the server
+ * moves this check with it.
+ */
+describe('every capability area the console names is a real one', () => {
+  it('reads and navigates against areas the permission matrix carries', () => {
+    const known = new Set<string>(CAPABILITY_AREA_LIST);
+    const found: string[] = [];
+
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      const patterns = [
+        // api.read('/v1/…', 'AREA') — the second argument, where it is a literal.
+        /\bapi\.read\(\s*[^,)]+,\s*'([A-Z_]+)'/g,
+        // The navigation model and every `blockedReason`/`can` call site.
+        /\barea:\s*'([A-Z_]+)'/g,
+        /\b(?:blockedReason|can)\(\s*'([A-Z_]+)'/g,
+      ];
+      for (const pattern of patterns) {
+        for (const match of source.matchAll(pattern)) {
+          const area = match[1]!;
+          if (known.has(area)) continue;
+          const line = source.slice(0, match.index).split('\n').length;
+          found.push(`${file.replace(FRONTEND, 'frontend')}:${line}: ${area}`);
+        }
+      }
+    }
+
+    assert.deepEqual(
+      found,
+      [],
+      `capability areas no role can ever hold, so the panel is withheld from everybody:\n  ${found.join('\n  ')}`,
     );
   });
 });

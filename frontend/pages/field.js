@@ -661,7 +661,7 @@ export async function field(root) {
   // working. Utilisation is derived from the diary lines above and the plant
   // sightings the equipment reading files, never entered a second time.
   const plant = await api.read(`/v1/projects/${projectId}/plant`, 'FIELD_EXECUTION').catch(() => null);
-  const register = await api.get('/v1/supply-chain?all=true').catch(() => null);
+  const register = await api.read('/v1/supply-chain?all=true', 'PROCUREMENT_AWARD').catch(() => null);
   const gbp = (minor) => (Number(minor ?? 0) / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
 
   // Whether this deployment can actually transcribe. A recording is worth

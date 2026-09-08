@@ -8493,6 +8493,21 @@ the area. A commercial position names both (`api.read(path, 'BUDGET_COST',
 screen reading one record type is refused in the same place as one bundling
 twelve.
 
+**The last three that still asked.** A sweep of all six seeded identities in
+Chromium, reading the refusals out of the gateway's own log rather than off the
+screen, found three reads still issued through plain `api.get`: the
+subscription line items on ACU & Billing (`ENTERPRISE_STRUCTURE`), and the
+supply-chain register and the sponsorship list on Enterprise and Field
+(`PROCUREMENT_AWARD`, `BILLING_ACU`). All three are guarded reads now, and the
+sweep is clean for every role.
+
+A mistyped area is the hazard this creates: `matrix[role]?.[area] ?? []` reads
+as "no role holds R here", which withholds the panel from everybody for ever
+with no request in the network tab to explain it. `consolebindings.test.ts`
+checks every area a page names — in `api.read`, in the navigation model, in
+`blockedReason` and `can` — against `CAPABILITY_AREA_LIST`, the same closed
+list the API publishes.
+
 **Denied and failed are different answers.** `positionReport`, the operator
 console's `refusal`, the insight panel and the drill all rendered a 403 in the
 same red as a thrown exception. A refusal is the permission model working, and
@@ -9374,7 +9389,23 @@ logout, the permission matrix) and refuses everything else with
 lands such a session on Security, and the first refusal from any other screen
 — the one remembered in the address bar, a deep link, the operator's estate —
 takes it back there with the sentence as a notice (`setEnrolmentGuard` in
-`frontend/lib/api.js`, registered by the shell). A refusal that does render
+`frontend/lib/api.js`, registered by the shell).
+
+That guard is the backstop, and for a while it was doing the whole job. The
+credentialled sign-in read `enrolmentRequired` off the verification and landed
+on Security without asking for anything else; the demonstration sign-in did
+not, and it is the path the console is actually opened by. The operator signed
+in, was navigated to the command centre, and its fifteen parallel reads were
+every one of them refused before the guard could move the screen — a console
+of refusals for a person whose only problem was a missing authenticator app.
+Both paths now branch on `enrolmentRequired`, and while a session is held the
+shell's `navigate` sends every destination but Security to Security, so no
+screen asks. The hold is in memory rather than on the stored session: a stored
+flag that failed to clear would trap somebody on Security with a session that
+works, which is the same shape of failure as a stale refresh token. Enrolment
+mints fresh tokens and clears it (`enrolmentSatisfied`).
+
+A refusal that does render
 says "Set up a second factor first" with a link to Security, not "outside
 your role": the person has the role and lacks the factor, and the first
 operator to meet it read the old heading as being locked out of their own
