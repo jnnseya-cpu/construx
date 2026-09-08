@@ -937,10 +937,10 @@ function parseRows(text) {
 async function issuerPanels(host) {
   if (!host) return;
   const [issuer, shares, lifecycle, readiness] = await Promise.all([
-    api.get('/v1/company/issuer').catch((error) => ({ error })),
-    api.get('/v1/shares').catch((error) => ({ error })),
+    api.read('/v1/company/issuer', 'ENTERPRISE_STRUCTURE').catch((error) => ({ error })),
+    api.read('/v1/shares', 'ENTERPRISE_STRUCTURE').catch((error) => ({ error })),
     api.get('/v1/documents/lifecycle').catch((error) => ({ error })),
-    api.get('/v1/company/readiness').catch(() => null),
+    api.read('/v1/company/readiness', 'ENTERPRISE_STRUCTURE').catch(() => null),
   ]);
   if (issuer.error && shares.error && lifecycle.error) return;
   const profile = issuer.profile;

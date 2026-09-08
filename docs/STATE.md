@@ -8493,13 +8493,17 @@ the area. A commercial position names both (`api.read(path, 'BUDGET_COST',
 screen reading one record type is refused in the same place as one bundling
 twelve.
 
-**The last three that still asked.** A sweep of all six seeded identities in
-Chromium, reading the refusals out of the gateway's own log rather than off the
-screen, found three reads still issued through plain `api.get`: the
-subscription line items on ACU & Billing (`ENTERPRISE_STRUCTURE`), and the
-supply-chain register and the sponsorship list on Enterprise and Field
-(`PROCUREMENT_AWARD`, `BILLING_ACU`). All three are guarded reads now, and the
-sweep is clean for every role.
+**The last six that still asked.** A sweep of all six seeded identities in
+Chromium — every screen in the navigation rather than the eighteen the walk
+tool defaults to, so the operator's twenty-seven and the tenant side's
+thirty-four both — reading the refusals out of the gateway's own log rather
+than off the screen. Six reads were still issued through plain `api.get`: the
+subscription line items on ACU & Billing, the issuer profile, the share
+register and the company readiness lights on Site Documents (all
+`ENTERPRISE_STRUCTURE`), the supply-chain register on Enterprise and Field
+(`PROCUREMENT_AWARD`) and the sponsorship list on Enterprise (`BILLING_ACU`).
+All six are guarded reads now. Every role walks every screen with an empty
+browser console and not one 4xx in the gateway log.
 
 A mistyped area is the hazard this creates: `matrix[role]?.[area] ?? []` reads
 as "no role holds R here", which withholds the panel from everybody for ever
