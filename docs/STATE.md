@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,418 passing, 0 failing, 0 skipped, across 296 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,429 passing, 0 failing, 0 skipped, across 297 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -2160,7 +2160,10 @@ attributed. `receiveSubmission` resolves the submitting party to its register
 entry and refuses a return from a firm that was not invited; `acknowledgeRFQ`
 does the same, and accepts either identifier from a firm answering for itself.
 The submission records the register entry it resolved to, so the join is read
-rather than re-derived on every report.
+rather than re-derived on every report. Both are additionally gated on
+`SUPPLIER_SUBMISSION` "C" or `PROCUREMENT_AWARD` "U" — see "Three commands the
+enquiry could not reach"; the identity rule says on whose behalf, the capability
+check says who may act at all.
 
 Nothing downstream was re-keyed. The award, the subcontract and the commitment
 still carry the party, which is now a resolvable reference instead of an
@@ -8614,6 +8617,38 @@ round them: the seed's tender-phase sibling is deliberately empty, so the firms
 are registered, then prequalified, then the package's design maturity assessed,
 and only then can the enquiry go to market — each of those refused the first
 draft in turn, which is the platform working.
+
+**And the capability check two of them never had.** Routing them exposed what
+the sweep had not: `acknowledgeRFQ` and `raiseClarification` carried an identity
+rule and no `authorise` call at all, and their already-shipped sibling
+`receiveSubmission` was the same. The identity rule is conditional on the caller
+holding `SUPPLIER`, so for every other role it did not run: any signed-in
+identity the gateway let onto the project could record a firm's intention to
+bid, raise a question in its name, or **write a price against a live enquiry** —
+which is the record an award is defended on.
+
+All three are now gated on `SUPPLIER_SUBMISSION` "C" **or** `PROCUREMENT_AWARD`
+"U": the firm bidding, or the buyer running the tender on behalf of a bidder
+with no login. Either alone would have been wrong — the first shuts the buyer
+out of its own tender administration, the second shuts the supplier portal.
+`authoriseAny` in `engines/context.ts` is the only new machinery: each candidate
+is a full ABAC evaluation under the same switches as `authorise`, the first that
+allows allows, and a refusal names every candidate tried and why, so the denial
+is answerable. It states that two doors open onto one room; it opens no third.
+
+Deliberately not phase-gated, unlike `createRFQ`, `issueRFQ` and
+`answerClarification`. A return arriving against an enquiry already issued is not
+a fresh procurement act, and refusing it by phase would make an enquiry conducted
+before the project moved on unreplayable through the command path.
+
+The console showed the stricter of the two rules and now shows the server's:
+`Acknowledge enquiry`, `Raise clarification` and `Record submission` read the
+same either/or off the published matrix, so a QS no longer sees three
+permanently blocked buttons for commands the API would have run.
+`rfqdialogue.test.ts` asserts both halves — a construction manager, who holds
+`PROCUREMENT_AWARD` "R" and nothing on `SUPPLIER_SUBMISSION`, is refused on all
+three; a `SUPPLIER` identity carrying the invited firm's party, which holds no
+award capability at all, is admitted.
 
 **The conversion path, driven rather than tested.** The account request on
 Contact, the booking form on Demo, the four package buttons on Get started and

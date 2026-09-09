@@ -11556,8 +11556,8 @@ export const ROUTES: Route[] = [
    * The supplier's side of an enquiry.
    *
    * `createRFQ`, `issueRFQ`, `receiveSubmission`, `awardRFQ` and the rest were
-   * routed; these three were written, complete, with their authorisation and
-   * their refusals, and reachable by nothing at all. A buyer could issue an
+   * routed; these three were written, with their invitation checks and their
+   * refusals, and reachable by nothing at all. A buyer could issue an
    * enquiry and take a price for it, and the firm receiving the enquiry could
    * not say whether it intended to bid, could not ask a question about the
    * information, and could not be answered. Found by asking which exported

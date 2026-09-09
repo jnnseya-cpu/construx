@@ -6,7 +6,7 @@ import * as structure from '../src/domain/structure.ts';
 import * as supplychain from '../src/domain/supplychain.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { Platform } from '../src/platform.ts';
-import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { authOf, seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
  * The half of an enquiry that belongs to the firm receiving it.
@@ -252,5 +252,95 @@ describe('a bidder asks, and every bidder is answered', () => {
     assert.equal(state.answer, 'Yes — measured in the bill, section 4.');
     assert.equal(state.answeredBy, seed.users.qs!.auth.actorId, 'the answer names nobody');
     assert.ok(typeof state.answeredAt === 'string' && state.answeredAt.length > 0);
+  });
+});
+
+/**
+ * The capability check these three commands did not have.
+ *
+ * `acknowledgeRFQ`, `raiseClarification` and `receiveSubmission` each carried an
+ * identity rule — a firm acting for itself may only name itself — and no
+ * capability check at all. That rule is conditional on the caller holding
+ * `SUPPLIER`, so for every other role it did not run, and the commands wrote to
+ * the ledger for anybody the gateway let through the door. A price against a
+ * live enquiry, recorded by somebody with no procurement standing, is the record
+ * an award is defended on.
+ *
+ * They are now gated on `SUPPLIER_SUBMISSION` "C" or `PROCUREMENT_AWARD` "U" —
+ * the firm bidding, or the buyer running the tender on its behalf. Both halves
+ * are asserted here, because a gate that only admitted the buyer would have made
+ * the supplier portal unusable and a gate that only admitted the supplier would
+ * have broken every tender the buyer administers.
+ */
+describe('only the two sides of an enquiry may act inside it', () => {
+  it('refuses a role that holds neither the submission nor the award capability', () => {
+    // A construction manager holds PROCUREMENT_AWARD "R" and nothing on
+    // SUPPLIER_SUBMISSION: senior, on the project, entitled to read the enquiry,
+    // and with no business recording a price against it.
+    const cm = () => platform.context(seed.users.constructionManager!.auth, tenderProjectId, { source: 'WEB' });
+
+    throwsCode(
+      () => procurement.acknowledgeRFQ(cm(), { rfqId: tenderRfqId, supplierId: invitedSupplierId, intendToBid: true }),
+      'ACCESS_DENIED',
+    );
+    throwsCode(
+      () => procurement.raiseClarification(cm(), { rfqId: tenderRfqId, supplierId: invitedSupplierId, question: 'Anything?' }),
+      'ACCESS_DENIED',
+    );
+    throwsCode(
+      () =>
+        procurement.receiveSubmission(cm(), {
+          rfqId: tenderRfqId,
+          supplierPartyId: 'party-tq-amey',
+          supplierName: 'Amey Ductwork Ltd',
+          priceMinor: 100_000_00,
+          durationDays: 60,
+          exclusions: [],
+          contractExceptions: [],
+          provisionalSumsMinor: 0,
+          insurancesHeld: ['PUBLIC_LIABILITY'],
+          submissionHash: `sha256:${'cm'.padEnd(64, '0')}`,
+        }),
+      'ACCESS_DENIED',
+    );
+  });
+
+  it('names both capabilities in the refusal, so the denial is answerable', () => {
+    // A bare "not permitted" sends somebody to the wrong person. Naming both
+    // candidates says which of the two standings they would need.
+    const cm = platform.context(seed.users.constructionManager!.auth, tenderProjectId, { source: 'WEB' });
+    let message = '';
+    try {
+      procurement.acknowledgeRFQ(cm, { rfqId: tenderRfqId, supplierId: invitedSupplierId, intendToBid: true });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert.match(message, /SUPPLIER_SUBMISSION/, 'the refusal does not say the supplier capability was tried');
+    assert.match(message, /PROCUREMENT_AWARD/, 'the refusal does not say the award capability was tried');
+  });
+
+  it('admits the firm that received the enquiry, which holds no award capability at all', () => {
+    // The half that would have been shut out by gating on PROCUREMENT_AWARD
+    // alone. A SUPPLIER holds SUPPLIER_SUBMISSION and nothing else, and the
+    // party on its sign-in is the firm the enquiry went to.
+    const person = platform.createUser({
+      tenantId: seed.tenantId,
+      name: 'Amey Ductwork commercial',
+      email: `tq-amey-${Math.random().toString(36).slice(2)}@example.com`,
+      roles: ['SUPPLIER'],
+      partyId: 'party-tq-amey',
+    });
+    const supplier = platform.context(authOf(platform, person.id), tenderProjectId, { source: 'WEB' });
+
+    procurement.acknowledgeRFQ(supplier, { rfqId: tenderRfqId, supplierId: invitedSupplierId, intendToBid: true });
+
+    const rows =
+      (platform.ledger.require({ refType: 'RFQ', refId: tenderRfqId }).state.acknowledgements as Array<
+        Record<string, unknown>
+      >) ?? [];
+    assert.ok(
+      rows.some((r) => r.supplierId === invitedSupplierId),
+      'the firm the enquiry was sent to could not answer it',
+    );
   });
 });

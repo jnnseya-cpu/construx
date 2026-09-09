@@ -11,9 +11,9 @@ import {
 } from '../ai/outputstandard.ts';
 import type { ProviderCapability, ProviderRequest } from '../ai/providers/types.ts';
 import { config } from '../config.ts';
-import { DomainError, VersionConflictError } from '../core/errors.ts';
+import { DomainError, ForbiddenError, VersionConflictError } from '../core/errors.ts';
 import type { AuthContext } from '../identity/auth.ts';
-import { assertAccess, type AccessAttributes } from '../identity/abac.ts';
+import { assertAccess, evaluateAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { ModuleId } from '../identity/modules.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
@@ -158,6 +158,42 @@ export function authorise(
     { tenantId: ctx.tenantId, projectId: ctx.projectId, ...attributes },
     authzOptions,
   );
+}
+
+/**
+ * Permit a command that two different capabilities legitimately reach.
+ *
+ * Almost every command belongs to exactly one capability area, and `authorise`
+ * is the right shape for it. A handful do not: an enquiry dialogue is conducted
+ * by the firm that received the enquiry and by the buyer administering it, and
+ * those are different areas held by different roles. Expressing that as one area
+ * would mean either locking the buyer out of its own tender administration or
+ * widening a supplier's capability far past what it should hold.
+ *
+ * The permissive case is unchanged — the first candidate that allows, allows.
+ * The refusal names every candidate that was tried and why each was refused, so
+ * a denial is still answerable rather than a bare "no".
+ *
+ * This is not a way to soften a gate. Each candidate is a full ABAC evaluation
+ * under the same switches as `authorise`, including tenant isolation, scopes,
+ * account-layer separation and phase gating. It states that two doors open onto
+ * one room; it does not open a third.
+ */
+export function authoriseAny(
+  ctx: EngineContext,
+  candidates: ReadonlyArray<readonly [CapabilityArea, PermissionCode]>,
+  attributes: Partial<AccessAttributes> = {},
+): void {
+  const attrs = { tenantId: ctx.tenantId, projectId: ctx.projectId, ...attributes };
+  const refusals: string[] = [];
+
+  for (const [area, code] of candidates) {
+    const decision = evaluateAccess(ctx.auth, area, code, attrs, authzOptions);
+    if (decision.decision === 'ALLOW') return;
+    refusals.push(`${area} "${code}" — ${decision.reason ?? 'not permitted'}`);
+  }
+
+  throw new ForbiddenError(refusals.join('; '), 'ACCESS_DENIED');
 }
 
 /** Current lifecycle phase of the project, for phase-gated authorisation. */

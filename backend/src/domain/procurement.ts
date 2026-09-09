@@ -1,8 +1,42 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
-import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import {
+  authorise,
+  authoriseAny,
+  currentPhase,
+  registerEvidence,
+  write,
+  type EngineContext,
+} from '../engines/context.ts';
+import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import { assertEligibleForEnquiry, supplierForParty } from './supplychain.ts';
+
+/**
+ * Who may act inside an enquiry that has gone out.
+ *
+ * Acknowledging an enquiry, asking a question about it and returning a price
+ * against it are the three commands both sides of an enquiry reach. The firm
+ * that received the enquiry holds `SUPPLIER_SUBMISSION`; the buyer running the
+ * tender holds `PROCUREMENT_AWARD` and does the same three things on the phone
+ * and by post on behalf of a bidder that has no login. Requiring one area would
+ * shut out whichever side it did not name.
+ *
+ * Each of the three then applies its own identity rule on top of this: a firm
+ * acting for itself may only name itself, and only an invited firm may respond
+ * at all. This says who may act; those say on whose behalf.
+ *
+ * Deliberately not phase-gated. `createRFQ`, `issueRFQ` and `answerClarification`
+ * pass `lifecyclePhase` because raising and answering an enquiry is buyer-side
+ * tender administration, and `WRITE_PHASE_GATES` correctly shuts that after
+ * CONSTRUCTION. A return arriving against an enquiry already issued is not a new
+ * procurement act, and refusing it by phase would make the record of an enquiry
+ * conducted before the project moved on unreplayable through the command path.
+ */
+const ENQUIRY_PARTICIPANT: ReadonlyArray<readonly [CapabilityArea, PermissionCode]> = [
+  ['SUPPLIER_SUBMISSION', 'C'],
+  ['PROCUREMENT_AWARD', 'U'],
+];
 
 /**
  * Procurement: RFQ issue, supplier returns, award, and the subcontract that
@@ -136,6 +170,8 @@ export function issueRFQ(ctx: EngineContext, input: { rfqId: string; tenderPacka
 }
 
 export function acknowledgeRFQ(ctx: EngineContext, input: { rfqId: string; supplierId: string; intendToBid: boolean }): void {
+  authoriseAny(ctx, ENQUIRY_PARTICIPANT);
+
   const rfq = ctx.ledger.require({ refType: 'RFQ', refId: input.rfqId });
 
   // A supplier may only acknowledge on its own behalf. The comparison is
@@ -184,6 +220,8 @@ export function raiseClarification(
   ctx: EngineContext,
   input: { rfqId: string; supplierId: string; question: string },
 ): { clarificationId: string; reference: string } {
+  authoriseAny(ctx, ENQUIRY_PARTICIPANT);
+
   const rfq = ctx.ledger.require({ refType: 'RFQ', refId: input.rfqId });
 
   if (ctx.auth.roles.includes('SUPPLIER') && ctx.auth.partyId !== input.supplierId) {
@@ -262,6 +300,8 @@ export function receiveSubmission(
     submissionHash: string;
   },
 ): { submissionId: string } {
+  authoriseAny(ctx, ENQUIRY_PARTICIPANT);
+
   const rfq = ctx.ledger.require({ refType: 'RFQ', refId: input.rfqId });
 
   if (ctx.auth.roles.includes('SUPPLIER') && ctx.auth.partyId !== input.supplierPartyId) {

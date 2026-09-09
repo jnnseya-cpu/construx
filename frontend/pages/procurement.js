@@ -264,6 +264,27 @@ export async function procurement(root) {
     ? await api.get(`/v1/projects/${projectId}/site-services/portal`).catch((error) => ({ error }))
     : null;
 
+  /**
+   * Who may act inside an issued enquiry, exactly as the server decides it.
+   *
+   * Acknowledging, asking and returning a price are conducted by the firm that
+   * received the enquiry and by the buyer running the tender on behalf of a
+   * bidder without a login. `authoriseAny` in `domain/procurement.ts` accepts
+   * `SUPPLIER_SUBMISSION` "C" or `PROCUREMENT_AWARD` "U", so the console reads
+   * the same either/or off the published matrix. Gating on the supplier area
+   * alone showed a QS three permanently blocked buttons for commands the API
+   * would have run — the browser holding a stricter rule than the server, which
+   * is the drift `blockedReason` exists to prevent.
+   *
+   * Written as two `can` calls rather than one helper taking a list, so the
+   * console-bindings invariant that scans literal areas at `can`/`blockedReason`
+   * call sites still sees both of them.
+   */
+  const enquiryParticipant = can('SUPPLIER_SUBMISSION', 'C') || can('PROCUREMENT_AWARD', 'U');
+  const enquiryParticipantReason = enquiryParticipant
+    ? null
+    : `${blockedReason('SUPPLIER_SUBMISSION', 'C')}; ${blockedReason('PROCUREMENT_AWARD', 'U')}`;
+
   render(
     root,
     html`
@@ -276,14 +297,16 @@ export async function procurement(root) {
           ${raw(commandBar([
             { id: 'rfq', label: 'Raise RFQ', tone: '', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
-            // The enquiry's other half. Acknowledging and asking are the
-            // bidder's acts, so they sit under SUPPLIER_SUBMISSION with the
-            // submission; answering is the buyer's and is gated on the award
-            // area, which is what `answerClarification` authorises against.
-            { id: 'acknowledge', label: 'Acknowledge enquiry', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
-            { id: 'clarification', label: 'Raise clarification', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
+            // The enquiry's other half. Acknowledging, asking and returning a
+            // price are conducted from both sides, so all three carry the
+            // either/or the server enforces. Answering is the buyer's act alone
+            // and is gated on the award area, which is what
+            // `answerClarification` authorises against — and it is phase-gated
+            // there, so it closes when procurement does.
+            { id: 'acknowledge', label: 'Acknowledge enquiry', permitted: enquiryParticipant, reason: enquiryParticipantReason },
+            { id: 'clarification', label: 'Raise clarification', permitted: enquiryParticipant, reason: enquiryParticipantReason },
             { id: 'answerclarification', label: 'Answer clarification', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
-            { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
+            { id: 'submission', label: 'Record submission', permitted: enquiryParticipant, reason: enquiryParticipantReason },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
             { id: 'route', label: 'Buy it or do it', permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
             { id: 'selfPerform', label: 'Price it ourselves',
