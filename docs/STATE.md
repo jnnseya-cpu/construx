@@ -8587,6 +8587,28 @@ anything: a flex item's default `min-width: auto` floors it at its own
 min-content, and with `white-space: nowrap` that is the whole string. The rule
 said truncate and the layout said no. It truncates at 182px now.
 
+**The conversion path, driven rather than tested.** The account request on
+Contact, the booking form on Demo, the four package buttons on Get started and
+the signup form each opens the API from a browser, not from a test harness. The
+account request posts `201 POST /v1/requests`, clears its fields, and prints
+"Thank you… Reference D9ERVA0W" into a live region; `?package=` is honoured on
+all four packages; the signup form reads `/v1/signup/account-types` and lays out
+clean on a 390px phone. The PWA manifest's every asset resolves — four icons,
+the service worker, and all three shortcut targets. The seven blog posts and the
+sign-in screen were swept at four widths and are clean.
+
+Nothing was broken in that pass. Two things looked broken and were not: the
+account request appeared to swallow its submission (the confirmation renders
+outside the form element, which the first probe did not read), and the package
+buttons appeared to ignore their parameter (a regex matching the first option
+label rather than the select's value). Both were faults in the measurement.
+Recorded because a sweep that only reports what it fixed teaches nobody where
+the tooling lies.
+
+`tools/site.mjs` discovers the blog's posts from the index now. Its first run
+checked fifteen pages and silently missed seven, which is what a hand-written
+list of paths does the first time somebody publishes.
+
 **A check that passed because it was looking for the wrong thing.**
 `env-check.sh` was extended to report the two go-live blockers and to warn on an
 open demonstration tenancy. Run against the live deployment it reported the

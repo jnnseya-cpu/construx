@@ -47,10 +47,21 @@ try {
 const log = (...a) => process.stdout.write(a.join(' ') + '\n');
 
 const BASE = process.env.SITE_BASE ?? 'http://localhost:8123';
-const PAGES = process.argv[2]
-  ? process.argv[2].split(',')
-  : ['/', '/about', '/how-it-works', '/exposure', '/industries', '/blog', '/developers',
-     '/contact', '/get-started', '/demo', '/growth', '/terms', '/privacy', '/policies', '/status'];
+/**
+ * The fifteen standing pages. The blog's posts are discovered rather than
+ * listed: the first run of this tool checked fifteen pages and silently missed
+ * seven, because a list of paths in a verification tool goes stale the first
+ * time somebody publishes anything.
+ */
+const STANDING = ['/', '/about', '/how-it-works', '/exposure', '/industries', '/blog', '/developers',
+                  '/contact', '/get-started', '/demo', '/growth', '/terms', '/privacy', '/policies', '/status'];
+
+async function posts() {
+  const html = await (await fetch(`${BASE}/blog`)).text();
+  return [...new Set([...html.matchAll(/href="(\/blog\/[a-z0-9-]+)"/g)].map((m) => m[1]))];
+}
+
+const PAGES = process.argv[2] ? process.argv[2].split(',') : [...STANDING, ...(await posts())];
 // The desk, a laptop, tablet portrait, a small phone, and the narrowest in real
 // use. 760 and 500 are in the list because the two faults this tool has found
 // so far were both in the gaps between the obvious breakpoints.
