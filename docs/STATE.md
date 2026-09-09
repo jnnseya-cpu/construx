@@ -8558,6 +8558,35 @@ Known and left: at exactly 760px the page lays out 2px wider than the viewport.
 `body.site` sets `overflow-x: hidden`, so nothing scrolls sideways and nothing
 is cut off that a reader would notice; it is recorded here rather than chased.
 
+**The public site, swept the same way.** `tools/site.mjs` does for the
+marketing pages what the walk and the handset tool do for the console: every
+internal link on every page fetched once and checked, and every page measured
+for content laid out past the viewport at six widths. The overflow question is
+sharper here than in the console — `body.site` sets `overflow-x: hidden`, so
+content past the edge does not scroll, it *clips*: the reader cannot reach it
+and nothing tells them it is there.
+
+44 distinct internal targets, all resolving. Three faults in the layout, each
+in a gap between the obvious breakpoints:
+
+The header handed over to the mobile menu at 720px and stopped fitting at 800px
+— measured on `/about`, four pixels of spare at 800 and minus four at 780. In
+that 80-pixel band, which contains iPad Mini portrait, the desktop header was
+still on and overflowing its own row, and **Get started was cut off on every
+page of the site**. The header rules have their own query at the width the
+header needs now; the content rules keep theirs, because a KPI grid has no
+reason to reflow because a navigation bar ran out of room.
+
+The hero panel — the product shot, with the demonstration project's real name
+and value on it — was clipped by 190px on a 390px phone, nearly half of it. The
+two-column rule is careful to write `minmax(0, 1.02fr)`; the one-column
+fallback at 960px dropped it for a bare `1fr`, which is `minmax(auto, 1fr)`,
+floored at the item's min-content of 558px. And the panel's breadcrumb carried
+`overflow: hidden; text-overflow: ellipsis` that had never once truncated
+anything: a flex item's default `min-width: auto` floors it at its own
+min-content, and with `white-space: nowrap` that is the whole string. The rule
+said truncate and the layout said no. It truncates at 182px now.
+
 **A check that passed because it was looking for the wrong thing.**
 `env-check.sh` was extended to report the two go-live blockers and to warn on an
 open demonstration tenancy. Run against the live deployment it reported the

@@ -351,7 +351,12 @@ img, svg { max-width: 100%; }
    mocked-up panel on the internet wears, and this panel is showing the
    product's own chrome — which has a breadcrumb and a verification state,
    because that is what the console has. */
-.crumb { margin-left: 10px; font-size: 11px; color: var(--text-3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* `min-width: 0` because the ellipsis above has never once been reached
+   without it. A flex item's default `min-width: auto` floors it at its own
+   min-content, and this one is `white-space: nowrap`, so the floor is the whole
+   breadcrumb: 394px of it, in a panel the phone gives 346px to. The rule said
+   truncate and the layout said no. */
+.crumb { margin-left: 10px; min-width: 0; font-size: 11px; color: var(--text-3); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .crumb b { color: var(--text-2); }
 .pill {
   margin-left: auto; font-size: 9.5px; font-weight: 800; letter-spacing: .8px;
@@ -748,7 +753,13 @@ img, svg { max-width: 100%; }
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 960px) {
-  .hero-inner { grid-template-columns: 1fr; gap: 38px; }
+  /* `minmax(0, 1fr)`, not `1fr`. The two-column rule above is careful about
+     this and the one-column fallback dropped it: a bare `1fr` is
+     `minmax(auto, 1fr)`, floored at the item's min-content, and the panel's
+     min-content is 558px. On a 390px phone the grid laid out a 558px track,
+     and `overflow-x: hidden` cut 190px off the panel — the product shot on the
+     landing page, with no way to reach the rest of it. */
+  .hero-inner { grid-template-columns: minmax(0, 1fr); gap: 38px; }
   .panel { transform: none; }
   .hero-panel:hover .panel { transform: none; }
   .proof-grid, .cards.g3, .cards.g2 { grid-template-columns: 1fr; }
@@ -758,12 +769,30 @@ img, svg { max-width: 100%; }
   .hero-stats .wrap > div:nth-child(3) { padding-left: 0; border-left: 0; }
 }
 
-@media (max-width: 720px) {
+/* The header hands over to the menu when it stops fitting, which is not where
+ * the rest of the page reflows.
+ *
+ * These rules sat in the 720px block below with everything else, and the eight
+ * navigation links plus Sign in plus Get started stop fitting at 800px —
+ * measured, on `/about`, walking the widths: 4px of spare at 800, minus four at
+ * 780. So between 721 and 800 the desktop header was still on, overflowing its
+ * own row, and `body.site { overflow-x: hidden }` clipped the Get started
+ * button rather than scrolling to it. That band contains iPad Mini portrait at
+ * 744 and a browser window a third of a 21:9 monitor; on every page of the
+ * site, the primary call to action was cut off.
+ *
+ * Its own query, at the width the header actually needs. The content rules
+ * below keep theirs — a KPI grid and a footer have no reason to reflow because
+ * a navigation bar ran out of room. */
+@media (max-width: 800px) {
   .site-nav, .head-cta { display: none; }
   .nav-toggle { display: block; margin-left: auto; }
   .mobile-nav { display: grid; border-top: 1px solid var(--line); padding: 10px 22px 16px; }
   .mobile-nav[hidden] { display: none; }
   .mobile-nav a { padding: 10px 0; color: var(--text-2); border-bottom: 1px solid var(--line); font-size: 14.5px; }
+}
+
+@media (max-width: 720px) {
   .kpis { grid-template-columns: 1fr; }
   .phase { grid-template-columns: 40px 1fr; }
   .foot-base { flex-direction: column; gap: 10px; }
