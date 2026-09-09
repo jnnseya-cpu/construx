@@ -8587,6 +8587,34 @@ anything: a flex item's default `min-width: auto` floors it at its own
 min-content, and with `white-space: nowrap` that is the whole string. The rule
 said truncate and the layout said no. It truncates at 182px now.
 
+**Three commands the enquiry could not reach.** A sweep of `domain/` and
+`engines/` for exported functions that no route and no test names — a question
+worth asking of any codebase whose domain layer is written before the surface
+that reaches it — returned eight referenced by nothing at all. Five are
+symmetric helpers, among them `businessDayOnOrAfter`, the mirror of a Construction
+Act helper used in three places; they are recorded here rather than removed.
+
+Three were a hole. `createRFQ`, `issueRFQ`, `receiveSubmission`, `awardRFQ` and
+the rest were routed; `acknowledgeRFQ`, `raiseClarification` and
+`answerClarification` were written in full — identity checks, invitation checks,
+refusals — with no route, no console door and no test. So a buyer could issue an
+enquiry and take a price for it, and **the firm receiving the enquiry could not
+say whether it meant to bid, could not ask a question about the information it
+had been sent, and could not be answered.**
+
+The sharpest of the three is the last. `answerClarification` refuses an answer
+sent to the asker alone, because the other bidders then priced different
+information: the returns are no longer comparable and the award is challengeable
+by whoever loses. That rule was correct, considered, written down — and until
+these routes existed it could not fire.
+
+All three now have routes, curated doors on Tender & Procurement, and
+`rfqdialogue.test.ts`. The fixture walks the real gates rather than writing
+round them: the seed's tender-phase sibling is deliberately empty, so the firms
+are registered, then prequalified, then the package's design maturity assessed,
+and only then can the enquiry go to market — each of those refused the first
+draft in turn, which is the platform working.
+
 **The conversion path, driven rather than tested.** The account request on
 Contact, the booking form on Demo, the four package buttons on Get started and
 the signup form each opens the API from a browser, not from a test harness. The

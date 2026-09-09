@@ -276,6 +276,13 @@ export async function procurement(root) {
           ${raw(commandBar([
             { id: 'rfq', label: 'Raise RFQ', tone: '', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'issue', label: 'Issue RFQ', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
+            // The enquiry's other half. Acknowledging and asking are the
+            // bidder's acts, so they sit under SUPPLIER_SUBMISSION with the
+            // submission; answering is the buyer's and is gated on the award
+            // area, which is what `answerClarification` authorises against.
+            { id: 'acknowledge', label: 'Acknowledge enquiry', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
+            { id: 'clarification', label: 'Raise clarification', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
+            { id: 'answerclarification', label: 'Answer clarification', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: can('SUPPLIER_SUBMISSION', 'C'), reason: blockedReason('SUPPLIER_SUBMISSION', 'C') },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
             { id: 'route', label: 'Buy it or do it', permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
@@ -1090,6 +1097,72 @@ export async function procurement(root) {
           options: b.TenderPackage.map((p) => ({ value: p._refId, label: p.reference ?? p._refId })) },
       ],
       transform: ({ rfqId, ...rest }) => rest,
+    },
+    /*
+     * The three the enquiry could not do.
+     *
+     * `acknowledgeRFQ`, `raiseClarification` and `answerClarification` were
+     * written in full — authorisation, refusals and all — and had no route and
+     * no door, so a firm receiving an enquiry could not say whether it meant to
+     * bid, could not ask a question about the information, and could not be
+     * answered. The catalogue would have given them a generic door the moment
+     * the routes existed; these are curated because each one wants this
+     * project's own RFQs and its own open questions in a list, not an id typed
+     * into a box.
+     */
+    acknowledge: {
+      title: 'Acknowledge an enquiry',
+      intent:
+        'The firm answers the enquiry it was sent: whether it intends to bid. Recorded against the RFQ, and the reconciliation counts it — ' +
+        'a firm that has said nothing is different from a firm that has declined.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/rfq/${collected.rfqId}/acknowledge`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'rfqId', label: 'Against RFQ', type: 'select',
+          options: b.RFQ.map((r) => ({ value: r._refId, label: `${r.reference} · ${r.title}` })) },
+        { name: 'supplierId', label: 'Firm', type: 'select',
+          options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
+        { name: 'intendToBid', label: 'Intends to bid', type: 'select',
+          options: [{ value: 'true', label: 'Yes — will return a price' }, { value: 'false', label: 'No — declining' }] },
+      ],
+      transform: ({ rfqId, intendToBid, ...rest }) => ({ ...rest, intendToBid: intendToBid === 'true' }),
+    },
+    clarification: {
+      title: 'Raise a clarification',
+      intent:
+        'A bidder’s question about the enquiry, raised as TQ-nnn against the RFQ. Ask it here rather than answering it by email — ' +
+        'an answer nobody else received is what makes an award challengeable.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/rfq/${collected.rfqId}/clarifications`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'rfqId', label: 'Against RFQ', type: 'select',
+          options: b.RFQ.map((r) => ({ value: r._refId, label: `${r.reference} · ${r.title}` })) },
+        { name: 'supplierId', label: 'Asked by', type: 'select',
+          options: (suppliers.suppliers ?? []).map((sup) => ({ value: sup.id, label: sup.name })) },
+        { name: 'question', label: 'Question', type: 'textarea', rows: 3 },
+      ],
+      transform: ({ rfqId, ...rest }) => rest,
+    },
+    answerclarification: {
+      title: 'Answer a clarification',
+      intent:
+        'The answer goes to every bidder, not only the firm that asked. The platform refuses any other choice: a private answer means the ' +
+        'returns are no longer comparable, and an award made on incomparable returns is one a losing bidder can challenge.',
+      path: (collected) => `/v1/projects/${projectId}/procurement/clarifications/${collected.clarificationId}/answer`,
+      submitLabel: 'Answer',
+      fields: [
+        { name: 'clarificationId', label: 'Question', type: 'select',
+          options: (b.Clarification ?? [])
+            .filter((c) => c.status !== 'ANSWERED')
+            .map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.question ?? '').slice(0, 60)}` })) },
+        { name: 'answer', label: 'Answer', type: 'textarea', rows: 3 },
+        { name: 'issueToAllBidders', label: 'Issued to', type: 'select',
+          options: [{ value: 'true', label: 'Every bidder — the only answer the platform accepts' }] },
+      ],
+      transform: ({ clarificationId, issueToAllBidders, ...rest }) => ({
+        ...rest,
+        issueToAllBidders: issueToAllBidders === 'true',
+      }),
     },
     submission: {
       title: 'Record a submission',

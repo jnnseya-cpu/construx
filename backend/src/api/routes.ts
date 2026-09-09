@@ -11552,6 +11552,71 @@ export const ROUTES: Route[] = [
         tenderPackageId: body<{ tenderPackageId: string }>(ctx).tenderPackageId,
       }),
   },
+  /*
+   * The supplier's side of an enquiry.
+   *
+   * `createRFQ`, `issueRFQ`, `receiveSubmission`, `awardRFQ` and the rest were
+   * routed; these three were written, complete, with their authorisation and
+   * their refusals, and reachable by nothing at all. A buyer could issue an
+   * enquiry and take a price for it, and the firm receiving the enquiry could
+   * not say whether it intended to bid, could not ask a question about the
+   * information, and could not be answered. Found by asking which exported
+   * engine commands no route and no test names.
+   *
+   * `answerClarification` carries the sharpest evidence that this mattered: it
+   * refuses an answer sent to one bidder rather than all of them, because
+   * answering privately makes the returns incomparable and the award
+   * challengeable. That refusal has never been able to fire.
+   */
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/acknowledge',
+    description: 'A firm answers the enquiry it was sent: whether it intends to bid',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'intendToBid'],
+      properties: { supplierId: stringField, intendToBid: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      procurement.acknowledgeRFQ(projectContext(platform, ctx), {
+        ...body<{ supplierId: string; intendToBid: boolean }>(ctx),
+        rfqId: ctx.params.rfqId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/clarifications',
+    description: 'A bidder asks a question about the enquiry — raised as TQ-nnn against the RFQ',
+    schema: {
+      type: 'object',
+      required: ['supplierId', 'question'],
+      properties: { supplierId: stringField, question: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      procurement.raiseClarification(projectContext(platform, ctx), {
+        ...body<{ supplierId: string; question: string }>(ctx),
+        rfqId: ctx.params.rfqId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/procurement/clarifications/:clarificationId/answer',
+    description:
+      'Answer a bidder’s question. Refused unless the answer goes to every bidder — a private answer makes the returns incomparable and the award challengeable',
+    schema: {
+      type: 'object',
+      required: ['answer', 'issueToAllBidders'],
+      properties: { answer: stringField, issueToAllBidders: { type: 'boolean' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      procurement.answerClarification(projectContext(platform, ctx), {
+        ...body<{ answer: string; issueToAllBidders: boolean }>(ctx),
+        clarificationId: ctx.params.clarificationId as string,
+      }),
+  },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/procurement/rfq/:rfqId/submissions',
