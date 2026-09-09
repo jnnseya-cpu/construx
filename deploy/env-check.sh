@@ -79,6 +79,25 @@ report critical EVIDENCE_STORE_PATH      "hashes recorded, files not held"
 report critical SIGNING_PRIVATE_KEY_PEM  "every signing request is refused"
 
 echo
+echo "Fit to hold a paying customer"
+# The two the System Control screen calls blocking, said here as well so the
+# answer is the same before a deploy as after one. A screen nobody has opened
+# yet is not a check.
+report critical EVIDENCE_MASTER_KEY      "evidence stored in the clear — a stolen volume or a backup copy is a readable archive of every customer's photographs, signed instructions and scanned contracts"
+report critical OBJECT_STORE_ENDPOINT    "no off-host backup — the record exists on this host only, and a lost volume is a lost company"
+report critical OBJECT_STORE_BUCKET      "no off-host backup — the endpoint alone ships nothing"
+report optional TRUSTED_PROXY_CIDRS      "rate limits key on the socket address; behind a proxy that is one bucket for the whole internet, login included"
+
+# Not a missing value: a value that is wrong for a deployment holding real
+# records. `is_set` cannot say this, because the setting is present and true.
+if grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=[[:space:]]*true" "$ENV_FILE"; then
+  echo "  WARNING  DEMO_TENANCY_ENABLED=true — any anonymous visitor can sign into the"
+  echo "           demonstration tenancy and spend its AI wallet. Right for a public"
+  echo "           sandbox, wrong beside real customer records."
+  missing_critical=$((missing_critical + 1))
+fi
+
+echo
 echo "Registration — nobody can complete signup without these"
 report critical SMTP_HOST                "verification emails are rendered and recorded, never sent"
 report optional SMTP_USER                "unauthenticated submission; correct for some relays"
