@@ -89,11 +89,22 @@ report critical OBJECT_STORE_BUCKET      "no off-host backup — the endpoint al
 report optional TRUSTED_PROXY_CIDRS      "rate limits key on the socket address; behind a proxy that is one bucket for the whole internet, login included"
 
 # Not a missing value: a value that is wrong for a deployment holding real
-# records. `is_set` cannot say this, because the setting is present and true.
-if grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=[[:space:]]*true" "$ENV_FILE"; then
-  echo "  WARNING  DEMO_TENANCY_ENABLED=true — any anonymous visitor can sign into the"
-  echo "           demonstration tenancy and spend its AI wallet. Right for a public"
-  echo "           sandbox, wrong beside real customer records."
+# records. Neither `report` nor `is_set` can say this — the setting is present
+# and true, which both of them read as configured.
+#
+# **Absent counts as on.** `config.ts` defaults this to true, so a file with no
+# line for it runs a public sandbox exactly as a file that says `true` does.
+# The first version of this check tested for a literal `=true` and therefore
+# said nothing at all on the one live deployment it was written for: the key
+# was absent, the demonstration tenancy was open, and the script reported a
+# clean pass while the process's own boot log warned about it. Only `false`
+# closes it, so only `false` is accepted here.
+if ! grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=[[:space:]]*false" "$ENV_FILE"; then
+  reason="is not set to false"
+  grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=" "$ENV_FILE" || reason="is absent, and it defaults to on"
+  echo "  WARNING  DEMO_TENANCY_ENABLED $reason — any anonymous visitor can sign"
+  echo "           into the demonstration tenancy and spend its AI wallet. Right for a"
+  echo "           public sandbox, wrong beside real customer records."
   missing_critical=$((missing_critical + 1))
 fi
 

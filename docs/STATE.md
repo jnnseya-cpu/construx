@@ -8558,6 +8558,16 @@ Known and left: at exactly 760px the page lays out 2px wider than the viewport.
 `body.site` sets `overflow-x: hidden`, so nothing scrolls sideways and nothing
 is cut off that a reader would notice; it is recorded here rather than chased.
 
+**A check that passed because it was looking for the wrong thing.**
+`env-check.sh` was extended to report the two go-live blockers and to warn on an
+open demonstration tenancy. Run against the live deployment it reported the
+three missing keys correctly and said nothing at all about the demonstration
+tenancy — while that same process's boot log was warning about it. The check
+tested for a literal `DEMO_TENANCY_ENABLED=true`; the key was simply absent from
+that `.env`, and `config.ts` defaults it to `true`. Absent and `true` are the
+same deployment. Only `false` closes it, so only `false` passes now, and the
+warning says which of the two it found. Verified against all three states.
+
 **The old brand, still in the file operators copy.** `NOTIFICATIONS_FROM_NAME`
 reading "not set" on System Control led to `.env.example`, which was still
 `CONSTRUX.AI` in three places and `hello@construx.ai` for the sender. The code
