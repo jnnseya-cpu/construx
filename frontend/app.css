@@ -538,7 +538,7 @@ button { font: inherit; }
  * treatments within a month.
  */
 .figure-strip {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
   margin: 4px 0 15px;
 }
@@ -866,7 +866,7 @@ input:focus, select:focus, textarea:focus {
 .cost-disclosure .split-list { gap: 4px; }
 
 .cmd-bar { display: flex; flex-wrap: wrap; gap: 8px; }
-.input-zone { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); align-items: end; }
+.input-zone { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); align-items: end; }
 .input-zone .field { margin-bottom: 0; }
 .input-zone .actions { display: flex; gap: 8px; }
 
@@ -1000,6 +1000,45 @@ input:focus, select:focus, textarea:focus {
   /* Left-aligned once it is on its own row: right-aligned buttons that have
      wrapped read as a ragged column pinned to the wrong edge. */
   .view-head .actions { width: 100%; margin-left: 0; justify-content: flex-start; }
+
+  /* --- the top bar -------------------------------------------------------
+   *
+   * It had no phone treatment at all, and it overflowed a 390px viewport by
+   * 3px — so every screen in the field application scrolled sideways under
+   * the thumb, which is precisely the failure the rail above was fixed for.
+   * Measured, not guessed: the bar's own contents came to 393px, with the
+   * sign-out button hanging over the edge as the last item in the row.
+   *
+   * Two things were wrong and only one of them was the overflow. Flex had
+   * been resolving the shortfall by crushing the left-hand side, so the
+   * breadcrumb was rendering at zero width and the project picker inside it
+   * at 26px — a control narrower than its own chevron, on the one screen
+   * where somebody actually needs to change which project they are looking
+   * at. The space now comes off the parts that are context rather than off
+   * the parts that are controls.
+   */
+  .topbar { padding: 0 14px; gap: 8px; }
+  /* The estate names. They were already painting nothing at this width; the
+     same two names are on Enterprise & Portfolio, which is a tap away. */
+  .crumb-path { display: none; }
+  /* The picker takes what the estate names were taking, and the spacer stops
+     competing with it for the same room. */
+  .crumb { flex: 1 1 auto; }
+  .topbar .spacer { display: none; }
+  .project-pick { max-width: 100%; }
+  /* The identity chip comes down to the avatar. Flex had already squeezed it
+     to that — 39px, all of it padding and picture — but the name inside was a
+     block that kept its content width and painted out from under the sign-out
+     button beside it. Stopping it here is the difference between a chip that
+     is small and a chip that is broken. Who is signed in is still on the
+     chip's accessible name, on the avatar's own initials, and on Account.
+
+     Sized rather than elastic: the avatar inside it cannot shrink, so a chip
+     flex is allowed to squeeze paints its picture outside its own pill. The
+     breadcrumb is the elastic one in this row. */
+  .user-chip { flex: 0 0 auto; padding: 4px 5px; }
+  .user-chip > span:last-of-type { display: none; }
+  .sign-out { margin-left: 0; }
 }
 
 @media (hover: none) and (pointer: coarse) {
@@ -1380,14 +1419,23 @@ input:focus, select:focus, textarea:focus {
 .kpi-delta.down { color: var(--critical); }
 .kpi-delta.flat { color: var(--text-3); }
 
-/* A row of charts that reflows rather than scrolling sideways. */
+/* A row of charts that reflows rather than scrolling sideways.
+ *
+ * `min(Npx, 100%)` rather than a bare `Npx`, here and on every other
+ * `auto-fit` in this stylesheet. A track floored at a fixed width cannot
+ * shrink below it, so once the container is narrower than the floor the grid
+ * lays out wider than its parent and the whole page scrolls sideways —
+ * `.chart-row.wide` at 420px did exactly that to Security on a 390px handset,
+ * pushing the card 44px past the viewport. `min()` makes the floor "420px, or
+ * everything there is, whichever is smaller", which changes nothing at any
+ * width where the floor already fitted. */
 .chart-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 .chart-row.wide {
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
 }
 
 @media (prefers-reduced-motion: reduce) {

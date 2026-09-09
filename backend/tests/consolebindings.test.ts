@@ -256,7 +256,19 @@ describe('no console class the design system never defined', () => {
 
     // The families worth policing: each is a layout decision the stylesheet has
     // to make, so a name outside it renders as an unstyled div.
-    const structural = /^(?:[a-z]+-)?(?:head|card|notice|metric|split-list|table-wrap|view|page)(?:-[a-z]+)?$/;
+    //
+    // `grid` joined the list after `security.js` was found painting
+    // `class="grid-4"` twice. The design system's name is `grid g4`; `grid-4`
+    // is defined nowhere, so those two rows had no `display: grid` and no gap
+    // at all — four KPI cards that should have sat across the top of the
+    // screen were stacked full-width down it, on every viewport, for every
+    // role. A class name is a string, and this is the second defect of exactly
+    // that shape.
+    //
+    // The suffix takes a digit as well as letters, because the whole point of
+    // the grid family is that the number is in the name — `[a-z]+` alone would
+    // have skipped `grid-4` even with `grid` in the list.
+    const structural = /^(?:[a-z]+-)?(?:head|card|notice|metric|split-list|table-wrap|view|page|grid)(?:-[a-z0-9]+)?$/;
 
     const found: string[] = [];
     for (const file of pageFiles()) {

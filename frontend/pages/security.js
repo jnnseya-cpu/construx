@@ -312,7 +312,7 @@ function mineView(mine) {
   const assessment = mine.session;
 
   return html`
-    <div class="grid-4" style="margin-bottom:14px">
+    <div class="grid g4" style="margin-bottom:14px">
       ${kpiCard({
         label: 'Account strength',
         value: mine.standing,
@@ -479,7 +479,7 @@ function tenancyView(tenancy) {
   const covered = adoption.people - adoption.withNeither;
 
   return html`
-    <div class="grid-4" style="margin-bottom:14px">
+    <div class="grid g4" style="margin-bottom:14px">
       ${kpiCard({
         label: 'People with a passkey',
         value: `${adoption.withPasskey} of ${adoption.people}`,

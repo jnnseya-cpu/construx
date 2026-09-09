@@ -507,7 +507,7 @@ change at all.
 
 That last point exposed a real trap. `NEWSLETTER_FROM_ADDRESS` is the from
 address on **every** outbound email despite its name — `notifications/notify.ts`
-uses it for the signup confirmation — and it defaults to `hello@construx.ai`,
+uses it for the signup confirmation. It defaulted to `hello@construx.ai`,
 which this deployment does not serve. Left alone, Hostinger would be asked to
 send as a domain it does not carry, the confirmation would fail SPF at the
 receiving end, and the symptom would not look like mail at all: it would look
@@ -8504,6 +8504,70 @@ register and the company readiness lights on Site Documents (all
 (`PROCUREMENT_AWARD`) and the sponsorship list on Enterprise (`BILLING_ACU`).
 All six are guarded reads now. Every role walks every screen with an empty
 browser console and not one 4xx in the gateway log.
+
+**The same sweep at a phone's width.** `tools/handset.mjs` drives the console
+at 390×844 as a touch device — the field application is this build installed to
+a home screen, and the walk above drives it at 1560px, which is the desk. It
+measures one thing per screen: whether the document lays out wider than its own
+viewport, and which element is furthest past the edge.
+
+It found the top bar overflowing by 3px on every screen, so every page in the
+field application scrolled sideways under the thumb — the exact failure the
+lifecycle rail had already been fixed for. The bar had no phone treatment at
+all, and flex was resolving the shortfall by crushing the left-hand side: the
+breadcrumb rendered at zero width and the project picker inside it at 26px, a
+control narrower than its own chevron, on the one screen where somebody needs
+to change which project they are looking at. The phone rule now drops the
+estate names (the same two names are on Enterprise & Portfolio) and brings the
+identity chip down to its avatar, which is what flex had squeezed it to anyway —
+the difference being that the name inside it no longer paints out from under
+the sign-out button. The picker gets the room, 120px of it. No screen scrolls
+sideways at 390px for any of the five delivery identities.
+
+This is not an accessibility or responsive audit and none is claimed; see
+"what is not built". It measures overflow and errors, which are facts.
+
+Two more came out of the same measurement. `security.js` painted
+`class="grid-4"` twice — a class the design system never defined; its name is
+`grid g4` — so two rows of four KPI cards had no `display: grid` and no gap at
+all, and stacked full-width on every viewport for every role. And every
+`auto-fit` track in `app.css` was floored at a fixed pixel width, which cannot
+shrink: `.chart-row.wide` at 420px pushed Security's card 44px past a 390px
+viewport. Each floor is now `min(Npx, 100%)`, which is identical wherever the
+floor already fitted. The class check in `consolebindings.test.ts` covers the
+`grid` family now, and its suffix takes digits — without that, `grid-4` slipped
+through a check written for exactly this failure.
+
+**The landing page's own pictures.** Reported from the live site: the figure
+beside the seven engines and the engine cards drawn on top of each other.
+Reproduced locally with a placeholder in every slot, and it is a real fault.
+`.column` is a float, and `float` does not apply to a grid item — so the figure
+inside `.engine-grid` was never a floated column with cards flowing past it. It
+was an ordinary grid item forced to 320px inside a track `minmax(240px, 1fr)`
+had made about 250px wide, lying 33px under the card beside it. Inside that
+grid it is a tile now, and the track sizes it.
+
+Measuring the same page for text drawn under a figure found a second: the
+hero's plate was pulled up 40px "into the hero's lower gradient" and was
+covering the last line of the proof strip — *closed, versioned · documented
+endpoints · nothing to patch at 3am* — at every width above 1000px. The strip
+was added after the pull was chosen. 18px clears it with room, and the check is
+now a measurement across 1440, 1024, 760, 500 and 390 rather than a look.
+
+Known and left: at exactly 760px the page lays out 2px wider than the viewport.
+`body.site` sets `overflow-x: hidden`, so nothing scrolls sideways and nothing
+is cut off that a reader would notice; it is recorded here rather than chased.
+
+**The old brand, still in the file operators copy.** `NOTIFICATIONS_FROM_NAME`
+reading "not set" on System Control led to `.env.example`, which was still
+`CONSTRUX.AI` in three places and `hello@construx.ai` for the sender. The code
+defaults are right — `CONSTRUX`, `contact@construxvg.com`,
+`no-reply@construxvg.com` — so a deployment that sets nothing is correct; but
+`GOING-LIVE.md` says to copy `.env.example` to `.env`, and anybody who did got
+the old brand on every email and a sender domain this deployment does not
+serve. That is the SPF trap described above, walked into by following the
+instructions. Corrected in the example file; the note above now says
+"defaulted", because it does not any more.
 
 A mistyped area is the hazard this creates: `matrix[role]?.[area] ?? []` reads
 as "no role holds R here", which withholds the panel from everybody for ever

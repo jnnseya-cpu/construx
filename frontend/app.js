@@ -1147,10 +1147,18 @@ function topbar() {
       ${
         isOperator()
           ? html`CONSTRUX <span style="opacity:.4">›</span> <b>Platform operations</b>`
-          : html`${state.session?.enterprise ?? 'Your enterprise'} <span style="opacity:.4">›</span>
-              ${state.session?.portfolio ?? 'no portfolio yet'}
-              <span style="opacity:.4">›</span>
-              ${projectPicker()}`
+          : // The estate above the project, wrapped rather than left as loose
+            // text so the phone rule can drop it and keep the control beside
+            // it. At 390px the whole crumb was being squeezed to nothing and
+            // the project picker with it — 26px wide, narrower than its own
+            // chevron — while the bar still overflowed the viewport. The two
+            // names are on Enterprise & Portfolio; the picker is the one thing
+            // in this bar somebody changes on site.
+            html`<span class="crumb-path"
+                >${state.session?.enterprise ?? 'Your enterprise'} <span style="opacity:.4">›</span>
+                ${state.session?.portfolio ?? 'no portfolio yet'}
+                <span style="opacity:.4">›</span>
+              </span>${projectPicker()}`
       }
     </div>
     <div class="spacer"></div>

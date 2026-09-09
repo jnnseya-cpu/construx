@@ -797,10 +797,18 @@ img, svg { max-width: 100%; }
 }
 
 /* Full-width product plate, sitting between two sections. Negative top margin
-   pulls it into the hero's lower gradient rather than sitting on a seam. */
+   pulls it into the hero's lower gradient rather than sitting on a seam.
+ *
+ * 18px, not 40px. At 40 the plate came up over the last line of the hero's
+ * proof strip and covered it — "closed, versioned · documented endpoints ·
+ * nothing to patch at 3am" was printed underneath the picture at every width
+ * above 1000px. The pull was chosen against a hero that did not yet carry that
+ * strip; the strip's baseline now sits 26px above where the plate would start
+ * unpulled, so anything past that eats it. Measured, at 1440, 1024, 760, 500
+ * and 390. */
 .plate.wide {
   max-width: 1200px;
-  margin: -40px auto 0;
+  margin: -18px auto 0;
   padding: 0 22px;
 }
 
@@ -823,6 +831,23 @@ img, svg { max-width: 100%; }
   margin: 4px 0 18px 28px;
 }
 
+/* Except inside the engine grid, where the float is inert.
+ *
+ * `float` does not apply to a grid item — the spec says so and the browser
+ * silently obeys — so the figure beside the seven engines was never a floated
+ * column with cards flowing past it. It was an ordinary grid item, forced to
+ * 320px inside a track the `minmax(240px, 1fr)` had made about 250px wide,
+ * lying a good 30px underneath the card next to it. Reported from the live
+ * site as the picture and the engine cards overlapping, and reproduced here
+ * with a placeholder in the slot.
+ *
+ * It is a tile among tiles, so it is sized like one and the track decides. */
+.engine-grid > .column {
+  float: none;
+  width: auto;
+  margin: 0;
+}
+
 .portrait-plate {
   width: min(360px, 70vw);
   margin: 0 auto 30px;
@@ -836,7 +861,7 @@ img, svg { max-width: 100%; }
     width: 100%;
     margin: 0 0 24px;
   }
-  .plate.wide { margin-top: -18px; }
+  .plate.wide { margin-top: -10px; }
 }
 
 /* ------------------------------------------------------------------ consent
