@@ -740,7 +740,7 @@ platform boots, takes the patched state as the state, and reports the
 discrepancy on stderr and on the boot line:
 
 ```
-[journal] event 3634 (01M1PH…, CLIENT_BRANDING_SET on ClientBrandingRecord …) records state hash sha256:e881… but its patch produces sha256:d4a1…. The chain hash verifies; the replayed state is the one its patch produces.
+[journal] event 3634 (01M1PH…, USER_DEACTIVATED on User 01M1M5…) records state hash sha256:e881… but its patch produces sha256:d4a1…. The chain hash verifies; the replayed state is the one its patch produces.
 Ledger   /data/ledger.jsonl — 4,102 events restored into 1,207 entities, … — 1 STATE-HASH DISCREPANCY (see stderr)
 ```
 
