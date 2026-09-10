@@ -3680,6 +3680,58 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => itt.complianceMatrix(tenantContext(platform, ctx), ctx.params.analysisId as string),
   },
   /*
+   * Waivers.
+   *
+   * A requirement consciously not answered. Tenant-scoped like the matrix it
+   * sits on, because a compliance matrix belongs to the tenancy that read the
+   * invitation rather than to a project — the same reason `analyses` above is.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId/waivers',
+    readOnly: true,
+    description: 'Every requirement waived on this matrix, live and past, and how many of them are mandatory',
+    handler: (platform, ctx) => itt.waiverRegister(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/waivers',
+    description: 'Waive a requirement, with a reason and a date it stops — never later than the tender returns',
+    schema: {
+      type: 'object',
+      required: ['reference', 'reason', 'expiresOn'],
+      properties: {
+        reference: stringField,
+        reason: { type: 'string', minLength: 20 },
+        expiresOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      itt.waiveRequirement(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<{ reference: string; reason: string; expiresOn: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/waivers/revoke',
+    description: 'Take a waiver back. The deliverable becomes outstanding again and the record keeps who reversed it and why',
+    schema: {
+      type: 'object',
+      required: ['reference', 'reason'],
+      properties: { reference: stringField, reason: { type: 'string', minLength: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      itt.revokeWaiver(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<{ reference: string; reason: string }>(ctx),
+      ),
+  },
+  /*
    * The bid response pack.
    *
    * `itt.ts` reads the invitation and stops where the work starts. These five

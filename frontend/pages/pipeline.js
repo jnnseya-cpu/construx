@@ -335,8 +335,11 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   `;
 }
 
-function matrixDetail(analysis) {
+function matrixDetail(analysis, waivers) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
+  // A waiver is read live, so a line waived after the matrix was analysed reads
+  // as waived here without the analysis being rerun.
+  const waivedBy = new Map((waivers?.live ?? []).map((waiver) => [waiver.reference, waiver]));
 
   return html`
     <div class="card pad0">
@@ -424,9 +427,43 @@ function matrixDetail(analysis) {
             : '—',
           line.weightingPercent === undefined ? '—' : `${line.weightingPercent}%`,
           line.dueBy ? date(line.dueBy) : '—',
-          html`${badge(humanise(line.status), MATRIX_TONE[line.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${MATRIX_MEANING[line.status] ?? ''}</span>`,
+          waivedBy.has(line.reference)
+            ? html`${badge('waived', 'warn')}<br><span style="font-size:11px;color:var(--text-3)">Not answered on purpose, to ${date(waivedBy.get(line.reference).expiresOn)}</span>`
+            : html`${badge(humanise(line.status), MATRIX_TONE[line.status] ?? '')}<br><span style="font-size:11px;color:var(--text-3)">${MATRIX_MEANING[line.status] ?? ''}</span>`,
         ]),
         empty: 'This analysis carries no requirements',
+      })}
+
+      <h2 style="padding:15px 17px 0">Requirements nobody is answering, on purpose</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${waivers?.summary ?? 'Waivers could not be read.'} A requirement not answered because somebody decided so and one
+        not answered because nobody got to it look identical on every list. This is the difference, and it carries a name,
+        a reason and a date it stops.
+      </p>
+      <div style="padding:11px 17px 0">
+        ${commandBar([
+          { id: 'waive-requirement', label: 'Waive a requirement',
+            permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+          { id: 'revoke-waiver', label: 'Take a waiver back', tone: 'quiet',
+            permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+        ])}
+      </div>
+      ${table({
+        headers: ['Ref', 'Requirement', 'Mandatory', 'Reason', 'Holds until', 'Granted', 'State'],
+        rows: [...(waivers?.live ?? []), ...(waivers?.past ?? [])].map((waiver) => [
+          waiver.reference,
+          waiver.requirement,
+          waiver.mandatory ? badge('mandatory', 'bad') : '—',
+          html`<span style="font-size:12px;color:var(--text-3)">${waiver.reason}</span>`,
+          date(waiver.expiresOn),
+          date(waiver.grantedAt),
+          waiver.revokedAt
+            ? html`${badge('revoked', 'neutral')}<br><span style="font-size:11px;color:var(--text-3)">${waiver.revokedReason ?? ''}</span>`
+            : waiver.expiresOn >= new Date().toISOString().slice(0, 10)
+              ? badge('in force', 'warn')
+              : badge('expired', 'neutral'),
+        ]),
+        empty: 'Nothing waived. Every requirement on this matrix is being answered.',
       })}
 
       <div class="grid g2" style="padding:13px 17px 15px">
@@ -1367,8 +1404,16 @@ export async function pipeline(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const analysis = await api.get(`/v1/pipeline/analyses/${analysisId}`);
-      render(detail, matrixDetail(analysis));
+      const [analysis, waivers] = await Promise.all([
+        api.get(`/v1/pipeline/analyses/${analysisId}`),
+        // Read separately rather than folded into the analysis: a waiver is a
+        // decision made after the invitation was read, and putting it inside the
+        // analysis record would mean rewriting a committed analysis every time
+        // somebody granted one.
+        api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+      ]);
+      render(detail, matrixDetail(analysis, waivers));
+      detail.dataset.analysis = analysisId;
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       // Shown as a denial rather than as an empty panel. A matrix that failed
@@ -1393,5 +1438,73 @@ export async function pipeline(root) {
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) await draw();
+  });
+
+  // The waiver doors live inside the matrix panel, which is rendered on demand,
+  // so the listener is on the container rather than on the buttons.
+  detail.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const analysisId = detail.dataset.analysis;
+    if (!analysisId) return;
+
+    const analysis = await api.get(`/v1/pipeline/analyses/${analysisId}`).catch(() => null);
+    const waivers = await api
+      .read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3')
+      .catch(() => null);
+    if (!analysis) return;
+
+    const specs = {
+      'waive-requirement': {
+        title: 'Waive a requirement',
+        intent:
+          'Record that this requirement is not being answered, and why. The deliverable leaves the drafting queue and is ' +
+          'named on the response pack as waived, so whoever signs the submission sees what was left out on purpose rather ' +
+          'than a checklist that quietly got shorter. It stops on the date given, never later than the tender returns.',
+        path: `/v1/pipeline/analyses/${analysisId}/waivers`,
+        submitLabel: 'Waive',
+        fields: [
+          { name: 'reference', label: 'Requirement', type: 'select',
+            options: analysis.matrix
+              .filter((line) => line.status !== 'SATISFIED')
+              .filter((line) => !(waivers?.live ?? []).some((waiver) => waiver.reference === line.reference))
+              .map((line) => ({
+                value: line.reference,
+                label: `${line.reference} — ${line.requirement.slice(0, 60)}${line.mandatory ? ' (mandatory)' : ''}`,
+              })) },
+          { name: 'reason', label: 'Why', type: 'textarea', rows: 3,
+            hint: 'At least 20 characters. The question after a lost tender is always why question 14 was not answered.' },
+          { name: 'expiresOn', label: 'Holds until', type: 'date',
+            hint: `On or before ${analysis.returnBy.slice(0, 10)}, when this tender returns.` },
+        ],
+      },
+      'revoke-waiver': {
+        title: 'Take a waiver back',
+        intent:
+          'The deliverable becomes outstanding again immediately, on this pack and on any response pack planned from this ' +
+          'matrix. The waiver stays on the record with who reversed it and why.',
+        path: `/v1/pipeline/analyses/${analysisId}/waivers/revoke`,
+        submitLabel: 'Revoke',
+        fields: [
+          { name: 'reference', label: 'Waiver', type: 'select',
+            options: (waivers?.live ?? []).map((waiver) => ({
+              value: waiver.reference,
+              label: `${waiver.reference} — ${waiver.requirement.slice(0, 60)}`,
+            })) },
+          { name: 'reason', label: 'What changed', type: 'text' },
+        ],
+      },
+    };
+
+    const spec = specs[button.dataset.command];
+    if (!spec) return;
+    if (await command(spec)) {
+      const [fresh, freshWaivers] = await Promise.all([
+        api.get(`/v1/pipeline/analyses/${analysisId}`),
+        api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+      ]);
+      render(detail, matrixDetail(fresh, freshWaivers));
+      detail.dataset.analysis = analysisId;
+    }
   });
 }

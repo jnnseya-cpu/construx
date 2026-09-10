@@ -668,3 +668,293 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
   }
   return readAnalysis(record);
 }
+
+// --- A requirement consciously not answered -----------------------------------------
+
+/**
+ * The waiver.
+ *
+ * ---
+ *
+ * **The silent event this exists to end.** On every large tender somebody
+ * decides not to answer something. The certificate cannot be got in time, the
+ * question asks for a reference the business will not give, the schedule wants a
+ * figure nobody will commit to. The decision is real, it is made by somebody
+ * senior, and it leaves no trace — because *not answered because we decided not
+ * to* and *not answered because nobody has got to it* look identical in every
+ * system that holds a list of requirements.
+ *
+ * That is the difference between a considered risk and a missed requirement, and
+ * it is invisible right up to the moment the submission is marked down or thrown
+ * out. A waiver makes it a record: who decided, why, and until when.
+ *
+ * ## Four rules, and what each one is for
+ *
+ * **It is an approval, not an edit.** `ESTIMATE_TENDER` `A` — the same authority
+ * that issues the response pack. Deciding a bid will go in without something the
+ * buyer asked for is a judgement about what this business is prepared to lose
+ * the job over, and it belongs with the person who owns that.
+ *
+ * **It carries a reason somebody will read in a review.** Not a checkbox. The
+ * question after a lost tender is always *why did we not answer question 14*,
+ * and "waived" is not an answer to it.
+ *
+ * **It expires, and never later than the return date.** A waiver is scoped to
+ * one submission. An open-ended one is a permanent hole in the compliance matrix
+ * that outlives everybody who agreed to it, and a waiver still running after the
+ * tender returns is governing nothing.
+ *
+ * **It cannot be granted over evidence the platform already holds.** A waiver on
+ * a satisfied line hides that the line was satisfied, which is worse than the
+ * gap it pretends to cover: the next person reads a deliberate omission where
+ * there was a complete answer.
+ *
+ * ## What it deliberately does not do
+ *
+ * It does not make the bid response pack complete by hiding a section. The pack
+ * reads live waivers when it is planned and when it is issued, so a waived
+ * deliverable leaves the drafting queue **and is named on the pack as waived**,
+ * with its reason. Somebody signing the submission sees what was left out on
+ * purpose rather than a checklist that quietly got shorter.
+ */
+export type RequirementWaiver = {
+  /** The matrix line reference this covers. */
+  reference: string;
+  /** The deliverable, carried so the record reads without the matrix beside it. */
+  requirement: string;
+  mandatory: boolean;
+  reason: string;
+  /** Inclusive last day the waiver holds, `YYYY-MM-DD`. Never after the return date. */
+  expiresOn: string;
+  grantedBy: string;
+  grantedAt: string;
+  revokedBy?: string;
+  revokedAt?: string;
+  revokedReason?: string;
+};
+
+/** The shortest reason worth reading in a post-tender review. */
+const WAIVER_REASON_MIN = 20;
+
+function waiversOf(record: EntityRecord): RequirementWaiver[] {
+  return ((record.state as Record<string, unknown>).waivers as RequirementWaiver[] | undefined) ?? [];
+}
+
+/** Whether a waiver is in force on a given day. Revoked is never in force. */
+export function waiverLive(waiver: RequirementWaiver, asAt: string): boolean {
+  if (waiver.revokedAt) return false;
+  return waiver.expiresOn >= asAt;
+}
+
+/**
+ * The references waived on an analysis today.
+ *
+ * Read by the bid response pack, which is the whole point: a waiver granted
+ * after a pack was planned still takes a deliverable out of the outstanding
+ * list, and a waiver revoked or expired puts it straight back.
+ */
+export function liveWaivers(ctx: EngineContext, analysisId: string, asAt?: string): RequirementWaiver[] {
+  const record = ctx.ledger.get({ refType: 'ITTAnalysis', refId: analysisId });
+  if (!record || record.tenantId !== ctx.tenantId) return [];
+  const day = asAt ?? new Date().toISOString().slice(0, 10);
+  return waiversOf(record).filter((waiver) => waiverLive(waiver, day));
+}
+
+function requireAnalysis(ctx: EngineContext, analysisId: string): EntityRecord {
+  const record = ctx.ledger.get({ refType: 'ITTAnalysis', refId: analysisId });
+  if (!record || record.tenantId !== ctx.tenantId) {
+    throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
+  }
+  return record;
+}
+
+/**
+ * Waive a requirement, with a name and an end date on it.
+ */
+export function waiveRequirement(
+  ctx: EngineContext,
+  analysisId: string,
+  input: { reference: string; reason: string; expiresOn: string },
+): RequirementWaiver {
+  authorise(ctx, 'ESTIMATE_TENDER', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireAnalysis(ctx, analysisId);
+  const analysis = readAnalysis(record);
+  const line = analysis.matrix.find((entry) => entry.reference === input.reference);
+  if (!line) {
+    throw new DomainError(
+      'REQUIREMENT_NOT_FOUND',
+      `${analysis.reference} has no requirement ${input.reference}. A waiver against a reference that is not in the matrix ` +
+        'covers nothing and reads as though it covers something.',
+      404,
+    );
+  }
+
+  if (line.status === 'SATISFIED') {
+    throw new DomainError(
+      'REQUIREMENT_ALREADY_SATISFIED',
+      `${input.reference} is already satisfied${line.evidenceHeld ? ` — ${line.evidenceHeld}` : ''}. Waiving it would record a ` +
+        'deliberate omission where there is a complete answer, and the next person to read the matrix would believe it.',
+    );
+  }
+
+  const reason = input.reason.trim();
+  if (reason.length < WAIVER_REASON_MIN) {
+    throw new DomainError(
+      'WAIVER_REASON_REQUIRED',
+      `A waiver needs a reason of at least ${WAIVER_REASON_MIN} characters. The question after a lost tender is always why ` +
+        'question 14 was not answered, and "waived" is not an answer to it.',
+      422,
+      [{ field: 'reason', message: `At least ${WAIVER_REASON_MIN} characters` }],
+    );
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}/.test(input.expiresOn)) {
+    throw new DomainError(
+      'WAIVER_EXPIRY_REQUIRED',
+      'A waiver needs a date it stops. An open-ended one is a permanent hole in the compliance matrix that outlives ' +
+        'everybody who agreed to it.',
+      422,
+      [{ field: 'expiresOn', message: 'A date, YYYY-MM-DD' }],
+    );
+  }
+  const expiresOn = input.expiresOn.slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  if (expiresOn < today) {
+    throw new DomainError(
+      'WAIVER_EXPIRY_PAST',
+      `A waiver expiring ${expiresOn} was over before it was granted.`,
+      422,
+      [{ field: 'expiresOn', message: `On or after ${today}` }],
+    );
+  }
+  const returnBy = analysis.returnBy.slice(0, 10);
+  if (returnBy && expiresOn > returnBy) {
+    throw new DomainError(
+      'WAIVER_OUTLIVES_TENDER',
+      `${analysis.reference} returns on ${returnBy} and this waiver would run to ${expiresOn}. A waiver is scoped to one ` +
+        'submission; one still running after the tender returns is governing nothing and will be read as covering the next bid.',
+      422,
+      [{ field: 'expiresOn', message: `On or before ${returnBy}` }],
+    );
+  }
+
+  const held = waiversOf(record);
+  if (held.some((waiver) => waiver.reference === input.reference && waiverLive(waiver, today))) {
+    throw new DomainError(
+      'WAIVER_ALREADY_HELD',
+      `${input.reference} already carries a live waiver. Revoke it and grant another rather than stacking two, which would ` +
+        'leave two reasons on the record and no way to tell which one the decision was made on.',
+    );
+  }
+
+  const waiver: RequirementWaiver = {
+    reference: input.reference,
+    requirement: line.requirement,
+    mandatory: line.mandatory,
+    reason,
+    expiresOn,
+    grantedBy: ctx.auth.actorId,
+    grantedAt: new Date().toISOString(),
+  };
+
+  write(ctx, {
+    eventType: 'REQUIREMENT_WAIVED',
+    entity: { refType: 'ITTAnalysis', refId: analysisId },
+    nextState: { ...(record.state as Record<string, unknown>), waivers: [...held, waiver] },
+  });
+
+  return waiver;
+}
+
+/**
+ * Take a waiver back.
+ *
+ * The waiver stays on the record with who revoked it and why. A decision
+ * somebody reversed is part of the history of the bid, and erasing it would
+ * leave a submission whose compliance matrix cannot explain itself.
+ */
+export function revokeWaiver(
+  ctx: EngineContext,
+  analysisId: string,
+  input: { reference: string; reason: string },
+): RequirementWaiver {
+  authorise(ctx, 'ESTIMATE_TENDER', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireAnalysis(ctx, analysisId);
+  const held = waiversOf(record);
+  const today = new Date().toISOString().slice(0, 10);
+  const index = held.findIndex((waiver) => waiver.reference === input.reference && waiverLive(waiver, today));
+  if (index < 0) {
+    throw new DomainError('WAIVER_NOT_FOUND', `No live waiver on ${input.reference}`, 404);
+  }
+
+  const reason = input.reason.trim();
+  if (!reason) {
+    throw new DomainError(
+      'REVOCATION_REASON_REQUIRED',
+      'Say why the waiver is being taken back. The deliverable becomes outstanding again and whoever owns it needs to know ' +
+        'what changed.',
+      422,
+      [{ field: 'reason', message: 'Required' }],
+    );
+  }
+
+  const revoked: RequirementWaiver = {
+    ...held[index]!,
+    revokedBy: ctx.auth.actorId,
+    revokedAt: new Date().toISOString(),
+    revokedReason: reason,
+  };
+  const waivers = held.map((waiver, at) => (at === index ? revoked : waiver));
+
+  write(ctx, {
+    eventType: 'REQUIREMENT_WAIVER_REVOKED',
+    entity: { refType: 'ITTAnalysis', refId: analysisId },
+    nextState: { ...(record.state as Record<string, unknown>), waivers },
+  });
+
+  return revoked;
+}
+
+export type WaiverRegister = {
+  analysisId: string;
+  reference: string;
+  returnBy: string;
+  live: RequirementWaiver[];
+  /** Expired and revoked, kept because the history of a bid is part of the bid. */
+  past: RequirementWaiver[];
+  /** Live waivers over mandatory requirements. The number a bid director reads first. */
+  mandatoryWaived: number;
+  summary: string;
+};
+
+/** Every waiver on one matrix, live and past. */
+export function waiverRegister(ctx: EngineContext, analysisId: string): WaiverRegister {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireAnalysis(ctx, analysisId);
+  const analysis = readAnalysis(record);
+  const today = new Date().toISOString().slice(0, 10);
+  const all = waiversOf(record);
+  const live = all.filter((waiver) => waiverLive(waiver, today));
+  const past = all.filter((waiver) => !waiverLive(waiver, today));
+  const mandatoryWaived = live.filter((waiver) => waiver.mandatory).length;
+
+  return {
+    analysisId,
+    reference: analysis.reference,
+    returnBy: analysis.returnBy,
+    live,
+    past,
+    mandatoryWaived,
+    summary:
+      live.length === 0
+        ? past.length === 0
+          ? 'Every requirement on this matrix is being answered.'
+          : `Nothing waived now. ${past.length} waiver(s) expired or revoked.`
+        : `${live.length} requirement(s) waived` +
+          (mandatoryWaived > 0 ? `, ${mandatoryWaived} of them mandatory` : '') +
+          '. A waived mandatory requirement is a decision to risk the bid, not an omission.',
+  };
+}

@@ -1,7 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
-import { complianceMatrix, type MatrixLine, type StoredITTAnalysis } from './itt.ts';
+import { complianceMatrix, liveWaivers, type MatrixLine, type RequirementWaiver, type StoredITTAnalysis } from './itt.ts';
 
 /**
  * The bid response pack: the half of a tender the platform could read but not
@@ -156,20 +156,31 @@ export function planBidResponse(
     );
   }
 
-  const sections: BidSection[] = analysis.matrix.filter(needsProse).map((line) => ({
-    key: line.reference,
-    title: titleFor(line),
-    deliverable: line.requirement,
-    owner: String(line.owner),
-    mandatory: line.mandatory,
-    status: 'PLANNED' as const,
-  }));
+  // A requirement somebody has waived is not drafted. It leaves the queue and is
+  // named on the pack instead, with its reason, so whoever signs the submission
+  // sees what was left out on purpose rather than a checklist that quietly got
+  // shorter.
+  const waived = new Set(liveWaivers(ctx, input.analysisId).map((waiver) => waiver.reference));
+  const sections: BidSection[] = analysis.matrix
+    .filter((line) => needsProse(line) && !waived.has(line.reference))
+    .map((line) => ({
+      key: line.reference,
+      title: titleFor(line),
+      deliverable: line.requirement,
+      owner: String(line.owner),
+      mandatory: line.mandatory,
+      status: 'PLANNED' as const,
+    }));
 
   if (sections.length === 0) {
     throw new DomainError(
       'NOTHING_TO_WRITE',
-      `Every requirement on ${analysis.reference} is already evidenced from records the platform holds, so there is no ` +
-        'prose to draft. Attach the evidence and issue the submission from the matrix.',
+      waived.size > 0
+        ? `Every requirement on ${analysis.reference} is either evidenced from records the platform holds or waived, so ` +
+          'there is no prose to draft. A submission that is entirely waivers and attachments is a decision worth making ' +
+          'deliberately rather than arriving at.'
+        : `Every requirement on ${analysis.reference} is already evidenced from records the platform holds, so there is no ` +
+          'prose to draft. Attach the evidence and issue the submission from the matrix.',
       422,
     );
   }
@@ -341,6 +352,14 @@ export type BidCompleteness = {
   unanswered: Array<{ key: string; deliverable: string; mandatory: boolean }>;
   /** Stated deadlines carrying no date. */
   undated: string[];
+  /**
+   * Deliverables nobody is answering, on purpose.
+   *
+   * Reported separately from `unanswered` and never folded into `written`. A
+   * waived deliverable is not an answered one, and a pack that counted it as
+   * answered would tell the person signing the submission that it is complete.
+   */
+  waived: Array<{ key: string; deliverable: string; mandatory: boolean; reason: string; expiresOn: string }>;
   written: number;
   total: number;
   summary: string;
@@ -353,24 +372,47 @@ export type BidCompleteness = {
  * gate cannot disagree — a completeness figure computed twice is two figures,
  * and the one somebody trusts is whichever is on screen at the time.
  */
-export function bidCompleteness(pack: BidResponsePack): BidCompleteness {
-  const unanswered = pack.sections
-    .filter((section) => section.status !== 'DRAFTED' || (section.body ?? []).length === 0)
+export function bidCompleteness(pack: BidResponsePack, waivers: RequirementWaiver[] = []): BidCompleteness {
+  // Waivers are read live rather than baked into the pack at plan time, so a
+  // waiver granted halfway through drafting takes a deliverable out of the
+  // outstanding list, and one revoked or expired puts it straight back. A pack
+  // that froze the decision at planning would let an expired waiver carry a
+  // submission through the issue check weeks after it stopped applying.
+  const waivedBy = new Map(waivers.map((waiver) => [waiver.reference, waiver]));
+
+  const outstanding = pack.sections.filter(
+    (section) => section.status !== 'DRAFTED' || (section.body ?? []).length === 0,
+  );
+  const unanswered = outstanding
+    .filter((section) => !waivedBy.has(section.key))
     .map((section) => ({ key: section.key, deliverable: section.deliverable, mandatory: section.mandatory }));
+  const waived = outstanding
+    .filter((section) => waivedBy.has(section.key))
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      mandatory: section.mandatory,
+      reason: waivedBy.get(section.key)!.reason,
+      expiresOn: waivedBy.get(section.key)!.expiresOn,
+    }));
   const undated = pack.deadlines.filter((deadline) => !deadline.on).map((deadline) => deadline.what);
-  const written = pack.sections.length - unanswered.length;
+  const written = pack.sections.length - outstanding.length;
 
   return {
     ready: unanswered.length === 0 && undated.length === 0,
     unanswered,
     undated,
+    waived,
     written,
     total: pack.sections.length,
     summary:
       unanswered.length === 0 && undated.length === 0
-        ? `${written} of ${pack.sections.length} deliverables answered and every stated deadline dated.`
+        ? `${written} of ${pack.sections.length} deliverables answered` +
+          (waived.length > 0 ? `, ${waived.length} waived` : '') +
+          ' and every stated deadline dated.'
         : `${written} of ${pack.sections.length} answered` +
           (unanswered.length > 0 ? `, ${unanswered.length} outstanding` : '') +
+          (waived.length > 0 ? `, ${waived.length} waived` : '') +
           (undated.length > 0 ? `, ${undated.length} deadline(s) undated` : '') +
           '.',
   };
@@ -398,7 +440,7 @@ export function issueBidResponse(
     throw new DomainError('BID_RESPONSE_ISSUED', `${pack.reference} is already issued.`, 409);
   }
 
-  const completeness = bidCompleteness(pack);
+  const completeness = bidCompleteness(pack, liveWaivers(ctx, pack.analysisId));
   if (!completeness.ready) {
     throw new DomainError(
       'BID_RESPONSE_INCOMPLETE',
@@ -455,18 +497,21 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       returnBy: pack.returnBy,
       status: pack.status,
       passes: pack.passes,
-      completeness: bidCompleteness(pack),
+      completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId)),
     }));
 
   const drafting = packs.filter((pack) => pack.status === 'DRAFTING').length;
   const outstanding = packs.reduce((sum, pack) => sum + pack.completeness.unanswered.length, 0);
+  const waived = packs.reduce((sum, pack) => sum + pack.completeness.waived.length, 0);
 
   return {
     packs,
     summary:
       packs.length === 0
         ? 'No bid response pack has been planned on this project.'
-        : `${packs.length} pack(s), ${drafting} still drafting, ${outstanding} deliverable(s) with no response yet.`,
+        : `${packs.length} pack(s), ${drafting} still drafting, ${outstanding} deliverable(s) with no response yet` +
+          (waived > 0 ? `, ${waived} waived` : '') +
+          '.',
   };
 }
 
@@ -477,5 +522,5 @@ export function bidResponsePack(
 ): BidResponsePack & { completeness: BidCompleteness } {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
   const pack = requirePack(ctx, packId);
-  return { ...pack, completeness: bidCompleteness(pack) };
+  return { ...pack, completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId)) };
 }

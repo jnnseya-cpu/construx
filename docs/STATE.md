@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,499 passing, 0 failing, 0 skipped, across 303 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,516 passing, 0 failing, 0 skipped, across 304 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20431,3 +20431,56 @@ Twenty-one tests on the engine, six on the wiring. Among them: every published
 symbol reads back, every unit round-trips through its dimension's base without
 drift, and the imperial factors agree with each other — a square foot has to be
 a foot squared or areas and lengths will disagree on the same drawing.
+
+## A requirement nobody is answering, on purpose
+
+`REQ-009` of the Level 7 specification: *only authorised roles may waive
+configured requirements; the waiver stores authority, reason, scope and expiry.*
+
+The event it exists to end is the most dangerous one in bidding and the least
+visible. On every large tender somebody decides not to answer something — the
+certificate cannot be got in time, the question asks for a reference the
+business will not give, the schedule wants a figure nobody will commit to. The
+decision is real and it is made by somebody senior, and it leaves no trace,
+because **not answered because we decided not to** and **not answered because
+nobody has got to it** look identical on every list of requirements. That is the
+difference between a considered risk and a missed requirement, and it surfaces
+at the moment the submission is marked down.
+
+**It is an approval.** `ESTIMATE_TENDER` `A`, the same authority that issues the
+response pack, and `REQUIREMENT_WAIVED` is `aiAllowed: false`. Deciding a bid
+goes in without something the buyer asked for is a judgement about what this
+business will lose the job over, and no agent mandate reaches it.
+
+**Four refusals, and what each is for.**
+
+- A reason under twenty characters. The question after a lost tender is always
+  why question 14 was not answered, and "waived" is not an answer to it.
+- An expiry after the return date (`WAIVER_OUTLIVES_TENDER`) or in the past. A
+  waiver is scoped to one submission; one still running afterwards governs
+  nothing and reads as covering the next bid.
+- A second live waiver on the same requirement. Two reasons on the record and no
+  way to tell which the decision was made on.
+- A waiver over a line the platform can already evidence. That would record a
+  deliberate omission where there is a complete answer, and the next person to
+  read the matrix would believe it.
+
+**It does real work rather than annotating a row.** The bid response pack reads
+live waivers when it is planned *and* every time its completeness is computed,
+so a waiver granted halfway through drafting takes the deliverable out of the
+outstanding list, and one revoked or expired puts it straight back. Freezing the
+decision at plan time would let an expired waiver carry a submission through the
+issue check weeks after it stopped applying.
+
+**A waived deliverable is never counted as an answered one.** `waived` is a
+separate field on the completeness report and never folds into `written`. A pack
+that counted it as answered would tell the person signing the submission that it
+is complete.
+
+A revoked waiver stays on the record with who reversed it and why. Erasing it
+would leave a submission whose compliance matrix cannot explain itself.
+
+Three routes under `/v1/pipeline/analyses/:analysisId/waivers`, a register
+counting live mandatory waivers separately because that is the number a bid
+director reads first, and two doors inside the matrix panel on Pipeline & Bids.
+Seventeen tests.

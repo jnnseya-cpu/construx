@@ -454,6 +454,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The invitation read properly: every requirement with an owner, and the
   // commercial terms assessed against what this business can actually carry.
   def('ITT_ANALYSED', 'ITTAnalysis', 'CREATE', 'PROCUREMENT'),
+  // A requirement consciously not answered.
+  //
+  // The most dangerous event in bidding is somebody deciding not to answer a
+  // mandatory question and nobody knowing. It happens on every large tender and
+  // it is invisible, because the absence of an answer looks exactly like an
+  // answer nobody has written yet. A waiver turns that decision into a record
+  // with a name, a reason and an end date on it — which is the only difference
+  // between a considered risk and a missed requirement.
+  //
+  // `aiAllowed: false`, and not as a formality. Deciding that a submission will
+  // go in without something the buyer asked for is a commercial judgement about
+  // what this business is prepared to lose the job over, and no agent mandate
+  // reaches it.
+  def('REQUIREMENT_WAIVED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  def('REQUIREMENT_WAIVER_REVOKED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   // The bid response pack: the half of a tender the platform could read and not
   // write. Planned by a person from a stored analysis, written one section at a
   // time so no single call carries a whole submission, and issued by a person
