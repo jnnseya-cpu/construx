@@ -204,6 +204,13 @@ escalation path.
 Seven domain engines exist today (`backend/src/engines/`) `[BUILT]`. The agent layer
 wraps them with memory, triggers and escalation.
 
+> **The `[NEW]` markers below are stale and are kept for the reasoning, not the
+> status.** The agent layer was built: `backend/src/agents/registry.ts` holds 81
+> agents across nine divisions, each declaring its capability area, memory
+> access, ACU tier, human-in-the-loop mode and mandate ceiling. See
+> [§18](#18-agent-depth-autonomy-and-the-automation-boundary) for what is
+> actually built, measured from the repository, and `docs/STATE.md` for counts.
+
 ### 5.1 Agent contract `[NEW]`
 
 Every agent declares the same interface, so orchestration, budgeting and audit
@@ -941,6 +948,529 @@ built; the third cannot be built.
 verifiable record of how an asset came to exist is not — because it cannot be
 back-filled. Every month a project runs on CONSTRUX, the cost of leaving rises,
 and the value of the record to owners, insurers and regulators compounds.
+
+---
+
+## 18. Agent depth, autonomy and the automation boundary
+
+> **Where this section came from.** An external assessment of how deep AI agents
+> can genuinely go across end-to-end construction and project management. It is
+> merged here rather than filed separately, and every claim in it is annotated
+> against what this repository actually contains. Where the assessment proposes
+> something CONSTRUX already has, the mechanism is named. Where it proposes
+> something CONSTRUX does not have, it is marked `[NEW]` and is not claimed.
+> Counts in this section were measured from the repository, not estimated.
+
+### 18.1 The conclusion, and why it is not "an AI project manager"
+
+AI agents can become exceptionally deep across end-to-end construction and
+project management — but they should not be designed as digital assistants that
+answer questions and draft documents.
+
+The strongest model is an **agentic project operating system** in which
+specialist agents continuously: understand the contract and the employer's
+requirements; structure the scope; develop and challenge the bid; create the
+baseline; monitor live delivery evidence; detect deviation; quantify time, cost,
+risk and contractual consequence; initiate controlled workflows; produce
+decision-ready recommendations; and learn from the final outcome.
+
+The critical distinction is one line:
+
+> **AI may perform most of the information work. Accountable people must retain
+> control of irreversible decisions.**
+
+That is not an aspiration here. It is enforced in three independent places, and
+each of them is tested:
+
+| The rule | Where it lives | Measured today |
+|---|---|---|
+| A governance act may not be performed by a machine | `aiAllowed: false` on the event type, `backend/src/goldenthread/eventTypes.ts` | **646 of 766** event types refuse an AI actor outright |
+| An agent may not act unattended beyond its declared ceiling | `mandate.maxUnattended`, `backend/src/agents/registry.ts` | **70** agents stop at OBSERVE, **9** at PROPOSE, **2** are ACT-*eligible* |
+| ACT-eligibility confers nothing until a human grants a bounded envelope | `backend/src/agents/mandate.ts` | Grants are command-listed, value-capped and time-bounded; `MAX_ENVELOPE_DAYS = 366` |
+
+`[BUILT]`
+
+### 18.2 Six depths of construction AI, and where CONSTRUX sits
+
+| Level | AI behaviour | Construction example | CONSTRUX |
+|---|---|---|---|
+| 1. Retrieval | Finds and explains information | "Show all clauses governing delay notices" | `[BUILT]` — clause register, obligation calendar |
+| 2. Production | Creates a requested output | Draft method statement, programme narrative, tender response | `[BUILT]` — document engine, bid response pipeline |
+| 3. Analysis | Compares evidence and identifies issues | Discrepancy between BoQ, drawings and specification | `[BUILT]` — scope-to-price reconciliation, cross-consistency validation |
+| 4. Workflow execution | Performs several controlled actions | Create RFI, assign owner, set deadline, monitor response | `[BUILT]` — agent findings raise proposals with owners and deadlines |
+| 5. Autonomous coordination | Pursues an objective across systems | Investigate slippage, obtain evidence, propose recovery | `[BUILT in part]` — the morning briefing coordinates across engines; external systems are `[NEW]` (§8 connectors) |
+| 6. Governed operational autonomy | Executes approved low-risk decisions | Issue reminders, update forecasts, release approved information | `[BUILT — narrow]` — 2 of 81 agents are ACT-eligible, and only inside a granted envelope |
+
+Most construction software sits between levels 1 and 2. CONSTRUX operates
+routinely at 3 and 4, selectively at 5, and uses 6 only for tightly bounded,
+reversible actions. That last sentence is a design commitment, not a limit
+waiting to be lifted: **autonomy increases through demonstrated reliability, not
+by making the model more verbally confident.**
+
+#### The real ceiling
+
+An agent can become extremely good at reading, cross-referencing, calculating,
+monitoring, checking completeness, tracing causation, drafting, forecasting,
+coordinating, escalating and preserving evidence.
+
+It remains fundamentally limited where success requires physical inspection that
+has not been digitally captured, professional engineering judgement, subjective
+negotiation, leadership under uncertainty, statutory appointment, acceptance of
+legal liability, safety-critical intervention, commercial authority to commit
+money, or the signing of certificates and binding contractual communications.
+
+Under CDM 2015 the principal contractor must possess the necessary skills,
+knowledge, experience and organisational capability, and must plan, manage,
+monitor and coordinate the construction phase. An AI system can support those
+duties. It cannot inherit the statutory appointment or the accountability that
+comes with it. ([HSE — principal contractors](https://www.hse.gov.uk/construction/cdm/2015/principal-contractors.htm))
+
+This is why `PRINCIPAL_CONTRACTOR_APPOINTED`, `HANDOVER_ACCEPTED`,
+`PAYMENT_CERTIFIED`, `VARIATION_APPROVED`, `NCR_CLOSED`, `GATE_DECIDED` and
+`USER_ROLE_ASSIGNED` are all `aiAllowed: false`, and why a grant naming one of
+them is refused at grant time as well as at commit time.
+
+### 18.3 Realistic automation, stated as a range and not a promise
+
+With high-quality integrations and disciplined project data, agents could
+realistically automate or materially accelerate:
+
+| Work | Realistic range |
+|---|---|
+| Tender administration and first-draft production | 75–90% |
+| Routine project-control work | 60–80% |
+| Commercial administration | 50–70% |
+| Reporting, evidence classification and document control | 60–85% |
+| Planning analysis and recovery-option development | 40–60% |
+| Safety administration — **not** safety accountability | 20–40% |
+| Final commercial, contractual, technical and safety decisions | 10–30% |
+
+The achievable destination is roughly **70–85% automation of project information
+work** — not 70–85% removal of project professionals. The human organisation
+becomes smaller, faster and more accountable; people move from chasing
+information and compiling reports toward judgement, leadership, negotiation,
+assurance and authorised decisions.
+
+**How CONSTRUX may quote these numbers.** It may not, yet, except as a range
+labelled as an estimate. The platform already computes a real automation
+measure — `automationMeasure` in `backend/src/domain/etablix/commandcentre.ts`,
+classifying every activity as A (autonomous), B (assisted) or C (human), with a
+catalogue-level test that fails the build if an event is added without a class
+so it cannot quietly fall out of the denominator. That measure is scoped to the
+Site Services module. **A platform-wide equivalent is `[NEW]`.** Until it
+exists, the table above is an estimate and is presented as one, because a
+percentage without a denominator is the failure mode that turns an automation
+metric into marketing.
+
+### 18.4 End-to-end agent coverage, stage by stage
+
+#### Stage 1 — Opportunity discovery and bid/no-bid `[BUILT]`
+
+Monitor portals, frameworks and target clients; classify by geography, sector,
+value, scope and contract; compare against capability; examine previous wins,
+losses and margins; identify pass/fail criteria; assess capacity and conflicting
+commitments; identify partners required; estimate bid cost and probability of
+winning; recommend.
+
+The score must not be "likelihood of winning" alone. A dangerous project may be
+winnable and commercially undesirable:
+
+```
+Expected bid value
+  = P(win) × risk-adjusted contribution
+  − bid cost
+  − capacity opportunity cost
+```
+
+Output: pursue, pursue conditionally, partner, seek clarification, or decline —
+each showing evidence, assumptions, unresolved risks and a sensitivity range.
+The ten-factor bid/no-bid algorithm and the tender radar carry this.
+
+#### Stage 2 — Tender ingestion and requirement decomposition `[BUILT]`
+
+Not a PDF summary — a structured tender model over instructions to tenderers,
+employer's requirements, specifications, drawings and revisions, BoQ and
+schedules, contract conditions and amendments, programme constraints, site
+information, surveys, pricing templates, quality questions, social-value
+requirements, bonds and insurance, and submission rules.
+
+It produces a **Requirements Compliance Matrix**, which becomes the bid's
+control spine: requirement, source (document, clause, page), classification,
+mandatory status, owner, evidence required, status, conflict status, submission
+destination, and extraction confidence.
+
+The bid response pipeline plans one response section per deliverable that needs
+prose off exactly this matrix, and refuses to issue a pack where a named
+deliverable has no response or a stated deadline has no date.
+
+#### Stage 3 — Scope intelligence and design coordination `[BUILT]`
+
+Decompose the employer's requirements into systems, assets, work packages,
+locations, disciplines, deliverables, temporary works, testing, interfaces,
+exclusions and assumptions. Then compare drawing against drawing, drawing
+against specification, specification against BoQ, BoQ against programme, design
+requirement against proposed method, and site constraint against planned
+resource.
+
+Valuable findings look like: an item on the drawings and absent from the BoQ;
+testing required by specification and missing from the programme; temporary
+works assumed and not priced; access restrictions incompatible with the proposed
+plant; a long-lead item scheduled after its required-on-site date; different
+quantities across model, drawing and pricing schedule.
+
+**The system must never silently resolve these.** Each becomes a clarification
+question, a bid assumption, a pricing qualification, a design risk, a provisional
+allowance or an interface responsibility — a record with an owner, not a
+correction nobody sees.
+
+#### Stage 4 — Estimating and commercial bid development `[BUILT]`
+
+Quantities and rates from BoQ, BIM objects, drawings, historic projects,
+supplier quotations, labour constants, plant outputs, location factors,
+escalation, logistics, duration and risk allowance — preserving the anatomy of
+every price:
+
+```
+Tender price = direct cost + preliminaries + temporary works
+             + risk allowance + overhead + profit + tax
+```
+
+Every number carries lineage: source, date, currency, location, quantity basis,
+productivity assumption, quotation validity, exclusions, escalation basis,
+confidence and human approval.
+
+**The agent must challenge the bid**, searching for double counting, missing
+scope, arithmetic inconsistency, optimistic productivity, expired quotations,
+insufficient supervision, mismatched currencies, unpriced interfaces,
+misapplied mark-ups, cash-flow exposure, negative working-capital periods,
+retention and bond cost, uncapped liability, delay damages and design-development
+exposure. Then run the expected case, the optimistic case, the P80 risk case,
+delayed mobilisation, supplier inflation, low productivity, acceleration and
+client-payment delay.
+
+#### Stage 5 — Contract and risk intelligence `[BUILT]`
+
+The contract stops being a document and becomes an executable obligation model.
+Each obligation is a controlled object: responsible party, trigger event,
+required action, notice period, time bar, communication method, approval
+requirement, evidence, consequence of non-compliance, current status.
+
+Monitored events include late information, instructed change, restricted access,
+differing site conditions, delayed possession, non-conforming work, employer
+prevention, subcontractor default, force majeure and testing failure. On each,
+the agent determines what happened, which evidence supports it, which clauses may
+apply, whether notice is required, the deadline, the likely time and cost effect,
+what evidence is still missing, and who must approve the communication.
+
+It may draft a notice. Issuing one is `aiAllowed: false` and passes through an
+authorised commercial gate.
+
+#### Stage 6 — Programme generation and challenge `[BUILT]`
+
+Generating a programme is the easy half. The deeper capability is
+**interrogation**: open-ended activities, excessive constraints, missing
+predecessors or successors, impossible sequencing, procurement disconnected from
+installation, design disconnected from approval, inadequate commissioning logic,
+hidden negative float, unrealistic calendars, resource over-allocation,
+unsupported productivity and excessive critical-path sensitivity.
+
+Modelled: baseline, tender programme, contract programme, look-ahead, update,
+recovery programme, what-if scenarios and time-impact analysis.
+
+#### Stage 7 — Tender production and submission control `[BUILT]`
+
+The composer develops the executive summary, technical solution, methodology,
+mobilisation, logistics, design management, procurement strategy, programme
+narrative, quality plan, health and safety response, environmental and
+social-value response, risk schedule, qualifications and assumptions,
+organisation chart, responsibility matrix, case studies and CVs.
+
+It must not simply generate persuasive text. Every claim needs a verified
+evidence object behind it. "We achieved 98% on-time delivery" requires an
+approved source before it may enter a submission.
+
+Before submission, validate every mandatory field, filename convention, page and
+word limit, file format, signature, pricing reconciliation, contradictory
+answer, expired certificate, unapproved assumption, portal completeness and
+upload confirmation. This is where AI prevents expensive administrative
+disqualification.
+
+### 18.5 From winning the bid to delivering it `[BUILT]`
+
+The bid must not die as a collection of PDFs. On award, approved bid objects
+convert directly into the delivery baseline:
+
+| Bid object | Delivery object |
+|---|---|
+| Tender programme | Contract baseline programme |
+| Bid risk | Live project risk |
+| Price build-up | Cost budget and control account |
+| Assumption | Validation or change trigger |
+| Qualification | Contract reconciliation item |
+| Supplier quotation | Procurement package |
+| Method statement | Controlled delivery method |
+| Employer requirement | Compliance obligation |
+| Promised KPI | Performance commitment |
+| Resource plan | Mobilisation demand |
+| Cash-flow model | Project cash baseline |
+
+This bid-to-delivery continuity is the strongest competitive advantage available
+to CONSTRUX, and it is the one thing a competitor cannot back-fill. The UK
+Construction Playbook treats assessment, procurement and delivery as connected
+concerns for exactly this reason.
+([UK Government Construction Playbook](https://www.gov.uk/government/publications/the-construction-playbook))
+
+### 18.6 Live construction-stage agents
+
+**Project controls** `[BUILT]` — continuously reconciles baseline against actual,
+planned against earned, cost incurred against value earned, forecast against
+budget, labour planned against deployed, quantities planned against installed,
+procurement required against delivered, and risk allowance against exposure.
+It raises an event when a tolerance is breached rather than waiting for the
+monthly report.
+
+**Field evidence** `[BUILT]` — turns diaries, voice notes, photographs, video,
+delivery tickets, labour returns, weather records, inspection forms, geolocation
+and timestamps into structured evidence connected to location, work package,
+activity, asset, contractor, defect, progress quantity, delay event and payment
+item. Drone data and equipment telemetry are `[NEW]`.
+
+**Progress verification** `[BUILT in part]` — triangulates rather than trusting a
+self-reported percentage:
+
+```
+Verified progress = f(installed quantity, visual evidence, inspection acceptance,
+                      labour deployment, materials consumed, programme logic)
+```
+
+A contractor reporting 80% while inspections show 50%, material consumption
+supports 55% and photographs support 60% should trigger a confidence-weighted
+challenge. Productivity against baseline and design readiness are built; the
+full six-input weighting is `[NEW]`.
+
+**Change and variation** `[BUILT]` — detects potential change from instructions,
+RFIs, drawing revisions and site events; compares revised scope against the
+contractual baseline; identifies affected quantities and activities; reserves
+rights; opens a change record; requests missing substantiation; estimates time
+and cost consequence; monitors quotation and determination deadlines; and
+updates the forecast only after defined approval.
+
+**Payment** `[BUILT]` — ingests applications, compares claimed work against
+verified progress, validates rates, checks materials on and off site, applies
+retention, reconciles previous certificates, identifies disputed items, drafts
+the assessment and forecasts cash. Certification stays with the authorised
+professional; the payment cycle refuses over-certification, double certification
+and overpayment at the domain level.
+
+**Procurement** `[BUILT]` — generates package scope, identifies qualified
+suppliers, issues controlled enquiries, compares bids like for like, detects
+exclusions, normalises currencies and commercial terms, analyses capacity and
+risk, prepares the recommendation and tracks design, manufacture, inspection,
+shipping and delivery. Appointment and contractual commitment stay
+approval-gated.
+
+**Safety and compliance** `[BUILT]` — reviews RAMS completeness, monitors permit
+expiry, identifies training gaps, detects recurring observations, cross-checks
+method statements against planned activities, escalates missing inspections and
+prepares briefings. Hazard detection from photographs is `[NEW]`.
+
+> It must never be marketed as replacing competent safety professionals or
+> direct site supervision. Closing a safety-critical defect is `aiAllowed:
+> false`, and no envelope may cover it.
+
+### 18.7 Commissioning, handover and O&M `[BUILT]`
+
+Handover control begins at mobilisation, not at practical completion. For every
+asset and system: required submittals, design approval, installation evidence,
+inspection, testing, commissioning, defect closure, training, certification,
+warranty, spare parts, operating procedure, asset data and final model status —
+with a live completeness score that forecasts whether handover will fail before
+the contractual date.
+
+After completion the same project knowledge becomes the operational asset twin:
+warranty monitoring, maintenance scheduling, failure prediction, document
+retrieval, energy-performance comparison, defect trends, lifecycle-cost
+forecasting and replacement planning. This is how concept-through-thirty-year
+O&M is covered credibly rather than by adding an O&M chatbot.
+
+### 18.8 The agent organisation
+
+Not dozens of independent agents competing with one another. Seven domain
+engines with controlled sub-agents, which is what
+`backend/src/agents/registry.ts` holds today — **81 agents across nine
+divisions**, each declaring its capability area, memory access, ACU tier,
+human-in-the-loop mode and mandate ceiling:
+
+1. **Tender and commercial** — opportunity, compliance, estimating, bid
+   composer, submission control
+2. **Planning and delivery** — programme, progress, recovery, constraint
+3. **Resource and cost** — resource, cost, cash-flow, productivity
+4. **Risk, safety and compliance** — risk, safety assurance, regulatory, audit
+5. **BIM and digital twin** — model validation, quantity, asset, spatial
+   coordination
+6. **Contracts and claims** — obligation, notice, change, entitlement and quantum
+7. **Handover and O&M** — commissioning, handover, asset information, lifecycle
+
+Above them sits one executive orchestrator — `morningBriefing` in
+`backend/src/agents/briefing.ts`. It does not replace the project director. It
+consolidates the project position, resolves routine cross-engine coordination
+and presents the decisions that need human authority.
+
+### 18.9 What makes an agent deep rather than superficial
+
+Nine foundations, each with its status here measured rather than asserted:
+
+| # | Foundation | Status |
+|---|---|---|
+| 1 | **Structured project state** — organisations, people, contracts, clauses, projects, locations, assets, packages, activities, costs, risks, documents, communications, decisions, approvals | `[BUILT]` — **344 entity types**. Without this, AI is only searching documents |
+| 2 | **Event spine** — every significant action an immutable event, giving causation, chronology and auditability | `[BUILT]` — **766 event types**, hash-chained, one write path |
+| 3 | **Temporal reasoning** — what was known, when it became known, which revision was current, what decision used it, what changed after | `[BUILT]` — a chatbot that always reads the latest file destroys the historic position a claim depends on |
+| 4 | **Provenance** — verified fact, extracted fact, calculation, assumption, prediction, recommendation and human decision kept distinct | `[BUILT]` — a finding that cannot name its source is an opinion, and opinions are not stored as facts |
+| 5 | **Contract awareness** — reasoning within the project's actual contract, not generic construction knowledge | `[BUILT]` — the same site event produces different rights, processes and time bars under different forms and bespoke amendments |
+| 6 | **Tool execution** — document management, CDE, BIM, estimating, scheduling, ERP, accounting, procurement, email, workflow, field applications, sensors | `[BUILT in part]` — internal engines and the field application are live; the external connector ecosystem is `[NEW]` (§8) |
+| 7 | **Memory** — project facts, organisational policy, approved lessons, user preference, working context, kept apart | `[BUILT]` — three layers, `PROJECT`, `ORGANISATION`, `ASSET`, with read and write declared separately per agent. The estimating agent reads the rate library and does not edit it |
+| 8 | **Evaluation** — tested against a specialist benchmark | `[BUILT]` — the gold set grades only what has a right answer fixed by statute, standard or arithmetic, and the harness refuses to score judgement rather than printing a number nobody can check |
+| 9 | **Permission and approval control** — authority depending on action type, value, contractual consequence, safety consequence, reversibility, confidence, role and stage | `[BUILT]` — permission matrix, ABAC attributes, phase gates, mandate ceilings and envelope grants |
+
+**Unverified AI output must never become institutional truth automatically.** An
+agent writing organisation memory is changing what every future project on every
+other job will be told, which is why write access is declared per layer and per
+agent rather than assumed.
+
+### 18.10 The autonomy model
+
+| Action class | AI authority | Enforced by |
+|---|---|---|
+| Read, extract, organise | Autonomous | Capability area read codes |
+| Calculate using approved rules | Autonomous with audit log | Engine arithmetic; the model does not overwrite it |
+| Draft documents | Autonomous drafting | Draft state; nothing issued |
+| Send routine reminders | Autonomous within policy | Alert routing |
+| Create internal workflow records | Autonomous | `aiAllowed: true` events |
+| Update unapproved forecast | Permitted and clearly labelled | AI authorship marked on the record |
+| Issue RFI | Human approval initially; conditional autonomy later | Proposal queue, then an envelope |
+| Issue contractual notice | Authorised human approval | `aiAllowed: false` |
+| Approve variation | Human only | `aiAllowed: false` |
+| Commit supplier expenditure | Human only | `aiAllowed: false` |
+| Certify payment | Human only | `aiAllowed: false` |
+| Change approved baseline | Human only | `aiAllowed: false` |
+| Approve design or temporary works | Competent authorised person only | `aiAllowed: false` |
+| Close safety-critical defect | Competent authorised person only | `aiAllowed: false` |
+| Stop work | AI may urgently recommend and escalate; formal authority follows site arrangements | Finding severity `URGENT` |
+
+`[BUILT]`. The ladder is `OBSERVE → DRAFT → PROPOSE → ACT`, and only the last
+rung needs a mechanism, because only the last rung removes the human.
+Revocation takes effect on the next tick: an act already executing completes and
+is recorded. Claiming the platform can interrupt a command mid-write would be a
+safety story that is not true, and a narrow true one is worth more.
+
+### 18.11 Quality targets, measured operationally
+
+Performance is measured by operational result, not by response quality.
+
+**Bidding.** Mandatory-requirement recall above 99%; zero unapproved commercial
+figures; zero unsupported corporate claims; 100% traceability for material
+pricing assumptions; tender reconciliation variance inside a defined tolerance;
+complete submission validation before upload.
+
+**Delivery.** Notice-deadline recall above 99%; progress-forecast calibration by
+package; early-warning precision; reduction in aged RFIs; reduction in
+unrecorded change; reduction in payment-assessment cycle time; improved handover
+completeness trajectory; measurable reduction in manual reporting hours.
+
+**A lower-confidence agent must abstain and escalate rather than invent
+certainty.** `confidenceFloor` is declared per agent and the finding is withheld
+below it.
+
+Status: the refusal behaviours are `[BUILT]`; the *published* target dashboard
+against these figures is `[NEW]`, and no figure above is claimed as achieved.
+
+### 18.12 The failure modes
+
+The system fails if CONSTRUX relies on:
+
+- one general-purpose agent;
+- document chat without structured data;
+- uncontrolled access to email and contractual communication;
+- progress percentages entered without evidence;
+- current documents without historic revision context;
+- AI-generated estimates without source lineage;
+- automatic learning from unverified project records;
+- many agents with no common project state;
+- confidence scores produced only by the model itself;
+- promises of replacing project managers.
+
+**The most dangerous error is not hallucinated prose. It is a plausible but
+incorrect action entering the live contractual, commercial or safety process.**
+That is the failure the closed event catalogue, the mandate ceiling and the
+envelope grant exist to prevent, and it is why the injection case is the one the
+evaluation harness was built for.
+
+NIST's AI Risk Management Framework, and its generative-AI profile, put
+trustworthiness into design, development, use and evaluation rather than into a
+disclaimer. That governance thinking applies directly here, particularly for
+critical infrastructure.
+([NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework))
+
+### 18.13 The assessment
+
+CONSTRUX can become one of the deepest agentic construction platforms if it is
+positioned as:
+
+> **A contract-aware, evidence-driven, multi-agent operating system that controls
+> the continuity between tender promise, delivery reality and asset
+> performance.**
+
+The differentiator is not "we have more AI agents". It is that:
+
+- every tender requirement becomes a controlled obligation;
+- every bid assumption becomes a monitored delivery condition;
+- every price becomes a live cost-control basis;
+- every programme commitment becomes measurable;
+- every site event is connected to time, cost, risk and contract;
+- every decision retains its source evidence and approval history;
+- every installed asset becomes part of the operational digital twin.
+
+| Area | Potential depth | Recommended autonomy |
+|---|---|---|
+| Opportunity qualification | Very high | High |
+| Tender compliance | Very high | High |
+| Bid drafting | Very high | Medium-high |
+| Estimating | High | Medium |
+| Contract analysis | High | Medium |
+| Programme analysis | High | Medium |
+| Procurement administration | High | Medium |
+| Progress intelligence | High with field evidence | Medium |
+| Change administration | Very high | Medium |
+| Commercial approval | Moderate | Low |
+| Safety administration | High | Low |
+| Engineering approval | Supportive only | Very low |
+| Handover control | Very high | High |
+| O&M intelligence | Very high | Medium-high |
+
+**AI agents perform the project-control labour. Competent humans exercise
+project authority.**
+
+### 18.14 What this section adds to the build queue
+
+Everything above marked `[NEW]`, gathered so it is not mistaken for built:
+
+1. **A platform-wide automation measure.** `automationMeasure` exists and is
+   honest, and covers Site Services only. Extending the A/B/C classification
+   across the whole event catalogue — with the same build-failing test that
+   refuses an unclassified event — is what would let CONSTRUX quote an
+   automation percentage at all.
+2. **The external connector ecosystem** (§8). Internal engines and the field
+   application are live; ERP, accounting, external CDE, email and sensor feeds
+   are not.
+3. **Six-input progress triangulation.** Productivity against baseline and design
+   readiness are built. The confidence-weighted challenge across all six inputs
+   is not.
+4. **Drone data, equipment telemetry and photographic hazard detection.**
+5. **A published quality-target dashboard** against §18.11, so recall and
+   calibration are reported rather than asserted.
+
+None of these blocks a paying customer. Each is a named gap rather than an
+implied capability, which is the only way this document stays worth reading.
 
 ---
 

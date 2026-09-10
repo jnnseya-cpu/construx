@@ -20261,3 +20261,32 @@ responses and `undefined` / `NaN` / `[object Object]` / `Invalid Date` in
 rendered text. This was the only defect the sweep found; every other identity
 and screen came back clean. The fix is verified by re-running the sweep, not by
 reading the diff.
+
+## The agent-depth assessment, merged rather than filed
+
+An external assessment of how deep AI agents can genuinely go across end-to-end
+construction and project management arrived as a standalone document. It is now
+`§18` of `docs/ai-os-blueprint.md` rather than a separate file, because a second
+document making claims about this platform is a second place for those claims to
+drift.
+
+Merging it meant annotating every claim against the repository rather than
+pasting it. Three numbers in it were measured, not estimated:
+
+- **646 of 766** event types carry `aiAllowed: false`. That is the mechanism
+  behind the assessment's central line — AI may perform the information work,
+  people must keep control of irreversible decisions.
+- **70** agents stop at `OBSERVE`, **9** at `PROPOSE`, and **2** are ACT-*eligible*
+  — `itt-register` and `health` — which confers nothing until somebody grants a
+  command-listed, value-capped, time-bounded envelope.
+- **344** entity types and **81** agents across nine divisions.
+
+Where the assessment proposes something that does not exist, `§18.14` names it
+instead of implying it: a platform-wide automation measure (the honest A/B/C one
+covers Site Services only), the external connector ecosystem, six-input progress
+triangulation, drone and telemetry capture with photographic hazard detection,
+and a published quality-target dashboard. None blocks a paying customer.
+
+`§5`'s `[NEW]` markers on the agent layer were stale — the layer was built — and
+now carry a note pointing at `§18` and at this file for counts. The reasoning in
+`§5` is kept; only the status pointer changed.
