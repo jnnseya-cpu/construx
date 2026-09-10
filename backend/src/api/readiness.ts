@@ -380,7 +380,18 @@ export function readiness(now = new Date()): Readiness {
       label: 'Off-host backup',
       // Critical in the sense that matters: the record is the product, and a
       // copy on the same disk survives a bad deploy and nothing else.
-      critical: true,
+      //
+      // Unless the operator has written down that they are running without one.
+      // That does not make the risk smaller and nothing here pretends it does —
+      // the state stays NOT_SET and the detail says the same sentence it always
+      // said. What changes is that a decision somebody made and recorded stops
+      // being reported as a decision nobody has made yet, which is the
+      // difference between a warning that can be answered and one that is
+      // learned and scrolled past, taking the next one with it.
+      critical: !(
+        (config.objectStore.endpoint === '' || config.objectStore.bucket === '') &&
+        config.backup.offhostAccepted.trim() !== ''
+      ),
       state:
         config.objectStore.endpoint === '' || config.objectStore.bucket === ''
           ? 'NOT_SET'
@@ -389,13 +400,16 @@ export function readiness(now = new Date()): Readiness {
             : 'DEGRADED',
       detail:
         config.objectStore.endpoint === '' || config.objectStore.bucket === ''
-          ? 'No object store, so the record exists on this host only. The deploy script copies it onto the same disk before each deploy, which survives a bad deploy and not a lost volume.'
+          ? 'No object store, so the record exists on this host only. The deploy script copies it onto the same disk before each deploy, which survives a bad deploy and not a lost volume.' +
+            (config.backup.offhostAccepted.trim() !== ''
+              ? ` Accepted, in the operator's own words: "${config.backup.offhostAccepted.trim()}" — recorded rather than silenced, and no copy is made anywhere as a result.`
+              : '')
           : config.backup.intervalMinutes <= 0
             ? 'An object store is configured and BACKUP_INTERVAL_MINUTES is 0, so nothing ships the record to it.'
             : config.ledger.journalPath === ''
               ? 'An object store is configured and there is no journal to ship.'
               : `Every journal file and the site media are shipped to the object store as a stamped set every ${config.backup.intervalMinutes} minutes; the newest ${config.backup.keep} sets are kept there. The watch fires when a set is missed.`,
-      env: ['BACKUP_INTERVAL_MINUTES', 'BACKUP_KEEP', 'BACKUP_PART_MB', 'BACKUP_PREFIX', 'OBJECT_STORE_ENDPOINT', 'OBJECT_STORE_BUCKET'],
+      env: ['BACKUP_INTERVAL_MINUTES', 'BACKUP_KEEP', 'BACKUP_PART_MB', 'BACKUP_PREFIX', 'OBJECT_STORE_ENDPOINT', 'OBJECT_STORE_BUCKET', 'BACKUP_OFFHOST_ACCEPTED'],
     },
     {
       key: 'public.url',

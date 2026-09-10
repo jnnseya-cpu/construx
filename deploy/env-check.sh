@@ -89,8 +89,17 @@ echo "Fit to hold a paying customer"
 # answer is the same before a deploy as after one. A screen nobody has opened
 # yet is not a check.
 report critical EVIDENCE_MASTER_KEY      "evidence stored in the clear — a stolen volume or a backup copy is a readable archive of every customer's photographs, signed instructions and scanned contracts"
-report critical OBJECT_STORE_ENDPOINT    "no off-host backup — the record exists on this host only, and a lost volume is a lost company"
-report critical OBJECT_STORE_BUCKET      "no off-host backup — the endpoint alone ships nothing"
+# An operator who has read the consequence and written down that they are
+# running without an off-host copy is reported as having decided, not as having
+# a gap. The risk is restated either way — the acceptance changes who is being
+# asked a question, not what is true.
+if is_set BACKUP_OFFHOST_ACCEPTED; then
+  echo "  noted    OBJECT_STORE_*                   running without an off-host backup is recorded as accepted in BACKUP_OFFHOST_ACCEPTED."
+  echo "           The record still exists on this host only, and a lost volume is still a lost company."
+else
+  report critical OBJECT_STORE_ENDPOINT    "no off-host backup — the record exists on this host only, and a lost volume is a lost company"
+  report critical OBJECT_STORE_BUCKET      "no off-host backup — the endpoint alone ships nothing"
+fi
 report optional TRUSTED_PROXY_CIDRS      "rate limits key on the socket address; behind a proxy that is one bucket for the whole internet, login included"
 
 # Set is not the same as right, and this script cannot tell the difference: it

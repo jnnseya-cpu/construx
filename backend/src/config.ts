@@ -545,6 +545,30 @@ export const config = {
     /** Files go up in parts of this size, so a journal of gigabytes never sits in memory whole. */
     partMb: num('BACKUP_PART_MB', 64),
     prefix: str('BACKUP_PREFIX', 'backups'),
+    /**
+     * A recorded decision to run without an off-host copy, in the operator's
+     * own words.
+     *
+     * Missing off-host backup is reported as blocking, and it should be: the
+     * record is the product and a copy on the same disk survives a bad deploy
+     * and nothing else. But an operator who has read that and decided to run
+     * anyway — on a deployment holding nothing yet, or while a bucket is being
+     * arranged — is then told the same thing every day by a screen that cannot
+     * tell "not yet looked at" from "looked at and accepted". A warning nobody
+     * can answer is a warning everybody learns to scroll past, and the next one
+     * that matters scrolls past with it.
+     *
+     * So the decision is recordable rather than silenceable. Set to the reason,
+     * and the capability stops counting as blocking while continuing to report
+     * exactly what it reported before: NOT_SET, one host, a lost volume is a
+     * lost company. The reason is shown beside it, because an acceptance with
+     * nobody's words on it is indistinguishable from a flag somebody flipped to
+     * make a screen go quiet.
+     *
+     * It configures nothing. No copy is made anywhere as a result of setting
+     * this, and the platform says so on its face.
+     */
+    offhostAccepted: str('BACKUP_OFFHOST_ACCEPTED', ''),
   },
 
   evidence: {

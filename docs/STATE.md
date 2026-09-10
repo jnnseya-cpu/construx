@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,453 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,458 passing, 0 failing, 0 skipped, across 300 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8708,6 +8708,32 @@ check, the restart, confirming a set landed, then the restore drill), and
 itself is still the customer's to create** — that is an account on somebody
 else's service and no commit can make it — but everything between pasting the
 keys and trusting them is now one command that either passes or names the fault.
+
+**Running without an off-host backup, recorded rather than silenced.** Missing
+off-host backup is reported as blocking by three separate things — the readiness
+screen, the `backup_offhost` watch rule and `deploy/env-check.sh` — and none of
+them could tell "nobody has looked at this" from "somebody looked at it and
+decided". An operator who has decided is left with a red line they cannot
+answer, and a warning nobody can answer is one everybody learns to scroll past,
+taking the next one with it.
+
+`BACKUP_OFFHOST_ACCEPTED` is the answer, in the operator's own words. It
+configures nothing and copies nothing. The capability stops counting as blocking
+and the rule declines to judge rather than passing — a green light would be the
+platform claiming a copy exists somewhere, and none does. Everything else is
+unchanged: the state stays `NOT_SET`, the detail still says the record is on one
+host and a lost volume is a lost company, and the acceptance is printed beside
+it so it can be read back and disagreed with. Whitespace is not a reason. A
+configured store ignores the setting entirely. Five assertions in
+`offhostaccepted.test.ts` are about what does *not* change.
+
+**Nothing was ever gated on it.** `/readyz` answers on `platform.health()`, which
+is the ledger's ability to extend the record; the object store appears in the
+`blocking` list on the readiness payload and on the operator's attention list,
+and nowhere else. A deployment without one serves every route, holds evidence on
+its volume and runs the full console. The line was a warning about a real risk,
+never a restriction, and this records the decision rather than removing the
+warning.
 
 **The article the site had no page for, and the two readers it was written
 for.** Eight topics in the marketing library, one per capability a buyer

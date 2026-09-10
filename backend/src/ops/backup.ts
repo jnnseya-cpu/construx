@@ -288,6 +288,18 @@ export function backupPosition(): BackupPosition {
 /** What the standing watch rule judges: whether a set young enough exists, or could. */
 export function backupStanding(now = new Date()): { judged: boolean; breached: boolean; detail: string } {
   if (!store().configured) {
+    // An operator who has read this and written down that they are running
+    // without an off-host copy is not told it again every interval. The rule
+    // declines to judge rather than passing: nothing is being backed up, and a
+    // green light for that would be the platform saying something untrue.
+    const accepted = config.backup.offhostAccepted.trim();
+    if (accepted !== '') {
+      return {
+        judged: false,
+        breached: false,
+        detail: `no object store is configured, and running without one is recorded as accepted: "${accepted}"`,
+      };
+    }
     return isProduction()
       ? { judged: true, breached: true, detail: 'No object store is configured, so the record is on this host only; a lost volume is a lost record' }
       : { judged: false, breached: false, detail: 'no object store is configured on this deployment' };
