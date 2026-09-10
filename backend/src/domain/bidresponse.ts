@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
 import { complianceMatrix, liveWaivers, type MatrixLine, type RequirementWaiver, type StoredITTAnalysis } from './itt.ts';
+import { approvedOn, standingOf, type EvidenceClaim } from './evidenceclaim.ts';
 
 /**
  * The bid response pack: the half of a tender the platform could read but not
@@ -360,6 +361,15 @@ export type BidCompleteness = {
    * answered would tell the person signing the submission that it is complete.
    */
   waived: Array<{ key: string; deliverable: string; mandatory: boolean; reason: string; expiresOn: string }>;
+  /**
+   * Evidence the submission leans on that will not be current when it is read.
+   *
+   * `SUB-003`'s last hard gate: **no expired mandatory evidence at the
+   * submission deadline.** A certificate valid on the day somebody attaches it
+   * and lapsed on the return date is not evidence for that submission, and
+   * checking it against today answers the wrong question.
+   */
+  lapsedEvidence: Array<{ reference: string; claim: string; expiresAt: string; covers: string[] }>;
   written: number;
   total: number;
   summary: string;
@@ -372,7 +382,11 @@ export type BidCompleteness = {
  * gate cannot disagree — a completeness figure computed twice is two figures,
  * and the one somebody trusts is whichever is on screen at the time.
  */
-export function bidCompleteness(pack: BidResponsePack, waivers: RequirementWaiver[] = []): BidCompleteness {
+export function bidCompleteness(
+  pack: BidResponsePack,
+  waivers: RequirementWaiver[] = [],
+  claims: EvidenceClaim[] = [],
+): BidCompleteness {
   // Waivers are read live rather than baked into the pack at plan time, so a
   // waiver granted halfway through drafting takes a deliverable out of the
   // outstanding list, and one revoked or expired puts it straight back. A pack
@@ -398,22 +412,37 @@ export function bidCompleteness(pack: BidResponsePack, waivers: RequirementWaive
   const undated = pack.deadlines.filter((deadline) => !deadline.on).map((deadline) => deadline.what);
   const written = pack.sections.length - outstanding.length;
 
+  // Judged against the return date rather than against today, because that is
+  // the day the buyer reads it. A claim approved this morning and lapsing the
+  // week before return is not evidence for this submission.
+  const returnBy = pack.returnBy.slice(0, 10);
+  const lapsedEvidence = claims
+    .filter((claim) => claim.status === 'APPROVED' && standingOf(claim, returnBy) === 'EXPIRED')
+    .map((claim) => ({
+      reference: claim.reference,
+      claim: claim.claim,
+      expiresAt: claim.expiresAt!,
+      covers: claim.covers,
+    }));
+
   return {
-    ready: unanswered.length === 0 && undated.length === 0,
+    ready: unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0,
     unanswered,
     undated,
     waived,
+    lapsedEvidence,
     written,
     total: pack.sections.length,
     summary:
-      unanswered.length === 0 && undated.length === 0
+      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0
         ? `${written} of ${pack.sections.length} deliverables answered` +
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
-          ' and every stated deadline dated.'
+          ', every stated deadline dated and every claim still evidenced on the return date.'
         : `${written} of ${pack.sections.length} answered` +
           (unanswered.length > 0 ? `, ${unanswered.length} outstanding` : '') +
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
           (undated.length > 0 ? `, ${undated.length} deadline(s) undated` : '') +
+          (lapsedEvidence.length > 0 ? `, ${lapsedEvidence.length} claim(s) evidenced by something that lapses first` : '') +
           '.',
   };
 }
@@ -440,7 +469,7 @@ export function issueBidResponse(
     throw new DomainError('BID_RESPONSE_ISSUED', `${pack.reference} is already issued.`, 409);
   }
 
-  const completeness = bidCompleteness(pack, liveWaivers(ctx, pack.analysisId));
+  const completeness = bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10)));
   if (!completeness.ready) {
     throw new DomainError(
       'BID_RESPONSE_INCOMPLETE',
@@ -450,6 +479,12 @@ export function issueBidResponse(
             `${completeness.unanswered.map((entry) => `${entry.key}${entry.mandatory ? ' (mandatory)' : ''}`).join(', ')}. `
           : '') +
         (completeness.undated.length > 0 ? `Undated: ${completeness.undated.join('; ')}. ` : '') +
+        (completeness.lapsedEvidence.length > 0
+          ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +
+            'when this is read: ' +
+            `${completeness.lapsedEvidence.map((entry) => `${entry.reference} (${entry.expiresAt})`).join(', ')}. ` +
+            'File the current document and assert against that. '
+          : '') +
         'A submission missing a mandatory response is not marked down, it is rejected, and everything else in it is ' +
         'spent for nothing.',
       422,
@@ -497,7 +532,7 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       returnBy: pack.returnBy,
       status: pack.status,
       passes: pack.passes,
-      completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId)),
+      completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10))),
     }));
 
   const drafting = packs.filter((pack) => pack.status === 'DRAFTING').length;
@@ -522,5 +557,8 @@ export function bidResponsePack(
 ): BidResponsePack & { completeness: BidCompleteness } {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
   const pack = requirePack(ctx, packId);
-  return { ...pack, completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId)) };
+  return {
+    ...pack,
+    completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10))),
+  };
 }

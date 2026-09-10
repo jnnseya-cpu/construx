@@ -135,6 +135,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
@@ -3686,6 +3687,76 @@ export const ROUTES: Route[] = [
    * sits on, because a compliance matrix belongs to the tenancy that read the
    * invitation rather than to a project — the same reason `analyses` above is.
    */
+  /*
+   * The evidence registry.
+   *
+   * Tenant-scoped, because a certificate is a company fact rather than a
+   * project one: the same insurance schedule evidences a claim on every bid the
+   * business makes, and filing it once per tender is how three copies drift.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/evidence/claims',
+    readOnly: true,
+    description: 'Every asserted claim, where it stands on a given day, and which of them lapse soon',
+    handler: (platform, ctx) =>
+      evidenceclaim.evidenceRegister(tenantContext(platform, ctx), ctx.query.get('asAt') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/claims',
+    description: 'Assert that a document proves a sentence a submission will make',
+    schema: {
+      type: 'object',
+      required: ['kind', 'claim', 'sourceHash'],
+      properties: {
+        kind: { type: 'string', enum: [...evidenceclaim.CLAIM_KIND] },
+        claim: { type: 'string', minLength: 12 },
+        sourceHash: stringField,
+        uri: stringField,
+        issuedBy: stringField,
+        issuedAt: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        expiresAt: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        covers: { type: 'array', items: stringField },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => evidenceclaim.assertClaim(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/claims/:claimId/verify',
+    description: 'Check the document says what the claim says. Refused if you asserted it, or if it has already lapsed',
+    schema: {
+      type: 'object',
+      required: ['method'],
+      properties: { method: { type: 'string', minLength: 12 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      evidenceclaim.verifyClaim(
+        tenantContext(platform, ctx),
+        ctx.params.claimId as string,
+        body<{ method: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/evidence/claims/:claimId/reject',
+    description: 'Refuse a claim, with the reason. The refusal stays on the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 1 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      evidenceclaim.rejectClaim(
+        tenantContext(platform, ctx),
+        ctx.params.claimId as string,
+        body<{ reason: string }>(ctx),
+      ),
+  },
   {
     method: 'GET',
     pattern: '/v1/pipeline/analyses/:analysisId/waivers',

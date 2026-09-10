@@ -604,6 +604,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
 
   // Evidence and AI
   EvidenceItem: { area: 'EVIDENCE_AUDIT' },
+  // A claim is authored rather than audited: it is a sentence the business
+  // intends to put in front of a buyer, so it sits with the submission it backs.
+  EvidenceClaim: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // What a model read out of a held file. Classified under evidence rather than
   // under the area it will eventually feed, because a draft is not yet a
   // drawing, a take-off or an observation — and until somebody confirms it, it

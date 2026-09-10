@@ -61,6 +61,10 @@ const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
  */
 const TERM_TONE = { BAR: 'bad', SEVERE: 'bad', MATERIAL: 'warn', ROUTINE: '' };
 const MATRIX_TONE = { SATISFIED: 'ok', GAP: 'bad', UNKNOWN: 'warn' };
+// Expired is worse than pending, not merely different: a pending claim is
+// waiting for somebody, and an expired one has been relied on since it stopped
+// being true.
+const CLAIM_TONE = { APPROVED: 'ok', PENDING: 'warn', EXPIRED: 'bad', REJECTED: 'bad' };
 
 /**
  * A status is not a verdict.
@@ -511,7 +515,7 @@ function matrixDetail(analysis, waivers) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices] = await Promise.all([
+  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices, claimRegister] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -524,6 +528,10 @@ export async function pipeline(root) {
     api.get('/v1/permissions/matrix'),
     // Every matrix the tenancy holds, not only one produced in this session.
     api.get('/v1/pipeline/analyses'),
+    // The company's verified claims. Tenant-scoped, because a certificate is a
+    // company fact rather than a project one — the same insurance schedule
+    // evidences a claim on every bid the business makes.
+    api.read('/v1/evidence/claims', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   // The reader is project-scoped: a reading is filed against the project the
@@ -751,6 +759,52 @@ export async function pipeline(root) {
       <!-- The topbar is 54px and sticky, so scrolling this into view without a
            margin puts the matrix's own heading underneath it. -->
       <div id="matrix-detail" style="margin-bottom:14px;scroll-margin-top:68px"></div>
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">Claims the submission can make</h2>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          ${claimRegister?.error ? 'The evidence registry could not be read.' : (claimRegister?.summary ?? '')}
+          A submission is a stack of sentences somebody will score, and one that turns out to be untrue is not marked
+          down — it is thrown out, with everything else in the submission spent for nothing. Each claim here names the
+          document that proves it, who checked, and the day it stops being current. Whoever asserts a claim may not be
+          the one who verifies it.
+        </p>
+        <div style="padding:11px 17px 0">
+          ${commandBar([
+            { id: 'assert-claim', label: 'Assert a claim',
+              permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'verify-claim', label: 'Verify a claim',
+              permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+            { id: 'reject-claim', label: 'Refuse a claim', tone: 'quiet',
+              permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+          ])}
+        </div>
+        ${table({
+          headers: ['Ref', 'Kind', 'Claim', 'Issued by', 'Expires', 'Checked by', 'Standing'],
+          rows: (claimRegister?.claims ?? []).map((claim) => [
+            claim.reference,
+            humanise(claim.kind),
+            claim.claim,
+            claim.issuedBy ?? '—',
+            claim.expiresAt ? date(claim.expiresAt) : html`<span style="font-size:12px;color:var(--text-3)">does not lapse</span>`,
+            claim.verifiedBy ?? '—',
+            badge(humanise(claim.standing), CLAIM_TONE[claim.standing] ?? ''),
+          ]),
+          empty: 'Nothing is registered. A claim in a submission with no evidence behind it is the one that loses the tender.',
+        })}
+        ${
+          (claimRegister?.lapsingSoon ?? []).length > 0
+            ? html`<div class="notice warn" style="margin:11px 17px 15px">
+                <div>
+                  <b>${claimRegister.lapsingSoon.length} claim(s) lapse soon.</b>
+                  ${claimRegister.lapsingSoon.map(
+                    (entry) => html`<div style="margin-top:4px">${entry.reference} — ${entry.claim} · ${entry.daysLeft} day(s) left</div>`,
+                  )}
+                </div>
+              </div>`
+            : ''
+        }
+      </div>
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
@@ -1439,6 +1493,73 @@ export async function pipeline(root) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+
+  const pendingClaims = (claimRegister?.claims ?? []).filter((claim) => claim.standing === 'PENDING');
+  const EVIDENCE_COMMANDS = {
+    'assert-claim': {
+      title: 'Assert a claim',
+      intent:
+        'Name the sentence a submission will make and the document that proves it. Nothing here counts for anything until ' +
+        'somebody else verifies it, and an expiry is what stops a certificate being relied on after it lapses.',
+      path: '/v1/evidence/claims',
+      submitLabel: 'Assert',
+      fields: [
+        { name: 'kind', label: 'Kind', type: 'select',
+          options: ['CERTIFICATE', 'CASE_STUDY', 'KPI', 'CV', 'POLICY', 'ACCREDITATION', 'INSURANCE', 'FINANCIAL',
+            'TEST_RESULT', 'REFERENCE', 'METHOD', 'CALCULATION'].map((kind) => ({ value: kind, label: humanise(kind) })) },
+        { name: 'claim', label: 'The sentence this proves', type: 'textarea', rows: 2,
+          hint: 'As it would appear in a submission — "We achieved 98% on-time delivery across 14 schemes in 2026".' },
+        { name: 'sourceHash', label: 'Document hash', type: 'text',
+          hint: 'The hash of the file already registered as evidence.' },
+        { name: 'issuedBy', label: 'Issued by', type: 'text', required: false },
+        { name: 'issuedAt', label: 'Issued on', type: 'date', required: false },
+        { name: 'expiresAt', label: 'Current until', type: 'date', required: false,
+          hint: 'Leave blank for something that does not lapse. A certificate always lapses.' },
+      ],
+      transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'verify-claim': {
+      title: 'Verify a claim',
+      intent:
+        'Say the document proves the sentence, and how it was checked. Refused if you were the one who asserted it, and ' +
+        'refused over a document that has already lapsed — an approved claim nobody can stand behind is worse than none.',
+      path: (v) => `/v1/evidence/claims/${v.claimId}/verify`,
+      submitLabel: 'Verify',
+      fields: [
+        { name: 'claimId', label: 'Claim', type: 'select',
+          options: pendingClaims.map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
+        { name: 'method', label: 'How it was checked', type: 'text',
+          hint: '"Compared against the insurer\u2019s schedule" is a method. "Yes" is a signature on nothing.' },
+      ],
+      transform: ({ claimId, ...rest }) => rest,
+    },
+    'reject-claim': {
+      title: 'Refuse a claim',
+      intent:
+        'The refusal stays on the record. Without it the next person attaches the same document and the same reviewer ' +
+        'refuses it again.',
+      path: (v) => `/v1/evidence/claims/${v.claimId}/reject`,
+      submitLabel: 'Refuse',
+      fields: [
+        { name: 'claimId', label: 'Claim', type: 'select',
+          options: pendingClaims.map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
+        { name: 'reason', label: 'Why', type: 'text' },
+      ],
+      transform: ({ claimId, ...rest }) => rest,
+    },
+  };
+
+  // The evidence doors sit in their own panel rather than on the page command
+  // bar, because they act on the registry rather than on the pipeline.
+  for (const bar of root.querySelectorAll('.cmd-bar')) {
+    bar.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-command]');
+      if (!button) return;
+      const spec = EVIDENCE_COMMANDS[button.dataset.command];
+      if (!spec) return;
+      if (await command(spec)) await draw();
+    });
+  }
 
   // The waiver doors live inside the matrix panel, which is rendered on demand,
   // so the listener is on the container rather than on the buttons.

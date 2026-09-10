@@ -1378,6 +1378,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
 
   // --- Evidence & integrity -------------------------------------------------
   def('EVIDENCE_REGISTERED', 'EvidenceItem', 'CREATE', 'EVIDENCE', { requiresEvidence: false }),
+  // A claim, and the thing that proves it.
+  //
+  // `EvidenceItem` above is a file with a hash on it. That is enough to prove
+  // nothing was altered and not enough to prove anything was true: it does not
+  // say what the document is offered as evidence *of*, whether anybody checked
+  // it, or when it stops being current. A submission asserting "we achieved 98%
+  // on-time delivery" needs all three, because the sentence is what the
+  // evaluator reads and the certificate is what makes it safe to write.
+  //
+  // Verification is `aiAllowed: false` and asserting is not. Attaching a claim
+  // to a document is clerical and reversible; deciding the document actually
+  // proves the claim is a judgement somebody signs their name to, and the
+  // asserter may not be the verifier.
+  def('EVIDENCE_CLAIM_ASSERTED', 'EvidenceClaim', 'CREATE', 'EVIDENCE', { creates: true, aiAllowed: true }),
+  def('EVIDENCE_CLAIM_VERIFIED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
+  def('EVIDENCE_CLAIM_REJECTED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE'),
 
   // What a model read out of a held file, and what a person did about it. Three
   // events rather than one because a draft that was rejected is as much a part

@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,525 passing, 0 failing, 0 skipped, across 305 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,542 passing, 0 failing, 0 skipped, across 306 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20529,3 +20529,58 @@ sentences say which promise the contract may not carry.
 Nine tests. The existing award lifecycle is untouched: it records an award that
 names its accepted qualifications, so it produces no unresolved ones and
 converts exactly as before.
+
+## A claim, and the thing that proves it
+
+`L7.2` is the property the Level 7 specification says a build cannot claim
+without: *no sentence enters a submission unless it resolves to an evidence
+object with an approved status, enforced by a hard gate rather than a prompt.*
+
+**What existed, and what it was not.** `EvidenceItem` is a file with a hash on
+it, registered beside the event that needed it. That proves nothing was altered.
+It does not prove anything was *true*: it does not say what the document is
+offered as evidence of, whether anybody checked that it says so, or when it
+stops being current.
+
+A submission is a stack of sentences somebody will score. *We achieved 98%
+on-time delivery. We hold ISO 14001. Our public liability cover is £10m.* Each
+one loses the tender if it turns out to be untrue — not marked down,
+disqualified, with everything else in the submission spent for nothing.
+
+**`backend/src/domain/evidenceclaim.ts`.** A claim is its own record: what is
+asserted, what proves it, who checked, and when it stops. It points at an
+`EvidenceItem` rather than duplicating the file, so there is still one answer to
+*where is the certificate*.
+
+**Four rules, each a refusal.**
+
+- **The asserter may not be the verifier.** Attaching a certificate to a
+  sentence is clerical. Deciding it proves the sentence is a judgement, and one
+  person doing both is not a check — the same segregation the payment cycle and
+  the signature ceremony already carry.
+- **Verification cannot be granted over something already lapsed.** An approved
+  claim nobody can stand behind is worse than no claim.
+- **A method, not a signature on nothing.** "Compared against the insurer's
+  schedule" is a method; "yes" is twelve characters short.
+- **A refusal is kept.** Without it the next person attaches the same document
+  and the same reviewer refuses it again.
+
+**The gate, and why it is judged against the return date.** `bidCompleteness`
+now reports `lapsedEvidence`, and the issue check refuses on it. The date it
+judges against is the day the buyer reads the submission, not today: a
+certificate current this morning and gone before the tender returns is not
+evidence for that submission, and asking whether it is valid *now* answers the
+wrong question. That was the bug in the first version of this — the list of
+claims was itself filtered at the return date, which removed exactly the ones
+the check exists to find.
+
+**Why `ESTIMATE_TENDER` and not `EVIDENCE_AUDIT`.** `EVIDENCE_AUDIT` carries `R`
+and `I` in the permission matrix and no role holds `C` or `A` on it, which is
+correct: nobody authors the audit trail. A claim is authored — it is a sentence
+the business intends to put in front of a buyer — so it takes the authority that
+writes the submission it goes into. The matrix is untouched. Asserting is the
+one act here an agent may perform, and nothing it files counts until a person
+verifies it.
+
+Seventeen tests. `consolebindings.test.ts` caught a duplicate binding in the
+console before the suite finished, which is what that invariant is for.
