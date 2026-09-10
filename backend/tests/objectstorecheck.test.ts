@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { after, before, describe, it } from 'node:test';
@@ -334,5 +334,43 @@ describe('the wrapper reads a real .env rather than running it', () => {
     const { status, out } = await wrapper(join(scratch, 'nowhere.env'));
     assert.equal(status, 1);
     assert.match(out, /No .*nowhere\.env here/);
+  });
+
+  it('says where it could run when the host node cannot', async () => {
+    // What the deployment actually did. The platform runs `.ts` with no build
+    // step and the image pins a Node that strips types; the host carried Node
+    // 20 and answered ERR_UNKNOWN_FILE_EXTENSION. The check now tries rather
+    // than assumes, and falls back to the container running the same code.
+    //
+    // Simulated with a node that refuses everything, and a container name
+    // nothing answers to, so both routes are closed and the message is what is
+    // left. It must name the problem rather than print a stack trace.
+    const shim = join(scratch, 'shim');
+    mkdirSync(shim, { recursive: true });
+    writeFileSync(
+      join(shim, 'node'),
+      '#!/bin/sh\ncase "$1" in --version) echo v20.20.2; exit 0 ;; esac\nexit 1\n',
+      { mode: 0o755 },
+    );
+
+    const path = write(`OBJECT_STORE_ENDPOINT=${endpoint}\n`);
+    const child = spawn('bash', [WRAPPER, path], {
+      env: {
+        ...process.env,
+        PATH: `${shim}:${process.env.PATH ?? ''}`,
+        CONSTRUX_CONTAINER: 'construx-no-such-container-for-this-test',
+      },
+    });
+    let out = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { out += chunk; });
+    child.stderr.on('data', (chunk: string) => { out += chunk; });
+    const status = await new Promise<number>((resolve) => child.on('close', (code) => resolve(code ?? -1)));
+
+    assert.equal(status, 1, out);
+    assert.match(out, /Nowhere to run the check/);
+    assert.match(out, /v20\.20\.2/, 'the message does not say which node it found');
+    assert.ok(!out.includes('ERR_UNKNOWN_FILE_EXTENSION'), 'a stack trace reached the operator');
   });
 });

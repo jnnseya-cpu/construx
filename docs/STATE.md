@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,452 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,453 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8679,8 +8679,10 @@ Cloudflare R2 signs against the literal region `auto` and serves path style, and
 each one wrong reads as *the security token is invalid* — an error about
 credentials, for a bug about a region string.
 
-It reads `.env` rather than running it, and that is the correction rather than
-the design. The first version sourced the file and died on the live deployment
+Two corrections landed on it from the deployment itself, and both are recorded
+because each was a check that could not run on the machine it was written for.
+
+It reads `.env` rather than running it, and that is the first. The first version sourced the file and died on the live deployment
 with `line 9: PRIVATE: command not found`, because `SIGNING_PRIVATE_KEY_PEM`
 holds a PEM block spanning several lines and the shell read its second line as a
 command — a preflight that could not run on the one file it exists to read.
@@ -8689,6 +8691,15 @@ running it as a script means a value containing a backtick or `$(...)` executes
 as whoever ran the check, which on a deployment is root. It now parses exactly
 as `config.ts` does, and both properties are asserted against a fixture carrying
 a PEM, a comment, a value full of spaces and a command substitution.
+
+It also runs where a suitable Node is, rather than assuming the host has one.
+The platform runs TypeScript with no build step and the image pins a version
+that strips types; the host does not have to, and this one carries Node 20,
+which answered `ERR_UNKNOWN_FILE_EXTENSION`. The version is now tried rather
+than asserted — a probe file, so the test cannot rot as Node's flags change —
+and where the host cannot, the check runs inside the `construx` container
+against the values in the file rather than the ones that container booted with.
+With neither available it names the problem instead of printing a stack.
 
 `deploy/env-check.sh` now says so where it used to stop at "set", the runbook
 carries *Turning the off-host backup on* end to end (bucket, the six values, the

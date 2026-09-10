@@ -65,4 +65,60 @@ while IFS= read -r line || [ -n "$line" ]; do
   export "$key=$value"
 done < "$ENV_FILE"
 
-exec node "$HERE/../backend/src/cli/objectstore.ts"
+# Run it where a Node that understands TypeScript actually is.
+#
+# The platform is `.ts` with no build step — `CMD ["node", "backend/src/main.ts"]`
+# — and the image pins the version that strips types. The host does not have to:
+# this deployment's host carries Node 20, which answered
+# `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`, so a check that
+# assumed the host could run the code failed on the first machine that mattered.
+#
+# The version is not asserted, it is tried. A probe file settles it in a way
+# that cannot rot as Node's flags change, and the fallback is the container that
+# is already running the exact code this is checking.
+probe_dir="$(mktemp -d)"
+trap 'rm -rf "$probe_dir"' EXIT
+printf 'const ok: string = "ok";\nprocess.stdout.write(ok);\n' > "$probe_dir/probe.ts"
+
+if command -v node >/dev/null 2>&1 && node "$probe_dir/probe.ts" >/dev/null 2>&1; then
+  exec node "$HERE/../backend/src/cli/objectstore.ts"
+fi
+
+# The values the preflight reads, and nothing else. Passed explicitly rather
+# than inherited, because the container is running the *old* environment: the
+# whole point is to test what is in the file now, before a restart makes it the
+# container's. A key absent from the file is passed empty, which `config.ts`
+# treats as unset — so the exec reflects the file exactly rather than falling
+# back to whatever the running process happens to hold.
+#
+# These land in the argv of `docker exec`, which is readable by root on this
+# host through `ps`. That is the same root who can read `.env`, so it grants
+# nothing new; it is said here so the choice is visible rather than assumed.
+CONTAINER="${CONSTRUX_CONTAINER:-construx}"
+PASSED=(
+  OBJECT_STORE_ENDPOINT OBJECT_STORE_REGION OBJECT_STORE_BUCKET
+  OBJECT_STORE_ACCESS_KEY_ID OBJECT_STORE_SECRET_ACCESS_KEY
+  OBJECT_STORE_PATH_STYLE OBJECT_STORE_TIMEOUT_MS
+  BACKUP_PREFIX BACKUP_INTERVAL_MINUTES BACKUP_KEEP
+)
+
+if command -v docker >/dev/null 2>&1 &&
+   [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
+  echo "This host's node cannot run TypeScript, so the check runs inside $CONTAINER,"
+  echo "against the values in $ENV_FILE rather than the ones that container booted with."
+  echo
+  args=()
+  for key in "${PASSED[@]}"; do
+    args+=( -e "$key=${!key-}" )
+  done
+  exec docker exec "${args[@]}" "$CONTAINER" node /srv/backend/src/cli/objectstore.ts
+fi
+
+echo "Nowhere to run the check."
+echo
+echo "The platform runs TypeScript directly, so this needs either a Node that strips types"
+echo "(the image pins one) or the running container to borrow. This host's node is"
+echo "$(node --version 2>/dev/null || echo 'not installed'), and the container '$CONTAINER' is not running."
+echo
+echo "Start the service and run this again, or set CONSTRUX_CONTAINER to the right name."
+exit 1

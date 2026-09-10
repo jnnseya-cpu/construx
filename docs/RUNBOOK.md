@@ -296,6 +296,13 @@ way. On AWS use the real region and `OBJECT_STORE_PATH_STYLE=false`.
 ./deploy/object-store-check.sh /srv/construx/app/.env
 ```
 
+The platform runs TypeScript with no build step, so the check needs a Node that
+strips types. It tries the host's, and where that cannot — this deployment's
+host carries Node 20 and answers `ERR_UNKNOWN_FILE_EXTENSION` — it runs inside
+the `construx` container instead, passing the values from the file rather than
+the ones that container booted with. Set `CONSTRUX_CONTAINER` if yours is named
+differently. With neither available it says so instead of printing a stack.
+
 It writes one small object under `BACKUP_PREFIX/.preflight/`, reads it back,
 compares the bytes, finds it in a listing, deletes it and confirms it is gone —
 then removes it whatever happened. No secret is printed and nothing else in the
