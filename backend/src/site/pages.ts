@@ -15,7 +15,7 @@ import { absolute, cards, cta, jsonLd, organisation, page, pageHead, SITE_PAGES 
 import { addressBlock, businessDetails, emailLink, phoneLink, socialLinks } from './business.ts';
 import { POSTS, longDate } from './posts.ts';
 import { publishedPost, publishedPosts } from './blog.ts';
-import { articleCta, byline, hyperlink, postUrl, readMinutes, setBody, shareBar, wordsOf } from './article.ts';
+import { articleCta, byline, faqOf, hyperlink, postUrl, readMinutes, setBody, shareBar, wordsOf } from './article.ts';
 import type { Platform } from '../platform.ts';
 
 /**
@@ -483,22 +483,58 @@ export function blogPost(slug: string, platform?: Platform): string {
       // A post presented as an untyped page is a page. Declared as a
       // BlogPosting it can appear as an article in a result, with its date, and
       // the headline is what gets shown rather than the browser tab title.
-      jsonLd: jsonLd({
-        '@context': 'https://schema.org',
-        '@type': 'BlogPosting',
-        headline: post.title,
-        description: post.standfirst,
-        datePublished: post.date,
-        url,
-        mainEntityOfPage: { '@type': 'WebPage', '@id': url },
-        image: absolute('/landing-hero.png'),
-        publisher: organisation(),
-        author: organisation(),
-        articleSection: post.tag,
-        wordCount: wordsOf(post.paragraphs),
-        timeRequired: `PT${minutes}M`,
-        ...(post.keyword ? { keywords: post.keyword } : {}),
-      }),
+      jsonLd: [
+        jsonLd({
+          '@context': 'https://schema.org',
+          '@type': 'BlogPosting',
+          headline: post.title,
+          description: post.standfirst,
+          datePublished: post.date,
+          url,
+          mainEntityOfPage: { '@type': 'WebPage', '@id': url },
+          image: absolute('/landing-hero.png'),
+          publisher: organisation(),
+          author: organisation(),
+          articleSection: post.tag,
+          wordCount: wordsOf(post.paragraphs),
+          timeRequired: `PT${minutes}M`,
+          ...(post.keyword ? { keywords: post.keyword } : {}),
+        }),
+        // Where the page sits. A result that shows "construx.com › Blog ›
+        // Governance" instead of a bare address is a result somebody can place
+        // before they click it, and the trail is derived from the post's own
+        // section rather than declared per page.
+        jsonLd({
+          '@context': 'https://schema.org',
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'CONSTRUX', item: absolute('/') },
+            { '@type': 'ListItem', position: 2, name: 'Blog', item: absolute('/blog') },
+            { '@type': 'ListItem', position: 3, name: post.title, item: url },
+          ],
+        }),
+        // The questions this article settles, where its sections ask any.
+        //
+        // An answer engine quotes a question and the passage under it. Declared
+        // here, that pairing is read rather than re-derived — and a post whose
+        // headings are statements declares nothing, which is the honest answer
+        // for an article that does not answer questions.
+        ...(() => {
+          const faq = faqOf(post.paragraphs);
+          if (faq.length === 0) return [];
+          return [
+            jsonLd({
+              '@context': 'https://schema.org',
+              '@type': 'FAQPage',
+              mainEntity: faq.map((entry) => ({
+                '@type': 'Question',
+                name: entry.question,
+                acceptedAnswer: { '@type': 'Answer', text: entry.answer },
+              })),
+            }),
+          ];
+        })(),
+      ],
     },
     `${pageHead({ eyebrow: post.tag, title: post.title, standfirst: post.standfirst })}
 

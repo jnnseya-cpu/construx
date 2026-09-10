@@ -58,6 +58,62 @@ Sitemap: ${absolute('/sitemap.xml')}
 }
 
 /**
+ * `llms.txt` — the same courtesy as `robots.txt`, for the reader that answers
+ * questions instead of listing links.
+ *
+ * A growing share of the people who will ever decide whether this platform is
+ * worth a conversation never see a results page. They ask an assistant, and the
+ * assistant reads a handful of pages and answers from them. What it reads is
+ * whatever it can reach and parse — which, on a site that renders every page
+ * from a template with a navigation bar, a footer and a cookie line, is mostly
+ * furniture.
+ *
+ * This is the site described once, in plain prose, at a fixed address: what the
+ * company does, which page settles which question, and what each post is about.
+ * It is a convention rather than a standard and no engine is obliged to read
+ * it — which is exactly the argument for it being twenty lines derived from the
+ * lists that already exist rather than a project.
+ *
+ * **Nothing here is a claim the site does not already make.** Every line is a
+ * page title, a page's own description or a post's standfirst, so the file
+ * cannot drift away from what a reader would find on arriving, and cannot
+ * become a place where a claim is made that no page is prepared to support.
+ */
+export function llms(platform?: Platform): string {
+  const published = platform?.ledger ? publishedPosts(platform) : [];
+
+  const pages = SITE_PAGES.map((page) => `- [${page.label}](${absolute(page.path)})`);
+  const notes = POSTS.map((post) => `- [${post.title}](${absolute(`/blog/${post.slug}`)}): ${post.standfirst}`);
+  const articles = published.map((post) => `- [${post.title}](${absolute(`/blog/${post.slug}`)}): ${post.standfirst}`);
+
+  return `# CONSTRUX
+
+> A construction operating system built on an append-only, hash-chained record.
+> Every change to a project is an event on that record, written before it is
+> acknowledged, so what was known and when has an answer rather than an opinion.
+> AI engines read, check and draft against it; a decision event refuses an AI
+> author outright, and no agent mandate goes above propose.
+
+## Site
+
+${pages.join('\n')}
+- [Verify a document](${absolute('/verify-document')})
+
+## Articles
+
+${articles.length > 0 ? articles.join('\n') : '- None published yet.'}
+
+## Engineering notes
+
+${notes.join('\n')}
+
+## Not for crawling
+
+${DISALLOW.map((path) => `- ${absolute(path)} — ${path === '/unsubscribe' ? 'acting on it unsubscribes a real person' : 'requires a session and answers nothing useful without one'}`).join('\n')}
+`;
+}
+
+/**
  * Every public page, with the posts carrying their publication date.
  *
  * `lastmod` is only claimed where it is known. A sitemap that stamps today's

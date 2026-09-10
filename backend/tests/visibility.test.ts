@@ -179,7 +179,7 @@ describe('the sweep reads the served site', () => {
     assert.equal(byCheck.get('Freshness')!.ok, false);
     assert.match(byCheck.get('Freshness')!.detail, new RegExp(`${visibility.FRESHNESS_DAYS + 1} days ago`));
     assert.equal(byCheck.get('Topic coverage')!.ok, false);
-    assert.match(byCheck.get('Topic coverage')!.detail, /0 of 8/);
+    assert.match(byCheck.get('Topic coverage')!.detail, /0 of 9/);
     assert.equal(byCheck.get('Keyword coverage')!.ok, false);
     assert.equal(byCheck.get('Internal linking')!.ok, false);
 
@@ -519,8 +519,8 @@ describe('through the gateway', () => {
     const before = await call('GET', '/v1/site/visibility', token);
     assert.equal(before.status, 200, JSON.stringify(before.body));
     assert.equal(typeof before.body.signal.score, 'number');
-    assert.equal(before.body.sweep.length, 11);
-    assert.equal(before.body.topics.length, 8);
+    assert.equal(before.body.sweep.length, 12);
+    assert.equal(before.body.topics.length, 9);
 
     const composed = await call('POST', '/v1/site/posts/compose', token, { topic: 'Composed over HTTP', keywords: ['http composition'], publish: true });
     assert.equal(composed.status, 201, JSON.stringify(composed.body));
@@ -531,7 +531,7 @@ describe('through the gateway', () => {
 
     const library = await call('POST', '/v1/site/marketing/library', token, {});
     assert.equal(library.status, 201);
-    assert.equal(library.body.created.length, 8);
+    assert.equal(library.body.created.length, 9);
 
     const release = await call('POST', '/v1/site/marketing/release', token, {});
     assert.equal(release.status, 201);
@@ -550,7 +550,7 @@ describe('through the gateway', () => {
     const after = await call('GET', '/v1/site/visibility', token);
     assert.ok(after.body.signal.score > before.body.signal.score, `${before.body.signal.score} → ${after.body.signal.score}`);
     assert.equal(after.body.releases.today.id, release.body.id);
-    assert.equal(after.body.posts.length, 9);
+    assert.equal(after.body.posts.length, 10);
     assert.ok(after.body.posts.every((post: { kit: unknown[] }) => post.kit.length === 5));
   });
 });

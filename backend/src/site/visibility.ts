@@ -23,7 +23,7 @@ import {
   seoScore,
   uniqueSlug,
 } from './blog.ts';
-import { robots, sitemap } from './discovery.ts';
+import { llms, robots, sitemap } from './discovery.ts';
 import { POST_PAGES, render, renderLanding, SITE_PAGES } from './index.ts';
 import { mediaState } from './media.ts';
 import { POSTS } from './posts.ts';
@@ -35,8 +35,9 @@ import { engagementFor, viewsPosition } from './views.ts';
  *
  * `blog.ts` governs one post at a time — its checks, its gate, its record. This
  * module reads the site as a whole and acts on the whole: a sweep of the
- * eleven things a crawler, a link preview and a search result actually look
- * for, each checked against the rendered markup rather than against a
+ * twelve things a crawler, a link preview, a search result and an answer
+ * engine actually look for, each checked against the rendered markup or the
+ * served file rather than against a
  * checklist; the reach the pages have had; where a post can be sent and where
  * it has been; a composer that writes a post from the feature catalogue; a
  * library of one post per topic; and a daily release that runs once a day and
@@ -79,17 +80,124 @@ export type Topic = {
   tag: string;
   /** Which entries of the feature catalogue the body draws on. */
   features: string[];
+  /**
+   * Written prose for this topic, where the template would say too little.
+   *
+   * `composeBody` assembles a post from the feature catalogue, which is the
+   * right answer for eight topics that each want the same argument made about a
+   * different capability. It is the wrong answer for a topic whose whole value
+   * is the specific rule it explains: an article about what an agent may decide
+   * that reads like the article about drawing registers is an article nobody
+   * quotes and no answer engine has any reason to prefer.
+   *
+   * Optional, and absent on every topic that does not need it. A free-form
+   * topic composed from the console has no definition at all and is unaffected.
+   */
+  article?: {
+    standfirst: string;
+    metaDescription: string;
+    body: string[];
+  };
 };
 
 /**
- * The eight things the site should have a page about.
+ * The nine things the site should have a page about.
  *
  * One per capability area a buyer searches for, phrased as the phrase they
- * would type. Coverage is "a published post carries this keyword", nothing
- * softer: a topic with a draft about it is not covered, because a draft is not
- * on the internet.
+ * would type, plus the one question that is now asked before any of them —
+ * what the software is allowed to decide. Coverage is "a published post carries
+ * this keyword", nothing softer: a topic with a draft about it is not covered,
+ * because a draft is not on the internet.
  */
 export const TOPICS: readonly Topic[] = [
+  // First, so it is the next thing the daily release publishes.
+  //
+  // It is the question every buyer now opens with and the one the site had no
+  // page about: the eight topics below each describe a capability, and none of
+  // them says what the software is allowed to decide. It is also the only claim
+  // here a competitor cannot copy by writing the same sentence — the ceiling is
+  // enforced on the write path, not asserted in marketing copy.
+  {
+    id: 'agents',
+    title: 'AI agents in construction: what they may decide',
+    keyword: 'AI agents in construction',
+    tag: 'AI & Agents',
+    features: ['autopilot', 'copilot', 'audit'],
+    article: {
+      standfirst:
+        'Every agent on this platform proposes. A named person disposes. The record says which of the two happened, on every single entry.',
+      metaDescription:
+        'AI agents in construction can read, check, watch and draft. They may not decide. Where the line sits, why it is enforced, and how to prove it held.',
+      body: [
+        'AI agents in construction are usually sold as autonomy: the software watches the project and acts on it. ' +
+          'That is the wrong shape for this industry, and not because the models are weak. A construction decision ' +
+          'has a name against it — an approval, a certificate, an instruction — and the person whose name it is ' +
+          'carries the consequence of it for years. Software that decides on their behalf does not remove the ' +
+          'consequence. It removes the trail back to whoever was supposed to carry it.',
+
+        '## What can an AI agent actually do on a project?',
+        'Everything that is not a decision, which is most of the work. Read the specification and say which clauses ' +
+          'have no verification method against them. Watch a programme and name the activities that have quietly lost ' +
+          'their float. Read four subcontract returns and say which exclusions make them incomparable. Draft the ' +
+          'pay-less notice with the ground and the calculation already set out. Each of those arrives as a proposal, ' +
+          'with the records it read attached to it, and then it waits.',
+        'The waiting is the point. A proposal sitting in a queue is an hour of work somebody checks in thirty ' +
+          'seconds. A proposal that executed itself is a change nobody checked at all — found later, usually by the ' +
+          'other side, usually at the worst moment.',
+
+        '## Where is the line between proposing and deciding?',
+        'At the event. Every change here is an event on the golden thread, and the catalogue that defines the event ' +
+          'types marks which of them software may author and which it may not. A decision — an approval, an award, a ' +
+          'certificate, a stage gate — carries a flag that refuses an AI author outright. That is not a setting an ' +
+          'administrator can relax on a busy afternoon. It is a property of the event type, checked on the single ' +
+          'write path every change in the system goes through.',
+        'The agents are bounded from the other end as well. Each holds a mandate, and the ladder stops at propose. ' +
+          'No agent holds anything above it, in any capability area, on any subscription tier — so there is no ' +
+          'upgrade, no enterprise exception and no flag that turns an agent into an approver. The ceiling is the ' +
+          'design rather than a default.',
+
+        '## How do you prove an agent did not decide something?',
+        'By replaying the record and reading who authored what. The ledger is append-only and hash-chained: each ' +
+          'event carries the hash of the one before it, so an entry cannot be altered or quietly dropped afterwards ' +
+          'without breaking every hash that follows it. A replay rebuilds the project from its own history and ' +
+          'reports a root hash, and two replays that disagree mean the record was touched.',
+        'On top of that, every AI-assisted step names the engine that produced it, the records it read and the ' +
+          'person who accepted it. So the question an adjudicator asks — who decided this, and on what — has a ' +
+          'literal answer, and that answer separates the draft from the decision. Separating those two is the entire ' +
+          'reason the flag on the event type exists.',
+
+        '> An agent that cannot decide is an agent nobody has to defend.',
+
+        '## What do agents cost to run on a project?',
+        'Metered, and refused outright when the meter is empty. Each run draws on a wallet the account funds, with ' +
+          'pricing per call rather than per seat, and the platform will not call a provider against an empty wallet — ' +
+          'it says so, rather than failing quietly and billing for it later. Every charge is written beside the ' +
+          'output it paid for, so a month of agent work reads as a list of things produced instead of one line on an ' +
+          'invoice.',
+
+        '## Why the line matters more in construction than elsewhere',
+        'Because this industry settles its disputes on records, years later, in front of somebody who was not there. ' +
+          'It is won by whoever can show what was known and when. Civil infrastructure and water treatment ' +
+          'programmes run for years across dozens of firms, and the record has to survive every one of them leaving ' +
+          'the job. An agent that had been quietly writing decisions into that record would not be an efficiency. It ' +
+          'would be the liability at the centre of the case.',
+
+        '## What you can check without taking our word for it',
+        'The demonstration environment runs a seeded programme end to end, with the proposal queue live and every ' +
+          'agent’s output attributed to the engine that produced it. Nothing in it is a screenshot.',
+        'Any document the platform issues carries a content hash, so a stranger holding one — a solicitor, an ' +
+          'insurer, a certifier — can check it against what was issued, with no account and no relationship to ' +
+          'anybody involved.',
+        'The API is documented for anyone who would rather read the event catalogue than a brochure, and it sets out ' +
+          'the seven engines and the stage gates they sit behind.',
+        'Platform status is a public page rather than a support ticket, which is the same argument in a smaller frame: ' +
+          'a claim anybody can check is worth more than a claim anybody has to accept.',
+        'If the design of the ledger interests you more than the pitch does, the engineering notes on this site are ' +
+          'where it is written down. If the shape of your own projects is the real question, talk to us and bring ' +
+          'one — an agent that may not decide is easiest to judge against work you already know the answer to.',
+      ],
+    },
+  },
   { id: 'commercial', title: 'Cost value reconciliation on a live project', keyword: 'cost value reconciliation', tag: 'Commercial', features: ['commercial', 'payments', 'billing'] },
   { id: 'contracts', title: 'Delay claim assessment with concurrency, not memory', keyword: 'delay claim assessment', tag: 'Contracts', features: ['contracts', 'payments', 'audit'] },
   { id: 'programme', title: 'Critical path float and a real probability of finishing', keyword: 'critical path float', tag: 'Programme', features: ['programme', 'autopilot', 'copilot'] },
@@ -263,17 +371,22 @@ export function composePost(platform: Platform, actor: PostActor, input: Compose
   const slug = uniqueSlug(platform, title);
   if (slug.length === 0) throw new DomainError('TITLE_REQUIRED', 'That title produces no usable address.', 422);
 
-  const features = featuresFor(topic, keywords, topicDefinition?.features);
-  const body = composeBody(keyword, features);
+  // A topic that carries written prose uses it; everything else is assembled
+  // from the catalogue as before. The gate is the same either way — a written
+  // article that failed a check would be held exactly like a composed one.
+  const written = topicDefinition?.article;
+  const body = written?.body ?? composeBody(keyword, featuresFor(topic, keywords, topicDefinition?.features));
 
   const post: BlogPost = {
     id: ulid(),
     slug,
     title,
-    standfirst: `What ${keyword} looks like on a governed record, and the checks a reader can run for themselves.`,
+    standfirst:
+      written?.standfirst ?? `What ${keyword} looks like on a governed record, and the checks a reader can run for themselves.`,
     metaDescription:
+      written?.metaDescription ??
       `${capitalise(keyword)}: how CONSTRUX records it as governed, evidenced events on the golden thread, and what a ` +
-      'reader can verify for themselves.',
+        'reader can verify for themselves.',
     body,
     tag: input.tag?.trim() || topicDefinition?.tag || 'Marketing',
     keyword,
@@ -763,7 +876,7 @@ function livePosts(platform: Platform): Array<{ slug: string; title: string; dat
 }
 
 /**
- * Eleven checks against the site as it is served.
+ * Twelve checks against the site as it is served.
  *
  * Each is what an outside reader — a crawler, a link preview, a search result
  * — would find, read off the rendered page rather than a setting. The weights
@@ -795,6 +908,15 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
   // 3. Robots: names the sitemap, keeps the crawler out of the application.
   const robotsText = robots();
   const robotsOk = /^Sitemap: https?:\/\/.+\/sitemap\.xml$/m.test(robotsText) && /^Disallow: \/app$/m.test(robotsText) && /^Disallow: \/unsubscribe$/m.test(robotsText);
+
+  // 12. llms.txt: every public page named, every published post named, and the
+  // two paths a machine must not follow said in prose rather than left out.
+  const llmsText = llms(platform);
+  const llmsMissing = [
+    ...SITE_PAGES.map((page) => page.path),
+    ...publishedPosts(platform).map((post) => `/blog/${post.slug}`),
+  ].filter((path) => !llmsText.includes(`${config.publicBaseUrl.replace(/\/$/, '')}${path})`));
+  const llmsOk = llmsText.startsWith('# CONSTRUX') && llmsMissing.length === 0 && llmsText.includes('/unsubscribe');
 
   // 4. Social cards: an absolute image, a card type, a title and a description on every page.
   const badCards = [...pages, ...postPages]
@@ -879,8 +1001,28 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
     {
       check: 'Robots',
       ok: robotsOk,
-      weight: 6,
+      // Two points lighter than it was, along with hreflang and hero imagery.
+      // The three are binary presence checks that are rarely wrong and cheap to
+      // fix, and the twelfth reader below — the assistant that answers instead
+      // of listing — now costs more when it cannot describe the site than a
+      // missing hreflang does on a site with one language.
+      weight: 4,
       detail: robotsOk ? 'Names the sitemap; keeps crawlers out of /app and off the unsubscribe link.' : 'robots.txt is missing the sitemap line or a disallow the application depends on.',
+    },
+    {
+      // The reader that answers the question instead of listing the links.
+      // A growing share of the people who will ever consider this platform
+      // never see a results page: they ask an assistant, which reads a few
+      // pages and answers from them. This is the site described once, in
+      // prose, at a fixed address — the same courtesy robots.txt is.
+      check: 'llms.txt',
+      ok: llmsOk,
+      weight: 6,
+      detail: llmsOk
+        ? `Describes the site in prose and names every public page and post at /llms.txt.`
+        : llmsMissing.length > 0
+          ? `Public addresses an assistant would never be told about: ${llmsMissing.join(', ')}.`
+          : 'llms.txt is malformed — it must open with the company name and say which paths must not be followed.',
     },
     {
       check: 'Social cards',
@@ -897,7 +1039,7 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
     {
       check: 'Hero imagery',
       ok: heroPresent && emptySlots.length === 0,
-      weight: 6,
+      weight: 4,
       detail: `${heroPresent ? 'The preview image is served.' : 'landing-hero.png, the image every share card points at, is not on disk.'} ${
         emptySlots.length === 0 ? `All ${slots.length} landing slots are filled.` : `${emptySlots.length} of ${slots.length} landing slots empty: ${emptySlots.join(', ')} — fill them on Company Profile.`
       }`,
@@ -922,7 +1064,7 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
     {
       check: 'hreflang',
       ok: noHreflang.length === 0,
-      weight: 4,
+      weight: 2,
       detail: noHreflang.length === 0 ? 'en-GB and x-default declared on every page.' : `Missing on ${noHreflang.join(', ')}.`,
     },
     {

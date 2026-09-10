@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,429 passing, 0 failing, 0 skipped, across 297 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,440 passing, 0 failing, 0 skipped, across 298 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8650,6 +8650,63 @@ permanently blocked buttons for commands the API would have run.
 three; a `SUPPLIER` identity carrying the invited firm's party, which holds no
 award capability at all, is admitted.
 
+**The article the site had no page for, and the two readers it was written
+for.** Eight topics in the marketing library, one per capability a buyer
+searches for, and not one of them answered the question a buyer now opens with:
+what is the software allowed to decide. That is the claim this platform has the
+strongest answer to — the ceiling is enforced on the write path rather than
+asserted in copy — and it was published nowhere.
+
+`AI agents in construction: what they may decide` is now the first topic in the
+library, so it is the next thing the daily release publishes. It is written
+prose rather than the composed template: `Topic.article` carries a standfirst, a
+meta description and a body, `composePost` uses them where a topic has them, and
+every other topic is unaffected. The gate is the same either way — a written
+article that failed a check would be held exactly like a composed one. It does
+not: 929 words, every one of the seven checks passing, **100/100, STRONG**,
+which is what `agentspost.test.ts` asserts rather than what a commit message
+claims. It states no figure, names no customer and makes no claim the site does
+not already make.
+
+It carries **eleven contextual links into eleven different pages**. The linker
+allows one link per destination, so an article's link count is bounded by how
+many pages the glossary knows: it knew nine, and `/contact`, `/status` and
+`/growth` — each in the navigation, the footer and the sitemap — had no
+contextual link from anywhere on the site. Three phrases were added and the
+prose was written to earn them.
+
+**`llms.txt`.** A growing share of the people who will ever consider this
+platform never see a results page: they ask an assistant, which reads a few
+pages and answers from them, and what it reads on a templated site is mostly
+furniture. `discovery.ts` now serves the site described once, in prose, at
+`/llms.txt` — every public page, every published post, and the two paths a
+machine must not follow said in words rather than left out. Every line is a page
+title, a page's own description or a post's own standfirst, so it cannot drift
+from what a reader finds on arriving and cannot become a place where a claim is
+made that no page supports. Derived from the same lists as the sitemap, checked
+by the sweep, and it is a convention rather than a standard — no engine is
+obliged to read it, which is the argument for it being twenty lines rather than
+a project.
+
+**Structured data a machine can answer from.** A `BlogPosting` says a page is an
+article; it does not say which questions the article settles, and an answer
+engine quotes a question and the passage under it. Every post page now carries
+three blocks — the article, a `BreadcrumbList`, and an `FAQPage` where the
+body's `## ` headings are questions. `faqOf` reads them off the prose, so an
+article and its structured data cannot disagree, and a post whose headings are
+statements declares no FAQ, which is the honest answer rather than a heading
+dressed up as a question it never asked. Separate script elements, never a
+`@graph`: every consumer reads a top-level `@type`, and the site's own sweep is
+one of them.
+
+**What is not claimed.** Nothing here knows where any page ranks. The platform
+queries no search engine, holds no ranking data, no search volume and no
+competitor data — the audit says so on its own face — so a top-five position is
+not something this or any other commit can deliver. What is measurable is
+measured: the score, the link count, the questions declared, the pages named.
+Distribution to LinkedIn, X and email still runs only where a credential is
+configured, and none is.
+
 **The conversion path, driven rather than tested.** The account request on
 Contact, the booking form on Demo, the four package buttons on Get started and
 the signup form each opens the API from a browser, not from a test harness. The
@@ -12501,10 +12558,13 @@ part of it looks the way it does.
 every live post and reads their heads; parses the sitemap it would serve; reads
 `robots.txt`; stats the hero image on disk; reads the landing slots; computes
 the newest publication date; counts the glossary links the article linker would
-actually insert. Eleven checks — page metadata, sitemap, robots, social cards,
-structured data, hero imagery, freshness (≤14 days), topic coverage (n of 8),
-hreflang, keyword coverage, internal linking (≥2) — with weights that sum to a
-hundred and say what costs traffic. `signalScore` is that sum for the checks
+actually insert. Twelve checks — page metadata, sitemap, robots, `llms.txt`,
+social cards, structured data, hero imagery, freshness (≤14 days), topic
+coverage (n of 9), hreflang, keyword coverage, internal linking (≥2) — with
+weights that sum to a hundred and say what costs traffic. The twelfth is the
+reader that answers rather than lists; robots, hreflang and hero imagery each
+gave up two points for it, being the binary presence checks that are cheapest to
+fix and rarely wrong. `signalScore` is that sum for the checks
 that pass, banded like the post score, and shown beside the failing checks,
 never instead of them. Running it on a fresh checkout found three real defects
 and fixed them: `/how-it-works` and `/exposure` descriptions over 160

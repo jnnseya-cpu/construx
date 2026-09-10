@@ -194,6 +194,19 @@ export const LINK_GLOSSARY: ReadonlyArray<{ term: string; path: string }> = [
   { term: 'about construx', path: '/about' },
   { term: 'engineering notes', path: '/blog' },
   { term: 'the blog', path: '/blog' },
+  // Three public pages that no article could reach.
+  //
+  // The glossary knew nine destinations, so nine was the most links any post
+  // could carry however long it ran — one per destination is the rule, and a
+  // phrase whose page is not in this list is simply prose. `/contact`,
+  // `/status` and `/growth` are in the navigation, in the footer and in the
+  // sitemap, and had no contextual link from anywhere on the site: the pages a
+  // reader reaches only by deciding to look for them.
+  { term: 'platform status', path: '/status' },
+  { term: 'request an account', path: '/contact' },
+  { term: 'referral programme', path: '/growth' },
+  { term: 'talk to us', path: '/contact' },
+  { term: 'uptime', path: '/status' },
 ];
 
 /** At most this many contextual links in one paragraph, so prose stays prose. */
@@ -291,6 +304,71 @@ export function setBody(paragraphs: readonly string[]): string {
 /** The section headings an article carries, for the structure check. */
 export function headingsOf(paragraphs: readonly string[]): string[] {
   return paragraphs.filter((paragraph) => paragraph.startsWith('## ')).map((paragraph) => paragraph.slice(3).trim());
+}
+
+/**
+ * The questions an article answers, and the answers, read off its own sections.
+ *
+ * An answer engine — and the "people also ask" block on a results page — quotes
+ * a question and the passage that answers it. `BlogPosting` says a page is an
+ * article; it does not say which question the article settles, so a page that
+ * answers four of them has to be re-derived from the prose by whoever is
+ * reading, and most readers of a web page now are not people.
+ *
+ * The grammar is the one the body already has: a `## ` heading that ends in a
+ * question mark is a question, and the paragraphs under it, up to the next
+ * heading, are the answer. No new field, no second copy of the text, and a post
+ * whose headings are statements yields nothing — which is the correct answer
+ * for an article that is not in that shape, rather than a heading dressed up as
+ * a question it never asked.
+ *
+ * Pull-quotes are dropped from the answer: a slogan quoted back as the answer
+ * to a question makes the page look like it is dodging one.
+ */
+/**
+ * Escaped or marked-up prose back to the plain text structured data wants.
+ *
+ * A stored post's paragraphs arrive escaped and a compiled one's arrive as
+ * markup; a consumer reading `acceptedAnswer.text` wants neither. `&amp;` is
+ * decoded last so an ampersand that was itself escaped does not decode twice.
+ */
+function plain(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, '')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function faqOf(paragraphs: readonly string[]): Array<{ question: string; answer: string }> {
+  const faq: Array<{ question: string; answer: string }> = [];
+  let question: string | undefined;
+  let answer: string[] = [];
+
+  const flush = (): void => {
+    if (question !== undefined && answer.length > 0) faq.push({ question: plain(question), answer: plain(answer.join(' ')) });
+    question = undefined;
+    answer = [];
+  };
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.startsWith('## ')) {
+      flush();
+      const heading = paragraph.slice(3).trim();
+      if (heading.endsWith('?')) question = heading;
+      continue;
+    }
+    if (question === undefined) continue;
+    if (paragraph.startsWith('> ') || paragraph.startsWith('&gt; ')) continue;
+    answer.push(paragraph.trim());
+  }
+  flush();
+
+  return faq;
 }
 
 /**

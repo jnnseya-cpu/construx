@@ -28,7 +28,7 @@ import { clientAddress } from './clientaddress.ts';
 import { matchRoute, ROUTES } from './routes.ts';
 import { onFieldSurface, webOnlyRefusal } from '../field/modules.ts';
 import { renderLanding } from '../site/index.ts';
-import { robots, sitemap } from '../site/discovery.ts';
+import { llms, robots, sitemap } from '../site/discovery.ts';
 import { serveStatic } from './static.ts';
 import { mediaDir } from '../site/media.ts';
 import { buildId } from './buildid.ts';
@@ -252,6 +252,14 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     }
     if (ctx.method === 'GET' && ctx.path === '/sitemap.xml') {
       sendDocument(res, ctx, 'application/xml; charset=utf-8', sitemap(platform));
+      logRequest(ctx, 200);
+      return;
+    }
+    // The same courtesy for the reader that answers a question rather than
+    // listing links. A crawler gets a sitemap; an assistant gets the site
+    // described once, in prose, at a fixed address.
+    if (ctx.method === 'GET' && ctx.path === '/llms.txt') {
+      sendDocument(res, ctx, 'text/plain; charset=utf-8', llms(platform));
       logRequest(ctx, 200);
       return;
     }

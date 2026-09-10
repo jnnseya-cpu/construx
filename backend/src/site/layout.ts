@@ -69,8 +69,18 @@ export type PageMeta = {
   type?: 'website' | 'article';
   /** Publication date, ISO `YYYY-MM-DD`. Articles only. */
   published?: string;
-  /** Structured data for this page, already serialised. */
-  jsonLd?: string;
+  /**
+   * Structured data for this page, already serialised.
+   *
+   * More than one block where a page has more than one thing to declare — a
+   * post is a `BlogPosting`, sits in a `BreadcrumbList`, and where its sections
+   * are questions it is also an `FAQPage`. Each goes in its own script element
+   * rather than under a `@graph`, because every consumer parses a top-level
+   * `@type` and the site's own sweep is one of them: wrapping the article node
+   * in a graph would hide it from the check that asserts every post declares
+   * itself an article.
+   */
+  jsonLd?: string | readonly string[];
 };
 
 /**
@@ -126,7 +136,7 @@ ${meta.published ? `<meta property="article:published_time" content="${esc(meta.
 <meta name="theme-color" content="#090a0d">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/site.css">
-${meta.jsonLd ? `<script type="application/ld+json">${meta.jsonLd}</script>\n` : ''}<script type="application/ld+json">${jsonLd(organisationJsonLd(businessDetails(), config.publicBaseUrl))}</script>
+${(typeof meta.jsonLd === 'string' ? [meta.jsonLd] : (meta.jsonLd ?? [])).map((block) => `<script type="application/ld+json">${block}</script>\n`).join('')}<script type="application/ld+json">${jsonLd(organisationJsonLd(businessDetails(), config.publicBaseUrl))}</script>
 </head>`;
 }
 
