@@ -51,12 +51,17 @@ report() {
   fi
 
   # Absent and blank need different fixes, and getting it wrong is silent.
-  # `config.ts` keeps the FIRST occurrence of a key and ignores every later
-  # one, so appending a line for a key that is already present — blank or not —
-  # changes nothing at all and looks exactly like a change that worked.
+  #
+  # A key that appears twice is resolved differently depending on who reads the
+  # file: `config.ts` keeps the FIRST occurrence and ignores every later one,
+  # while a container runtime given the same file as an env file may keep the
+  # last. So a second line for a key that is already present is at best
+  # ambiguous and at worst a change that looks like it worked and did nothing.
+  # The advice is the one that is right under either reader: edit the line that
+  # is already there.
   local how="append it"
   if present "$key"; then
-    how="EDIT the existing blank line — appending a second one is ignored"
+    how="EDIT the existing blank line rather than appending a second"
   fi
 
   if [[ "$level" == "critical" ]]; then
