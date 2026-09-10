@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,449 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,452 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8678,6 +8678,17 @@ S3. It also warns, without failing, about the two settings nobody guesses:
 Cloudflare R2 signs against the literal region `auto` and serves path style, and
 each one wrong reads as *the security token is invalid* — an error about
 credentials, for a bug about a region string.
+
+It reads `.env` rather than running it, and that is the correction rather than
+the design. The first version sourced the file and died on the live deployment
+with `line 9: PRIVATE: command not found`, because `SIGNING_PRIVATE_KEY_PEM`
+holds a PEM block spanning several lines and the shell read its second line as a
+command — a preflight that could not run on the one file it exists to read.
+Sourcing was the wrong mechanism rather than a fragile one: a `.env` is data, and
+running it as a script means a value containing a backtick or `$(...)` executes
+as whoever ran the check, which on a deployment is root. It now parses exactly
+as `config.ts` does, and both properties are asserted against a fixture carrying
+a PEM, a comment, a value full of spaces and a command substitution.
 
 `deploy/env-check.sh` now says so where it used to stop at "set", the runbook
 carries *Turning the off-host backup on* end to end (bucket, the six values, the

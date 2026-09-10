@@ -28,12 +28,41 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-# Read into this shell's environment only. The file is never rewritten, never
-# echoed and never copied; `set -a` exports what the check needs and `set +a`
-# stops as soon as the file is read.
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+# Read the file. Never source it.
+#
+# `.env` is not a shell script and must not be run as one. This one holds
+# SIGNING_PRIVATE_KEY_PEM, whose value is a PEM block spanning several lines,
+# and `. .env` stopped on it with "PRIVATE: command not found" — a check that
+# fails on a deployment because of a key it never uses. Sourcing is worse than
+# broken here: a value containing a backtick or `$(...)` would be *executed*,
+# as root, from a file whose whole purpose is to hold secrets.
+#
+# So: parse, exactly as `config.ts` parses it. Trim the line, split on the first
+# `=`, accept the key only if it is a plain identifier, and take the rest
+# literally. A PEM's continuation lines match nothing and are skipped, which is
+# what the application does with them too. Nothing is evaluated, nothing is
+# rewritten, and nothing is echoed.
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%$'\r'}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+
+  [ -z "$line" ] && continue
+  case "$line" in '#'*) continue ;; esac
+  case "$line" in *=*) ;; *) continue ;; esac
+
+  key="${line%%=*}"
+  key="${key%"${key##*[![:space:]]}"}"
+  case "$key" in
+    ''|*[!A-Za-z0-9_]*) continue ;;
+    [0-9]*) continue ;;
+  esac
+
+  value="${line#*=}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+
+  export "$key=$value"
+done < "$ENV_FILE"
 
 exec node "$HERE/../backend/src/cli/objectstore.ts"

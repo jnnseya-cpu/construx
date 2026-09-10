@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
+import { tmpdir } from 'node:os';
 import { after, before, describe, it } from 'node:test';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -229,5 +231,108 @@ describe('the object store preflight', () => {
     const { status, out } = await run({ BACKUP_INTERVAL_MINUTES: '0' });
     assert.equal(status, 0, out);
     assert.match(out, /nothing is shipped on a timer/);
+  });
+});
+
+/**
+ * The wrapper, against a `.env` shaped like a real one.
+ *
+ * The first version sourced the file — `set -a; . "$ENV_FILE"` — and died on a
+ * live deployment with `line 9: PRIVATE: command not found`, because
+ * `SIGNING_PRIVATE_KEY_PEM` is a PEM block spanning several lines and the shell
+ * read its second line as a command. A preflight that cannot run on the one
+ * file it exists to read is not a preflight.
+ *
+ * Sourcing was the wrong mechanism, not merely a fragile one. A `.env` is data,
+ * and running it as a script means a value containing a backtick or `$(...)`
+ * executes as whoever ran the check, which on a deployment is root. So the
+ * fixture below carries the things that break a sourcing parser *and* the thing
+ * that would make one dangerous, and asserts the check reads past all of them.
+ */
+describe('the wrapper reads a real .env rather than running it', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'construx-envcheck-'));
+  const WRAPPER = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'deploy', 'object-store-check.sh');
+
+  after(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  function write(body: string): string {
+    const path = join(scratch, '.env');
+    writeFileSync(path, body);
+    return path;
+  }
+
+  async function wrapper(path: string): Promise<{ status: number; out: string }> {
+    const child = spawn('bash', [WRAPPER, path], { env: { ...process.env } });
+    let out = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => { out += chunk; });
+    child.stderr.on('data', (chunk: string) => { out += chunk; });
+    const status = await new Promise<number>((resolve) => child.on('close', (code) => resolve(code ?? -1)));
+    return { status, out };
+  }
+
+  it('reads past a multi-line PEM, a comment and a value full of spaces', async () => {
+    allow = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'LIST']);
+    corrupt = false;
+    objects.clear();
+
+    const path = write(
+      [
+        '# The deployment configuration.',
+        'PUBLIC_BASE_URL=https://construxvg.com',
+        'SIGNING_PRIVATE_KEY_PEM=-----BEGIN PRIVATE KEY-----',
+        'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ',
+        'wEAAQJBAKm2b5Cy9nQKcCPDoO0lTLLEG3Pk1n0m6i8Yq0Ke8Pk',
+        '-----END PRIVATE KEY-----',
+        'NEWSLETTER_FROM_NAME=CONSTRUX Engineering Notes',
+        `OBJECT_STORE_ENDPOINT=${endpoint}`,
+        'OBJECT_STORE_REGION=eu-west-2',
+        'OBJECT_STORE_BUCKET=construx',
+        'OBJECT_STORE_ACCESS_KEY_ID=AKIDTESTONLY',
+        'OBJECT_STORE_SECRET_ACCESS_KEY=not-a-real-credential',
+        'OBJECT_STORE_PATH_STYLE=true',
+        'OBJECT_STORE_TIMEOUT_MS=4000',
+        'BACKUP_PREFIX=backups',
+        '',
+      ].join('\n'),
+    );
+
+    const { status, out } = await wrapper(path);
+    assert.equal(status, 0, out);
+    assert.match(out, /This store will hold the record/);
+    assert.ok(!out.includes('command not found'), 'the wrapper is still running the file as a script');
+  });
+
+  it('does not execute what a value contains', async () => {
+    // The reason this is parsed rather than sourced. Under `. .env` this line
+    // would run `touch`, as whoever ran the check — root, on a deployment.
+    const marker = join(scratch, 'executed');
+    const path = write(
+      [
+        `NOTES=$(touch ${marker})`,
+        `OBJECT_STORE_ENDPOINT=${endpoint}`,
+        'OBJECT_STORE_REGION=eu-west-2',
+        'OBJECT_STORE_BUCKET=construx',
+        'OBJECT_STORE_ACCESS_KEY_ID=AKIDTESTONLY',
+        'OBJECT_STORE_SECRET_ACCESS_KEY=not-a-real-credential',
+        'OBJECT_STORE_PATH_STYLE=true',
+        'OBJECT_STORE_TIMEOUT_MS=4000',
+        '',
+      ].join('\n'),
+    );
+
+    objects.clear();
+    const { out } = await wrapper(path);
+    assert.ok(!existsSync(marker), 'a value in .env was executed');
+    assert.match(out, /Object store preflight/, out);
+  });
+
+  it('says which file it could not find rather than failing obscurely', async () => {
+    const { status, out } = await wrapper(join(scratch, 'nowhere.env'));
+    assert.equal(status, 1);
+    assert.match(out, /No .*nowhere\.env here/);
   });
 });
