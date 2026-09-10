@@ -20334,3 +20334,29 @@ Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
 rewrite.
+
+**The wider edition, merged as Part I.** A second and larger edition of the same
+specification followed: product definition, an L0–L7 autonomy ladder, six action
+risk classes, the canonical domain model, memory partitions, the agent control
+plane, the engines section by section, a hundred functional requirements, twelve
+acceptance scenarios, a build sequence and a definition of done. It is Part I of
+the same document; the earlier handoff edition is Part II, unchanged.
+
+Merging it meant counting rather than summarising. Against the hundred
+functional requirements: **41 met, 24 partly met, 35 not built.** Agent control
+is the strongest group at eight of ten; submission is the weakest at one of ten,
+because nine of its requirements need a channel that does not exist. Of the
+twelve acceptance scenarios, two pass today — cross-tenant isolation, which was
+run against a live server in the adversarial audit, and prompt injection, which
+passes for governed writes by construction rather than by detection.
+
+Three ladders now exist across these documents and they are reconciled once, in
+Part I's front matter, so they cannot be conflated: the blueprint's six depths,
+Part I's L0–L7 autonomy rungs, and Part II's L7.1–L7.7 properties. **L7 is the
+rung; L7.1 to L7.7 are what earn it.**
+
+Both parts, reached independently and from opposite ends, name the same three
+clusters of missing work: the staleness and impact graph, the evidence registry
+with its gate, and the submission channel with a tool gateway. Part I's twelve
+acceptance scenarios fail in exactly those three groups. That agreement is the
+most useful thing merging produced, and it sets the build order.
