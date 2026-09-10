@@ -528,11 +528,20 @@ export async function contracts(root) {
 
       <div class="grid g2">
         <div class="card pad0">
-          <h2 style="padding:15px 17px 0">Obligation register — time-barred</h2>
+          <h2 style="padding:15px 17px 0">Obligation register</h2>
           ${table({
-            headers: ['Category', 'Time bar', 'Owner', 'Status'],
+            // Every obligation on the contract, of both kinds. A reactive one
+            // carries a time bar and no date; a dated one carries a date and no
+            // time bar. Reading `timeBarDays` off both put `undefinedd` in this
+            // column against every renewal somebody registered by hand.
+            headers: ['Category', 'Time bar or due date', 'Owner', 'Status'],
             align: ['', 'num', '', ''],
-            rows: b.Obligation.map((o) => [humanise(o.category), `${o.timeBarDays}d`, o.owner, badge(humanise(o.status), statusTone(o.status))]),
+            rows: b.Obligation.map((o) => [
+              humanise(o.category),
+              o.timeBarDays ? `${o.timeBarDays}d` : o.dueDate ? date(o.dueDate) : '—',
+              o.owner,
+              badge(humanise(o.status), statusTone(o.status)),
+            ]),
             empty: 'No obligations extracted',
           })}
         </div>

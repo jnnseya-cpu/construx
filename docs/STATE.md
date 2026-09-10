@@ -20235,3 +20235,29 @@ working code, which is how a test gets deleted.
 
 Two tests. Both were red against `ESTIMATE_TENDER 'I'` before it was corrected
 to `'A'`, which is the only evidence that they check anything.
+
+## An obligation with no time bar
+
+The Contracts screen's obligation register read `timeBarDays` off every row and
+printed `${o.timeBarDays}d`. Two kinds of obligation exist and only one carries
+that field, so every renewal somebody had registered by hand rendered as
+**undefinedd** in the Time bar column.
+
+The two kinds are a deliberate distinction the calendar panel above already
+respects: a **reactive** obligation comes out of clause extraction, has no date
+until something triggers it, and carries a time bar in days; a **dated** one is
+registered by a person against a date and recurs, and has no time bar because a
+renewal date is not one. The register below them is the whole list of both, and
+was reading only the first kind's shape.
+
+The column now reads the time bar where there is one and the due date where
+there is not, and the heading no longer says "time-barred", because the panel
+never only held those.
+
+Found by driving all fourteen seeded identities through every screen they can
+reach in Chromium — 27 to 31 screens each, plus tabs and segments, at desktop
+and phone width — watching for page errors, failed requests, 4xx and 5xx
+responses and `undefined` / `NaN` / `[object Object]` / `Invalid Date` in
+rendered text. This was the only defect the sweep found; every other identity
+and screen came back clean. The fix is verified by re-running the sweep, not by
+reading the diff.
