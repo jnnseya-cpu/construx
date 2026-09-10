@@ -20290,3 +20290,47 @@ and a published quality-target dashboard. None blocks a paying customer.
 `§5`'s `[NEW]` markers on the agent layer were stale — the layer was built — and
 now carry a note pointing at `§18` and at this file for counts. The reasoning in
 `§5` is kept; only the status pointer changed.
+
+## A seventh level, specified and not claimed
+
+`docs/LEVEL7_BID_ENGINE.md` arrived as a developer-ready specification for an
+ITT and bid engine sitting above the six-level maturity model in the blueprint's
+§18.2. It is merged in as its own document, linked from §18.14, with the
+platform's real position annotated under every section rather than pasted whole.
+
+**Nothing in it is built.** It is a specification and says so in its first
+paragraph. What merging it produced is an honest audit of the seven properties
+it defines:
+
+| | Property | Here |
+|---|---|---|
+| L7.1 | Contract-native reasoning from a clause library | **Partial** — obligations are derived per project, not loaded from a versioned standard-form package with an amendment overlay |
+| L7.2 | Evidence-bound assertion, enforced as a gate | **Partial** — the discipline exists, the `EvidenceObject` registry and its gate do not |
+| L7.3 | Adversarial self-challenge | **Not built** — no red-team agent attacks another agent's output |
+| L7.4 | Time-travel state | **Partial** — the chain is replayable; there is no second time axis, so "as known on the 14th about the 12th" cannot be asked |
+| L7.5 | Full lineage | **Built in part** — the data is carried; the materialised graph and the click-through view are not |
+| L7.6 | Governed learning | **Partial** — lessons are human-approved corporate memory; nothing feeds delivery variance back into a tender rate or a win probability |
+| L7.7 | Platform-agnostic core | **Built** — zero runtime dependencies is the strongest form of the rule, and every provider already sits behind a port |
+
+Three are genuinely absent: adversarial self-challenge, the evidence registry as
+a gate, and bitemporal state.
+
+**On the reference stack.** The specification names a service-per-engine
+deployment on Kafka with Python workers. That is not adopted and is not
+proposed. `CLAUDE.md` records zero runtime dependencies as settled, and §7 of
+the specification — zero business logic in adapters — is the rule CONSTRUX
+already follows. L7.1 to L7.7 are properties, not products: a build satisfies
+them or it does not, and the substrate is a separate question nobody has to
+answer to close any of the three gaps above.
+
+Four of its nine ports already exist under CONSTRUX names — document store,
+model provider, billing as reserve-then-settle, and identity with signing. Five
+do not: common data environment, tender portal, estimating, scheduling and
+workflow. Those are the same connector gap §18.14 named, and the portal port is
+the one that unlocks the most, because without it discovery, upload, receipt and
+confirmation are all manual.
+
+Its §8 orders the work by value per unit of effort. The first three items —
+the evidence registry and its gate, the lineage projection, and bitemporal
+columns on the ledger — close the three absent properties, and none of them is a
+rewrite.

@@ -1472,6 +1472,15 @@ Everything above marked `[NEW]`, gathered so it is not mistaken for built:
 None of these blocks a paying customer. Each is a named gap rather than an
 implied capability, which is the only way this document stays worth reading.
 
+**A seventh level.** [`docs/LEVEL7_BID_ENGINE.md`](LEVEL7_BID_ENGINE.md)
+specifies what would sit above level 6 of §18.2: contract-native reasoning from
+a clause library, evidence-bound assertion enforced as a gate, adversarial
+self-challenge, bitemporal state, a materialised lineage graph, governed
+learning from outcomes, and a platform-agnostic core. Three of its seven
+properties are genuinely absent here, and that document says which, in what
+order they are worth closing, and what each costs. It is a specification;
+`docs/STATE.md` remains the record of what exists.
+
 ---
 
 ## Appendix — verifying the claims in this document
