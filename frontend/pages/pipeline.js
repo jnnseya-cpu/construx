@@ -492,7 +492,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion] = projectId
+  const [perception, evidence, ingestion, bidPacks] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -500,8 +500,12 @@ export async function pipeline(root) {
         // an invitation, and a screen that guessed instead would offer a
         // vision model a Word document it cannot see.
         api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
+        // The submissions being written against the matrices above. Project
+        // scoped for the same reason the reader is: writing a section spends
+        // this project's tenancy's ACUs, and the cost is quoted from a project.
+        api.read(`/v1/projects/${projectId}/bid-responses`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null];
+    : [null, null, null, null];
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -630,6 +634,55 @@ export async function pipeline(root) {
         tenderProjects,
         invitationOptions,
       })}
+
+      <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
+        <h2 id="pl-bid-h">Bid response packs</h2>
+        <p class="metric-sub">
+          The submission itself, written against a matrix above rather than beside it. One section per deliverable that
+          needs prose, written one pass at a time — so the size of the tender decides how many passes run, never how
+          much of the submission fits in one. A pass that dies leaves its section unwritten and the next pass writes
+          exactly that one. It will not issue a pack that leaves a deliverable unanswered or a stated deadline undated:
+          a submission missing a mandatory response is rejected, not marked down.
+        </p>
+        ${!projectId
+          ? notice('Choose a project first. A pack is written against one, and writing a section spends that tenancy’s AI budget.', 'warn')
+          : bidPacks?.error
+            ? notice(bidPacks.error.detail ?? 'The bid response register could not be read.', 'bad')
+            : html`
+                <div class="actions cmd-bar" style="margin:10px 0">
+                  ${raw(
+                    commandBar([
+                      { id: 'bid-plan', label: 'Plan a response pack', tone: '',
+                        permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                      { id: 'bid-section', label: 'Write the next section',
+                        permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
+                      { id: 'bid-issue', label: 'Issue the pack',
+                        permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+                    ]),
+                  )}
+                </div>
+                <p class="metric-sub">${(bidPacks.summary ?? '')}</p>
+                ${table({
+                  headers: ['Pack', 'Client', 'Return by', 'Written', 'Outstanding', 'Passes', 'State'],
+                  rows: (bidPacks.packs ?? []).map((pack) => [
+                    pack.reference,
+                    pack.clientName,
+                    pack.returnBy ? date(pack.returnBy) : '—',
+                    `${pack.completeness?.written ?? 0} of ${pack.completeness?.total ?? 0}`,
+                    (pack.completeness?.unanswered ?? []).length === 0
+                      ? badge('none', 'good')
+                      : badge(`${pack.completeness.unanswered.length} deliverable(s)`, 'warn'),
+                    String(pack.passes ?? 0),
+                    pack.status === 'ISSUED'
+                      ? badge('issued', 'good')
+                      : pack.completeness?.ready
+                        ? badge('ready to issue', 'good')
+                        : badge('drafting', 'neutral'),
+                  ]),
+                  empty: 'No response pack yet. Plan one from a compliance matrix below.',
+                })}
+              `}
+      </section>
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
@@ -909,6 +962,63 @@ export async function pipeline(root) {
   );
 
   const COMMANDS = {
+    /*
+     * The bid response pipeline: plan it, write it a section at a time, issue
+     * it against a check that refuses an incomplete one.
+     *
+     * Three doors rather than one "generate the submission" button, because the
+     * middle one is the whole design. A single button would have to produce the
+     * entire pack in one call, which is where a token ceiling truncates a large
+     * tender into something that looks finished at section forty-one.
+     */
+    'bid-plan': {
+      title: 'Plan a response pack',
+      intent:
+        'Reads a compliance matrix already on file and plans one section per deliverable that needs prose. A ' +
+        'requirement the platform can already evidence from its own records is a certificate to attach, not a method ' +
+        'statement to write, and is left out of the drafting queue. The pack takes a BID-nnnn reference at this point ' +
+        'so it can be quoted in a clarification before a word of it exists.',
+      path: `/v1/projects/${projectId}/bid-responses`,
+      submitLabel: 'Plan',
+      fields: [
+        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
+          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+      ],
+    },
+    'bid-section': {
+      title: 'Write the next section',
+      intent:
+        'One pass, one section. Press it until nothing remains — the size of the tender decides how many passes run, ' +
+        'never how much of the submission fits into one. A pass that is cut off leaves its section unwritten, and the ' +
+        'next press writes exactly that one, so there is no resume to get wrong. The cost of this pass is quoted ' +
+        'before it runs.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/sections`,
+      submitLabel: 'Write',
+      ai: true,
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.written ?? 0} of ${pack.completeness?.total ?? 0} written` })) },
+      ],
+      transform: ({ packId: _packId }) => ({}),
+    },
+    'bid-issue': {
+      title: 'Issue the pack',
+      intent:
+        'Refused unless every deliverable has a response and every stated deadline carries a date. A submission ' +
+        'missing a mandatory response is not marked down, it is rejected, and everything else in it is spent for ' +
+        'nothing — so this refuses rather than warns, and names every outstanding item at once.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/issue`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })) },
+      ],
+      transform: ({ packId: _packId }) => ({}),
+    },
     invitation: {
       title: 'Record an invitation to tender',
       intent:

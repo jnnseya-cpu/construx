@@ -134,6 +134,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import { morningBriefing } from '../agents/briefing.ts';
@@ -3676,6 +3677,73 @@ export const ROUTES: Route[] = [
     pattern: '/v1/pipeline/analyses/:analysisId',
     description: 'One compliance matrix: every requirement with an owner and a status, and the terms assessed',
     handler: (platform, ctx) => itt.complianceMatrix(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  /*
+   * The bid response pack.
+   *
+   * `itt.ts` reads the invitation and stops where the work starts. These five
+   * write the submission: plan it from the matrix, write one section per call
+   * until none remain, and issue it against a check that refuses an incomplete
+   * one.
+   *
+   * Project-scoped, and that is the invariant's doing rather than a preference.
+   * The first draft hung these off `/v1/pipeline` beside the analysis, on the
+   * argument that a bid happens before there is a delivery project. But writing
+   * a section spends a customer's ACUs, the quote that discloses the cost is
+   * assembled from a project, and `doors.test.ts` refuses a route that spends a
+   * tenancy's credit with nothing to quote against — which is exactly what a
+   * per-section pipeline with no project would have been. Pre-project work runs
+   * against the tenant's governance project, which is a project id like any
+   * other.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/bid-responses',
+    readOnly: true,
+    description: 'Every bid response pack, what is written and what is outstanding on each',
+    handler: (platform, ctx) => bidresponse.bidResponsePosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId',
+    readOnly: true,
+    description: 'One pack in full: every section, who owns it, what was written and what is stopping issue',
+    handler: (platform, ctx) => bidresponse.bidResponsePack(projectContext(platform, ctx), ctx.params.packId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses',
+    description: 'Plan a numbered response pack from a compliance matrix: one section per deliverable needing prose',
+    schema: {
+      type: 'object',
+      required: ['analysisId'],
+      properties: { analysisId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.planBidResponse(projectContext(platform, ctx), body<{ analysisId: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections',
+    description:
+      'Write the next section that has none. Called until nothing remains, so no single call carries a whole submission; a pass that dies leaves its section unwritten and the next call writes exactly that one',
+    ai: { engine: 'TENDER', taskType: 'bid_response_section', capability: 'REASONING' },
+    // Takes no body: which section is next is the pack's own answer, not the
+    // caller's. Declared all the same, because a write route with no declared
+    // shape is a write route accepting whatever arrives.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidresponse.writeNextSection(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/issue',
+    description:
+      'Issue the pack. Refused unless every deliverable has a response and every stated deadline is dated — a submission missing a mandatory response is rejected, not marked down',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidresponse.issueBidResponse(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
   },
   {
     method: 'POST',

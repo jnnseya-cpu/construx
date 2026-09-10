@@ -454,6 +454,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The invitation read properly: every requirement with an owner, and the
   // commercial terms assessed against what this business can actually carry.
   def('ITT_ANALYSED', 'ITTAnalysis', 'CREATE', 'PROCUREMENT'),
+  // The bid response pack: the half of a tender the platform could read and not
+  // write. Planned by a person from a stored analysis, written one section at a
+  // time so no single call carries a whole submission, and issued by a person
+  // against a check that refuses an incomplete one.
+  //
+  // The section event is UPDATE and is the only one of the three an agent may
+  // author. Planning commits the business to answering this tender and issuing
+  // sends it to a buyer; neither is a draft, and no agent mandate reaches
+  // either.
+  def('BID_RESPONSE_PLANNED', 'BidResponsePack', 'CREATE', 'PROCUREMENT'),
+  def('BID_RESPONSE_SECTION_WRITTEN', 'BidResponsePack', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  def('BID_RESPONSE_ISSUED', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
   // Reading the whole tender document set: what is missing, what nobody owns,
   // what two people own, and what the contract actually says.
   //

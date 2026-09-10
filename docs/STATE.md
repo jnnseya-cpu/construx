@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,459 passing, 0 failing, 0 skipped, across 300 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,470 passing, 0 failing, 0 skipped, across 301 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8708,6 +8708,74 @@ check, the restart, confirming a set landed, then the restore drill), and
 itself is still the customer's to create** — that is an account on somebody
 else's service and no commit can make it — but everything between pasting the
 keys and trusting them is now one command that either passes or names the fault.
+
+**The bid response pack: the half of a tender the platform could read and not
+write.** `domain/itt.ts` produces the requirements register, the compliance
+matrix, the owner per requirement and the clarifications, and stops exactly
+where the work starts. Somebody then wrote the submission by hand against a
+matrix on another screen. `domain/bidresponse.ts` writes it.
+
+**A pipeline, not a command, and the reason is the ceiling.** A large ITT
+carries sixty or eighty requirements needing prose. One model call producing all
+of them hits a token ceiling, and a ceiling does not refuse — it stops
+mid-sentence at section forty-one looking finished, and the tool becomes
+something a bid team trusts on small tenders and abandons on the ones worth
+winning. So the unit of work is one section: `writeNextSection` is called until
+`remaining` is zero, each call bounded by the section it writes and never by the
+size of the tender. There is no ceiling on the pack because the pack is never
+produced in a single act, and there is no time ceiling because no single call
+carries more than one section.
+
+**Resume is not a separate path.** A pass that dies — a provider timeout, a
+restart, a wallet that emptied — leaves its section PLANNED, and the next call
+writes the first section that has none. That is the same code that ran the first
+time. No checkpoint, no half-written state, and no way for resuming to work less
+well than the first run. A pass with nothing left spends nothing, because the
+natural way to drive this is a loop that stops on zero and the natural bug in
+that loop is running it once more.
+
+**A numbered document.** `BID-nnnn` at planning, before a word exists, so the
+pack can be quoted in a clarification and found afterwards. The plan is derived
+rather than typed twice: the checklist is the compliance matrix, the
+responsibility matrix is the owner already on each line, and the deadline
+schedule is each line's own date with the return date always at the end of it. A
+requirement the platform can already evidence from its own records is a
+certificate to attach, not a method statement to write, and is left out of the
+drafting queue — asking a model to write around evidence that exists is how a
+submission acquires a paragraph contradicting its own appendix.
+
+**One machine check, and it refuses.** The mirror of the tender pack's own
+completeness gate. `issueBidResponse` will not issue a pack that leaves a
+deliverable unanswered or a stated deadline undated, and the refusal names every
+outstanding item at once rather than the first, because fixing them one attempt
+at a time is how somebody decides at 4pm that the check is the problem. A
+submission missing a mandatory response is not marked down, it is rejected, and
+everything else in it is spent for nothing. A section marked drafted carrying an
+empty body counts as unanswered: a heading with no answer under it is the
+deliverable being unanswered.
+
+Planning and issuing are decisions and neither is an event an agent may author;
+only the section write carries `aiAllowed`. Drafting is refused outright on the
+local stand-in, before the charge, because prose from an adapter that reasons
+about nothing, sent to a buyer under the company's name as its answer to a
+mandatory requirement, is a false statement.
+
+**Two defects the platform's own invariants caught during the build**, both
+recorded because each was the same class of fault as one fixed the same day.
+`issueBidResponse` first authorised `ESTIMATE_TENDER` "I", a code no role holds
+— a command nobody could ever run, refused with a message about their role. And
+the routes first hung off `/v1/pipeline` beside the analysis, on the argument
+that a bid happens before there is a delivery project; `doors.test.ts` refuses
+an AI route that spends a customer's ACUs with no project to quote the cost
+against, which is exactly what a per-section pipeline with no project would have
+been. Both are now project-scoped, and pre-project work runs against the
+tenant's governance project.
+
+**What it does not do.** It does not decide. The pack is drafted and a named
+person issues it. It does not write the price, the programme or the commercial
+position — those are the estimate, and they have their own gates. And "90% of
+the bidding process" is the intent, not a measurement: nothing here counts what
+share of a bid it wrote, and no such figure is claimed anywhere in the product.
 
 **Four doors locked against everybody, including the owner.** The Offline packs
 panel on Work rendered *Estimate a pack*, *Issue a pack*, *Record a device
