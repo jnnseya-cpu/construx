@@ -259,6 +259,69 @@ front of the volume), so the evidence is off the host by construction. With
 no object store there is nowhere to ship a backup either, and the readiness
 screen says so under *Off-host backup*.
 
+### Turning the off-host backup on
+
+Six values and one command. Do it before the deployment holds a customer's
+record, not after: everything above is inert until an object store answers.
+
+**1. Make a bucket.** Any S3-compatible store — Cloudflare R2, AWS S3,
+Backblaze B2, MinIO, Ceph. It must be **private**; nothing here needs public
+read, and a public bucket is the whole record on the open internet. Create an
+access key scoped to that one bucket with read, write, list and **delete** —
+delete is not optional, because the rotation prunes sets beyond `BACKUP_KEEP`
+and a key without it fills the bucket until somebody gets a bill.
+
+**2. Put the values in `.env`.** Append, never rewrite: the file already holds
+secrets that cannot be regenerated without consequences.
+
+```
+OBJECT_STORE_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+OBJECT_STORE_REGION=auto
+OBJECT_STORE_BUCKET=construx-record
+OBJECT_STORE_ACCESS_KEY_ID=<key id>
+OBJECT_STORE_SECRET_ACCESS_KEY=<secret>
+OBJECT_STORE_PATH_STYLE=true
+```
+
+The endpoint is the **host only** — no bucket in it, no trailing slash; either
+puts the bucket in the signed path twice and produces a signature mismatch
+that reads as *the security token is invalid*, an error about credentials for a
+bug about punctuation. On R2 the region is the literal string `auto` and path
+style is `true`; both are wrong by default and both fail the same misleading
+way. On AWS use the real region and `OBJECT_STORE_PATH_STYLE=false`.
+
+**3. Prove it before anything depends on it.**
+
+```
+./deploy/object-store-check.sh /srv/construx/app/.env
+```
+
+It writes one small object under `BACKUP_PREFIX/.preflight/`, reads it back,
+compares the bytes, finds it in a listing, deletes it and confirms it is gone —
+then removes it whatever happened. No secret is printed and nothing else in the
+bucket is read or touched. Exit 0 means the credentials are good for everything
+the platform asks of them; exit 1 names the step that failed in the store's own
+words.
+
+Run it rather than restarting and reading a screen. Readiness can only say
+*configured*, which a typo, a key with no write permission and a bucket the
+endpoint does not serve all satisfy equally — and a wrong secret then sits
+unnoticed until the first set is missed, so the first news of it arrives from
+the alarm that exists for a lost volume.
+
+**4. Restart, then confirm a set actually landed.**
+
+```
+docker restart construx
+# within BACKUP_INTERVAL_MINUTES, or press "Back up now" on Platform operations
+curl -s -H "authorization: Bearer $OPERATOR_TOKEN" "$PUBLIC_BASE_URL/v1/admin/backups" | head -40
+```
+
+*Off-host backup* on System Control turns green, and `deploy/env-check.sh`
+stops reporting it. **Then drill the restore** — `deploy/restore-drill.sh`
+below, on the first set and afterwards on a calendar. A backup nobody has
+restored is a backup nobody knows they have.
+
 ### Restore
 
 1. Stop the service.

@@ -88,6 +88,19 @@ report critical OBJECT_STORE_ENDPOINT    "no off-host backup — the record exis
 report critical OBJECT_STORE_BUCKET      "no off-host backup — the endpoint alone ships nothing"
 report optional TRUSTED_PROXY_CIDRS      "rate limits key on the socket address; behind a proxy that is one bucket for the whole internet, login included"
 
+# Set is not the same as right, and this script cannot tell the difference: it
+# reads the file and reaches nothing. A wrong secret reads as configured here,
+# turns Off-host backup green on System Control, and is then discovered when the
+# first set is missed — which is to say, discovered from the alarm that exists
+# for a lost volume.
+if is_set OBJECT_STORE_ENDPOINT && is_set OBJECT_STORE_BUCKET; then
+  echo
+  echo "  An object store is set. Nothing here can tell whether the credentials work — this"
+  echo "  script reads the file and reaches nothing. Prove them before restarting the service:"
+  echo "      ./deploy/object-store-check.sh $ENV_FILE"
+  echo "  It writes one object, reads it back, lists it, deletes it, and names the step that failed."
+fi
+
 # Not a missing value: a value that is wrong for a deployment holding real
 # records. Neither `report` nor `is_set` can say this — the setting is present
 # and true, which both of them read as configured.

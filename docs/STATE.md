@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,440 passing, 0 failing, 0 skipped, across 298 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,449 passing, 0 failing, 0 skipped, across 299 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8649,6 +8649,43 @@ permanently blocked buttons for commands the API would have run.
 `PROCUREMENT_AWARD` "R" and nothing on `SUPPLIER_SUBMISSION`, is refused on all
 three; a `SUPPLIER` identity carrying the invited firm's party, which holds no
 award capability at all, is admitted.
+
+**The object store, made provable before it is trusted.** Everything the
+off-host backup needs was built and tested: the SigV4 signer against AWS's own
+published vector, the shipper, the manifest, the restore drill, the readiness
+line, the watch rule. None of it could answer the only question an operator has
+on the day they create a bucket — **are these five values right**. The answer
+came from restarting the service and reading a screen, and readiness can only
+say *configured*, which a typo in the endpoint, a key with no write permission
+and a bucket the endpoint does not serve all satisfy equally. A wrong secret
+then sits quiet for a backup interval, so the first news of it arrives from the
+alarm that exists for a lost volume.
+
+`deploy/object-store-check.sh` runs a round trip against the real store before
+anything depends on it: write one small object under `BACKUP_PREFIX/.preflight/`,
+read it back, compare the bytes, find it in a listing, delete it, confirm it is
+gone — and remove it whatever happened. Exit 0 means the credentials are good
+for everything the platform asks of them; exit 1 names the step that failed in
+the store's own words. No secret is printed, not even truncated, and nothing
+else in the bucket is read or touched.
+
+The two failures it exists for are the ones that look like success: a credential
+that can list but not write ships nothing while every screen reads green, and
+one that can write but not delete defeats the rotation and fills the bucket
+until somebody gets an invoice. Both are asserted in `objectstorecheck.test.ts`,
+which drives the real command in its own process against a store speaking real
+S3. It also warns, without failing, about the two settings nobody guesses:
+Cloudflare R2 signs against the literal region `auto` and serves path style, and
+each one wrong reads as *the security token is invalid* — an error about
+credentials, for a bug about a region string.
+
+`deploy/env-check.sh` now says so where it used to stop at "set", the runbook
+carries *Turning the off-host backup on* end to end (bucket, the six values, the
+check, the restart, confirming a set landed, then the restore drill), and
+`.env.example` carries the per-provider shape beside the keys. **The bucket
+itself is still the customer's to create** — that is an account on somebody
+else's service and no commit can make it — but everything between pasting the
+keys and trusting them is now one command that either passes or names the fault.
 
 **The article the site had no page for, and the two readers it was written
 for.** Eight topics in the marketing library, one per capability a buyer
