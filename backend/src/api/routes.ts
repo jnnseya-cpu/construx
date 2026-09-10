@@ -76,6 +76,7 @@ import * as collection from '../billing/collection.ts';
 import { AuthError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import type { Schema } from '../core/validate.ts';
+import * as units from '../core/units.ts';
 import * as business from '../domain/business.ts';
 import * as cdm from '../domain/cdm.ts';
 import { CDM_DOCUMENTS } from '../domain/cdm.ts';
@@ -17186,6 +17187,20 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/rfi/position',
     description: 'The RFI register as a delay exhibit: what is overdue and for how long',
     handler: (platform, ctx) => bim.rfiPosition(projectContext(platform, ctx)),
+  },
+  // The units the platform reads, for the same reason the correspondence matrix
+  // below is published: a second list of units in the browser is a second list
+  // that drifts, and a form offering a unit the engine cannot read produces a
+  // quantity nothing can check.
+  {
+    method: 'GET',
+    pattern: '/v1/units',
+    readOnly: true,
+    description: 'Every unit the platform reads, what it measures, and which units it can be converted against',
+    handler: (_platform, ctx) => {
+      auth(ctx);
+      return { units: units.unitCatalogue(), dimensions: units.UNIT_DIMENSION, base: units.BASE_UNIT };
+    },
   },
   // Contractual correspondence. The matrix is published rather than restated in
   // the browser, for the same reason the permission matrix is: who a letter must

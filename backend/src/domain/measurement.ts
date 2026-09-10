@@ -1,6 +1,7 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
+import { canonicalUnit, sameDimension } from '../core/units.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 
@@ -221,11 +222,22 @@ export function validateItems(items: MeasuredItem[]): MeasurementFinding[] {
     });
     const units = [...new Set(group.map((item) => item.unit))];
     if (units.length > 1) {
+      // Whether the two units measure the same kind of thing changes what the
+      // reader is looking at. Two lines at m and mm are one item somebody wrote
+      // twice in different scales; two lines at m and m² are two different
+      // items that collided on one reference, and the second is the worse of
+      // the two because the totals still add up.
+      const dimensions = new Set(units.map((unit) => canonicalUnit(unit)?.dimension ?? `unreadable:${unit}`));
       findings.push({
         severity: 'CRITICAL',
         reference,
         subject: `${reference} is measured in ${units.join(' and ')}`,
-        detail: 'The same item at two units cannot be totalled and cannot be priced.',
+        detail:
+          dimensions.size > 1
+            ? 'The same item at two units cannot be totalled and cannot be priced. These units do not even measure the same ' +
+              'kind of thing, so one of these lines is a different item under the same reference.'
+            : 'The same item at two units cannot be totalled and cannot be priced. They measure the same kind of thing, so ' +
+              'this is one item written at two scales — pick the one the client asked to be priced in.',
       });
     }
   }
@@ -311,6 +323,23 @@ export function validateItems(items: MeasuredItem[]): MeasurementFinding[] {
         reference: item.reference,
         subject: `${item.reference} sits under ${item.parent}, which is not in the schedule`,
         detail: 'The hierarchy is broken here, so the section totals this item belongs to cannot be built.',
+      });
+    }
+
+    // A unit the platform cannot read is a quantity it cannot check. `MAJOR`
+    // rather than `CRITICAL`: the line may be perfectly correct, and a bill
+    // arriving with a unit column nobody standardised is normal. What is not
+    // normal is pricing on through it without anybody noticing, so it is said
+    // out loud and the freeze is not blocked by it.
+    if (!canonicalUnit(item.unit)) {
+      findings.push({
+        severity: 'MAJOR',
+        reference: item.reference,
+        subject: `${item.reference} is measured in "${item.unit}", which this platform does not read`,
+        detail:
+          'A unit it cannot read is a quantity it cannot check — nothing here can tell whether the rate beside it is per ' +
+          'square metre or per linear metre, and both will total. Use a recognised unit, or price this line by hand knowing ' +
+          'it is unchecked.',
       });
     }
   }
@@ -953,6 +982,44 @@ export function reconcile(ctx: EngineContext, fromScheduleId: string, toSchedule
   const after = totalsOf(toRecord);
   const beforeBy = new Map(before.items.map((item) => [item.reference, item]));
   const afterBy = new Map(after.items.map((item) => [item.reference, item]));
+
+  // A reference whose unit moved is not the same item measured again.
+  //
+  // Without this the reconciliation is arithmetically perfect and meaningless:
+  // 340 m² became 340 m, the quantity did not change, no movement is reported,
+  // and the £240,000 the reader is trying to explain is hiding in a line the
+  // report says did not move. Where the dimension is the same the arithmetic is
+  // even more convincing — 12 m became 12,000 mm and the report shows a
+  // thousand-fold remeasurement of a wall that never changed.
+  //
+  // Both are refused rather than converted. Converting would produce a number,
+  // and the honest answer is that somebody redefined an item and has to say
+  // which definition the bid is being priced against.
+  const changed: string[] = [];
+  for (const item of after.items) {
+    const previous = beforeBy.get(item.reference);
+    if (!previous) continue;
+    const was = canonicalUnit(previous.unit);
+    const now = canonicalUnit(item.unit);
+    // Two units the platform reads are the same when they fold to one symbol.
+    // Two it cannot read are the same only when the text is identical, because
+    // there is nothing else to compare them by.
+    const same = was && now ? was.symbol === now.symbol : previous.unit.trim() === item.unit.trim();
+    if (same) continue;
+    changed.push(
+      `${item.reference} was measured in ${previous.unit} and is now measured in ${item.unit}` +
+        (sameDimension(previous.unit, item.unit) ? ' — the same kind of thing at a different scale' : ''),
+    );
+  }
+  if (changed.length > 0) {
+    throw new DomainError(
+      'UNIT_CHANGED_BETWEEN_SCHEDULES',
+      `${changed.length} item${changed.length === 1 ? '' : 's'} changed unit between ${stateOf(fromRecord).reference} and ` +
+        `${stateOf(toRecord).reference}, so the movement between them cannot be stated: ${changed.join('; ')}. ` +
+        'An item that changed unit is a redefinition, not a remeasurement. Reissue it under its own reference, or correct ' +
+        'the unit, and reconcile again.',
+    );
+  }
 
   const movements: Movement[] = [];
 

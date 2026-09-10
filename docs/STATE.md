@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,472 passing, 0 failing, 0 skipped, across 302 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,499 passing, 0 failing, 0 skipped, across 303 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20360,3 +20360,74 @@ clusters of missing work: the staleness and impact graph, the evidence registry
 with its gate, and the submission channel with a tool gateway. Part I's twelve
 acceptance scenarios fail in exactly those three groups. That agreement is the
 most useful thing merging produced, and it sets the build order.
+
+## A unit is not a label on a number
+
+`EST-005` of the Level 7 specification is one line: *incompatible units cannot
+calculate silently*. It is the cheapest requirement in that document and it
+prevents the most expensive class of estimating error, because the error adds
+up. Ten thousand square metres of blockwork against a rate built per linear
+metre produces a total that prints correctly, reconciles against itself and is
+wrong by an order of magnitude, and nothing notices — a spreadsheet holds
+numbers, and the platform's whole argument is that it holds facts.
+
+**`backend/src/core/units.ts`.** Thirty-two units across eight dimensions, each
+with an exact factor to its dimension's base. Conversion is exact within a
+dimension and refused across one, with the refusal naming what each side
+measures rather than returning a number.
+
+**Reading what somebody actually typed.** A bill assembled from three
+spreadsheets writes the same unit as `m2`, `m²`, `M2`, `sq m`, `sq.m.` and
+`SQM`. Those fold to one symbol. Anything outside the table returns `undefined`
+rather than a guess, because a unit the platform has invented a meaning for is
+worse than one it admits it cannot read: the first is checked against nothing
+and looks checked.
+
+**Three things it refuses to read, on purpose.**
+
+- **`ton`.** A short ton is 907.18474 kg, a long ton is 1016.0469088 kg and a
+  tonne is 1000. Reading the word as any one of them is a silent error of up to
+  1.6% on every line it touches. `tonne`, `te` and `MT` are unambiguous and are
+  read.
+- **A working day.** `day` here is twenty-four hours, which is what a day is. A
+  working day is five, seven, eight, nine or twelve hours depending on the
+  calendar in force, and a unit called `wd` would have to pick one. Programme
+  calendars already model this properly; a text unit that pretended to would
+  silently disagree with them.
+- **Currency.** Money has its own minor units, its own rounding and its own
+  conversion decision — an exchange rate has a date and somebody's authority on
+  it. Burying that in a conversion factor would make a commercial decision look
+  like arithmetic.
+
+**Where it is wired, and why those two places.**
+
+`validateItems` reports an unreadable unit as `MAJOR` rather than `CRITICAL`:
+the line may be perfectly correct, and a bill arriving with a unit column nobody
+standardised is normal. What is not normal is pricing on through it without
+anybody noticing. The same-reference-two-units finding now says which of the two
+collisions it is — `m` against `mm` is one item written at two scales, `m`
+against `m²` is two different items that collided on one reference, and the
+second is the worse because the totals still add up.
+
+`reconcile` **refuses**. This is where the silence was: 340 m² becomes 340 m,
+the quantity did not change, no movement is reported, and the money the reader
+is trying to explain is hiding in a line the report says did not move. The
+scale case is more convincing still — 12 m becomes 12,000 mm and the report
+shows a thousand-fold remeasurement of a wall nobody touched. Both are refused
+rather than converted, because converting would produce a number and the honest
+answer is that somebody redefined an item. Two units that fold to the same
+symbol are not a change, so a bill written by two people does not raise a false
+alarm.
+
+`GET /v1/units` publishes the table, and the measurement form offers it as
+suggestions rather than as a choice: anything is accepted, because a bill may
+legitimately be measured in something the engine does not read, and the engine
+reports that instead of refusing it. The console's hardcoded hint listing six
+units is gone — it was a second list, and the one that drifts is always the one
+nobody tests. `frontend/lib/command.js` gained `suggestions` on a text field for
+this, rendered as a datalist.
+
+Twenty-one tests on the engine, six on the wiring. Among them: every published
+symbol reads back, every unit round-trips through its dimension's base without
+drift, and the imperial factors agree with each other — a square foot has to be
+a foot squared or areas and lengths will disagree on the same drawing.

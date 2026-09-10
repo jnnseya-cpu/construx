@@ -689,6 +689,118 @@ describe('measurement · where the money went between two versions', () => {
     const error = throwsCode(() => measurement.reconcile(asQS(), first, euro), 'CURRENCY_MISMATCH');
     assert.match(String(error.message), /a rate decision, not a measurement one/);
   });
+
+  /**
+   * The movement that is arithmetically perfect and meaningless.
+   *
+   * 340 m² becomes 340 m. The quantity did not change, so no movement is
+   * reported, and the money the reader is trying to explain is hiding inside a
+   * line the report says did not move. Reconciling it would produce a number,
+   * and the honest answer is that somebody redefined the item.
+   */
+  it('refuses when an item changed to a unit measuring something else', () => {
+    const before = measurement.openSchedule(asQS(), { packageReference: 'PKG-DIM', title: 'Screed rev 1' }).scheduleId;
+    build('S.10.1', 340, 55_00, before);
+
+    const after = measurement.openSchedule(asQS(), { packageReference: 'PKG-DIM', title: 'Screed rev 2' }).scheduleId;
+    measurement.recordItems(asQS(), after, [measured({ reference: 'S.10.1', quantity: 340, unit: 'm' })]);
+    measurement.priceItem(asQS(), after, {
+      reference: 'S.10.1',
+      components: [{ kind: 'SUBCONTRACT', description: 'Trade contractor', unitCostMinor: 55_00, constant: 1 }],
+    });
+
+    const error = throwsCode(() => measurement.reconcile(asQS(), before, after), 'UNIT_CHANGED_BETWEEN_SCHEDULES');
+    assert.match(String(error.message), /S\.10\.1 was measured in m2 and is now measured in m/);
+    assert.match(String(error.message), /a redefinition, not a remeasurement/);
+  });
+
+  /**
+   * The same failure wearing a more convincing disguise: 12 m becomes 12,000 mm
+   * and the report shows a thousand-fold remeasurement of a wall nobody touched.
+   * Converting silently would be worse than refusing, so both are refused and
+   * the message says which case this is.
+   */
+  it('refuses a scale change too, and says it is the same kind of thing', () => {
+    const before = measurement.openSchedule(asQS(), { packageReference: 'PKG-SCALE', title: 'Kerbs rev 1' }).scheduleId;
+    measurement.recordItems(asQS(), before, [measured({ reference: 'K.10.1', quantity: 12, unit: 'm' })]);
+    measurement.priceItem(asQS(), before, {
+      reference: 'K.10.1',
+      components: [{ kind: 'SUBCONTRACT', description: 'Kerb layer', unitCostMinor: 40_00, constant: 1 }],
+    });
+
+    const after = measurement.openSchedule(asQS(), { packageReference: 'PKG-SCALE', title: 'Kerbs rev 2' }).scheduleId;
+    measurement.recordItems(asQS(), after, [measured({ reference: 'K.10.1', quantity: 12_000, unit: 'mm' })]);
+    measurement.priceItem(asQS(), after, {
+      reference: 'K.10.1',
+      components: [{ kind: 'SUBCONTRACT', description: 'Kerb layer', unitCostMinor: 4, constant: 1 }],
+    });
+
+    const error = throwsCode(() => measurement.reconcile(asQS(), before, after), 'UNIT_CHANGED_BETWEEN_SCHEDULES');
+    assert.match(String(error.message), /the same kind of thing at a different scale/);
+  });
+
+  it('does not refuse when the same unit was written two different ways', () => {
+    // `m²` and `sq m` are one unit typed by two people. Refusing there would be
+    // a false alarm on every bill assembled from more than one spreadsheet.
+    const before = measurement.openSchedule(asQS(), { packageReference: 'PKG-SPELL', title: 'Paint rev 1' }).scheduleId;
+    measurement.recordItems(asQS(), before, [measured({ reference: 'P.10.1', quantity: 500, unit: 'm2' })]);
+    measurement.priceItem(asQS(), before, {
+      reference: 'P.10.1',
+      components: [{ kind: 'SUBCONTRACT', description: 'Decorator', unitCostMinor: 9_00, constant: 1 }],
+    });
+
+    const after = measurement.openSchedule(asQS(), { packageReference: 'PKG-SPELL', title: 'Paint rev 2' }).scheduleId;
+    measurement.recordItems(asQS(), after, [measured({ reference: 'P.10.1', quantity: 560, unit: 'sq m' })]);
+    measurement.priceItem(asQS(), after, {
+      reference: 'P.10.1',
+      components: [{ kind: 'SUBCONTRACT', description: 'Decorator', unitCostMinor: 9_00, constant: 1 }],
+    });
+
+    const result = measurement.reconcile(asQS(), before, after);
+    assert.equal(result.movements.length, 1);
+    assert.equal(result.movements[0]!.kind, 'REMEASURED');
+  });
+});
+
+describe('measurement · a unit nobody can read is a quantity nobody can check', () => {
+  it('says so, without blocking the freeze over it', () => {
+    const findings = measurement.validateItems([measured({ reference: 'U.10.1', unit: 'per bay' })]);
+    const unreadable = findings.find((finding) => finding.subject.includes('does not read'));
+    assert.ok(unreadable, 'an unreadable unit should be reported');
+    assert.equal(unreadable.severity, 'MAJOR');
+    assert.match(unreadable.detail, /per square metre or per linear metre, and both will total/);
+  });
+
+  it('says nothing about a unit it reads, however it was typed', () => {
+    for (const unit of ['m3', 'cu m', 'Nr', 'sq.m.', 'hrs', 'tonnes', 'lump sum']) {
+      const findings = measurement.validateItems([measured({ reference: 'U.20.1', unit })]);
+      assert.equal(
+        findings.filter((finding) => finding.subject.includes('does not read')).length,
+        0,
+        `"${unit}" should be read without complaint`,
+      );
+    }
+  });
+
+  it('tells the two kinds of duplicate-unit collision apart', () => {
+    const differentThings = measurement.validateItems([
+      measured({ reference: 'D.10.1', unit: 'm2' }),
+      measured({ reference: 'D.10.1', unit: 'm' }),
+    ]);
+    assert.ok(
+      differentThings.some((finding) => finding.detail.includes('do not even measure the same kind of thing')),
+      'm2 against m is two items sharing a reference',
+    );
+
+    const sameThing = measurement.validateItems([
+      measured({ reference: 'D.20.1', unit: 'm' }),
+      measured({ reference: 'D.20.1', unit: 'mm' }),
+    ]);
+    assert.ok(
+      sameThing.some((finding) => finding.detail.includes('one item written at two scales')),
+      'm against mm is one item at two scales',
+    );
+  });
 });
 
 // ── The position, and the catalogue ─────────────────────────────────────────

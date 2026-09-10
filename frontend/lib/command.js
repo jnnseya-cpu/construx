@@ -132,6 +132,23 @@ function control(field) {
   }
 
   const type = FIELD_TYPES.has(field.type) ? field.type : 'text';
+  // Suggestions, not a choice. A select would be wrong wherever the platform
+  // has an opinion about the usual answers and still has to accept an unusual
+  // one — a bill may legitimately be measured in something the unit engine does
+  // not read, and the engine reports that rather than refusing it. A datalist
+  // offers the recognised set and takes anything.
+  const suggestions = Array.isArray(field.suggestions) && field.suggestions.length > 0 ? field.suggestions : null;
+  const listId = suggestions ? `${id}-list` : '';
+  const list = suggestions ? ` list="${listId}"` : '';
+  const datalist = suggestions
+    ? `<datalist id="${listId}">${suggestions
+        .map((option) =>
+          typeof option === 'string'
+            ? `<option value="${esc(option)}"></option>`
+            : `<option value="${esc(option.value)}">${esc(option.label ?? '')}</option>`,
+        )
+        .join('')}</datalist>`
+    : '';
   const step = field.type === 'number' ? ` step="${esc(field.step ?? 'any')}"` : '';
   const min = field.min !== undefined ? ` min="${esc(field.min)}"` : '';
   // `max` was never rendered, so a date field had no upper bound to offer even
@@ -140,7 +157,7 @@ function control(field) {
   // the API refuses a future notice date whatever the browser allowed.
   const max = field.max !== undefined ? ` max="${esc(field.max)}"` : '';
   return `<input id="${id}" name="${esc(field.name)}" type="${type}" value="${esc(field.value ?? '')}"
-    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max} ${required}>`;
+    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} ${required}>${datalist}`;
 }
 
 async function collect(host, fields, files = []) {

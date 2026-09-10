@@ -30,7 +30,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -38,6 +38,11 @@ export async function procurement(root) {
     api.read('/v1/frameworks', 'PROCUREMENT_AWARD').catch((error) => ({ error })),
     api.read(`/v1/projects/${projectId}/tender-reviews`, 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.read(`/v1/projects/${projectId}/awards`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    // The units the engine reads, fetched rather than restated. A hint listing
+    // units the browser believes in is a second list, and the one that drifts is
+    // always the one nobody tests — a form offering a unit the engine cannot
+    // read produces a quantity nothing can check.
+    api.get('/v1/units').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -1585,7 +1590,9 @@ export async function procurement(root) {
         { name: 'reference', label: 'Item reference', type: 'text', hint: 'The reference on the paper the client sees' },
         { name: 'parent', label: 'Sits under', type: 'text', required: false },
         { name: 'description', label: 'Description', type: 'textarea', rows: 2 },
-        { name: 'unit', label: 'Unit', type: 'text', hint: 'm3, m2, m, t, nr, item' },
+        { name: 'unit', label: 'Unit', type: 'text',
+          suggestions: (units.units ?? []).map((unit) => ({ value: unit.symbol, label: `${unit.label} — ${unit.dimension.toLowerCase()}` })),
+          hint: 'Anything is accepted. A unit outside this list is reported as unchecked rather than refused.' },
         { name: 'quantity', label: 'Quantity', type: 'number' },
         { name: 'formula', label: 'Formula', type: 'text', required: false, hint: 'e.g. 12.4 * 3.85 * 2 — checked against the quantity' },
         { name: 'basis', label: 'Basis', type: 'select',
