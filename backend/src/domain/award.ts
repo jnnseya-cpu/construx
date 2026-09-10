@@ -275,6 +275,11 @@ export function departuresBetween(
 
   // A qualification the price depended on, struck out without anybody noticing,
   // is the single most expensive thing on this list.
+  //
+  // Silence is handled by `qualificationStandings` below rather than here,
+  // because silence about a qualification is not a departure and is not an
+  // acceptance either. It is the third thing, and the whole of `AWD-002` is
+  // that the third thing has to exist.
   if (awarded.acceptedQualifications !== undefined) {
     const accepted = new Set(awarded.acceptedQualifications);
     for (const qualification of submitted.qualifications) {
@@ -291,6 +296,63 @@ export function departuresBetween(
   }
 
   return departures;
+}
+
+/**
+ * Where each bid qualification stands after the award — `AWD-002`.
+ *
+ * ---
+ *
+ * **The assumption this removes.** A term the award is silent on carries the
+ * bid figure, which is why silence is not a departure for a contract sum or a
+ * retention percentage. A qualification is the opposite: it is only in the
+ * contract if the contract says it is. Silence about a qualification is not
+ * acceptance of it, and a platform that carried bid qualifications into
+ * delivery because nobody struck them out has manufactured a commercial
+ * position the contract does not support — one the business will discover the
+ * first time it tries to rely on it.
+ *
+ * So there are three standings and not two. Named as accepted, named as struck
+ * out, and **unresolved** — which is the honest answer whenever the award
+ * document does not say, and the state `AWD-002`'s acceptance criterion calls
+ * for: *an ambiguous item remains unresolved.*
+ *
+ * Pure, like `departuresBetween`, so the position can be shown before anything
+ * is recorded.
+ */
+export type QualificationStanding = {
+  qualification: string;
+  standing: 'ACCEPTED' | 'STRUCK_OUT' | 'UNRESOLVED';
+  /** What in the record says so. Never an inference. */
+  basis: string;
+};
+
+export function qualificationStandings(
+  submitted: { qualifications: string[] },
+  awarded: AwardedTerms,
+): QualificationStanding[] {
+  return submitted.qualifications.map((qualification) => {
+    if (awarded.acceptedQualifications === undefined) {
+      return {
+        qualification,
+        standing: 'UNRESOLVED' as const,
+        basis:
+          'The award document does not say either way. A qualification is only in the contract if the contract says it is, ' +
+          'so silence is not acceptance — and carrying it forward would create a position the contract does not support.',
+      };
+    }
+    return awarded.acceptedQualifications.includes(qualification)
+      ? {
+          qualification,
+          standing: 'ACCEPTED' as const,
+          basis: 'Named in the award as accepted.',
+        }
+      : {
+          qualification,
+          standing: 'STRUCK_OUT' as const,
+          basis: 'The award lists the qualifications it accepts and this is not among them.',
+        };
+  });
 }
 
 /**
@@ -360,6 +422,14 @@ export function recordAward(
         )
       : [];
 
+  // Where each qualification stands, computed rather than assumed. Recorded
+  // even where every one is unresolved — especially then, because an unresolved
+  // qualification that is not on the record is one nobody will chase.
+  const standings =
+    input.outcome === 'WON'
+      ? qualificationStandings({ qualifications: assembly.qualifications ?? [] }, input.terms!)
+      : [];
+
   const evidenceRefs = input.evidenceHash
     ? [
         registerEvidence(ctx, {
@@ -394,6 +464,7 @@ export function recordAward(
         id: `DEP-${String(index + 1).padStart(2, '0')}`,
         status: 'OPEN' as const,
       })),
+      qualificationStandings: standings,
     },
     evidenceRefs,
   });
@@ -460,6 +531,72 @@ export function acceptDeparture(
   return { accepted: departureId, outstanding };
 }
 
+/**
+ * Resolve an unresolved qualification, against something the client said.
+ *
+ * The point of `AWD-002` is that this cannot be a shrug. Resolving one means
+ * naming what settles it — the clause of the contract that carries it, the
+ * clarification response that accepted it, the letter that struck it out — and
+ * saying which of the two it turned out to be. A resolution with no basis is
+ * the assumption this whole mechanism exists to remove, entered by hand.
+ *
+ * Struck out is a legitimate outcome and is not a failure. What is refused is
+ * the third state surviving into the delivery baseline.
+ */
+export function resolveQualification(
+  ctx: EngineContext,
+  packId: string,
+  input: { qualification: string; standing: 'ACCEPTED' | 'STRUCK_OUT'; basis: string },
+): { qualification: string; standing: string; unresolved: number } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const pack = requirePack(ctx, packId);
+  if (!pack.state.award) throw new DomainError('NOT_AWARDED', 'Nothing has been awarded against this pack');
+
+  const standings = (pack.state.qualificationStandings as QualificationStanding[] | undefined) ?? [];
+  const index = standings.findIndex((entry) => entry.qualification === input.qualification);
+  if (index < 0) {
+    throw new DomainError(
+      'QUALIFICATION_NOT_FOUND',
+      `This award carries no qualification "${input.qualification}"`,
+      404,
+    );
+  }
+  if (standings[index]!.standing !== 'UNRESOLVED') {
+    throw new DomainError(
+      'QUALIFICATION_ALREADY_RESOLVED',
+      `That qualification already stands as ${standings[index]!.standing.toLowerCase().replace('_', ' ')}.`,
+    );
+  }
+
+  const basis = input.basis.trim();
+  if (basis.length < 15) {
+    throw new DomainError(
+      'RESOLUTION_BASIS_REQUIRED',
+      'Name what settles it — the contract clause that carries it, the clarification response that accepted it, or the ' +
+        'letter that struck it out. A resolution with no basis is the assumption this exists to remove, typed in by hand.',
+      422,
+      [{ field: 'basis', message: 'At least 15 characters' }],
+    );
+  }
+
+  const resolved: QualificationStanding = {
+    qualification: input.qualification,
+    standing: input.standing,
+    basis,
+  };
+  const updated = standings.map((entry, at) => (at === index ? resolved : entry));
+  const unresolved = updated.filter((entry) => entry.standing === 'UNRESOLVED').length;
+
+  write(ctx, {
+    eventType: 'AWARD_DEPARTURE_IDENTIFIED',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: { ...pack.state, qualificationStandings: updated },
+  });
+
+  return { qualification: input.qualification, standing: input.standing, unresolved };
+}
+
 // --- Conversion --------------------------------------------------------------
 
 export type ConversionResult = {
@@ -517,6 +654,24 @@ export function convertAward(
       'DEPARTURES_OUTSTANDING',
       `${open.length} departure${open.length === 1 ? '' : 's'} between the award and the bid ${open.length === 1 ? 'is' : 'are'} still open: ` +
         `${open.map((d) => `${d.id} ${d.field}`).join(', ')}. Accept them with a reason, or resolve them with the client, before the money starts moving.`,
+    );
+  }
+
+  // `AWD-002`. A qualification the award said nothing about is not accepted, and
+  // carrying it into the delivery baseline would manufacture a commercial
+  // position the contract does not support — one the business discovers the
+  // first time it tries to rely on it. Struck out is a fine answer here;
+  // unresolved is not an answer at all.
+  const standings = (pack.state.qualificationStandings as QualificationStanding[] | undefined) ?? [];
+  const unresolved = standings.filter((entry) => entry.standing === 'UNRESOLVED');
+  if (unresolved.length > 0) {
+    throw new DomainError(
+      'QUALIFICATIONS_UNRESOLVED',
+      `${unresolved.length} bid qualification${unresolved.length === 1 ? '' : 's'} ${unresolved.length === 1 ? 'is' : 'are'} ` +
+        'neither accepted nor struck out by the award: ' +
+        `${unresolved.map((entry) => `"${entry.qualification}"`).join(', ')}. ` +
+        'A qualification is only in the contract if the contract says it is, so silence is not acceptance. Resolve each ' +
+        'against what the client actually said before the budget is set on it.',
     );
   }
 
@@ -617,9 +772,21 @@ export type AwardPosition = {
     outcome?: AwardOutcome;
     departures: Array<Departure & { id: string; status: string }>;
     departuresOutstanding: number;
+    /** Where each bid qualification stands after the award. */
+    qualificationStandings: QualificationStanding[];
+    /** How many the award said nothing about. Conversion refuses while this is above zero. */
+    qualificationsUnresolved: number;
     converted: boolean;
     contractSumMinor?: number;
   }>;
+  /**
+   * Every qualification the award said nothing about, across every pack.
+   *
+   * Lifted to the top so a register shows the sentences rather than a count.
+   * A number beside "unresolved" tells somebody there is a problem; this tells
+   * them which promise the contract may not carry.
+   */
+  unresolvedQualifications: Array<{ packId: string; qualification: string; basis: string }>;
   summary: string;
 };
 
@@ -650,11 +817,16 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
       outcome: award?.outcome,
       departures,
       departuresOutstanding: departures.filter((d) => d.status === 'OPEN').length,
+      qualificationStandings: (state.qualificationStandings as QualificationStanding[] | undefined) ?? [],
+      qualificationsUnresolved: ((state.qualificationStandings as QualificationStanding[] | undefined) ?? []).filter(
+        (entry) => entry.standing === 'UNRESOLVED',
+      ).length,
       converted: state.status === 'CONVERTED',
       contractSumMinor: award?.terms?.contractSumMinor,
     };
   });
 
+  const unresolved = packs.reduce((sum, p) => sum + p.qualificationsUnresolved, 0);
   const outstanding = packs.reduce((sum, p) => sum + p.departuresOutstanding, 0);
   const mismatched = packs.filter((p) => p.submitted && !p.submitted.hashMatches).length;
 
@@ -663,8 +835,19 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
   const lost = packs.filter((p) => p.outcome === 'LOST').length;
   if (won > 0 || lost > 0) parts.push(`${won} won, ${lost} lost`);
   if (outstanding > 0) parts.push(`${outstanding} award departure${outstanding === 1 ? '' : 's'} still open`);
+  if (unresolved > 0) {
+    parts.push(
+      `${unresolved} bid qualification${unresolved === 1 ? '' : 's'} neither accepted nor struck out`,
+    );
+  }
   if (mismatched > 0) parts.push(`${mismatched} receipt${mismatched === 1 ? '' : 's'} naming a pack hash that has since changed`);
   if (parts.length === 1) parts.push('nothing outstanding');
 
-  return { packs, summary: `${parts.join(', ')}.` };
+  const unresolvedQualifications = packs.flatMap((pack) =>
+    pack.qualificationStandings
+      .filter((entry) => entry.standing === 'UNRESOLVED')
+      .map((entry) => ({ packId: pack.packId, qualification: entry.qualification, basis: entry.basis })),
+  );
+
+  return { packs, unresolvedQualifications, summary: `${parts.join(', ')}.` };
 }

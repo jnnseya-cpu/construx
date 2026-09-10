@@ -20986,6 +20986,27 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/qualifications/resolve',
+    description: 'Say where a bid qualification stands after the award, against what the client actually said',
+    schema: {
+      type: 'object',
+      required: ['qualification', 'standing', 'basis'],
+      properties: {
+        qualification: stringField,
+        standing: { type: 'string', enum: ['ACCEPTED', 'STRUCK_OUT'] },
+        basis: { type: 'string', minLength: 15 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.resolveQualification(
+        projectContext(platform, ctx),
+        ctx.params.packId as string,
+        body<{ qualification: string; standing: 'ACCEPTED' | 'STRUCK_OUT'; basis: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-packs/:packId/convert',
     description: 'Carry the awarded submission into the budget and the buyout targets, without re-entry',
     schema: {

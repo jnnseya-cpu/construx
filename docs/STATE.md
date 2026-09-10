@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,516 passing, 0 failing, 0 skipped, across 304 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,525 passing, 0 failing, 0 skipped, across 305 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20484,3 +20484,48 @@ Three routes under `/v1/pipeline/analyses/:analysisId/waivers`, a register
 counting live mandatory waivers separately because that is the number a bid
 director reads first, and two doors inside the matrix panel on Pipeline & Bids.
 Seventeen tests.
+
+## Silence is not acceptance
+
+`AWD-002`: *no qualification is treated as accepted without evidence; an
+ambiguous item remains unresolved.*
+
+Reading the code against that sentence found a real defect rather than a missing
+feature. `departuresBetween` compared qualifications only when the award named
+the ones it accepted:
+
+```ts
+if (awarded.acceptedQualifications !== undefined) { … }
+```
+
+An award that said nothing — which is what a letter of intent normally does —
+produced no departure, no record and no question, and every bid qualification
+rode into the delivery baseline unexamined.
+
+**A term the award is silent on carries the bid figure. A qualification does
+not.** That is right for a contract sum or a retention percentage, and it is why
+silence is correctly not a departure for either. A qualification is the
+opposite: it is only in the contract if the contract says it is. Carrying one
+forward because nobody struck it out manufactures a commercial position the
+contract does not support, and the business finds out the first time it tries to
+rely on it.
+
+**So there are three standings, not two.** Named as accepted, named as struck
+out, and **unresolved** — computed by `qualificationStandings`, recorded on the
+award, and each carrying what says so rather than an inference.
+
+`convertAward` refuses while any is unresolved (`QUALIFICATIONS_UNRESOLVED`),
+naming each. Struck out is a perfectly good answer and is not a failure; what is
+refused is the third state surviving into the budget. Resolving one takes a
+basis of at least fifteen characters — the clause that carries it, the
+clarification that accepted it, the letter that struck it out — because a
+resolution with no basis is the assumption this exists to remove, typed in by
+hand.
+
+The award position lists the unresolved qualifications at the top rather than
+counting them. A number beside "unresolved" says there is a problem; the
+sentences say which promise the contract may not carry.
+
+Nine tests. The existing award lifecycle is untouched: it records an award that
+names its accepted qualifications, so it produces no unresolved ones and
+converts exactly as before.

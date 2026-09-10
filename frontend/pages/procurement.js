@@ -1063,7 +1063,16 @@ export async function procurement(root) {
         intent: 'Submission packs and their receipts, the award departures, and what has converted.',
         data: awards,
         error: awards?.error,
-        sections: [{ key: 'packs', label: 'Submission packs', empty: 'Nothing has been submitted.' }],
+        sections: [
+          { key: 'packs', label: 'Submission packs', empty: 'Nothing has been submitted.' },
+          // Listed rather than counted. A number beside "unresolved" says there
+          // is a problem; this says which promise the contract may not carry.
+          {
+            key: 'unresolvedQualifications',
+            label: 'Bid qualifications the award did not answer',
+            empty: 'Every bid qualification is either accepted or struck out by the award.',
+          },
+        ],
       })}
     `,
   );
