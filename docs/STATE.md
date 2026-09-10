@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,470 passing, 0 failing, 0 skipped, across 301 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,472 passing, 0 failing, 0 skipped, across 302 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20211,3 +20211,27 @@ Department remains absent, because CONSTRUX still has no department and
 inventing one would be a dimension that looked real and was not.
 
 Covered by nine tests in `portfolio.test.ts`, seven of them refusals.
+
+## A command nobody can run
+
+`issueBidResponse` was written this week as `authorise(ctx, 'ESTIMATE_TENDER',
+'I')`. It reads perfectly — *I* for issue — and no role on the platform holds
+it. The estate expresses that decision as an approval. The route would have
+403'd every caller for ever, including an owner holding every capability there
+is, and the refusal would have blamed their role.
+
+It is not a strict command. It is an **unreachable** one, and the two are
+indistinguishable from the outside: both render as a locked button under a
+tooltip saying to ask somebody for permission, and the somebody does not exist.
+
+`reachablecommands.test.ts` reads the literal pairs at every call site and asks
+the published matrix whether anybody holds them. Both sides, because the same
+mistake has two faces: on the server a route that always refuses, in the
+console `can(area, code)` returning false for every role. 769 backend call
+sites and 500 console gates, with floors under both so a changed call shape
+fails the check loudly rather than quietly finding nothing. A pair built from a
+variable is skipped rather than guessed at — a check that guessed would fail on
+working code, which is how a test gets deleted.
+
+Two tests. Both were red against `ESTIMATE_TENDER 'I'` before it was corrected
+to `'A'`, which is the only evidence that they check anything.
