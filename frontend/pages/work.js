@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, notice, raw, render, statusTone, table } from '../lib/ui.js';
-import { draw, state } from '../app.js';
+import { blockedReason, can, draw, state } from '../app.js';
 
 /**
  * The field module workspace.
@@ -290,10 +290,18 @@ export async function work(root) {
         </p>
         <div class="actions cmd-bar" style="margin:10px 0">
           ${commandBar([
-            { id: 'pack-estimate', label: 'Estimate a pack', tone: 'quiet' },
-            { id: 'pack-issue', label: 'Issue a pack' },
-            { id: 'pack-receipt', label: 'Record a device receipt', tone: 'quiet' },
-            { id: 'pack-revoke', label: 'Withdraw a pack', tone: 'quiet' },
+            // Each mirrors what `field/pack.ts` actually authorises: estimate
+            // reads, issue creates, a receipt updates, a withdrawal approves.
+            //
+            // All four were written with no capability declared at all, and
+            // `commandBar` reads a missing declaration as a refusal — so every
+            // door on this panel was locked for every role including the owner,
+            // under a tooltip saying it was outside their role. It was not
+            // outside anybody's role. The screen never asked.
+            { id: 'pack-estimate', label: 'Estimate a pack', tone: 'quiet', permitted: can('FIELD_EXECUTION', 'R'), reason: blockedReason('FIELD_EXECUTION', 'R') },
+            { id: 'pack-issue', label: 'Issue a pack', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
+            { id: 'pack-receipt', label: 'Record a device receipt', tone: 'quiet', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
+            { id: 'pack-revoke', label: 'Withdraw a pack', tone: 'quiet', permitted: can('FIELD_EXECUTION', 'A'), reason: blockedReason('FIELD_EXECUTION', 'A') },
           ])}
         </div>
         ${

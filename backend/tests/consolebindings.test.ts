@@ -340,3 +340,93 @@ describe('every capability area the console names is a real one', () => {
     );
   });
 });
+
+/**
+ * A command button that never says what it needs.
+ *
+ * `commandBar` renders an entry as a working button when `permitted` is true and
+ * as a lock when it is anything else — and `undefined` is anything else. So an
+ * entry written without a capability is not "unguarded", which would at least be
+ * loud. It is **locked for everybody, permanently**, under the fallback tooltip
+ * "Not permitted for your role" — a sentence that is false, because the command
+ * is not outside anybody's role and the screen simply never asked.
+ *
+ * That is worse than the failure it looks like. A role problem sends somebody to
+ * Team & Access, where an administrator finds nothing wrong, because nothing is.
+ * The four doors on the Offline packs panel shipped this way: an owner, who
+ * holds everything, saw four locks and a sentence telling them to ask
+ * themselves for permission.
+ *
+ * The check is deliberately narrow. It does not judge *which* capability an
+ * entry declares — that is a question about the server's own rules, and the
+ * capability-area check above already refuses an area no role can hold. It
+ * answers one question: does every entry declare one at all.
+ *
+ * Entries are found by brace-matching from `commandBar(`, rather than by a
+ * regular expression over the whole call, because these lists run to twenty
+ * entries carrying nested ternaries and object literals of their own, and a
+ * pattern that tried to read them would either miss entries or invent them.
+ */
+describe('every command button declares the capability it needs', () => {
+  it('has no entry that renders as a lock for every role including the owner', () => {
+    const found: string[] = [];
+    let entries = 0;
+
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      let at = 0;
+
+      while ((at = source.indexOf('commandBar(', at)) !== -1) {
+        const open = source.indexOf('[', at);
+        if (open === -1) break;
+
+        // The bounds of the array literal.
+        let depth = 0;
+        let close = open;
+        for (; close < source.length; close += 1) {
+          if (source[close] === '[') depth += 1;
+          else if (source[close] === ']') {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+        }
+        const block = source.slice(open, close + 1);
+
+        // Each entry is an object literal at the top level of that array.
+        let inside = 0;
+        let start = -1;
+        for (let i = 0; i < block.length; i += 1) {
+          if (block[i] === '{') {
+            if (inside === 0) start = i;
+            inside += 1;
+          } else if (block[i] === '}') {
+            inside -= 1;
+            if (inside === 0 && start !== -1) {
+              const entry = block.slice(start, i + 1);
+              entries += 1;
+              if (!/\bpermitted\s*:/.test(entry)) {
+                const line = source.slice(0, open + start).split('\n').length;
+                const label = /\blabel\s*:\s*'([^']*)'/.exec(entry)?.[1] ?? entry.slice(0, 40);
+                found.push(`${file.replace(FRONTEND, 'frontend')}:${line}: "${label}"`);
+              }
+              start = -1;
+            }
+          }
+        }
+        at = close;
+      }
+    }
+
+    // A guard on the guard. If the brace matching above ever stops finding
+    // entries, this check would pass by finding nothing rather than by
+    // everything being right, which is the quietest way for a test to die.
+    assert.ok(entries > 100, `only ${entries} command entries found; the scan is no longer reading the command bars`);
+
+    assert.deepEqual(
+      found,
+      [],
+      `command buttons that declare no capability, so they render as a lock for every role — including the ` +
+        `owner — under a tooltip saying it is outside their role:\n  ${found.join('\n  ')}`,
+    );
+  });
+});

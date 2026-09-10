@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,458 passing, 0 failing, 0 skipped, across 300 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,459 passing, 0 failing, 0 skipped, across 300 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -8708,6 +8708,27 @@ check, the restart, confirming a set landed, then the restore drill), and
 itself is still the customer's to create** — that is an account on somebody
 else's service and no commit can make it — but everything between pasting the
 keys and trusting them is now one command that either passes or names the fault.
+
+**Four doors locked against everybody, including the owner.** The Offline packs
+panel on Work rendered *Estimate a pack*, *Issue a pack*, *Record a device
+receipt* and *Withdraw a pack* as locks, under the tooltip "Not permitted for
+your role", for every role there is. It was not a permission problem. All four
+entries were written with no capability declared at all, and `commandBar` reads
+a missing `permitted` as a refusal — so the sentence on screen was false, and it
+sent whoever read it to Team & Access, where an administrator finds nothing
+wrong because nothing is.
+
+They now declare what `field/pack.ts` actually authorises: `FIELD_EXECUTION` R
+to estimate, C to issue, U for a receipt, A to withdraw. `can` and
+`blockedReason` were not bound in `work.js` either, which the console-bindings
+invariant would have caught the moment the call sites existed.
+
+A sweep of every command bar in the console found these four and no others: 237
+entries, 233 already declaring a capability. `consolebindings.test.ts` now holds
+the rule, found by brace-matching from `commandBar(` rather than by a pattern
+that would miss entries or invent them, with a floor on the entry count so the
+check cannot pass by silently reading nothing. Verified against the defect: with
+one declaration removed it fails and names the button.
 
 **Running without an off-host backup, recorded rather than silenced.** Missing
 off-host backup is reported as blocking by three separate things — the readiness
