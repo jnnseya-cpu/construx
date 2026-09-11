@@ -135,6 +135,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as pricelineage from '../domain/pricelineage.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
@@ -20609,6 +20610,34 @@ export const ROUTES: Route[] = [
     description: 'How much of the direct cost sits on a quantity that is not firm, and which lines',
     handler: (platform, ctx) =>
       measurement.uncertaintyReport(projectContext(platform, ctx), ctx.params.scheduleId as string),
+  },
+  /*
+   * Why is this number.
+   *
+   * A projection, not a store. Nothing is written and the graph is rebuilt from
+   * the ledger every time it is asked for — a stored lineage would be a second
+   * copy of the truth that could disagree with the first, and a recomputed one
+   * cannot be stale.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/lineage',
+    readOnly: true,
+    description: 'Every line in the schedule, how deeply each figure is traced, and which chains cannot answer something',
+    handler: (platform, ctx) =>
+      pricelineage.scheduleLineage(projectContext(platform, ctx), ctx.params.scheduleId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/measurement/:scheduleId/lineage/:itemReference',
+    readOnly: true,
+    description: 'The chain behind one priced line: the drawing, the formula, every rate component, the assumptions and the approval',
+    handler: (platform, ctx) =>
+      pricelineage.priceLineage(
+        projectContext(platform, ctx),
+        ctx.params.scheduleId as string,
+        decodeURIComponent(ctx.params.itemReference as string),
+      ),
   },
   {
     method: 'POST',

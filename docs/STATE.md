@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,542 passing, 0 failing, 0 skipped, across 306 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,557 passing, 0 failing, 0 skipped, across 307 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20584,3 +20584,51 @@ verifies it.
 
 Seventeen tests. `consolebindings.test.ts` caught a duplicate binding in the
 console before the suite finished, which is what that invariant is for.
+
+## Why is this number
+
+`L7.5`: every number in the price chains back to source, date, currency,
+quantity basis, productivity assumption, quote validity and approver.
+
+A commercial director looks at a line that says £287,400 and asks where it came
+from. Every part of the answer was already on the record — the quantity names
+its drawing and revision, the rate names its components, the freeze names who
+approved it — and assembling them took somebody an afternoon. What did not
+exist was the **chain**, in one place, in the order the arithmetic ran.
+
+**`backend/src/domain/pricelineage.ts` is a projection, not a store.** Nothing
+is written, no event is emitted, and the graph is rebuilt from the ledger every
+time it is asked for. That matters twice: a stored lineage would be a second
+copy of the truth that could disagree with the first, and a recomputed one
+cannot be stale. Both routes are declared read-only and a test asserts it.
+
+**Five node kinds, and the distinction that matters most is the third.** A
+productivity constant is an `ASSUMPTION`, not a `SOURCE` — 0.85 hours of
+bricklayer per square metre is somebody's judgement whatever their confidence in
+it, and putting it beside a measured quantity as though the two were the same
+kind of thing is how an optimistic output becomes a fact. Waste is its own
+`ADJUSTMENT`, because it is the one uplift argued line by line, and it attaches
+only to a material.
+
+**Three things it refuses to invent.**
+
+- **A price base date.** The engine records when a rate was entered. It does not
+  record the index date its costs were current at, and presenting the first as
+  the second would be exactly the confident wrong answer the chain exists to
+  prevent. The gap is stated on every chain.
+- **A confidence figure.** The specification's lineage node carries one. There
+  is nothing honest to put in it: the platform knows whether a quantity is
+  measured, provisional, approximate or an allowance, and that is a statement
+  about basis rather than a probability.
+- **Currency conversion.** A schedule has one currency. Two meeting is a rate
+  decision with somebody's authority on it, and it belongs where `reconcile`
+  already refuses it.
+
+**It says what it cannot answer** rather than leaving a blank that reads as good
+news: an unfrozen schedule, an unreadable unit, a missing source, a line with no
+rate. `scheduleLineage` asks the same question of every line at once, so *which
+of these numbers cannot be defended* is one read.
+
+Two lookups on Procurement & Supply Chain — one line, and the whole schedule.
+Fifteen tests, among them that the graph has no dangling edge and no cycle,
+walked from the money back to the drawing.

@@ -172,6 +172,51 @@ export async function procurement(root) {
       ],
     },
     {
+      id: 'lineage',
+      title: 'Why is this number',
+      intent:
+        'The chain behind one priced line, in the order the arithmetic ran: the drawing at its revision, the formula, ' +
+        'every rate component with its cost and its productivity constant, the waste on a material, and who froze the ' +
+        'schedule. Nothing here is stored — it is rebuilt from the record each time, so it cannot be stale and cannot ' +
+        'disagree with the bill it projects.',
+      empty: 'No measurement schedule exists to trace.',
+      inputs: [
+        {
+          name: 'scheduleId',
+          label: 'Schedule',
+          options: (bill.schedules ?? []).map((sch) => ({ value: sch.scheduleId, label: `${sch.reference} \u00b7 ${sch.title}` })),
+        },
+        { name: 'itemReference', label: 'Item reference', type: 'text' },
+      ],
+      path: (v) => `/v1/projects/${projectId}/measurement/${v.scheduleId}/lineage/${encodeURIComponent(v.itemReference)}`,
+      sections: [
+        { key: 'nodes', label: 'The chain', empty: 'Nothing stands behind this figure.' },
+        // Named rather than left blank. A chain that cannot answer something is
+        // a figure somebody will have to explain from memory.
+        { key: 'gaps', label: 'What the chain cannot answer', empty: 'Every step of this figure is traced.' },
+      ],
+    },
+    {
+      id: 'lineagesweep',
+      title: 'Which numbers cannot be defended',
+      intent:
+        'The same question asked of the whole schedule, so the lines nobody can explain are one read rather than one ' +
+        'read per line.',
+      empty: 'No measurement schedule exists to trace.',
+      inputs: [
+        {
+          name: 'scheduleId',
+          label: 'Schedule',
+          options: (bill.schedules ?? []).map((sch) => ({ value: sch.scheduleId, label: `${sch.reference} \u00b7 ${sch.title}` })),
+        },
+      ],
+      path: (v) => `/v1/projects/${projectId}/measurement/${v.scheduleId}/lineage`,
+      sections: [
+        { key: 'lines', label: 'Every line, and how deeply it is traced', empty: 'This schedule carries no items.' },
+        { key: 'incomplete', label: 'Chains with something missing', empty: 'Every line on this schedule is fully traced.' },
+      ],
+    },
+    {
       id: 'reconciliation',
       title: 'Where the money went between two schedules',
       intent: 'Item by item, so a movement in a total can be attributed rather than argued about.',
