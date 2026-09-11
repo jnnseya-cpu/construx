@@ -135,6 +135,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as addendum from '../domain/addendum.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
@@ -3756,6 +3757,70 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.claimId as string,
         body<{ reason: string }>(ctx),
+      ),
+  },
+  /*
+   * Addenda, and what they invalidated.
+   *
+   * The matrix is not rewritten by an addendum: the analysis is what was read on
+   * the day and stays that. These record what has happened to it since, so a
+   * response written against superseded wording can be told apart from one
+   * written against the current requirement.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId/addenda',
+    readOnly: true,
+    description: 'Every addendum assessed against this matrix, what each changed, and whether the submission is blocked',
+    handler: (platform, ctx) => addendum.addendumRegister(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/addenda',
+    description: 'Assess an addendum against the matrix on file: what was added, withdrawn, reworded, redated or reweighted',
+    schema: {
+      type: 'object',
+      required: ['reference', 'issuedOn', 'summary', 'requirements'],
+      properties: {
+        reference: stringField,
+        issuedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+        summary: { type: 'string', minLength: 1 },
+        requirements: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'requirement', 'mandatory'],
+            properties: {
+              reference: stringField,
+              requirement: stringField,
+              mandatory: { type: 'boolean' },
+              weightingPercent: { type: 'number' },
+              dueBy: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => addendum.assessAddendum(tenantContext(platform, ctx), ctx.params.analysisId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/addenda/review',
+    description: 'Record what was done about one impact. A tick is not a review',
+    schema: {
+      type: 'object',
+      required: ['addendum', 'reference', 'note'],
+      properties: { addendum: stringField, reference: stringField, note: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      addendum.reviewImpact(
+        tenantContext(platform, ctx),
+        ctx.params.analysisId as string,
+        body<{ addendum: string; reference: string; note: string }>(ctx),
       ),
   },
   {

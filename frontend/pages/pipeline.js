@@ -339,7 +339,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   `;
 }
 
-function matrixDetail(analysis, waivers) {
+function matrixDetail(analysis, waivers, addenda) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
   // A waiver is read live, so a line waived after the matrix was analysed reads
   // as waived here without the analysis being rerun.
@@ -437,6 +437,49 @@ function matrixDetail(analysis, waivers) {
         ]),
         empty: 'This analysis carries no requirements',
       })}
+
+      ${
+        (addenda?.impacts ?? []).length > 0
+          ? html`<h2 style="padding:15px 17px 0">What the addenda changed</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                ${addenda.summary} Only the requirements that actually moved are marked — a response written against one
+                that did not change stays good, which is why this is not a re-analysis. A reworded mandatory question is
+                the case a response answers perfectly and scores nothing, because it answers the old one.
+              </p>
+              <div style="padding:11px 17px 0">
+                ${commandBar([
+                  { id: 'assess-addendum', label: 'Assess an addendum',
+                    permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
+                  { id: 'review-impact', label: 'Record what was done', tone: 'quiet',
+                    permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
+                ])}
+              </div>
+              ${table({
+                headers: ['Addendum', 'Ref', 'What moved', 'Detail', 'Weight', 'State'],
+                rows: addenda.impacts.map((impact) => [
+                  impact.addendum,
+                  impact.reference,
+                  badge(humanise(impact.kind), impact.material ? 'bad' : 'warn'),
+                  html`<span style="font-size:12px;color:var(--text-3)">${impact.detail}</span>`,
+                  impact.material ? badge('material', 'bad') : badge('minor', ''),
+                  impact.status === 'REVIEWED'
+                    ? html`${badge('reviewed', 'ok')}<br><span style="font-size:11px;color:var(--text-3)">${impact.reviewNote ?? ''}</span>`
+                    : badge('nobody has looked', 'bad'),
+                ]),
+                empty: 'No addendum has been assessed against this matrix.',
+              })}`
+          : html`<h2 style="padding:15px 17px 0">Addenda</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                Nothing has been assessed against this matrix. An addendum is compared line by line against what was read
+                on the day, so only the requirements that actually moved are marked stale.
+              </p>
+              <div style="padding:11px 17px 15px">
+                ${commandBar([
+                  { id: 'assess-addendum', label: 'Assess an addendum',
+                    permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
+                ])}
+              </div>`
+      }
 
       <h2 style="padding:15px 17px 0">Requirements nobody is answering, on purpose</h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
@@ -1458,15 +1501,16 @@ export async function pipeline(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const [analysis, waivers] = await Promise.all([
+      const [analysis, waivers, addenda] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         // Read separately rather than folded into the analysis: a waiver is a
         // decision made after the invitation was read, and putting it inside the
         // analysis record would mean rewriting a committed analysis every time
         // somebody granted one.
         api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        api.read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(analysis, waivers));
+      render(detail, matrixDetail(analysis, waivers, addenda));
       detail.dataset.analysis = analysisId;
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
@@ -1573,6 +1617,9 @@ export async function pipeline(root) {
     const waivers = await api
       .read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3')
       .catch(() => null);
+    const addenda = await api
+      .read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3')
+      .catch(() => null);
     if (!analysis) return;
 
     const specs = {
@@ -1617,14 +1664,75 @@ export async function pipeline(root) {
       },
     };
 
+    specs['assess-addendum'] = {
+      title: 'Assess an addendum',
+      intent:
+        'Compare the revised requirement set against the matrix on file. Only what actually moved is marked, so a ' +
+        'response written against a requirement that did not change stays good — this is not a re-analysis, and it ' +
+        'costs nothing and resets nothing. A material change blocks the submission until somebody has looked at it.',
+      path: `/v1/pipeline/analyses/${analysisId}/addenda`,
+      submitLabel: 'Assess',
+      fields: [
+        { name: 'reference', label: 'Addendum reference', type: 'text', hint: 'The reference the buyer gave it.' },
+        { name: 'issuedOn', label: 'Issued on', type: 'date' },
+        { name: 'summary', label: 'What the buyer says it changed', type: 'textarea', rows: 2 },
+        { name: 'requirements', label: 'The revised requirement set', type: 'textarea', rows: 8,
+          hint: 'One per line: reference | requirement | mandatory (yes/no) | weight % | due date. Every requirement ' +
+            'still in force, not only the changed ones — an absent reference reads as withdrawn.' },
+      ],
+      transform: (v) => ({
+        reference: v.reference,
+        issuedOn: v.issuedOn,
+        summary: v.summary,
+        requirements: String(v.requirements ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [reference, requirement, mandatory, weight, due] = line.split('|').map((part) => part.trim());
+            return {
+              reference,
+              requirement,
+              mandatory: /^(y|yes|true|mandatory)$/i.test(mandatory ?? ''),
+              ...(weight ? { weightingPercent: Number(weight) } : {}),
+              ...(due ? { dueBy: due } : {}),
+            };
+          }),
+      }),
+    };
+    specs['review-impact'] = {
+      title: 'Record what was done about an impact',
+      intent:
+        'The section rewritten, the price revisited, or why neither was needed. A tick is not a review, and the question ' +
+        'three weeks later is what somebody concluded.',
+      path: `/v1/pipeline/analyses/${analysisId}/addenda/review`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'impact', label: 'Impact', type: 'select',
+          options: (addenda?.impacts ?? [])
+            .filter((impact) => impact.status === 'OPEN')
+            .map((impact) => ({
+              value: `${impact.addendum}::${impact.reference}`,
+              label: `${impact.addendum} · ${impact.reference} — ${impact.detail.slice(0, 60)}`,
+            })) },
+        { name: 'note', label: 'What was done', type: 'textarea', rows: 2 },
+      ],
+      transform: (v) => ({
+        addendum: String(v.impact ?? '').split('::')[0],
+        reference: String(v.impact ?? '').split('::')[1],
+        note: v.note,
+      }),
+    };
+
     const spec = specs[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) {
-      const [fresh, freshWaivers] = await Promise.all([
+      const [fresh, freshWaivers, freshAddenda] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        api.read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(fresh, freshWaivers));
+      render(detail, matrixDetail(fresh, freshWaivers, freshAddenda));
       detail.dataset.analysis = analysisId;
     }
   });

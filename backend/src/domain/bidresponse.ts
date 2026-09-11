@@ -3,6 +3,7 @@ import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
 import { complianceMatrix, liveWaivers, type MatrixLine, type RequirementWaiver, type StoredITTAnalysis } from './itt.ts';
 import { approvedOn, standingOf, type EvidenceClaim } from './evidenceclaim.ts';
+import { openImpacts, type AddendumImpact } from './addendum.ts';
 
 /**
  * The bid response pack: the half of a tender the platform could read but not
@@ -370,6 +371,14 @@ export type BidCompleteness = {
    * checking it against today answers the wrong question.
    */
   lapsedEvidence: Array<{ reference: string; claim: string; expiresAt: string; covers: string[] }>;
+  /**
+   * Sections written against a requirement an addendum has since changed.
+   *
+   * Targeted invalidation: only a section whose own requirement moved is stale,
+   * and every other section stays good. A full re-plan would reset statuses
+   * somebody set by hand and would cost a re-analysis nobody needs.
+   */
+  staleSections: Array<{ key: string; deliverable: string; addendum: string; detail: string }>;
   written: number;
   total: number;
   summary: string;
@@ -386,6 +395,7 @@ export function bidCompleteness(
   pack: BidResponsePack,
   waivers: RequirementWaiver[] = [],
   claims: EvidenceClaim[] = [],
+  impacts: AddendumImpact[] = [],
 ): BidCompleteness {
   // Waivers are read live rather than baked into the pack at plan time, so a
   // waiver granted halfway through drafting takes a deliverable out of the
@@ -425,16 +435,31 @@ export function bidCompleteness(
       covers: claim.covers,
     }));
 
+  // Only a drafted section can be stale: one nobody has written yet is already
+  // outstanding, and reporting it twice would double-count the same work.
+  const materialBy = new Map(impacts.filter((impact) => impact.material).map((impact) => [impact.reference, impact]));
+  const staleSections = pack.sections
+    .filter((section) => section.status === 'DRAFTED' && (section.body ?? []).length > 0)
+    .filter((section) => materialBy.has(section.key))
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      addendum: materialBy.get(section.key)!.addendum,
+      detail: materialBy.get(section.key)!.detail,
+    }));
+
   return {
-    ready: unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0,
+    ready:
+      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0 && staleSections.length === 0,
     unanswered,
     undated,
     waived,
     lapsedEvidence,
+    staleSections,
     written,
     total: pack.sections.length,
     summary:
-      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0
+      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0 && staleSections.length === 0
         ? `${written} of ${pack.sections.length} deliverables answered` +
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
           ', every stated deadline dated and every claim still evidenced on the return date.'
@@ -443,6 +468,7 @@ export function bidCompleteness(
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
           (undated.length > 0 ? `, ${undated.length} deadline(s) undated` : '') +
           (lapsedEvidence.length > 0 ? `, ${lapsedEvidence.length} claim(s) evidenced by something that lapses first` : '') +
+          (staleSections.length > 0 ? `, ${staleSections.length} answering a requirement an addendum has changed` : '') +
           '.',
   };
 }
@@ -469,7 +495,12 @@ export function issueBidResponse(
     throw new DomainError('BID_RESPONSE_ISSUED', `${pack.reference} is already issued.`, 409);
   }
 
-  const completeness = bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10)));
+  const completeness = bidCompleteness(
+      pack,
+      liveWaivers(ctx, pack.analysisId),
+      approvedOn(ctx, new Date().toISOString().slice(0, 10)),
+      openImpacts(ctx, pack.analysisId),
+    );
   if (!completeness.ready) {
     throw new DomainError(
       'BID_RESPONSE_INCOMPLETE',
@@ -479,6 +510,11 @@ export function issueBidResponse(
             `${completeness.unanswered.map((entry) => `${entry.key}${entry.mandatory ? ' (mandatory)' : ''}`).join(', ')}. `
           : '') +
         (completeness.undated.length > 0 ? `Undated: ${completeness.undated.join('; ')}. ` : '') +
+        (completeness.staleSections.length > 0
+          ? `${completeness.staleSections.length} section(s) answer a requirement an addendum has since changed: ` +
+            `${completeness.staleSections.map((entry) => `${entry.key} (${entry.addendum})`).join(', ')}. ` +
+            'A response that answers the old wording perfectly scores nothing. '
+          : '') +
         (completeness.lapsedEvidence.length > 0
           ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +
             'when this is read: ' +
@@ -532,7 +568,12 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       returnBy: pack.returnBy,
       status: pack.status,
       passes: pack.passes,
-      completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10))),
+      completeness: bidCompleteness(
+      pack,
+      liveWaivers(ctx, pack.analysisId),
+      approvedOn(ctx, new Date().toISOString().slice(0, 10)),
+      openImpacts(ctx, pack.analysisId),
+    ),
     }));
 
   const drafting = packs.filter((pack) => pack.status === 'DRAFTING').length;
@@ -559,6 +600,11 @@ export function bidResponsePack(
   const pack = requirePack(ctx, packId);
   return {
     ...pack,
-    completeness: bidCompleteness(pack, liveWaivers(ctx, pack.analysisId), approvedOn(ctx, new Date().toISOString().slice(0, 10))),
+    completeness: bidCompleteness(
+      pack,
+      liveWaivers(ctx, pack.analysisId),
+      approvedOn(ctx, new Date().toISOString().slice(0, 10)),
+      openImpacts(ctx, pack.analysisId),
+    ),
   };
 }

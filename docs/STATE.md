@@ -15,7 +15,7 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,557 passing, 0 failing, 0 skipped, across 307 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,572 passing, 0 failing, 0 skipped, across 308 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
 | Backend | 325 TypeScript files, 211,700 lines |
 | Application | 80 ES modules, 48,259 lines (including a service worker) |
@@ -20632,3 +20632,50 @@ of these numbers cannot be defended* is one read.
 Two lookups on Procurement & Supply Chain — one line, and the whole schedule.
 Fifteen tests, among them that the graph has no dangling edge and no cycle,
 walked from the money back to the drawing.
+
+## Only what moved
+
+`AS-02` of the Level 7 acceptance scenarios, and the third of the three clusters
+both parts of that specification independently named.
+
+An addendum lands eleven days before return. It changes a drawing, moves a date
+and rewrites one requirement. The bid team reads the covering email, agrees it
+looks minor, and carries on — and the response written three weeks ago against
+the old wording goes in unchanged, because **nothing on any screen
+distinguished a section written against the current requirement from one written
+against a superseded one.**
+
+**Targeted, not a re-analysis.** The naive answer is to read the invitation
+again. That costs money, writes a second analysis of one tender into the record,
+and resets every status somebody set by hand. The specification names the right
+answer and this implements it: only nodes with an edge to a changed node are
+marked stale. A requirement that did not move is not re-examined, and the
+response written against it stays good.
+
+**The matrix is not rewritten.** The analysis is what was read on the day and
+stays that — rewriting it would destroy the position a clarification or a claim
+is argued from. The addendum's impacts sit beside it as what has happened since.
+
+**Material and minor, and where the line is.** Material is a mandatory
+requirement added, withdrawn or reworded, a stated deadline that moved, or a
+requirement that became mandatory or stopped being. Those block the submission
+until somebody has looked at each. A weighting moving on a scored question is
+minor: it changes where effort is worth spending, not whether the submission is
+compliant. Blocking on that would make the block routine, and a block nobody can
+clear is one everybody learns to work around.
+
+**A review is a conclusion, not a tick.** Ten characters minimum, because the
+question three weeks later is never whether the addendum changed something — it
+is who looked and what they decided.
+
+**The staleness lives on the analysis, not the pack.** The pack reads open
+impacts the way it already reads live waivers and evidence, so a section reads
+as stale the moment the addendum lands and as current the moment somebody
+records what was done, with no second copy of the decision to keep in step. A
+section nobody has written yet is *not* reported as stale — it is already
+outstanding, and counting it twice would say the same work needs doing in two
+places.
+
+Three routes, a panel inside the matrix on Pipeline & Bids with two doors, and
+fifteen tests. Among them: an addendum that changed nothing raises nothing, and
+exactly one section goes stale when exactly one requirement moves.

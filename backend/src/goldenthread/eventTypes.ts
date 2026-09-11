@@ -467,6 +467,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // go in without something the buyer asked for is a commercial judgement about
   // what this business is prepared to lose the job over, and no agent mandate
   // reaches it.
+  // An addendum, and what it invalidated.
+  //
+  // The matrix itself is not rewritten: the analysis is what was read on the day
+  // and stays that. These record what has happened to it since, so a response
+  // written against a superseded requirement can be told apart from one written
+  // against the current wording — which is the distinction nothing on any screen
+  // could make before.
+  def('TENDER_ADDENDUM_ASSESSED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  def('TENDER_ADDENDUM_IMPACT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVER_REVOKED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   // The bid response pack: the half of a tender the platform could read and not
