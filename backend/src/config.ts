@@ -801,20 +801,35 @@ export const config = {
    * the seed. When it runs out the platform refuses to call a provider, which
    * is existing, tested behaviour and reads correctly on screen.
    *
-   * **On by default**, and the cost argument above no longer applies: the seed
-   * runs against the deterministic local engines whatever `AI_MODE` says, so
-   * building the fixture is free and reproducible. Only what a visitor does
-   * afterwards spends anything, and that is bounded by the wallet.
+   * **Off by default**, and the default has moved twice for reasons worth
+   * keeping.
    *
-   * The default was `false` while seeding could spend money. It is `true` now
-   * because a deployment that shows a prospective customer an empty sign-in
-   * page is a deployment that does not work, and requiring somebody to know
-   * about a variable before the product demonstrates itself made the common
-   * case the broken one. A deployment carrying real customers that would rather
-   * not publish a sandbox sets `DEMO_TENANCY_ENABLED=false`.
+   * It began `false` because seeding could spend real money. It went `true`
+   * once the seed was shown to run against the deterministic local engines
+   * whatever `AI_MODE` says — free and reproducible — on the argument that a
+   * deployment showing a prospective customer an empty sign-in page is a
+   * deployment that does not work.
+   *
+   * It is `false` again because that argument was about marketing and this
+   * variable is not a marketing control. The public site is what shows a
+   * prospective customer the product; this seeds fourteen fictional identities
+   * into the record and opens an anonymous route to a wallet. On a deployment
+   * carrying real customers those are invented rows sitting beside real ones,
+   * and inheriting them from a default is exactly the way an operator ends up
+   * with a sandbox they never chose to publish.
+   *
+   * That is the reasoning of decision 11 applied here: the newsletter sender is
+   * off everywhere until somebody arms it in one environment deliberately, for
+   * the same reason. Anything that reaches the outside world starts closed.
+   *
+   * A deployment that wants the sandbox sets `DEMO_TENANCY_ENABLED=true` and is
+   * then choosing it. Nothing about the seed changed — it is the same fixture,
+   * it costs the same nothing to build, and an existing demonstration already
+   * in the record is not removed by this. It simply is not created for anybody
+   * who did not ask.
    */
   demo: {
-    enabled: bool('DEMO_TENANCY_ENABLED', true),
+    enabled: bool('DEMO_TENANCY_ENABLED', false),
     /**
      * Opening credit for the demonstration wallet, in minor units.
      *
@@ -1604,10 +1619,10 @@ export function confidenceThresholdFor(taskType: string): number {
 
 export function demonstrationEnabled(): boolean {
   const raw = process.env.DEMO_TENANCY_ENABLED;
-  // Unset means on, matching `config.demo.enabled`. The two must agree or a
+  // Unset means off, matching `config.demo.enabled`. The two must agree or a
   // deployment seeds a demonstration at boot that every route then refuses to
   // show — working, invisible, and very hard to explain.
-  if (raw === undefined || raw === '') return true;
+  if (raw === undefined || raw === '') return false;
   return raw === 'true' || raw === '1';
 }
 

@@ -216,11 +216,12 @@ export function readiness(now = new Date()): Readiness {
       critical: false,
       // Not a blocker: a public sandbox is a deliberate marketing choice. Listed
       // because on a production deployment it hands any anonymous visitor a
-      // working sign-in and a wallet to spend, and the operator should be
-      // choosing that rather than inheriting it from a default.
+      // working sign-in and a wallet to spend. It can no longer be inherited —
+      // the default is off — so a deployment reporting it open was switched on
+      // by somebody, which is the point.
       state: !config.demo.enabled ? 'NOT_SET' : production ? 'DEGRADED' : 'CONFIGURED',
       detail: !config.demo.enabled
-        ? 'Switched off. No sandbox identity can be signed into.'
+        ? 'Switched off, which is the default. No sandbox identity exists to be signed into.'
         : production
           ? 'Open in production: any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Right for a public sandbox; wrong beside real customer records.'
           : 'Open. Any visitor can sign into the seeded demonstration as any role.',

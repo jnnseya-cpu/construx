@@ -119,19 +119,18 @@ fi
 # records. Neither `report` nor `is_set` can say this — the setting is present
 # and true, which both of them read as configured.
 #
-# **Absent counts as on.** `config.ts` defaults this to true, so a file with no
-# line for it runs a public sandbox exactly as a file that says `true` does.
-# The first version of this check tested for a literal `=true` and therefore
-# said nothing at all on the one live deployment it was written for: the key
-# was absent, the demonstration tenancy was open, and the script reported a
-# clean pass while the process's own boot log warned about it. Only `false`
-# closes it, so only `false` is accepted here.
-if ! grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=[[:space:]]*false" "$ENV_FILE"; then
-  reason="is not set to false"
-  grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=" "$ENV_FILE" || reason="is absent, and it defaults to on"
-  echo "  WARNING  DEMO_TENANCY_ENABLED $reason — any anonymous visitor can sign"
-  echo "           into the demonstration tenancy and spend its AI wallet. Right for a"
-  echo "           public sandbox, wrong beside real customer records."
+# **Absent now counts as off.** It did not always: `config.ts` defaulted this to
+# true, so a file with no line for it ran a public sandbox exactly as a file
+# saying `true` did, and the first version of this check tested for a literal
+# `=true` and said nothing at all on the one live deployment it was written for.
+# The default is off now, so absence is the safe state and only an explicit
+# truth opens it. This warns on that truth, because it is worth seeing on a
+# deployment carrying real customers even when somebody chose it.
+if grep -qE "^[[:space:]]*DEMO_TENANCY_ENABLED[[:space:]]*=[[:space:]]*(true|1)[[:space:]]*$" "$ENV_FILE"; then
+  echo "  WARNING  DEMO_TENANCY_ENABLED is on — fourteen fictional identities are seeded"
+  echo "           into the record, and any anonymous visitor can sign in as one of them"
+  echo "           and spend the demonstration wallet. Right for a public sandbox, wrong"
+  echo "           beside real customer records. Remove the line to close it."
   missing_critical=$((missing_critical + 1))
 fi
 

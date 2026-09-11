@@ -11064,9 +11064,26 @@ providers in a `finally`. Seeding is therefore free, and it is also
 lifecycle, which is a second and independent reason to do it this way. What was
 left was a deployment that came up, served a sign-in page onto an empty world,
 and required the operator to know about an environment variable before the
-product would demonstrate itself. That made the common case the broken one. A
-deployment carrying real customers that would rather not publish a sandbox sets
-`DEMO_TENANCY_ENABLED=false`.
+product would demonstrate itself. That made the common case the broken one.
+
+**That argument has since been overturned and the default is off again.** It was
+an argument about marketing, and this variable is not a marketing control: the
+public site is what shows a prospective customer the product, and this seeds
+fourteen fictional identities into the record and opens an anonymous route to a
+wallet. On a deployment carrying real customers those are invented rows sitting
+beside real ones, and inheriting them from a default is how an operator ends up
+publishing a sandbox they never chose. That is decision 11's rule — the
+newsletter sender is off everywhere until somebody arms it deliberately —
+applied to the thing with the larger blast radius.
+
+Nothing about the seed changed. It is the same fixture, it still costs nothing
+to build, it is still reproducible, and a demonstration already in a record is
+not removed by the new default; it simply is not created for anybody who did not
+ask. A deployment that wants a sandbox sets `DEMO_TENANCY_ENABLED=true` and is
+then choosing it, with `deploy/env-check.sh` and the readiness report both
+saying so. Absent means off, in `config.demo.enabled` and in
+`demonstrationEnabled()` alike — the two must agree or a deployment seeds a
+demonstration at boot that every route then refuses to show.
 
 **A deployment with no mail server can be signed into.** Sign-in requires a
 one-time code, the code goes by email, and in production it is not returned in
@@ -21032,3 +21049,116 @@ start now sits in front of it with its own gate.
 
 Five routes, a panel with two doors and a readiness lookup on Pipeline & Bids,
 and twenty-one tests.
+
+---
+
+## The stack this platform is, and the three it was asked to become
+
+A production-readiness pass arrived as seven instructions. Four of them describe
+a platform that does not exist here, and saying so is the whole of the answer to
+those four. This section is the record, so the question is not re-opened by
+somebody reading the same specification next month.
+
+**There is no Next.js, no React, no Firebase, no pnpm, and no `next build`.**
+Searched, not assumed: those names appear in three files in this repository and
+every one of them is a *rejection*. `docs/SPEC.md` lists Next.js and Firebase
+Auth as the original target stack and marks the row **"Behaviour yes, stack
+no."** `docs/GOING-LIVE.md` and this document carry the Firebase assessment and
+the reasons it was refused. Nothing imports any of them.
+
+What is here instead is decisions 2 and 3, which are settled: zero runtime
+dependencies, no frontend framework, no build step. Node 22 strips the types at
+load; the console is plain ES modules served as files; the whole production
+dependency set is empty, and `npm ci --omit=dev` installing nothing is the proof
+rather than a claim.
+
+### Dependency conflicts
+
+There are none, and there is nothing to align. One lock file, two dev
+dependencies (`typescript`, `@types/node`), zero runtime dependencies, and `npm
+ci --omit=dev` completes clean with no peer warnings and no advisories. The
+`mobile/` workspace has its own manifest and its own `tsconfig.json`, is excluded
+from the root typecheck by the root `include`, is never installed, and is not
+copied into the image — the Dockerfile copies four directories by name, so it
+cannot drift into a build. Two manifests in one tree is not a conflict when
+neither can reach the other.
+
+### Firebase App Hosting
+
+Not a stabilisation. Firebase App Hosting runs a Next.js build; there is no
+Next.js application to run, so this is not "configure the host" — it is rewrite
+the console as React, rewrite the gateway as Cloud Functions or Cloud Run, and
+replace the identity model with Firebase Auth. That fights three settled
+decisions at once and replaces a hash-chained append-only ledger, which is the
+product, with a document database that has no such property.
+
+The remediation path, if hosting is the actual requirement, is the one already
+built: `deploy/compose.yaml` with `deploy/compose.edge.yaml` behind Caddy on a
+VPS, deployed by a systemd timer that fetches, backs up, rebuilds and rolls back
+on a failed readiness probe. It is running. Moving it to a managed platform is a
+migration to price and schedule, not a build failure to fix.
+
+### Build failures
+
+There are none to debug. The production build is `deploy/Dockerfile`, which has
+no compile step by design: it installs the empty production dependency set and
+copies files. Typecheck is clean, 6,709 tests pass, and the image build could not
+be executed in the authoring sandbox because no Docker daemon runs there — the
+CI workflow and the deployment timer both build it, and that limit is stated
+rather than papered over.
+
+### End-to-end encryption
+
+**This cannot be delivered as asked, and the reason is architectural rather than
+a matter of effort.** End-to-end encryption means the server cannot read the
+content. Every function this platform sells depends on the server reading the
+content: the AI engines analyse tenders and drawings, the ledger projects state
+from event bodies, the cost intelligence aggregates across committed records,
+search reads text, and the compliance engines reason over clauses. Encrypt the
+payloads to the client and all of it stops working, in exchange for a guarantee
+that the platform's own operators cannot read data they must read to run it.
+
+What is actually in place, named precisely:
+
+- **In transit** — TLS with HSTS at the edge, and every emailed link built from
+  the https origin.
+- **At rest** — AES-256-GCM envelope encryption of evidence with per-tenancy
+  keys derived by HKDF from a master that is not on the volume, the tenancy id
+  bound in as additional authenticated data. `evidence/envelope.ts` states in
+  its own header what it does not protect: a live process, and a master key kept
+  beside the data it protects. `posture()` reports that case as broken rather
+  than as "encryption: on".
+- **Erasure** — destroying a tenancy's key makes its ciphertext unreadable by
+  anybody including this platform, which is a stronger statement to a customer
+  than a delete.
+
+The honest middle path, if the requirement is really "our operators must not be
+able to read customer content", is a documented hosted-key model with the master
+in a KMS or HSM the application calls and cannot export. That is a real project
+with a real dependency, and it is not built.
+
+### "Hacker-impenetrable"
+
+No system is, and a platform that claims it is has told its first lie to its
+customers. What can be said is what is built and tested: argon-hashed
+credentials, mandatory second factor for operators, passkeys, device binding,
+risk-based step-up, Redis-backed lockouts counted across replicas, per-IP and
+per-token rate limiting, tenant isolation applied on every read including the
+generic entity route and the audit feed, a closed event catalogue, RFC 7807
+problem responses that leak nothing, a strict content security policy of
+`default-src 'none'`, and an adversarial launch audit recorded in
+`docs/LAUNCH_AUDIT.md` and `docs/LAUNCH_VERDICT.md`. What is **not** present is
+an independent penetration test. Until one exists, the correct sentence is "these
+controls are built and tested", never "impenetrable", and no marketing copy on
+this platform says otherwise.
+
+### Mobile packaging
+
+**Go for the PWA. No-go for native packaging.** The installable progressive web
+app is built, offline-capable and in use; that is the mobile answer today and it
+needs no packaging step. `mobile/` is an Expo skeleton — an API client, a
+database schema and sync state — carrying twenty-five declared dependencies that
+have never been installed, no screens, and no build ever run. Packaging it would
+mean standing up EAS, Apple and Play accounts and the review cycle, against a
+client that does not yet render a screen. That work is parked, deliberately, and
+is not counted anywhere as complete.

@@ -1,6 +1,12 @@
-# Going live
+# Going live, part two — payments and real AI
 
-From nothing to taking payments and running real AI, in order.
+From a deployment that already answers, to one taking payments and running real
+AI, in order.
+
+**There are two going-live documents and they run in order.** This is part two.
+`docs/GOING-LIVE.md` is part one — the server, the domain, the secrets and the
+first container. If nothing is serving your domain yet, start there and come
+back here.
 
 Every command here uses absolute paths, so it does not matter which directory
 your shell is in — the Hostinger web console resets to `/root` on every

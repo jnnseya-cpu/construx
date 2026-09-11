@@ -708,7 +708,7 @@ being relied on before dropping it.
 | Variable | Production value | What goes wrong otherwise |
 |---|---|---|
 | `NODE_ENV` | `production` | The demonstration routes stay open and the MFA challenge code is returned in the login response for **every** account, not only the seeded ones |
-| `DEMO_TENANCY_ENABLED` | your call — `false` unless you want a public demonstration | See below. It is the one setting here that is a product decision rather than a correctness one |
+| `DEMO_TENANCY_ENABLED` | leave it out — off is the default | See below. It is the one setting here that is a product decision rather than a correctness one. Setting it to `true` publishes a sandbox of fourteen fictional identities beside your real records |
 | `LEDGER_JOURNAL_PATH` | a path on a mounted volume | **Every record is lost on restart** |
 | `LEDGER_JOURNAL_FSYNC` | `true` | Events can be acknowledged before reaching the disk |
 | `GATEWAY_JWT_SECRET` | a real secret | Every token is forgeable |
@@ -721,6 +721,11 @@ start on a misconfiguration converts a wrong flag into an outage. Read the boot
 log on every deploy.
 
 ### The demonstration tenancy
+
+**Off by default, and absent means off.** A deployment inherits no sandbox; one
+exists only where somebody set the variable. `deploy/env-check.sh` warns when it
+is on and says nothing when it is absent, and the readiness report shows it as
+`DEGRADED` on a production deployment that has switched it on.
 
 `DEMO_TENANCY_ENABLED=true` seeds the Meridian lifecycle at boot as a real
 tenancy with twelve identities. Know exactly what it does before setting it:

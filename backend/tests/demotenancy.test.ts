@@ -89,14 +89,16 @@ async function login(email: string): Promise<Record<string, unknown>> {
 // --- the switch itself ------------------------------------------------------
 
 describe('reading the switch', () => {
-  it('is on when the variable is absent or empty, which is the default', async () => {
-    // The default changed from off to on once seeding stopped costing money:
-    // the seed runs against the deterministic local engines whatever AI_MODE
-    // says, so a deployment showing a prospective customer an empty sign-in
-    // page was the broken common case rather than the safe one.
+  it('is off when the variable is absent or empty, which is the default', async () => {
+    // A deployment inherits no sandbox. Seeding costs nothing to run, but it
+    // writes fourteen fictional identities into the record and opens an
+    // anonymous route to a wallet, and on a deployment carrying real customers
+    // that has to be something somebody chose rather than something a default
+    // handed them. Decision 11's rule: what reaches the outside world starts
+    // closed.
     for (const value of [undefined, '']) {
       const on = await withEnv({ DEMO_TENANCY_ENABLED: value }, async () => demonstrationEnabled());
-      assert.equal(on, true, `DEMO_TENANCY_ENABLED=${String(value)} did not take the default`);
+      assert.equal(on, false, `DEMO_TENANCY_ENABLED=${String(value)} did not take the default`);
     }
   });
 

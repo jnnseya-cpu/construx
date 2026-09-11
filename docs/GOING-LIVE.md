@@ -1,8 +1,15 @@
-# Going live
+# Going live, part one — standing the deployment up
 
-The first deploy, once. `docs/RUNBOOK.md` is how the system is operated after
-this — build, release, rollback, backup, restore — and this does not repeat it.
-Where a step has a runbook section, it links to it rather than restating it.
+The first deploy, once: a server, a domain, the secrets, and a container
+answering on https. `docs/RUNBOOK.md` is how the system is operated after this —
+build, release, rollback, backup, restore — and this does not repeat it. Where a
+step has a runbook section, it links to it rather than restating it.
+
+**There are two going-live documents and they run in order.** This one stands
+the deployment up. `docs/GO-LIVE.md` is part two: it takes a deployment that is
+already answering and turns on payments and the real AI providers. If nothing is
+serving your domain yet, you are in the right document. If the site loads and
+you are here to collect Stripe keys, you want part two.
 
 ---
 
