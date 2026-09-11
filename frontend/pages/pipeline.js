@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
@@ -47,7 +47,11 @@ function timeZoneOptions() {
   return [...NEAR_THE_TOP, ...rest].map((zone) => ({ value: zone, label: zone.replace(/_/g, ' ') }));
 }
 
-const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
+// Two vocabularies, one map. The commercial-term reading grades CRITICAL,
+// MAJOR and MINOR; the assurance review grades CRITICAL, HIGH, MEDIUM and LOW.
+// They agree about CRITICAL and never collide elsewhere, so one map keeps a
+// severity looking the same colour wherever it appears on this screen.
+const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '', HIGH: 'warn', MEDIUM: 'neutral', LOW: '' };
 
 /**
  * The compliance matrix, read back.
@@ -580,7 +584,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -592,8 +596,22 @@ export async function pipeline(root) {
         // scoped for the same reason the reader is: writing a section spends
         // this project's tenancy's ACUs, and the cost is quoted from a project.
         api.read(`/v1/projects/${projectId}/bid-responses`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        // What the red team found against those submissions. Loaded beside the
+        // packs rather than behind a click, because a review that found a
+        // critical problem is the reason the issue button is refusing.
+        api.read(`/v1/projects/${projectId}/assurance`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null, null];
+    : [null, null, null, null, null];
+
+  // The register carries counts; the findings themselves are what somebody acts
+  // on, so the newest review is opened in full rather than left behind a click.
+  const latestReviewId = (assurance?.reviews ?? [])[0]?.id;
+  const latestReview =
+    projectId && latestReviewId
+      ? await api
+          .get(`/v1/projects/${projectId}/assurance/${latestReviewId}`)
+          .catch(() => null)
+      : null;
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -771,6 +789,72 @@ export async function pipeline(root) {
                 })}
               `}
       </section>
+
+      ${!projectId || assurance?.error
+        ? ''
+        : html`<section class="card" style="margin-bottom:14px" aria-labelledby="pl-asr-h">
+            <h2 id="pl-asr-h">The red team</h2>
+            <p class="metric-sub">
+              Every other check on this screen runs for the submission: is each deliverable answered, is each deadline
+              dated. This one runs against it. A pack that passes every completeness rule can still score nothing,
+              because completeness is not the question a scorer asks — they ask whether they can find the answer and
+              award the mark without inferring anything. A critical finding is a hard block nobody can wave through; a
+              high one blocks until somebody records what they decided.
+            </p>
+            <div class="actions cmd-bar" style="margin:10px 0">
+              ${raw(
+                commandBar([
+                  { id: 'bid-challenge', label: 'Attack the pack',
+                    permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                  { id: 'finding-dispose', label: 'Record a decision on a finding',
+                    permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+                ]),
+              )}
+            </div>
+            <p class="metric-sub">${assurance?.summary ?? ''}</p>
+            ${table({
+              headers: ['Review', 'Findable marks', 'Critical', 'High', 'Undecided', 'Judgement lens', 'Ran'],
+              align: ['', 'num', 'num', 'num', 'num', '', ''],
+              rows: (assurance?.reviews ?? []).map((review) => [
+                review.reference,
+                `${review.findableScorePercent}%`,
+                review.critical > 0 ? badge(String(review.critical), 'bad') : '0',
+                String(review.high),
+                review.openHigh > 0 ? badge(`${review.openHigh} open`, 'warn') : badge('none', 'good'),
+                review.modelRan ? badge('model challenged', 'ok') : badge('checks only', 'neutral'),
+                time(review.runAt),
+              ]),
+              empty: 'No submission has been attacked yet. A pack nothing has challenged is not a pack nothing is wrong with.',
+            })}
+            ${latestReview
+              ? html`
+                  <h3 style="margin:15px 0 4px;font-size:13px">${latestReview.reference} — every finding</h3>
+                  <p class="metric-sub" style="margin-bottom:8px">${latestReview.summary}</p>
+                  ${table({
+                    headers: ['Severity', 'Lens', 'Against', 'Finding', 'Raised by', 'Decision'],
+                    rows: (latestReview.findings ?? []).map((f) => [
+                      badge(f.severity.toLowerCase(), SEVERITY_TONE[f.severity] ?? 'neutral'),
+                      humanise(f.lens),
+                      f.sectionKey ?? f.reference ?? '—',
+                      html`<b>${f.title}</b><br><span class="metric-sub">${f.detail} <i>${f.remedy}</i></span>`,
+                      f.raisedBy === 'MODEL' ? badge('model', 'ok') : badge('check', 'neutral'),
+                      f.disposition
+                        ? html`${badge(humanise(f.disposition.decision), 'good')}<br><span class="metric-sub">${f.disposition.note}</span>`
+                        : f.severity === 'CRITICAL'
+                          ? badge('cannot be disposed of', 'bad')
+                          : '—',
+                    ]),
+                    empty: 'Nothing was found against it.',
+                  })}
+                  ${(latestReview.limits ?? []).length > 0
+                    ? html`<div class="notice warn" style="margin-top:10px">
+                        <b>What this review cannot tell you.</b>
+                        <ul style="margin:6px 0 0 16px">${(latestReview.limits ?? []).map((limit) => html`<li>${limit}</li>`)}</ul>
+                      </div>`
+                    : ''}
+                `
+              : ''}
+          </section>`}
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
@@ -1152,6 +1236,59 @@ export async function pipeline(root) {
             .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })) },
       ],
       transform: ({ packId: _packId }) => ({}),
+    },
+    /*
+     * The red team — L7.3.
+     *
+     * Two doors, and the second is why the first is a gate rather than a
+     * report. Attacking the pack produces findings; recording what was decided
+     * about a high one is what lets the submission go out. A critical finding
+     * has no door at all, because a hard block with a way round it is a
+     * warning.
+     */
+    'bid-challenge': {
+      title: 'Attack the pack',
+      intent:
+        'Scores the submission as the employer’s evaluator would, and reports what a scorer cannot award: a section ' +
+        'that does not use the buyer’s own words, a placeholder nobody removed, a certificate that lapses before the ' +
+        'return date, prose answering a requirement an addendum has since changed. Where a reasoning provider ' +
+        'answers, a second model attacks the prose under a different prompt from the one that wrote it — and where ' +
+        'one does not, the review says the judgement lens did not run rather than reporting an empty list.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/challenge`,
+      submitLabel: 'Attack',
+      ai: true,
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })) },
+      ],
+      transform: ({ packId: _packId }) => ({}),
+    },
+    'finding-dispose': {
+      title: 'Record a decision on a finding',
+      intent:
+        'A high finding blocks the submission until a named person says what they decided about it. Fixed, accepted ' +
+        'or waived, with the reasoning — the question three weeks later is never whether somebody clicked it, it is ' +
+        'what they concluded and on what basis. A critical finding cannot be disposed of and is not offered here.',
+      path: (v) =>
+        `/v1/projects/${projectId}/assurance/${latestReviewId}/findings/${v.findingId}/disposition`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'findingId', label: 'Finding', type: 'select',
+          options: (latestReview?.findings ?? [])
+            .filter((f) => f.severity !== 'CRITICAL' && !f.disposition)
+            .map((f) => ({ value: f.id, label: `${f.severity} · ${f.title}` })) },
+        { name: 'decision', label: 'What was decided', type: 'select',
+          options: [
+            { value: 'FIXED', label: 'Fixed — the section has been rewritten' },
+            { value: 'ACCEPTED', label: 'Accepted — we are going out with it as it stands' },
+            { value: 'WAIVED', label: 'Waived — it does not apply to this submission' },
+          ] },
+        { name: 'note', label: 'On what basis', type: 'textarea',
+          hint: 'At least 12 characters. What you concluded, not that you looked.' },
+      ],
+      transform: ({ findingId: _findingId, ...rest }) => rest,
     },
     invitation: {
       title: 'Record an invitation to tender',

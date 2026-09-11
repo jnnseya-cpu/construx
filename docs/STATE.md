@@ -15,18 +15,18 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,589 passing, 0 failing, 0 skipped, across 309 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,612 passing, 0 failing, 0 skipped, across 310 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 332 TypeScript files, 215,858 lines |
-| Application | 80 ES modules, 49,223 lines (including a service worker) |
-| API routes | 1,163 — 793 writes, 370 reads (51 public across both) |
-| Event types | 763 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 343, all classified for access |
+| Backend | 333 TypeScript files, 217,001 lines |
+| Application | 80 ES modules, 49,362 lines (including a service worker) |
+| API routes | 1,167 — 795 writes, 372 reads (51 public across both) |
+| Event types | 775 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 346, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
 
-Counted from the tree on 8 September 2026 (`npm test`, `wc`, and the
+Counted from the tree on 11 September 2026 (`npm test`, `wc`, and the
 `ROUTES`, `EVENT_TYPES`, `ENTITY_ACCESS` and `AGENTS` tables at import). The
 figures drift as the work below lands; the Blueprint screen counts the same
 tables from the running process and is the live figure.
@@ -20306,16 +20306,17 @@ it defines:
 |---|---|---|
 | L7.1 | Contract-native reasoning from a clause library | **Partial** — obligations are derived per project, not loaded from a versioned standard-form package with an amendment overlay |
 | L7.2 | Evidence-bound assertion, enforced as a gate | **Built** — `EvidenceClaim` is the registry, `bidCompleteness` is the gate, and a claim that lapses before the return date blocks the submission |
-| L7.3 | Adversarial self-challenge | **Not built** — no red-team agent attacks another agent's output |
+| L7.3 | Adversarial self-challenge | **Built** — `redteam.ts` is the evaluator simulation: it attacks the drafted pack, and a critical finding is a hard block on issue |
 | L7.4 | Time-travel state | **Built** — `validFrom` is the second axis and `stateAsOf` asks both questions, so "as known on the 14th about the 12th" is one read |
 | L7.5 | Full lineage | **Built** — `pricelineage.ts` walks a figure back to its drawing as a projection over the ledger, and says what it cannot answer |
 | L7.6 | Governed learning | **Partial** — lessons are human-approved corporate memory; nothing feeds delivery variance back into a tender rate or a win probability |
 | L7.7 | Platform-agnostic core | **Built** — zero runtime dependencies is the strongest form of the rule, and every provider already sits behind a port |
 
 Three were genuinely absent when this was written: adversarial self-challenge,
-the evidence registry as a gate, and bitemporal state. Two have since been
-built — see *A claim is what is asserted* and *Two time axes* below. **One
-remains: adversarial self-challenge.**
+the evidence registry as a gate, and bitemporal state. **All three have since
+been built** — see *A claim is what is asserted*, *Two time axes* and *The red
+team* below. Of the seven properties, six are built and `L7.6` — governed
+learning — is the one that remains partial.
 
 **On the reference stack.** The specification names a service-per-engine
 deployment on Kafka with Python workers. That is not adopted and is not
@@ -20335,9 +20336,10 @@ confirmation are all manual.
 Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
-rewrite. **All three are now built.** What remains from that ordering is the
-evaluator-simulation red-team agent (L7.3), the portal port, the standard-form
-clause library with an amendment overlay (L7.1), and the learning loop (L7.6).
+rewrite. **All three are now built, and so is the fifth — the
+evaluator-simulation red-team agent.** What remains from that ordering is the
+portal port, the standard-form clause library with an amendment overlay (L7.1),
+and the learning loop (L7.6).
 
 **The wider edition, merged as Part I.** A second and larger edition of the same
 specification followed: product definition, an L0–L7 autonomy ladder, six action
@@ -20741,3 +20743,68 @@ recorded late and by how many days. Seventeen tests.
 moment; there is no path that edits it afterwards. A fact recorded wrongly is
 corrected by recording the correction, which is what an append-only ledger is
 for.
+
+## The red team
+
+`L7.3`, §16 and §4.7.3 — the last of the three properties the Level 7
+specification named as genuinely absent, and the one it says to build first
+because it is the only red-team agent whose accuracy can eventually be measured
+against real feedback.
+
+**Every machine check the platform had ran *for* the submission.** Is each
+deliverable answered, is each deadline dated, is each claim still evidenced on
+the return date. None of them ran *against* it. A pack that satisfies every
+completeness rule can still lose, because completeness is not the question a
+scorer asks: they ask whether they can find the answer and award the mark
+without inferring anything, and a section that answers a different question at
+length passes every check the platform had and scores nothing.
+
+**Independence, and what it honestly costs.** §16.1 says the run that authored
+content may not provide the assurance result. Two mechanisms.
+
+- The **deterministic lenses always run** and are the gate. They are not a
+  second opinion from the same mind because they are not a mind; §16.1's own
+  last clause names a deterministic validator as sufficient, and for everything
+  mechanical it is.
+- The **model challenge runs when a reasoning provider answers**, under a
+  different task type and prompt from the drafting one. Where the router lands
+  on the provider that wrote the prose, the review records `independent: false`
+  and says so. Where no model answers, it records that the judgement lens did
+  not run. **It never invents a finding to fill the space** — an empty list from
+  a red team that never ran reads as a clean submission, which is worse than no
+  red team.
+
+**Severity is a gate rather than a label.** §16.3's four severities each carry a
+submission effect and the effect is enforced: `CRITICAL` is a hard block nobody
+can dispose of, `HIGH` blocks until a named person records what they decided,
+`MEDIUM` and `LOW` are reported. A severity with no consequence is a list.
+
+**A model may not hard-block and may not clear itself.** A model-raised finding
+is capped at `HIGH` — it stops the submission until a person decides, which is
+exactly what propose means. `ASSURANCE_FINDING_DISPOSED` carries
+`aiAllowed: false`.
+
+**What the deterministic lenses catch that nothing else could.** A placeholder
+left in the prose. A figure in an AI-drafted section the drafting constraint
+forbade, because the model had no source for one. A response that never uses the
+buyer's own vocabulary. A section thin for its weighting, measured against the
+pack's own words per mark rather than an invented industry constant. A
+certificate that lapses before the return date, or one nobody verified. A
+section answering a requirement an addendum has since moved.
+
+**The score, and what it is not.** `findableScorePercent` is the weighted
+proportion of marks an evaluator can find and award, and `scoreBasis` carries
+the working line by line. It is **not a predicted mark**: §4.7.3 asks for one and
+for its correlation with real feedback to be tracked, and that correlation is
+the learning loop, which is not built. The limit is stated on every review.
+
+Findability and severity answer different questions and are computed
+separately. An unanswered requirement that is not mandatory is only a `MEDIUM` —
+the submission is not rejected for it — and it still scores nothing, because
+there is nothing on the page to award.
+
+**The issue gate changed.** `issueBidResponse` now refuses a pack that no review
+has attacked, one whose review is of an earlier pass count, and one with an open
+critical or an undisposed high finding. A review that was never run and a review
+that found nothing must not look the same. Four routes, a panel on Pipeline &
+Bids with two doors, and twenty-three tests.

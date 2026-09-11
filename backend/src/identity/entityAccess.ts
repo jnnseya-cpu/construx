@@ -607,6 +607,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // A claim is authored rather than audited: it is a sentence the business
   // intends to put in front of a buyer, so it sits with the submission it backs.
   EvidenceClaim: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // What a red team found against a submission before it went out. Sits with
+  // the submission it attacks: the findings quote the prose and name the marks
+  // at risk, so anybody who may not read the bid may not read the review of it.
+  AssuranceReview: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // What a model read out of a held file. Classified under evidence rather than
   // under the area it will eventually feed, because a draft is not yet a
   // drawing, a take-off or an observation — and until somebody confirms it, it

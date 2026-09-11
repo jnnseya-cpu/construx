@@ -4,6 +4,10 @@ import { authorise, currentPhase, runAI, write, type EngineContext } from '../en
 import { complianceMatrix, liveWaivers, type MatrixLine, type RequirementWaiver, type StoredITTAnalysis } from './itt.ts';
 import { approvedOn, standingOf, type EvidenceClaim } from './evidenceclaim.ts';
 import { openImpacts, type AddendumImpact } from './addendum.ts';
+// One direction only. The red team reads the pack out of the ledger itself
+// rather than importing this module's readers, so the dependency between the
+// two does not become a cycle.
+import { assuranceStanding, latestReview } from './redteam.ts';
 
 /**
  * The bid response pack: the half of a tender the platform could read but not
@@ -523,6 +527,26 @@ export function issueBidResponse(
           : '') +
         'A submission missing a mandatory response is not marked down, it is rejected, and everything else in it is ' +
         'spent for nothing.',
+      422,
+    );
+  }
+
+  // The red team, and it is a gate rather than a report — §16.3.
+  //
+  // Completeness answers whether every deliverable has prose against it. It
+  // cannot answer whether the prose scores, and a pack that satisfies every
+  // completeness rule can still be rejected for a placeholder nobody removed or
+  // an unverified certificate. Refusing here rather than warning is deliberate:
+  // a warning leaves that decision to whoever is most tired on the return date.
+  const standing = assuranceStanding(latestReview(ctx, pack.id), pack);
+  if (!standing.clear) {
+    throw new DomainError(
+      'ASSURANCE_NOT_CLEAR',
+      `${pack.reference} cannot be issued. ${standing.reason}` +
+        (standing.current
+          ? ' A critical finding must be fixed and the review run again; a high one needs a named decision recorded ' +
+            'against it.'
+          : ''),
       422,
     );
   }

@@ -1400,6 +1400,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // to a document is clerical and reversible; deciding the document actually
   // proves the claim is a judgement somebody signs their name to, and the
   // asserter may not be the verifier.
+  // The red team's own record. Running the review is an agent act and may be
+  // AI-authored; deciding what to do about a finding is not, for the same
+  // reason no agent mandate exceeds propose. A model may not clear its own
+  // objection any more than it may raise a hard block.
+  def('ASSURANCE_REVIEW_RUN', 'AssuranceReview', 'AI_EXECUTE', 'PROCUREMENT', { creates: true, aiAllowed: true }),
+  def('ASSURANCE_FINDING_DISPOSED', 'AssuranceReview', 'APPROVE', 'PROCUREMENT'),
+
   def('EVIDENCE_CLAIM_ASSERTED', 'EvidenceClaim', 'CREATE', 'EVIDENCE', { creates: true, aiAllowed: true }),
   def('EVIDENCE_CLAIM_VERIFIED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
   def('EVIDENCE_CLAIM_REJECTED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE'),

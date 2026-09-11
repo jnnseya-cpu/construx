@@ -137,6 +137,7 @@ import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
+import * as redteam from '../domain/redteam.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
@@ -3981,10 +3982,63 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/projects/:projectId/bid-responses/:packId/issue',
     description:
-      'Issue the pack. Refused unless every deliverable has a response and every stated deadline is dated — a submission missing a mandatory response is rejected, not marked down',
+      'Issue the pack. Refused unless every deliverable has a response, every stated deadline is dated and the assurance review clears it — a submission missing a mandatory response is rejected, not marked down',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       bidresponse.issueBidResponse(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
+  },
+  /*
+   * The red team — L7.3, §16.
+   *
+   * The machine checks the platform already had run for the submission. These
+   * run against it: the evaluator lens asks whether a scorer can find the
+   * answer, not whether a field is filled in.
+   */
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/challenge',
+    ai: { engine: 'TENDER', taskType: 'evaluator_simulation', capability: 'REASONING' },
+    description: 'Attack the pack as the employer’s evaluator would, and score what a scorer could actually award',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      redteam.challengeSubmission(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/assurance',
+    readOnly: true,
+    description: 'Every assurance review, which block their submission, the nine lenses and what each severity does',
+    handler: (platform, ctx) => redteam.assuranceRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/assurance/:reviewId',
+    readOnly: true,
+    description: 'One review in full: every finding, the score working, and what the challenge could not tell you',
+    handler: (platform, ctx) =>
+      redteam.assuranceReview(projectContext(platform, ctx), ctx.params.reviewId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/assurance/:reviewId/findings/:findingId/disposition',
+    description:
+      'Record what was decided about a finding. A high finding blocks the submission until this exists; a critical one cannot be disposed of at all',
+    schema: {
+      type: 'object',
+      required: ['decision', 'note'],
+      properties: {
+        decision: { type: 'string', enum: ['FIXED', 'ACCEPTED', 'WAIVED'] },
+        note: { type: 'string', minLength: 12 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      redteam.disposeFinding(
+        projectContext(platform, ctx),
+        ctx.params.reviewId as string,
+        ctx.params.findingId as string,
+        body(ctx),
+      ),
   },
   {
     method: 'POST',

@@ -3,6 +3,7 @@ import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as itt from '../src/domain/itt.ts';
+import * as redteam from '../src/domain/redteam.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { EVENT_TYPES } from '../src/goldenthread/eventTypes.ts';
 import { Platform } from '../src/platform.ts';
@@ -261,10 +262,32 @@ describe('the pipeline writes it, and refuses to issue it half done', () => {
     assert.equal(pass.acuConsumed, 0, 'a pass with nothing to do was charged for');
   });
 
-  it('issues once every deliverable is answered and every deadline dated', () => {
+  it('issues once every deliverable is answered, every deadline dated and the red team clears it', async () => {
     const position = bidresponse.bidResponsePosition(asQS());
     const complete = position.packs.find((pack) => pack.completeness.ready);
     assert.ok(complete, 'the hand-drafted pack is not showing as ready');
+
+    // Complete is not the same as clear. Nothing had attacked this pack, and a
+    // submission nothing has attacked is not a submission nothing is wrong with
+    // — so the issue gate refuses before it is asked about anything else.
+    const unattacked = throwsCode(
+      () => bidresponse.issueBidResponse(asQS(), { packId: complete.id }),
+      'ASSURANCE_NOT_CLEAR',
+    );
+    assert.match(String(unattacked.message), /nothing has attacked/);
+
+    const { review } = await redteam.challengeSubmission(asQS(), { packId: complete.id });
+    for (const blocking of review.findings.filter((entry) => entry.severity === 'HIGH')) {
+      redteam.disposeFinding(asQS(), review.id, blocking.id, {
+        decision: 'ACCEPTED',
+        note: `Read before issue and accepted: ${blocking.title.slice(0, 40)}`,
+      });
+    }
+    assert.equal(
+      review.findings.filter((entry) => entry.severity === 'CRITICAL').length,
+      0,
+      'the hand-drafted pack carries a hard block',
+    );
 
     const { pack, completeness } = bidresponse.issueBidResponse(asQS(), { packId: complete.id });
     assert.equal(pack.status, 'ISSUED');
