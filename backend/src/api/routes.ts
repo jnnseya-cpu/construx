@@ -136,6 +136,7 @@ import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
+import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as learning from '../domain/learning.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
 import * as redteam from '../domain/redteam.ts';
@@ -18626,6 +18627,74 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => bim.generateAsBuilt(projectContext(platform, ctx), body(ctx)),
   },
 
+  /*
+   * Contract-native reasoning — L7.1, §2.4, §4.5.
+   *
+   * The library carries each standard form's clause numbers and effects, never
+   * its words: the publishers own those. The overlay shows what a schedule of
+   * amendments did, field by field, because reporting an amended contract as
+   * though it were the standard form is the most expensive thing this could do.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/contract-forms',
+    readOnly: true,
+    description: 'The standard forms the library carries, their editions and package versions',
+    handler: () => ({ forms: clauselibrary.standardForms(), agreement: clauselibrary.citationAgreement() }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/contract-forms/:formId/response/:category',
+    readOnly: true,
+    description:
+      'What one kind of site event means under one form: the clause, the period, and whether missing it ends the entitlement',
+    handler: (_platform, ctx) =>
+      clauselibrary.responseToEvent(ctx.params.formId as string, ctx.params.category as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/form',
+    description:
+      'Load a standard form and its schedule of amendments against a contract. Refused where an amendment names a clause the form does not have',
+    schema: {
+      type: 'object',
+      required: ['formId'],
+      properties: {
+        formId: stringField,
+        amendments: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['ref', 'kind', 'clauseRef', 'note'],
+            properties: {
+              ref: stringField,
+              kind: { type: 'string', enum: [...clauselibrary.AMENDMENT_KIND] },
+              clauseRef: stringField,
+              note: stringField,
+              changes: { type: 'object' },
+              inserted: { type: 'object' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      clauselibrary.adoptStandardForm(projectContext(platform, ctx), {
+        contractId: ctx.params.contractId as string,
+        ...body<{ formId: string }>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/contracts/:contractId/clauses',
+    readOnly: true,
+    description:
+      'Every effective clause, what the amendments changed field by field, and where each term sits against the stated risk appetite',
+    handler: (platform, ctx) =>
+      clauselibrary.contractClausePosition(projectContext(platform, ctx), ctx.params.contractId as string),
+  },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/contracts',

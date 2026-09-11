@@ -1400,6 +1400,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // to a document is clerical and reversible; deciding the document actually
   // proves the claim is a judgement somebody signs their name to, and the
   // asserter may not be the verifier.
+  // Which standard form governs, and what the schedule of amendments did to it.
+  //
+  // Not an AI act. Naming the form and its amendments decides what every notice
+  // period and time bar on the project is, and a model reading a schedule
+  // wrongly moves a time bar without anybody noticing.
+  def('CONTRACT_FORM_ADOPTED', 'ContractClausePosition', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
+
   // The loop closing on the bid.
   //
   // A loss was invisible: `LOST` was a declared opportunity stage nothing ever

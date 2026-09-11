@@ -426,6 +426,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
 
   // Contracts, change and claims — legal
   Contract: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
+  // Which standard form governs and what was amended. Every notice period and
+  // time bar on the project follows from it, so it sits with the contract.
+  ContractClausePosition: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   ContractClause: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   Obligation: { area: 'CONTRACTS_CLAIMS' },
   // A promise read out of a letter, quoting the letter. Named for where it

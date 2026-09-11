@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,639 passing, 0 failing, 0 skipped, across 311 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,660 passing, 0 failing, 0 skipped, across 312 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 334 TypeScript files, 218,051 lines |
-| Application | 80 ES modules, 49,549 lines (including a service worker) |
-| API routes | 1,174 — 800 writes, 374 reads (51 public across both) |
-| Event types | 780 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 347, all classified for access |
+| Backend | 335 TypeScript files, 219,148 lines |
+| Application | 80 ES modules, 49,693 lines (including a service worker) |
+| API routes | 1,178 — 801 writes, 377 reads (51 public across both) |
+| Event types | 781 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 348, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -20304,7 +20304,7 @@ it defines:
 
 | | Property | Here |
 |---|---|---|
-| L7.1 | Contract-native reasoning from a clause library | **Partial** — obligations are derived per project, not loaded from a versioned standard-form package with an amendment overlay |
+| L7.1 | Contract-native reasoning from a clause library | **Built** — `clauselibrary.ts` carries versioned packages for NEC4, JCT Design and Build and FIDIC Yellow, with an amendment overlay that diffs every modified clause against the standard |
 | L7.2 | Evidence-bound assertion, enforced as a gate | **Built** — `EvidenceClaim` is the registry, `bidCompleteness` is the gate, and a claim that lapses before the return date blocks the submission |
 | L7.3 | Adversarial self-challenge | **Built** — `redteam.ts` is the evaluator simulation: it attacks the drafted pack, and a critical finding is a hard block on issue |
 | L7.4 | Time-travel state | **Built** — `validFrom` is the second axis and `stateAsOf` asks both questions, so "as known on the 14th about the 12th" is one read |
@@ -20336,11 +20336,10 @@ confirmation are all manual.
 Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
-rewrite. **All three are now built, and so are the fifth and the eighth — the
-evaluator-simulation red-team agent and the learning loop.** What remains from
-that ordering is the portal port and the standard-form clause library with an
-amendment overlay (L7.1), the latter being the item that most needs a
-construction professional rather than an engineer.
+rewrite. **Seven of the eight are now built**: the three absent properties, the
+evaluator-simulation red-team agent, the learning loop and the standard-form
+clause library. What remains is the **portal port**, which needs a portal to
+adapt to and cannot honestly be built against nothing.
 
 **The wider edition, merged as Part I.** A second and larger edition of the same
 specification followed: product definition, an L0–L7 autonomy ladder, six action
@@ -20873,3 +20872,64 @@ can argue with, and the algorithm is what a decision is defended by.
 
 Seven routes, two panels and five doors across Tender & Procurement and Pipeline
 & Bids, and twenty-seven tests.
+
+## What this contract actually says
+
+`L7.1`, §2.4 and §4.5 — contract-native reasoning, and the item the Level 7
+specification calls the largest single piece of work in it.
+
+**The property, stated as a test.** *The same site event produces different
+outputs under NEC4, JCT Design and Build and FIDIC Yellow.* Ground conditions
+worse than an experienced contractor would have allowed for are a compensation
+event notifiable within fifty-six days under NEC4, and the period is a condition
+precedent — a notice on the fifty-seventh day loses the entitlement entirely.
+The same discovery is not a Relevant Event at all under JCT Design and Build:
+the risk sits with the contractor unless the employer's requirements say
+otherwise. Under FIDIC it is twenty-eight days, and the bar bites. **An engine
+reasoning from generic construction knowledge averages the three and is wrong
+under all of them**, in the direction that costs money.
+
+**What was here.** `contractClauses.ts` maps an obligation category to the
+clause number that imposes it, per suite. That is the difference between a
+reminder and a position and it is kept exactly as it was. What it could not
+carry is the obligation itself: who must act, within how long, whether the
+period is a bar or a courtesy, what it costs to be late, and which clauses are
+onerous before anybody amends them.
+
+**Three versioned packages**, not eight. `nec4-ecc`, `jct-db-2016` and
+`fidic-yellow-2017` are the three a UK contractor bidding abroad actually meets,
+and they differ from each other in exactly the ways the property is about: a
+hard time bar, a soft notice, and fitness for purpose as the standard position
+rather than as an amendment. A fourth package is data, not code.
+
+**What the packages deliberately do not contain.** The clause text. NEC, JCT and
+FIDIC own the words, and a platform shipping them would be redistributing
+somebody's publication. What is here is each clause's number, subject and
+effect, which are facts about the form and are what an engine reasons over.
+Every package says `textIncluded: false` on its face, and a test asserts it.
+
+**The amendment overlay, with its working shown.** A standard form is almost
+never used unamended, and the schedule of amendments is where the risk actually
+moves. `MODIFIES`, `DELETES` and `INSERTS`, and every modified clause carries a
+field-by-field diff against the standard — §4.5.1's explicit guardrail rather
+than a summary of it. A struck-out clause is kept and marked rather than
+dropped, because what the parties rely on instead is the question somebody has
+to ask. An amendment naming a clause the form does not have is refused, and the
+refusal says why: the schedule was written against another edition, or the form
+was identified wrongly, and both matter.
+
+**A risk register with the disclaimer attached to it**, not to a screen. Each
+effective clause is scored against a stated appetite and flagged where it sits
+above it, naming the onerous pattern from the eleven §4.5.2 lists. The register
+says plainly that it is not legal advice and does not read the contract's words.
+
+**Two findings the reconciliation caught**, which is what it exists for. The
+library first filed NEC4 clause 43.2 under the defects-period category; 43.2 is
+the period to correct a notified defect and 11.2(6) is the defects date, which
+are two obligations with two clocks. And the citation table, being keyed by
+*suite* rather than by form, carries JCT Standard Building Contract numbering:
+the notice of delay is 2.27 there and 2.24 in Design and Build. Neither number
+is wrong, they belong to different books — recorded as a known divergence with
+its reason, so a future disagreement with no reason recorded fails the test.
+
+Four routes, a panel and a lookup on Change & Claims, and twenty-one tests.

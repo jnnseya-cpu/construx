@@ -1,8 +1,9 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
-import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, money, pct, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -78,6 +79,64 @@ export async function contracts(root) {
   const terms = contract?.id
     ? await api.get(`/v1/projects/${projectId}/contracts/${contract.id}/terms`).catch(() => null)
     : null;
+  // Which standard form governs, what the schedule of amendments did to it, and
+  // where each term sits against the stated appetite. Loaded beside the terms
+  // because the terms are what the amendments move.
+  const [forms, clausePosition] = await Promise.all([
+    api.get('/v1/contract-forms').catch((error) => ({ error })),
+    contract?.id
+      ? api
+          .read(`/v1/projects/${projectId}/contracts/${contract.id}/clauses`, 'CONTRACTS_CLAIMS', 'LEGAL_L4')
+          .catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  /**
+   * The `L7.1` property, as a control somebody can press.
+   *
+   * The same site event under a different form is a different answer, and the
+   * difference is usually a time bar. Ground conditions are a compensation
+   * event notifiable in 56 days under NEC4, not a Relevant Event at all under
+   * JCT Design and Build, and a claim notifiable in 28 days under FIDIC.
+   */
+  const FORM_LOOKUP = {
+    id: 'form-response',
+    title: 'What this event means under which form',
+    intent:
+      'The same thing happening on site is a different contractual route under each published form, and the ' +
+      'difference is usually whether the period is a bar or a courtesy. Pick a form and a kind of event.',
+    empty: 'The clause library could not be read.',
+    inputs: [
+      {
+        name: 'formId',
+        label: 'Form',
+        options: (forms?.forms ?? []).map((form) => ({ value: form.id, label: `${form.name} — ${form.edition}` })),
+      },
+      {
+        name: 'category',
+        label: 'What happened',
+        options: [
+          { value: 'GROUND_CONDITIONS', label: 'Ground conditions worse than allowed for' },
+          { value: 'EXTENSION_OF_TIME', label: 'An event delaying completion' },
+          { value: 'PAYMENT_NOTICE', label: 'A payment falling due' },
+          { value: 'PAY_LESS_NOTICE', label: 'Withholding part of a payment' },
+          { value: 'LIQUIDATED_DAMAGES', label: 'Completion missed' },
+          { value: 'DLP-EXPIRY', label: 'A defect after completion' },
+          { value: 'LOSS_AND_EXPENSE', label: 'Loss and expense from a disruption' },
+          { value: 'DESIGN_RESPONSIBILITY', label: 'A design obligation' },
+          { value: 'DISPUTE_FORUM', label: 'A dispute needing a forum' },
+          { value: 'TERMINATION', label: 'The employer walking away' },
+        ],
+      },
+    ],
+    path: (v) => `/v1/contract-forms/${v.formId}/response/${v.category}`,
+    sections: [
+      { key: 'reading', label: 'What the form requires' },
+      { key: 'consequence', label: 'What missing it costs' },
+      { key: 'amendedBy', label: 'Amended by', empty: 'The standard position, unamended.' },
+    ],
+  };
+
   const claim = b.Claim.at(-1);
   const attribution = claim?.attribution;
 
@@ -114,6 +173,10 @@ export async function contracts(root) {
             { id: 'delay', label: 'Record delay event', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'notice', label: 'Serve notice', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'obligation', label: 'Register obligation', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
+            { id: 'adopt-form', label: 'Load the standard form',
+              permitted: can('CONTRACTS_CLAIMS', 'C') && b.Contract.length > 0 && !clausePosition?.position,
+              reason: blockedReason('CONTRACTS_CLAIMS', 'C')
+                ?? (b.Contract.length === 0 ? 'No contract has been created yet' : 'A form is already loaded against this contract') },
             { id: 'dispute', label: 'Give notice of adjudication', permitted: can('CONTRACTS_CLAIMS', 'C'), reason: blockedReason('CONTRACTS_CLAIMS', 'C') },
             { id: 'refer', label: 'Record a referral', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
             { id: 'decision', label: 'Record a decision', permitted: can('CONTRACTS_CLAIMS', 'U'), reason: blockedReason('CONTRACTS_CLAIMS', 'U') },
@@ -525,6 +588,37 @@ export async function contracts(root) {
           })}
         </div>
       </div>
+
+      ${raw(resolveHtml(lookupPanel(FORM_LOOKUP)))}
+
+      ${clausePosition?.position
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>What this contract actually says</h2>
+            <p class="metric-sub" style="margin-bottom:11px">
+              ${clausePosition.position.formName}, package ${clausePosition.position.formVersion}.
+              ${clausePosition.risk.summary}
+              The library carries each form's clause numbers and effects, never its words — the publishers own those.
+            </p>
+            ${table({
+              headers: ['Clause', 'Term', 'Pattern', 'Standard', 'As agreed', 'What changed'],
+              align: ['', '', '', 'num', 'num', ''],
+              rows: clausePosition.risk.findings.map((finding) => [
+                finding.clauseRef,
+                finding.title,
+                finding.pattern ? badge(humanise(finding.pattern), finding.riskWeight >= 0.7 ? 'bad' : 'warn') : '—',
+                finding.standardWeight,
+                finding.walkAway ? badge(String(finding.riskWeight), 'bad') : String(finding.riskWeight),
+                finding.changes.length === 0
+                  ? finding.reading
+                  : html`${finding.reading}<br>${finding.changes.map(
+                      (change) => html`<span class="metric-sub">${change.field}: ${change.was} → <b>${change.now}</b></span><br>`,
+                    )}`,
+              ]),
+              empty: 'Nothing in this form carries an onerous pattern, and nothing was amended.',
+            })}
+            <div class="notice info" style="margin-top:10px">${clausePosition.risk.disclaimer}</div>
+          </div>`
+        : ''}
 
       <div class="grid g2">
         <div class="card pad0">
@@ -952,6 +1046,54 @@ export async function contracts(root) {
         })),
       }),
     },
+    /*
+     * Contract-native reasoning — L7.1.
+     *
+     * The form decides what every notice period and time bar on the project
+     * is, so it is loaded once and cannot be loaded twice. The schedule of
+     * amendments is typed as a list because it is a list: each line names the
+     * clause it acts on, and the engine refuses one naming a clause the form
+     * does not have.
+     */
+    'adopt-form': {
+      title: 'Load the standard form',
+      intent:
+        'Which published form governs, and what the schedule of amendments did to it. The library carries each ' +
+        'form’s clause numbers and effects, never its words — the publishers own those. Every modified clause comes ' +
+        'back with a field-by-field diff against the standard, because an amended contract reported as though it ' +
+        'were the standard form is the expensive mistake. A bespoke contract loads nothing: offering the nearest ' +
+        'standard form would cite clauses that may not exist.',
+      path: (v) => `/v1/projects/${projectId}/contracts/${v.contractId}/form`,
+      submitLabel: 'Load',
+      fields: [
+        { name: 'contractId', label: 'Contract', type: 'select',
+          options: b.Contract.map((c) => ({ value: c._refId, label: `${c.form} · ${c.suite}` })) },
+        { name: 'formId', label: 'Standard form', type: 'select',
+          options: (forms?.forms ?? []).map((form) => ({
+            value: form.id,
+            label: `${form.name} — ${form.edition} (${form.clauses} clauses, package ${form.version})`,
+          })) },
+        { name: 'amendments', label: 'Schedule of amendments', type: 'textarea', rows: 5, required: false,
+          hint: 'One per line: KIND clause — reference — what it does. For example "MODIFIES 61.3 — Item 14 — notice cut to 21 days". Leave blank for the unamended form.' },
+      ],
+      transform: ({ contractId: _contractId, amendments, ...rest }) => ({
+        ...rest,
+        amendments: String(amendments ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const [head, ref, ...note] = line.split('—').map((part) => part.trim());
+            const [kind, clauseRef] = String(head ?? '').split(/\s+/);
+            return {
+              kind: String(kind ?? '').toUpperCase(),
+              clauseRef: clauseRef ?? '',
+              ref: ref ?? 'Schedule of amendments',
+              note: note.join(' — ') || 'No reason stated.',
+            };
+          }),
+      }),
+    },
     dispute: {
       title: 'Give notice of adjudication',
       intent:
@@ -1135,6 +1277,8 @@ export async function contracts(root) {
       ],
     },
   };
+
+  wireLookups(root, [FORM_LOOKUP]);
 
   void insightPanel(root.querySelector('#contracts-insight'), {
     projectId,
