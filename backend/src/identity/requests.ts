@@ -203,7 +203,23 @@ export function provisionAccountRequest(
     package: input.package,
     enterpriseName: input.enterpriseName?.trim() || request.organisationName,
   });
-  const administrator = platform.createUser({ tenantId: created.tenant.id, name: request.contactName, email: request.email, roles: ['ENTERPRISE_ADMIN'] });
+  // Both roles, like every other founding path.
+  //
+  // This one was the last place a company's first person was created as an
+  // administrator and nothing else. `ENTERPRISE_ADMIN` reads nearly every
+  // delivery area and authors in almost none of them, and nobody may change
+  // their own roles — so an account provisioned from a request arrived with its
+  // founder locked out of twenty of the twenty-five capability areas, and no
+  // second person with the authority to unlock them. Public signup and both
+  // group paths already created founders as owners; this did not, and an
+  // operator provisioning a qualified request is creating exactly the same
+  // person.
+  const administrator = platform.createUser({
+    tenantId: created.tenant.id,
+    name: request.contactName,
+    email: request.email,
+    roles: ['OWNER', 'ENTERPRISE_ADMIN'],
+  });
   const next: AccountRequest = {
     ...request,
     status: 'PROVISIONED',

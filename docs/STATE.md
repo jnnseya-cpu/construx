@@ -13334,21 +13334,46 @@ person with the authority to unlock them. `OWNER` was defined long ago as
 everything anybody in the tenancy may do, for exactly the people running the
 tenancies being sold; the founder is that person.
 
-**Founders are owners.** Public signup, the operator's onboarding and a
-group's add-company and found-a-group all create the first administrator as
-`['OWNER', 'ENTERPRISE_ADMIN']`. **Companies created before the rule are
-brought under it at boot**: `Platform.ownFoundingAdministrators` makes each
-active administrator an owner in every open tenancy where nobody holds anything
-but the administrator's role — so nobody could have changed anybody's roles —
-recorded as the system's `USER_ROLE_ASSIGNED` with the reason and the date. A
-tenancy that has organised its roles is left exactly as it is; a company with
-two administrators and nobody else is included, since either could have
-promoted the other. Idempotent, said on stdout when it changes something, one
-writer of a role change (`#applyRoles`) shared with the governed command so the
-two cannot drift. The seat is unchanged: owner and administrator are the same
-seat class. `founders.test.ts` covers the trap, the reconciliation, the
-untouched company, idempotence and the seat; signup, group signup and
-onboarding tests assert the two roles at creation.
+**Founders are owners, on every path that creates one.** Public signup, the
+operator's onboarding, a group's add-company and found-a-group, and — corrected
+later — the operator provisioning a qualified account request, all create the
+first administrator as `['OWNER', 'ENTERPRISE_ADMIN']`. That last one was the
+outlier for a while: `identity/requests.ts` created the administrator alone, so
+an account the operator provisioned from an enquiry arrived with its founder
+locked out of twenty of the twenty-five capability areas. It is the same person
+public signup makes an owner.
+
+**Companies created before the rule are brought under it at boot** by
+`Platform.ownFoundingAdministrators`, recorded as the system's
+`USER_ROLE_ASSIGNED` with the reason and the date.
+
+The test it applies is **whether the tenancy has an owner at all**. It began as
+the narrower question — every active person holds nothing but the
+administrator's role, so nobody could have changed anybody's roles — and that
+had a blind spot which closed the moment the founder did the one thing the
+administrator's role exists for. Invite a project manager and the tenancy no
+longer held only administrators, so the repair stepped over it for ever. The
+reasoning behind the narrow test was simply wrong: only `ENTERPRISE_ADMIN` and
+`OWNER` may grant roles at all, so a project manager in the room creates nobody
+who could have granted ownership. The founder was locked out by the act of
+inviting somebody, and the sweep written to free them had already passed by.
+
+So the rule is now: in every open tenancy where no active person holds `OWNER`,
+each active administrator becomes an owner too. Same safety argument in its
+correct form — an administrator may grant roles to other people but never to
+themselves, so where nobody holds ownership there is nobody who could have
+granted it. A tenancy that already has an owner is left exactly as it is,
+whatever else it has organised. Roles are **added** rather than replaced, which
+the narrow guard had made safe by accident and the wide one has to do on
+purpose: an administrator who also holds a delivery role keeps it.
+
+Idempotent, said on stdout when it changes something, one writer of a role
+change (`#applyRoles`) shared with the governed command so the two cannot drift.
+The seat is unchanged: owner and administrator are the same seat class.
+`founders.test.ts` covers the trap, the administrator who invited somebody, the
+company that already has an owner, the administrator carrying a delivery role,
+idempotence and the seat; signup, group signup, onboarding and request
+provisioning tests assert the two roles at creation.
 
 **A bar where every door is locked now says why, once, on the screen.**
 `commandBar` appends a sentence when three or more doors are all refused —

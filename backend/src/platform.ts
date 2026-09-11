@@ -1143,12 +1143,30 @@ export class Platform {
    * the tenancy may do, for exactly the people running the tenancies being
    * sold; the person who founded the company is that person.
    *
-   * Founders are created with both roles now. This brings the companies
-   * created before that rule under it: in every open tenancy where **nobody
-   * holds anything but the administrator's role** — so nobody could have
-   * changed anybody's roles — each active administrator becomes an owner too,
-   * recorded as the system's role change with the reason. A tenancy that has
-   * organised its roles already is left exactly as it is. Idempotent.
+   * Founders are created with both roles now, on every path that creates one.
+   * This brings the companies created before that rule under it.
+   *
+   * **The test is whether the tenancy has an owner at all**, not whether it has
+   * only administrators. The first version asked the narrower question — every
+   * active person holds nothing but `ENTERPRISE_ADMIN` — and that had a blind
+   * spot which closed the moment the founder did the one thing the
+   * administrator's role exists for. Invite a quantity surveyor, and the
+   * tenancy no longer held only administrators, so the repair stopped
+   * considering it for ever. The founder was locked out of twenty capability
+   * areas by the act of inviting somebody, and the sweep that existed to free
+   * them had already stepped over them.
+   *
+   * So: in every open tenancy where **no active person holds `OWNER`**, each
+   * active administrator becomes an owner too. That is the same safety argument
+   * in its correct form — an administrator may grant roles to other people but
+   * never to themselves, so where nobody holds ownership there is nobody who
+   * could have granted it. A tenancy that already has an owner is left exactly
+   * as it is, whatever else it has organised. Idempotent.
+   *
+   * Roles are added rather than replaced. The first version replaced them,
+   * which was safe only because the guard guaranteed the administrator held
+   * nothing else; under the wider test an administrator who also holds a
+   * delivery role would have lost it.
    */
   ownFoundingAdministrators(now: Date = new Date()): Array<{ tenantId: string; userId: string }> {
     const owned: Array<{ tenantId: string; userId: string }> = [];
@@ -1156,13 +1174,12 @@ export class Platform {
       if (tenant.id === PLATFORM_TENANT_ID || tenant.closedAt || tenant.deletedAt) continue;
       const active = this.users(tenant.id).filter((user) => user.status === 'ACTIVE');
       if (active.length === 0) continue;
-      const onlyAdministrators = active.every((user) => user.roles.every((role) => role === 'ENTERPRISE_ADMIN'));
-      if (!onlyAdministrators) continue;
+      if (active.some((user) => user.roles.includes('OWNER'))) continue;
       for (const user of active) {
-        if (user.roles.includes('OWNER')) continue;
+        if (!user.roles.includes('ENTERPRISE_ADMIN')) continue;
         this.#applyRoles(
           user,
-          ['OWNER', 'ENTERPRISE_ADMIN'],
+          [...new Set<Role>(['OWNER', ...user.roles])],
           `Founding administrator of ${tenant.legalName}: the company's owner, with everything anybody in it may do. Nobody else here could have granted it. (${now.toISOString().slice(0, 10)})`,
           { refType: 'System', refId: 'platform' },
           'SYSTEM',

@@ -21,6 +21,10 @@ let trappedAdmin = '';
 let organised = '';
 let organisedAdmin = '';
 let pair = '';
+let settled = '';
+let settledAdmin = '';
+let alsoDelivers = '';
+let alsoDeliversAdmin = '';
 
 function tenancy(name: string): string {
   return platform.createTenant({ legalName: name, jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: name, trialGrant: false, opensOn: 'CREATION' }).tenant.id;
@@ -34,10 +38,31 @@ before(() => {
   trapped = tenancy('ETABLIX Ltd');
   trappedAdmin = platform.createUser({ tenantId: trapped, name: 'Lea Mbala', email: 'lea@etablix.example', roles: ['ENTERPRISE_ADMIN'] }).id;
 
-  // A company that has organised itself: an administrator and a project manager.
+  // An administrator who has invited somebody — and is trapped exactly as the
+  // lone one is.
+  //
+  // This fixture used to be called "a company that has organised itself" and
+  // the repair was asserted to step over it, on the reasoning that somebody
+  // there could have changed the roles. That reasoning was wrong: only
+  // ENTERPRISE_ADMIN and OWNER may grant roles at all, and nobody may grant
+  // their own, so a project manager in the room creates nobody who could have
+  // made this administrator an owner. The old rule therefore stopped helping a
+  // founder the moment they did the one thing the administrator's role exists
+  // for, which is to invite the rest of the company.
   organised = tenancy('Meridian Ltd');
   organisedAdmin = platform.createUser({ tenantId: organised, name: 'Amara Okafor', email: 'amara@meridian.example', roles: ['ENTERPRISE_ADMIN'] }).id;
   platform.createUser({ tenantId: organised, name: 'Tom Hale', email: 'tom@meridian.example', roles: ['PM'] });
+
+  // A company that really has organised itself: somebody holds OWNER already.
+  // Nothing here is the platform's business.
+  settled = tenancy('Rossendale Ltd');
+  settledAdmin = platform.createUser({ tenantId: settled, name: 'Iris Vance', email: 'iris@rossendale.example', roles: ['ENTERPRISE_ADMIN'] }).id;
+  platform.createUser({ tenantId: settled, name: 'Joan Petrie', email: 'joan@rossendale.example', roles: ['OWNER'] });
+
+  // An administrator who also carries a delivery role. Ownership is added to
+  // what they hold, never swapped for it.
+  alsoDelivers = tenancy('Kirkbride Ltd');
+  alsoDeliversAdmin = platform.createUser({ tenantId: alsoDelivers, name: 'Sam Doyle', email: 'sam@kirkbride.example', roles: ['ENTERPRISE_ADMIN', 'QS'] }).id;
 
   // Two administrators and nobody else: either could have promoted the other.
   pair = tenancy('JNN Homes Ltd');
@@ -63,8 +88,8 @@ describe('the founding administrators become owners', () => {
     const owned = platform.ownFoundingAdministrators(new Date('2026-09-05T09:00:00Z'));
     assert.deepEqual(
       owned.map((entry) => entry.tenantId).sort(),
-      [trapped, pair, pair].sort(),
-      'the lone administrator and the pair of administrators; the organised company is untouched',
+      [trapped, organised, pair, pair, alsoDelivers].sort(),
+      'every tenancy with no owner; only the one that already has an owner is untouched',
     );
 
     const admin = platform.user(trappedAdmin);
@@ -81,7 +106,18 @@ describe('the founding administrators become owners', () => {
     assert.match(String(record.reason), /Founding administrator of ETABLIX Ltd/);
     assert.match(String(record.reason), /2026-09-05/);
 
-    assert.deepEqual(platform.user(organisedAdmin).roles, ['ENTERPRISE_ADMIN'], 'somebody in that company could have changed the roles, so nothing is changed for them');
+    // The blind spot the old rule had. Inviting a project manager created
+    // nobody who could grant ownership, and used to disqualify this founder
+    // from the repair for ever.
+    assert.deepEqual(platform.user(organisedAdmin).roles, ['OWNER', 'ENTERPRISE_ADMIN']);
+    assert.equal(rolesAllow(platform.user(organisedAdmin).roles, 'FIELD_EXECUTION', 'C'), true);
+
+    // Already has an owner, so the platform has no business here.
+    assert.deepEqual(platform.user(settledAdmin).roles, ['ENTERPRISE_ADMIN'], 'a company with an owner is left exactly as it is');
+
+    // Ownership is added to what they hold, not swapped for it.
+    assert.deepEqual(platform.user(alsoDeliversAdmin).roles.sort(), ['ENTERPRISE_ADMIN', 'OWNER', 'QS'].sort());
+
     for (const user of platform.users(pair)) assert.deepEqual(user.roles, ['OWNER', 'ENTERPRISE_ADMIN']);
   });
 

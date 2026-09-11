@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { rateLimiter } from '../src/api/middleware.ts';
+import { rolesAllow, type Role } from '../src/identity/roles.ts';
 import { Platform, type PlatformUser } from '../src/platform.ts';
 import { authOf } from '../src/seed.ts';
 
@@ -84,7 +85,15 @@ describe('the request pipeline', () => {
     const administrator = provisioned.body.administrator as Record<string, unknown>;
     assert.equal(tenant.legalName, 'Groupe Nseya');
     assert.equal(administrator.email, ask.email);
-    assert.deepEqual(administrator.roles, ['ENTERPRISE_ADMIN']);
+    // Owner as well as administrator, like every other founding path. The
+    // administrator's role reads delivery and authors in almost none of it, and
+    // nobody may change their own roles — so provisioning this person as an
+    // administrator alone handed them an account they could not work in, with
+    // no second person able to unlock it.
+    assert.deepEqual(administrator.roles, ['OWNER', 'ENTERPRISE_ADMIN']);
+    assert.equal(rolesAllow(administrator.roles as Role[], 'WORKPACKAGES_TASKS', 'C'), true);
+    assert.equal(rolesAllow(administrator.roles as Role[], 'FIELD_EXECUTION', 'C'), true);
+    assert.equal(rolesAllow(administrator.roles as Role[], 'PLATFORM_ADMINISTRATION', 'R'), false, 'nothing of the operator layer');
     assert.ok(['SENT', 'RECORDED', 'FAILED', 'QUEUED', 'DELIVERED'].includes(String(provisioned.body.notified)));
     const request = provisioned.body.request as Record<string, unknown>;
     assert.equal(request.status, 'PROVISIONED');
