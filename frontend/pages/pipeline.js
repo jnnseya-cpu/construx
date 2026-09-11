@@ -1136,9 +1136,21 @@ export async function pipeline(root) {
 
       <div class="card pad0">
         <h2 style="padding:15px 17px 0">Opportunities</h2>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          How a bid ended is the signal the calibration reads from. A loss had nowhere to go before this: it sat at
+          <b>bid</b> for ever, so the pipeline could not tell a live tender from a dead one and the record learned
+          nothing from it.
+        </p>
+        <div style="padding:11px 17px 0">
+          ${commandBar([
+            { id: 'bid-outcome', label: 'Record how a bid ended',
+              permitted: can('BUSINESS_DEVELOPMENT', 'U') && opportunities.some((o) => o.stage === 'BID' || o.stage === 'CONVERTED'),
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'U') ?? 'Nothing has reached a decision to bid' },
+          ])}
+        </div>
         ${table({
-          headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Due'],
-          align: ['', '', 'num', 'num', '', '', ''],
+          headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Outcome', 'Due'],
+          align: ['', '', 'num', 'num', '', '', '', ''],
           rows: opportunities.map((o) => {
             const q = o.qualification;
             return [
@@ -1152,6 +1164,9 @@ export async function pipeline(root) {
                   }`
                 : '—',
               badge(BAND_LABEL[o.stage] ?? o.stage, STAGE_TONE[o.stage] ?? ''),
+              o.outcome
+                ? badge(o.outcome.outcome === 'WON' ? 'won' : 'lost', o.outcome.outcome === 'WON' ? 'good' : 'bad')
+                : '—',
               o.submissionDueAt ? date(o.submissionDueAt) : '—',
             ];
           }),
@@ -1289,6 +1304,46 @@ export async function pipeline(root) {
           hint: 'At least 12 characters. What you concluded, not that you looked.' },
       ],
       transform: ({ findingId: _findingId, ...rest }) => rest,
+    },
+    'bid-outcome': {
+      title: 'Record how a bid ended',
+      intent:
+        'The outcome, the buyer’s marks where they gave any, the winning price where they disclosed it, and what the ' +
+        'evaluator said. This is the signal the calibration reads from — without it the business loses the same money ' +
+        'twice, because the next tender is priced by somebody who never saw what happened to the last one. Recorded ' +
+        'once and not rewritten: an outcome that can be edited is one nothing can rely on.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/outcome`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          options: opportunities
+            .filter((o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome)
+            .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })) },
+        { name: 'outcome', label: 'How it ended', type: 'select',
+          options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }] },
+        { name: 'decidedOn', label: 'Decided on', type: 'date' },
+        { name: 'ourPriceMinor', label: 'What we tendered', type: 'number', money: true, required: false,
+          hint: 'Left blank, the opportunity’s own value is used' },
+        { name: 'winningPriceMinor', label: 'The winning price', type: 'number', money: true, required: false,
+          hint: 'Only on a loss, and only where the buyer disclosed it' },
+        { name: 'winnerName', label: 'Who won', type: 'text', required: false },
+        { name: 'qualityScorePercent', label: 'Quality mark (%)', type: 'number', required: false, min: 0, max: 100 },
+        { name: 'commercialScorePercent', label: 'Commercial mark (%)', type: 'number', required: false, min: 0, max: 100 },
+        { name: 'rank', label: 'Ranked', type: 'number', required: false, min: 1 },
+        { name: 'tenderers', label: 'Out of', type: 'number', required: false, min: 1 },
+        { name: 'reviewId', label: 'Assurance review of the submission', type: 'select', required: false,
+          options: (assurance?.reviews ?? []).map((review) => ({
+            value: review.id,
+            label: `${review.reference} · ${review.findableScorePercent}% findable`,
+          })),
+          hint: 'Naming it is what lets the platform check the findable score against the mark the buyer actually gave' },
+        { name: 'feedback', label: 'What the evaluator said', type: 'textarea', rows: 3, required: false,
+          hint: 'One point per line. Kept verbatim — it is the most useful thing here.' },
+      ],
+      transform: ({ opportunityId: _opportunityId, feedback, ...rest }) => ({
+        ...rest,
+        feedback: String(feedback ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+      }),
     },
     invitation: {
       title: 'Record an invitation to tender',

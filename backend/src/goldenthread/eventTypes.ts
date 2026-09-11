@@ -1400,6 +1400,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // to a document is clerical and reversible; deciding the document actually
   // proves the claim is a judgement somebody signs their name to, and the
   // asserter may not be the verifier.
+  // The loop closing on the bid.
+  //
+  // A loss was invisible: `LOST` was a declared opportunity stage nothing ever
+  // set, so a bid that lost sat at `BID` for ever and the record could not tell
+  // a live tender from a dead one. That is the signal the whole learning loop
+  // reads from, and it was being thrown away.
+  //
+  // An agent may propose a calibration and may not promote one. Promotion is
+  // the moment an unverified output would become institutional truth, and it
+  // carries an approver for the same reason no mandate exceeds propose.
+  def('BID_OUTCOME_RECORDED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CALIBRATION_LESSON_PROPOSED', 'CalibrationLesson', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true, aiAllowed: true }),
+  def('CALIBRATION_LESSON_PROMOTED', 'CalibrationLesson', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
+  def('CALIBRATION_LESSON_REJECTED', 'CalibrationLesson', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CALIBRATION_LESSON_RETIRED', 'CalibrationLesson', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+
   // The red team's own record. Running the review is an agent act and may be
   // AI-authored; deciding what to do about a finding is not, for the same
   // reason no agent mandate exceeds propose. A model may not clear its own

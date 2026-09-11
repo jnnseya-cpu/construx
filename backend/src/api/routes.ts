@@ -136,6 +136,7 @@ import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
+import * as learning from '../domain/learning.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
 import * as redteam from '../domain/redteam.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
@@ -11678,9 +11679,124 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/benchmark',
-    description: "Compare an estimate against the business's own price history",
+    readOnly: true,
+    description:
+      "Compare an estimate against the business's own price history, with every median corrected by a promoted estimating-bias lesson and each line saying so",
     handler: (platform, ctx) =>
-      costintel.benchmarkEstimate(projectContext(platform, ctx), ctx.params.estimateId as string),
+      // The calibrated reader rather than the raw one. The medians a rate is
+      // compared against are this business's own past estimates and inherit
+      // every bias they carry — a line in line with the median is under the
+      // market by exactly as much as the business has been. Nothing changes
+      // until a lesson is promoted; the note says which it is.
+      learning.calibratedBenchmark(projectContext(platform, ctx), ctx.params.estimateId as string),
+  },
+  /*
+   * The loop closing on the bid — L7.6, §4.10.
+   *
+   * Outcome capture, the signals the record supports, and the promotion gate
+   * that stands between a signal and an estimate.
+   */
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/outcome',
+    description:
+      'Record how a bid ended and what the buyer said. A loss had nowhere to go before this, so the signal the learning loop reads from was being thrown away',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'decidedOn'],
+      properties: {
+        outcome: { type: 'string', enum: ['WON', 'LOST'] },
+        decidedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}' },
+        ourPriceMinor: { type: 'integer', minimum: 0 },
+        winningPriceMinor: { type: 'integer', minimum: 0 },
+        winnerName: stringField,
+        qualityScorePercent: { type: 'number', minimum: 0, maximum: 100 },
+        commercialScorePercent: { type: 'number', minimum: 0, maximum: 100 },
+        rank: { type: 'integer', minimum: 1 },
+        tenderers: { type: 'integer', minimum: 1 },
+        reviewId: stringField,
+        feedback: { type: 'array', items: stringField },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.recordBidOutcome(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/calibration',
+    readOnly: true,
+    description:
+      'What the record says about how this business bids: price against the winner, what a win-probability score has been worth, estimating bias, and whether the findable score tracks the buyer’s mark',
+    handler: (platform, ctx) =>
+      learning.calibrationSignals(
+        tenantContext(platform, ctx),
+        ctx.query.get('today') ?? undefined,
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/calibration/lessons',
+    readOnly: true,
+    description: 'Every proposed, promoted, refused and retired calibration, and what a promoted one of each kind changes',
+    handler: (platform, ctx) => learning.lessonRegister(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/calibration/lessons',
+    description:
+      'Propose that a signal become a correction. Refused where the record is too thin to support one — a factor built on a single bid is an anecdote with a percentage sign on it',
+    schema: {
+      type: 'object',
+      required: ['signalId', 'adjustmentPercent', 'rationale'],
+      properties: {
+        signalId: stringField,
+        adjustmentPercent: { type: 'number', minimum: -40, maximum: 40 },
+        rationale: { type: 'string', minLength: 20 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => learning.proposeLesson(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/calibration/lessons/:lessonId/promote',
+    description:
+      'Gate G7. Until this runs the lesson changes nothing anybody sees, and the person who proposed it may not be the one who promotes it',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string', minLength: 12 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.promoteLesson(tenantContext(platform, ctx), ctx.params.lessonId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/calibration/lessons/:lessonId/reject',
+    description: 'Refuse a proposed correction. Kept, because one somebody looked at and refused is part of the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.rejectLesson(tenantContext(platform, ctx), ctx.params.lessonId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/calibration/lessons/:lessonId/retire',
+    description: 'Stop applying a promoted correction. What was true about last year’s market is not true for ever',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.retireLesson(tenantContext(platform, ctx), ctx.params.lessonId as string, body(ctx)),
   },
   {
     method: 'POST',

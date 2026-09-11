@@ -30,7 +30,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -43,6 +43,11 @@ export async function procurement(root) {
     // always the one nobody tests — a form offering a unit the engine cannot
     // read produces a quantity nothing can check.
     api.get('/v1/units').catch((error) => ({ error })),
+    // What the record has learned about how this business bids, and which of
+    // those corrections somebody has actually promoted. Loaded beside the price
+    // history because a promoted lesson is what corrects it.
+    api.read('/v1/calibration', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read('/v1/calibration/lessons', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -145,8 +150,12 @@ export async function procurement(root) {
       ],
       path: (v) => `/v1/projects/${projectId}/tender/estimate/${v.estimateId}/benchmark`,
       sections: [
-        { key: 'comparisons', label: 'Against our own history', empty: 'No line has enough history to compare against.' },
-        { key: 'outliers', label: 'Outliers', empty: 'No line sits outside the expected range.' },
+        // The keys the response actually carries. `calibrated` is every line
+        // with its median corrected by a promoted estimating-bias lesson, and
+        // `note` says which lesson did it or that none is promoted.
+        { key: 'calibrated', label: 'Against our own history, corrected', empty: 'No line has enough history to compare against.' },
+        { key: 'note', label: 'What the correction is' },
+        { key: 'warnings', label: 'Warnings', empty: 'Nothing to flag.' },
       ],
     },
     {
@@ -358,6 +367,21 @@ export async function procurement(root) {
             { id: 'answerclarification', label: 'Answer clarification', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: enquiryParticipant, reason: enquiryParticipantReason },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
+            // The loop closing on the bid. Proposing and promoting are
+            // deliberately different authorities, and the engine refuses a
+            // promotion by whoever proposed it.
+            { id: 'calibration-propose', label: 'Propose a calibration',
+              permitted: can('ESTIMATE_TENDER', 'C') && (calibration?.signals ?? []).length > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'C') ?? 'The record supports no signal yet — no bid has a recorded outcome' },
+            { id: 'calibration-promote', label: 'Promote a calibration',
+              permitted: can('ESTIMATE_TENDER', 'A') && (lessons?.counts?.PROPOSED ?? 0) > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'A') ?? 'Nothing is awaiting a decision' },
+            { id: 'calibration-reject', label: 'Refuse a calibration',
+              permitted: can('ESTIMATE_TENDER', 'A') && (lessons?.counts?.PROPOSED ?? 0) > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'A') ?? 'Nothing is awaiting a decision' },
+            { id: 'calibration-retire', label: 'Retire a calibration',
+              permitted: can('ESTIMATE_TENDER', 'A') && (lessons?.counts?.PROMOTED ?? 0) > 0,
+              reason: blockedReason('ESTIMATE_TENDER', 'A') ?? 'Nothing is being applied' },
             { id: 'route', label: 'Buy it or do it', permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
             { id: 'selfPerform', label: 'Price it ourselves',
               permitted: can('ESTIMATE_TENDER', 'U') && openRoutes.length > 0,
@@ -1065,6 +1089,37 @@ export async function procurement(root) {
       })}
 
       ${positionReport({
+        title: 'What the record has learned',
+        intent:
+          'Every other measure on this screen looks backwards at delivery. These look forward into the next bid: how ' +
+          'far our price sat from the winning price, what a win-probability score has actually been worth, how far ' +
+          'our package estimates sit from the market. A signal is not a lesson — nothing here reaches an estimate ' +
+          'until somebody promotes it.',
+        data: calibration,
+        error: calibration?.error,
+        sections: [
+          { key: 'signals', label: 'Signals the record supports', empty: 'No bid has a recorded outcome yet, so there is nothing to calibrate against.' },
+          { key: 'settled', label: 'Settled bids' },
+          { key: 'limits', label: 'What the record cannot answer', empty: 'Every question the calibration asks has an answer on the record.' },
+        ],
+      })}
+
+      ${positionReport({
+        title: 'Calibrations being applied',
+        intent:
+          'Gate G7. A proposed correction changes nothing anybody sees; a promoted one corrects every median the ' +
+          'estimate benchmark compares against, carries its source bids and names its approver. The person who ' +
+          'proposed it may not be the one who promotes it.',
+        data: lessons,
+        error: lessons?.error,
+        sections: [
+          { key: 'lessons', label: 'Every calibration', empty: 'Nothing has been proposed. Until a lesson is promoted, nothing the record has learned reaches an estimate.' },
+          { key: 'effects', label: 'What a promoted one of each kind changes' },
+          { key: 'counts', label: 'By standing' },
+        ],
+      })}
+
+      ${positionReport({
         title: 'Trade catalogue',
         intent: 'Every trade, and which require third-party accreditation before anybody may be engaged.',
         data: trades,
@@ -1274,6 +1329,83 @@ export async function procurement(root) {
         contractExceptions: String(contractExceptions ?? '').split('\n').map((x) => x.trim()).filter(Boolean),
         insurancesHeld: String(insurancesHeld ?? '').split(',').map((x) => x.trim()).filter(Boolean),
       }),
+    },
+    /*
+     * The loop closing on the bid — L7.6.
+     *
+     * Four doors and a gate between them. A signal is what the record supports;
+     * a lesson is what somebody decided to act on; and the two are kept apart
+     * because a correction that goes into every future estimate is not a thing
+     * one person decides on their own.
+     */
+    'calibration-propose': {
+      title: 'Propose a calibration',
+      intent:
+        'Turn a signal the record supports into a correction somebody can act on. Refused where the record is too ' +
+        'thin — a factor built on a single bid is an anecdote with a percentage sign on it, and once it is in the ' +
+        'library nobody remembers it was one bid.',
+      path: '/v1/calibration/lessons',
+      submitLabel: 'Propose',
+      fields: [
+        { name: 'signalId', label: 'Signal', type: 'select',
+          options: (calibration?.signals ?? []).map((sig) => ({
+            value: sig.id,
+            label: `${sig.subject} — ${sig.deltaPercent === null ? 'no reading' : `${sig.deltaPercent}%`}, ${sig.observations} observation(s)`,
+          })) },
+        { name: 'adjustmentPercent', label: 'Correction (%)', type: 'number',
+          hint: 'Positive means our figure runs low against what actually happened. Nothing beyond 40 either way.' },
+        { name: 'rationale', label: 'Why the record supports it', type: 'textarea', rows: 3,
+          hint: 'At least 20 characters. Repeating the signal’s own sentence is not a reason to act on it.' },
+      ],
+    },
+    'calibration-promote': {
+      title: 'Promote a calibration',
+      intent:
+        'Gate G7. Until this runs the lesson changes nothing anybody sees; after it, every median the estimate ' +
+        'benchmark compares against is corrected by it and says so. You cannot promote one you proposed.',
+      path: (v) => `/v1/calibration/lessons/${v.lessonId}/promote`,
+      submitLabel: 'Promote',
+      fields: [
+        { name: 'lessonId', label: 'Calibration', type: 'select',
+          options: (lessons?.lessons ?? [])
+            .filter((lesson) => lesson.status === 'PROPOSED')
+            .map((lesson) => ({ value: lesson.id, label: `${lesson.reference} · ${lesson.subject} · ${lesson.adjustmentPercent}%` })) },
+        { name: 'note', label: 'What you checked', type: 'textarea', rows: 2,
+          hint: 'At least 12 characters. A promoted lesson carries its approver, and an approver with nothing recorded is a name on a decision nobody can reconstruct.' },
+      ],
+      transform: ({ lessonId: _lessonId, ...rest }) => rest,
+    },
+    'calibration-reject': {
+      title: 'Refuse a calibration',
+      intent:
+        'Kept rather than deleted. A correction somebody looked at and refused is part of the record, and deleting ' +
+        'it means the next person proposes the same one.',
+      path: (v) => `/v1/calibration/lessons/${v.lessonId}/reject`,
+      submitLabel: 'Refuse',
+      fields: [
+        { name: 'lessonId', label: 'Calibration', type: 'select',
+          options: (lessons?.lessons ?? [])
+            .filter((lesson) => lesson.status === 'PROPOSED')
+            .map((lesson) => ({ value: lesson.id, label: `${lesson.reference} · ${lesson.subject}` })) },
+        { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ lessonId: _lessonId, ...rest }) => rest,
+    },
+    'calibration-retire': {
+      title: 'Retire a calibration',
+      intent:
+        'Stop applying a promoted correction. What was true about last year’s market is not true for ever, and a ' +
+        'library nobody can retire from is one that accumulates.',
+      path: (v) => `/v1/calibration/lessons/${v.lessonId}/retire`,
+      submitLabel: 'Retire',
+      fields: [
+        { name: 'lessonId', label: 'Calibration', type: 'select',
+          options: (lessons?.lessons ?? [])
+            .filter((lesson) => lesson.status === 'PROMOTED')
+            .map((lesson) => ({ value: lesson.id, label: `${lesson.reference} · ${lesson.subject} · ${lesson.adjustmentPercent}%` })) },
+        { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ lessonId: _lessonId, ...rest }) => rest,
     },
     award: {
       title: 'Award the package',

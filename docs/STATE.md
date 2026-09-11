@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,612 passing, 0 failing, 0 skipped, across 310 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,639 passing, 0 failing, 0 skipped, across 311 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 333 TypeScript files, 217,001 lines |
-| Application | 80 ES modules, 49,362 lines (including a service worker) |
-| API routes | 1,167 — 795 writes, 372 reads (51 public across both) |
-| Event types | 775 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 346, all classified for access |
+| Backend | 334 TypeScript files, 218,051 lines |
+| Application | 80 ES modules, 49,549 lines (including a service worker) |
+| API routes | 1,174 — 800 writes, 374 reads (51 public across both) |
+| Event types | 780 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 347, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -20309,14 +20309,14 @@ it defines:
 | L7.3 | Adversarial self-challenge | **Built** — `redteam.ts` is the evaluator simulation: it attacks the drafted pack, and a critical finding is a hard block on issue |
 | L7.4 | Time-travel state | **Built** — `validFrom` is the second axis and `stateAsOf` asks both questions, so "as known on the 14th about the 12th" is one read |
 | L7.5 | Full lineage | **Built** — `pricelineage.ts` walks a figure back to its drawing as a projection over the ledger, and says what it cannot answer |
-| L7.6 | Governed learning | **Partial** — lessons are human-approved corporate memory; nothing feeds delivery variance back into a tender rate or a win probability |
+| L7.6 | Governed learning | **Built** — `learning.ts` captures the outcome, derives the calibration, and gates promotion so nothing an agent proposes reaches an estimate without a named approver |
 | L7.7 | Platform-agnostic core | **Built** — zero runtime dependencies is the strongest form of the rule, and every provider already sits behind a port |
 
 Three were genuinely absent when this was written: adversarial self-challenge,
 the evidence registry as a gate, and bitemporal state. **All three have since
 been built** — see *A claim is what is asserted*, *Two time axes* and *The red
-team* below. Of the seven properties, six are built and `L7.6` — governed
-learning — is the one that remains partial.
+team* below. `L7.6` followed; see *The loop closing on the bid*. **All seven
+properties are now built.**
 
 **On the reference stack.** The specification names a service-per-engine
 deployment on Kafka with Python workers. That is not adopted and is not
@@ -20336,10 +20336,11 @@ confirmation are all manual.
 Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
-rewrite. **All three are now built, and so is the fifth — the
-evaluator-simulation red-team agent.** What remains from that ordering is the
-portal port, the standard-form clause library with an amendment overlay (L7.1),
-and the learning loop (L7.6).
+rewrite. **All three are now built, and so are the fifth and the eighth — the
+evaluator-simulation red-team agent and the learning loop.** What remains from
+that ordering is the portal port and the standard-form clause library with an
+amendment overlay (L7.1), the latter being the item that most needs a
+construction professional rather than an engineer.
 
 **The wider edition, merged as Part I.** A second and larger edition of the same
 specification followed: product definition, an L0–L7 autonomy ladder, six action
@@ -20808,3 +20809,67 @@ has attacked, one whose review is of an earlier pass count, and one with an open
 critical or an undisposed high finding. A review that was never run and a review
 that found nothing must not look the same. Four routes, a panel on Pipeline &
 Bids with two doors, and twenty-three tests.
+
+## The loop closing on the bid
+
+`L7.6`, §4.10, and the last of the seven Level 7 properties to be only partial.
+
+**Everything the platform measured looked backwards.** Lessons learned are
+corporate memory across projects. The cost intelligence database is built from
+committed records. Forecast accuracy compares estimate-at-completion snapshots
+against the final account. Every one of those reads delivery. None of them
+reached forward into the next bid, so the business lost the same money twice:
+the estimate that came in eleven per cent under the market is a fact somebody
+found out during delivery, and the next tender is priced by somebody who never
+saw it.
+
+**A loss had nowhere to go.** `LOST` was a declared opportunity stage that
+nothing ever set. A bid that lost sat at `BID` for ever, the pipeline could not
+tell a live tender from a dead one, and the signal the whole loop learns from
+was being thrown away. `recordBidOutcome` is the capture: the outcome, the
+buyer's marks, the winning price where it was disclosed, the rank, and the
+evaluator's comments kept verbatim. Recorded once and not rewritten.
+
+A side effect worth naming: `bidDiscipline`'s per-band win rate was `null` on
+every band for ever, because it is taken over decided outcomes and nothing was
+ever decided. **The algorithm's own self-check now works.**
+
+**Four signals, and each says how much it rests on.** Where our price sat
+against the winning price. What a win-probability score has actually been worth,
+per score, against the probability that score implies. How far package estimates
+sit from what the market returned. Whether the red team's findable score tracks
+the buyer's quality mark. A projection, computed on every request and never
+stored — a stored calibration would be a second copy of a conclusion that has to
+move every time an outcome is recorded.
+
+**Every question it cannot settle is stated as a limit**, rather than left as a
+short signal list that reads like a clean bill.
+
+**A signal is not a lesson.** Nothing reaches an estimator until a named person
+promotes it, and four rules stand in the way of a bad one: a signal under three
+observations is refused outright, a correction beyond forty per cent either way
+is refused as a scope difference or a mistake rather than a factor, the rationale
+must say why the record supports it, and **the person who proposed a correction
+may not be the one who promotes it**. A promoted lesson carries its source bids
+and its approver. A refused one is kept, because the next person would otherwise
+propose the same thing.
+
+**An agent may propose and may not promote.** `CALIBRATION_LESSON_PROPOSED`
+carries `aiAllowed: true`; promotion, refusal and retirement do not. This is the
+one place where an unverified output would become institutional truth, and the
+rule that keeps every mandate at propose is what closes it.
+
+**The loop actually closes, in one place and visibly.** The estimate benchmark
+compares a rate against the median of what this business has estimated before,
+and that median inherits every bias those estimates carried. A promoted
+estimating-bias lesson corrects it, keeps the uncorrected figure beside it, and
+names the lesson and its approver on every read. Nothing moves while a lesson is
+only proposed, and a test asserts exactly that.
+
+**What it deliberately does not do.** It does not alter the bid/no-bid score or
+recommendation. The observed win rate is published beside the scored one, because
+a score somebody can no longer reproduce from the ten factors is a score nobody
+can argue with, and the algorithm is what a decision is defended by.
+
+Seven routes, two panels and five doors across Tender & Procurement and Pipeline
+& Bids, and twenty-seven tests.
