@@ -698,6 +698,12 @@ export async function commercial(root) {
     ? await api.get(`/v1/projects/${projectId}/cis/returns/${openCisMonth}?asAt=${today()}`).catch(() => null)
     : null;
 
+  // What the risk allowance was priced at and what has gone out of it. Read
+  // from the API rather than worked out here: the remaining figure and the
+  // share consumed are the platform's arithmetic, and a second copy in the
+  // browser is a second answer to the same question.
+  const contingency = await api.get(`/v1/projects/${projectId}/cost/contingency`).catch(() => null);
+
   const cvr = bundle.CVR.at(-1);
   const evm = bundle.EarnedValueSnapshot.at(-1);
   const budget = bundle.Budget.filter((b) => b.status === 'APPROVED').at(-1);
@@ -916,6 +922,56 @@ export async function commercial(root) {
             }),
             empty: 'No approved cost baseline',
           })}
+          ${
+            contingency
+              ? html`<div style="padding:0 17px 15px">
+                  <h2 style="padding-top:12px">Risk allowance</h2>
+                  ${
+                    contingency.absent
+                      ? html`<div class="metric-sub">${contingency.absent}</div>`
+                      : html`<div class="split-list">
+                            <div class="row"><span class="lbl">Priced</span><span class="val">${money(contingency.pricedMinor)}</span></div>
+                            <div class="row"><span class="lbl">Drawn</span><span class="val">${money(contingency.drawnMinor)}</span></div>
+                            <div class="row">
+                              <span class="lbl">Remaining</span>
+                              <span class="val">${money(contingency.remainingMinor)}</span>
+                            </div>
+                            <div class="row">
+                              <span class="lbl">Consumed</span>
+                              <span class="val">${
+                                contingency.consumedPercent === null
+                                  ? 'not priced'
+                                  : // The figure as well as the bar. A track at zero draws
+                                    // nothing, and a row labelled "Consumed" with nothing
+                                    // beside it reads as a panel that failed to load
+                                    // rather than as an allowance nothing has come out of.
+                                    html`${pct(contingency.consumedPercent / 100)} ${track(
+                                      contingency.consumedPercent,
+                                      contingency.consumedPercent > 90 ? 'bad' : contingency.consumedPercent > 70 ? 'warn' : 'good',
+                                    )}`
+                              }</span>
+                            </div>
+                          </div>
+                          ${table({
+                            headers: ['Drawn', 'Risk', 'Amount', 'Why'],
+                            align: ['', '', 'num', ''],
+                            rows: contingency.draws.map((entry) => [
+                              date(entry.drawnAt),
+                              entry.riskReference,
+                              money(entry.amountMinor),
+                              entry.reason,
+                            ]),
+                            empty: 'Nothing drawn against the allowance yet',
+                          })}
+                          <div class="metric-sub" style="margin-top:8px">
+                            A draw names the risk that materialised. Money spent on something nobody identified is an
+                            underestimate or a scope change, and both belong on the record as that. What the allowance
+                            turns out to be worth is what calibrates the next tender's risk pricing.
+                          </div>`
+                  }
+                </div>`
+              : ''
+          }
         </div>
 
         <div>

@@ -68,6 +68,163 @@ export function approveBudget(
   return { budgetId, totalMinor: total };
 }
 
+// --- The risk pot, and what it was actually worth ----------------------------
+
+/**
+ * Drawing against the project contingency.
+ *
+ * The baseline priced a contingency and nothing had ever spent one. The figure
+ * was approved, carried, and never moved again, which meant the record could
+ * say what the job *expected* risk to cost and never what it did — and a risk
+ * allowance nobody tracks is a number that is right by construction, because
+ * nothing can ever contradict it.
+ *
+ * That is also why the learning loop could not derive a risk signal. §4.10.2
+ * asks for calibration deltas against the risk distribution alongside rates,
+ * productivity and win probability, and the other three had records behind
+ * them. This one had a priced figure and no outturn to compare it with.
+ *
+ * Three refusals, and the middle one is the one that matters:
+ *
+ * - **A draw of nothing is not a draw.** Zero and negative are refused rather
+ *   than written as events that move no money.
+ * - **A draw names the risk that materialised.** Money spent on something
+ *   nobody identified is an underestimate or a scope change, and both have
+ *   their own route into the record. Without this the contingency becomes the
+ *   place overspend goes to stop being visible, which is precisely what makes
+ *   the calibration derived from it worthless. The same rule already governs
+ *   the integrator's contingency in `domain/integrator.ts`.
+ * - **A draw beyond what remains is spending the margin.** Refused here and
+ *   named as that, rather than allowed to run the allowance negative.
+ */
+export function drawBudgetContingency(
+  ctx: EngineContext,
+  input: { amountMinor: number; riskReference: string; reason: string },
+): { budgetId: string; pricedMinor: number; drawnMinor: number; remainingMinor: number } {
+  authorise(ctx, 'BUDGET_COST', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const budget = approvedBudget(ctx);
+  if (!budget) {
+    throw new DomainError(
+      'NO_APPROVED_BUDGET',
+      'There is no approved cost baseline on this project, so there is no contingency to draw against.',
+      422,
+    );
+  }
+
+  if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
+    throw new DomainError('CONTINGENCY_AMOUNT_INVALID', 'A draw of nothing is not a draw');
+  }
+  if (input.riskReference.trim() === '') {
+    throw new DomainError(
+      'CONTINGENCY_RISK_REQUIRED',
+      'Contingency is drawn against a risk that has materialised. Money spent on something nobody identified is an ' +
+        'underestimate or a scope change, and both have their own route into the record.',
+    );
+  }
+  if (input.reason.trim().length < 12) {
+    throw new DomainError(
+      'CONTINGENCY_REASON_REQUIRED',
+      'Say what happened, in a sentence somebody reading this in two years can act on.',
+    );
+  }
+
+  const priced = Number(budget.state.contingencyMinor ?? 0);
+  const alreadyDrawn = Number(budget.state.contingencyDrawnMinor ?? 0);
+  const remaining = priced - alreadyDrawn;
+  if (input.amountMinor > remaining) {
+    throw new DomainError(
+      'CONTINGENCY_EXHAUSTED',
+      `Only ${remaining} of ${priced} (minor units) of contingency remains. Drawing beyond it is spending the margin, ` +
+        'and it belongs on the record as that rather than hidden in the risk pot.',
+    );
+  }
+
+  const draws = [...((budget.state.contingencyDraws as unknown[] | undefined) ?? [])];
+  draws.push({
+    amountMinor: input.amountMinor,
+    riskReference: input.riskReference,
+    reason: input.reason,
+    drawnAt: new Date().toISOString(),
+    drawnBy: ctx.auth.actorId,
+  });
+
+  write(ctx, {
+    eventType: 'BUDGET_CONTINGENCY_DRAWN',
+    entity: { refType: 'Budget', refId: String(budget.state.id) },
+    reason: `${input.riskReference}: ${input.reason}`,
+    nextState: {
+      ...(budget.state as Record<string, unknown>),
+      contingencyDraws: draws,
+      contingencyDrawnMinor: alreadyDrawn + input.amountMinor,
+    },
+  });
+
+  return {
+    budgetId: String(budget.state.id),
+    pricedMinor: priced,
+    drawnMinor: alreadyDrawn + input.amountMinor,
+    remainingMinor: remaining - input.amountMinor,
+  };
+}
+
+export type ContingencyDraw = {
+  amountMinor: number;
+  riskReference: string;
+  reason: string;
+  drawnAt: string;
+  drawnBy: string;
+};
+
+export type ContingencyPosition = {
+  /** Absent where no baseline is approved. Named, never reported as a zero pot. */
+  budgetId: string | null;
+  pricedMinor: number;
+  drawnMinor: number;
+  remainingMinor: number;
+  /** What share of the allowance has gone, or `null` where nothing was priced. */
+  consumedPercent: number | null;
+  draws: ContingencyDraw[];
+  /** Why there is nothing to report, where that is the answer. */
+  absent?: string;
+};
+
+export function contingencyPosition(ctx: EngineContext): ContingencyPosition {
+  authorise(ctx, 'BUDGET_COST', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const budget = approvedBudget(ctx);
+  if (!budget) {
+    return {
+      budgetId: null,
+      pricedMinor: 0,
+      drawnMinor: 0,
+      remainingMinor: 0,
+      consumedPercent: null,
+      draws: [],
+      absent: 'No cost baseline is approved on this project, so no contingency has been priced.',
+    };
+  }
+
+  const priced = Number(budget.state.contingencyMinor ?? 0);
+  const drawn = Number(budget.state.contingencyDrawnMinor ?? 0);
+  return {
+    budgetId: String(budget.state.id),
+    pricedMinor: priced,
+    drawnMinor: drawn,
+    remainingMinor: priced - drawn,
+    // A percentage of nothing is not zero per cent, it is not a question.
+    consumedPercent: priced > 0 ? Number(((drawn / priced) * 100).toFixed(1)) : null,
+    draws: (budget.state.contingencyDraws as ContingencyDraw[] | undefined) ?? [],
+    ...(priced === 0 ? { absent: 'The approved baseline priced no contingency, so there is nothing to draw against.' } : {}),
+  };
+}
+
+/** The latest approved baseline, which is the one the contingency belongs to. */
+function approvedBudget(ctx: EngineContext): { state: Record<string, unknown> } | undefined {
+  const approved = ctx.ledger.list(ctx.projectId, 'Budget').filter((b) => b.state.status === 'APPROVED');
+  return approved.length > 0 ? (approved[approved.length - 1] as { state: Record<string, unknown> }) : undefined;
+}
+
 export function postActualCost(
   ctx: EngineContext,
   input: { costCode: string; amountMinor: number; date: string; sourceSystem: string; description: string },

@@ -963,6 +963,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
 
   // --- Commercial -----------------------------------------------------------
   def('BUDGET_BASELINE_APPROVED', 'Budget', 'APPROVE', 'COMMERCIAL', { requiresEvidence: true, creates: true }),
+  // The risk pot, spent against a named risk. Approval rather than update: it
+  // moves money out of the allowance the job was priced with, and the person
+  // who may do that is the person who approved the baseline.
+  def('BUDGET_CONTINGENCY_DRAWN', 'Budget', 'APPROVE', 'COMMERCIAL'),
   def('ACTUAL_COST_POSTED', 'ActualCost', 'CREATE', 'COMMERCIAL'),
   def('EVM_SNAPSHOT_TAKEN', 'EarnedValueSnapshot', 'CREATE', 'COMMERCIAL', { aiAllowed: true }),
   def('CVR_PUBLISHED', 'CVR', 'CREATE', 'COMMERCIAL', { aiAllowed: true }),

@@ -15,12 +15,12 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,709 passing, 0 failing, 0 skipped, across 314 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,721 passing, 0 failing, 0 skipped, across 315 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 337 TypeScript files, 220,532 lines |
-| Application | 80 ES modules, 49,859 lines (including a service worker) |
-| API routes | 1,183 — 803 writes, 380 reads (51 public across both) |
-| Event types | 784 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Backend | 337 TypeScript files, 220,798 lines |
+| Application | 80 ES modules, 49,908 lines (including a service worker) |
+| API routes | 1,185 — 804 writes, 381 reads (51 public across both) |
+| Event types | 785 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 350, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
@@ -20931,6 +20931,56 @@ can argue with, and the algorithm is what a decision is defended by.
 
 Seven routes, two panels and five doors across Tender & Procurement and Pipeline
 & Bids, and twenty-seven tests.
+
+### The fourth delta: what the risk allowance was worth
+
+§4.10.2 asks for calibration deltas against four things — rate library items,
+productivity assumptions, the win-probability model and **the risk
+distribution**. Three of them had records behind them. The fourth did not, and
+the reason was not a missing calculation.
+
+**The cost baseline priced a contingency and nothing ever spent one.** From the
+first day `approveBudget` existed it took a `contingencyMinor`, wrote it onto the
+`Budget`, and nothing in the platform ever moved that figure again. So the record
+could say what a job expected risk to cost and never what it did — and a risk
+allowance nobody draws against is right by construction. Nothing can contradict
+it, so it is never wrong, so it never improves. The integrator's own contingency
+had a draw and a remaining balance; the project's did not.
+
+`BUDGET_CONTINGENCY_DRAWN` is the outturn. An **approve** on the `Budget` rather
+than an update, because it moves money out of the allowance the job was priced
+with and the person who may do that is the person who approved the baseline. It
+refuses three things, and the middle one is why the signal means anything:
+
+- A draw of nothing is not a draw.
+- **A draw names the risk that materialised.** Money spent on something nobody
+  identified is an underestimate or a scope change, and both have their own route
+  into the record. Without this rule the contingency becomes the place overspend
+  goes to stop being visible, and a calibration derived from it measures nothing.
+  The same rule already governed the integrator's pot in `domain/integrator.ts`.
+- A draw beyond what remains is spending the margin, refused and named as that
+  rather than allowed to run the allowance negative.
+
+`RISK_CONTINGENCY` is the fifth calibration signal. Tenancy-wide rather than per
+project, because one job's contingency says what happened on that job and the
+question here is whether this business prices risk well — only answerable across
+several. The delta is the distance from the allowance being exactly spent, so a
+positive figure is risk carried and not needed: money that sat in the price and
+could have been competed with.
+
+It counts **only baselines something has actually come out of**. An untouched
+allowance may be well priced or may simply belong to a job that has not finished,
+and reporting the second as nought per cent consumed would read as proof the
+pricing was right. Where every priced baseline is undrawn the signal is absent and
+a named limit says so, which is the same discipline as the other four.
+
+A promoted risk lesson reports and **moves no contingency**. How much risk to
+carry on a particular job is a judgement about that job; a median across other
+jobs is evidence for that judgement rather than a substitute for it. That is the
+same line `WIN_RATE` holds against the bid/no-bid score.
+
+Two routes, a panel on Cost & Value, and twelve tests. All four of §4.10.2's
+deltas now have a record behind them.
 
 ## What this contract actually says
 

@@ -16924,6 +16924,29 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/cost/contingency-draw',
+    description: 'Engine C — draw against the project contingency for a risk that has materialised',
+    schema: {
+      type: 'object',
+      required: ['amountMinor', 'riskReference', 'reason'],
+      properties: {
+        amountMinor: { type: 'integer', minimum: 1 },
+        riskReference: stringField,
+        reason: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => cost.drawBudgetContingency(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/cost/contingency',
+    description: 'Engine C — what the risk allowance was priced at, what has gone, and against which risks',
+    readOnly: true,
+    handler: (platform, ctx) => cost.contingencyPosition(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/cost/actuals',
     description: 'Engine C — post actual cost',
     schema: {

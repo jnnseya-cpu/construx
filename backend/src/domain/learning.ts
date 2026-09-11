@@ -70,6 +70,12 @@ export const SIGNAL_KIND = [
   'ESTIMATING_BIAS',
   /** Whether the red team's findable score tracks the mark the buyer gave. */
   'EVALUATOR_ACCURACY',
+  /**
+   * What the priced risk allowance turned out to be worth, from contingency
+   * drawn against contingency carried. §4.10.2's risk distribution, and the
+   * last of its four deltas to have a record behind it.
+   */
+  'RISK_CONTINGENCY',
 ] as const;
 
 export type SignalKind = (typeof SIGNAL_KIND)[number];
@@ -492,6 +498,62 @@ export function calibrationSignals(ctx: EngineContext, today?: string): Calibrat
     );
   }
 
+  // --- What the risk allowance was actually worth --------------------------
+  //
+  // §4.10.2 asks for a calibration delta against the risk distribution beside
+  // the ones for rates, productivity and win probability. It could not be
+  // derived while the baseline priced a contingency and nothing ever spent one:
+  // a risk allowance nobody draws against is right by construction, because
+  // nothing can contradict it. `BUDGET_CONTINGENCY_DRAWN` is the outturn, and
+  // this is the comparison.
+  //
+  // Tenancy-wide, not per project. One job's contingency says what happened on
+  // that job; the question here is whether this business prices risk well, and
+  // that is only answerable across several.
+  const budgets = ctx.ledger
+    .listByTenant(ctx.tenantId, 'Budget')
+    .filter((record) => record.state.status === 'APPROVED' && Number(record.state.contingencyMinor ?? 0) > 0);
+  // Only a baseline something has been drawn against has an outturn to read. A
+  // job with an untouched allowance may be well priced or may simply not have
+  // finished, and counting it as nought per cent consumed would report the
+  // second as the first.
+  const consumed = budgets.filter((record) => Number(record.state.contingencyDrawnMinor ?? 0) > 0);
+  if (consumed.length > 0) {
+    const shares = consumed.map(
+      (record) => (Number(record.state.contingencyDrawnMinor) / Number(record.state.contingencyMinor)) * 100,
+    );
+    const share = Number(median(shares).toFixed(1));
+    // A hundred per cent consumed is the allowance exactly spent. The delta is
+    // the distance from that, so a positive figure means risk was over-priced
+    // and a negative one means it ran out.
+    const delta = Number((100 - share).toFixed(1));
+    signals.push({
+      id: 'risk:contingency',
+      kind: 'RISK_CONTINGENCY',
+      subject: 'The risk allowance against what the risks actually cost',
+      observations: consumed.length,
+      confidence: confidenceFor(consumed.length),
+      deltaPercent: delta,
+      reading:
+        delta > 0
+          ? `Across ${consumed.length} baseline(s) with a contingency that has been drawn on, a median ${share}% of ` +
+            `the allowance was spent. ${delta}% of the risk pot was carried and not needed, which is money that sat ` +
+            'in the price and could have been competed with.'
+          : `Across ${consumed.length} baseline(s) a median ${share}% of the risk allowance was spent. The pot is ` +
+            'running to its limit, so the next job priced this way has no room for a risk that costs more than expected.',
+      sources: consumed.map((record) => String(record.state.version ?? record.refId)),
+    });
+  } else if (budgets.length > 0) {
+    limits.push(
+      `${budgets.length} approved baseline(s) price a contingency and none has been drawn against, so what the risk ` +
+        'allowance is worth cannot be measured yet. An untouched allowance is not evidence it was right.',
+    );
+  } else {
+    limits.push(
+      'No approved cost baseline prices a contingency, so there is no risk allowance to calibrate.',
+    );
+  }
+
   return {
     signals,
     settled: { won: won.length, lost: lost.length },
@@ -780,6 +842,10 @@ const KIND_EFFECT: Record<SignalKind, string> = {
   EVALUATOR_ACCURACY:
     'Reported on an assurance review as how far the findable score has read from the buyer’s mark. It does not ' +
     'move the score.',
+  RISK_CONTINGENCY:
+    'Reported beside the cost baseline as what this business’s risk allowances have actually been worth. It moves ' +
+    'no contingency: how much risk to carry on a particular job is a judgement about that job, and a median across ' +
+    'others is evidence for it rather than a substitute for it.',
 };
 
 export function lessonRegister(ctx: EngineContext): LessonRegister {
