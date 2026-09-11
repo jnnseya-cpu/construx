@@ -1400,6 +1400,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // to a document is clerical and reversible; deciding the document actually
   // proves the claim is a judgement somebody signs their name to, and the
   // asserter may not be the verifier.
+  // The tender portal port. What the buyer said about the shape of the
+  // submission, and a person starting the upload against it.
+  //
+  // Neither is an AI act. The rule set is a reading of the invitation that
+  // decides whether a submission is rejected on a filename, and §4.8.1 is
+  // explicit that a human starts the upload.
+  def('SUBMISSION_RULESET_RECORDED', 'SubmissionRuleSet', 'CREATE', 'PROCUREMENT', { creates: true }),
+  // An addendum changes what the buyer asked for, so the rule set is revisable
+  // and the revision is its own event. "The rules changed on the fourteenth" is
+  // exactly the thing an addendum does and exactly what a second CREATE would
+  // have hidden.
+  def('SUBMISSION_RULESET_REVISED', 'SubmissionRuleSet', 'UPDATE', 'PROCUREMENT'),
+  def('SUBMISSION_STARTED', 'SubmissionStart', 'CREATE', 'PROCUREMENT', { creates: true }),
+
   // Which standard form governs, and what the schedule of amendments did to it.
   //
   // Not an AI act. Naming the form and its amendments decides what every notice

@@ -15,13 +15,13 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,660 passing, 0 failing, 0 skipped, across 312 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,681 passing, 0 failing, 0 skipped, across 313 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 335 TypeScript files, 219,148 lines |
-| Application | 80 ES modules, 49,693 lines (including a service worker) |
-| API routes | 1,178 — 801 writes, 377 reads (51 public across both) |
-| Event types | 781 Golden Thread (closed) · the communication catalogue is separate and closed |
-| Entity types | 348, all classified for access |
+| Backend | 336 TypeScript files, 220,051 lines |
+| Application | 80 ES modules, 49,801 lines (including a service worker) |
+| API routes | 1,183 — 803 writes, 380 reads (51 public across both) |
+| Event types | 784 Golden Thread (closed) · the communication catalogue is separate and closed |
+| Entity types | 350, all classified for access |
 | Agents | 81 across the divisions the registry declares |
 | Runtime dependencies | none — verified by booting with no `node_modules` present |
 | Layout | `backend/` · `frontend/` · `shared/` · `deploy/` |
@@ -20336,10 +20336,11 @@ confirmation are all manual.
 Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
-rewrite. **Seven of the eight are now built**: the three absent properties, the
-evaluator-simulation red-team agent, the learning loop and the standard-form
-clause library. What remains is the **portal port**, which needs a portal to
-adapt to and cannot honestly be built against nothing.
+rewrite. **All eight are now built.** The portal port ships the interface and
+the one adapter that is real — a person works the buyer's portal and the
+platform gates, records and binds what they did. No portal-specific adapter
+exists, and the register says so rather than listing integrations that do not
+work.
 
 **The wider edition, merged as Part I.** A second and larger edition of the same
 specification followed: product definition, an L0–L7 autonomy ladder, six action
@@ -20933,3 +20934,60 @@ is wrong, they belong to different books — recorded as a known divergence with
 its reason, so a future disagreement with no reason recorded fails the test.
 
 Four routes, a panel and a lookup on Change & Claims, and twenty-one tests.
+
+## Getting it to the buyer
+
+The tender portal port — §4.8.1, §14, and the last item in the Level 7
+specification's own build order.
+
+**A port is an interface plus its adapters, and this ships the adapter that is
+real.** The interface a tender portal has to satisfy is four operations:
+discover, fetch the pack, upload the submission, confirm receipt. One adapter
+satisfies it — `MANUAL`, a person working the buyer's portal — and it is not a
+stub. It is the process every contractor runs today. What was missing is not the
+clicking, it is the **record**: what was checked before the upload started, who
+started it, how long was left, and what came back.
+
+**No portal-specific adapter exists and the register says so.** There is no
+Proactis, no Jaggaer, no Delta, no Find a Tender, and none is stubbed. A screen
+listing six portals with five of them inert is a list of things that do not
+work, and an upload control that silently does nothing is worse than one that
+says a person has to do it. `GET /v1/portal/adapters` publishes what each
+adapter can actually do and names what is absent.
+
+This is `L7.7` demonstrated rather than asserted. Every check that matters sits
+on this side of the port, so a real adapter is an adapter and a configuration
+entry — never a change to the gate, the rule set, the readiness check or the
+receipt binding.
+
+**Three things that needed no portal and were missing anyway.**
+
+- **The submission rule set.** Buyers state filenames, formats, page limits,
+  word limits and mandatory documents, and nothing recorded any of it. A
+  submission rejected on a filename is rejected as completely as one rejected on
+  price. Each rule quotes the buyer's own words, because a rule with nothing
+  behind it cannot be argued from when the submission is challenged. It is
+  **revisable, and the revision is its own event** — an addendum moves a page
+  limit, and a rule set that could only be written once would leave the
+  submission checked against wording the buyer has replaced.
+- **A readiness score that will not round up.** The specification asks for 100
+  on the hard rules. A hard rule the record cannot check — a page count, a file
+  size — is reported as **uncheckable and blocks**. A check that could not run
+  is not a check that passed, and a screen treating the two alike is how a
+  submission goes out short of a document. The remedy is named: open the file,
+  confirm it, and record the rule as met.
+- **The four-hour buffer.** Starting an upload twenty minutes before the
+  deadline is how a portal timeout becomes a lost bid. Refused inside the buffer
+  unless a named director authorises it, with the reason recorded, because the
+  question afterwards is never whether somebody was in a hurry. The buffer is
+  `SUBMISSION_BUFFER_HOURS`, configuration rather than a constant, because the
+  number is a judgement.
+
+**Neither act is open to an agent.** The rule set decides whether a submission
+is rejected on a filename, and §4.8.1 is explicit that a human starts the
+upload. The existing receipt binding is untouched: `recordSubmission` still
+binds the buyer's acknowledgement to the pack's exact content hash, and the
+start now sits in front of it with its own gate.
+
+Five routes, a panel with two doors and a readiness lookup on Pipeline & Bids,
+and twenty-one tests.

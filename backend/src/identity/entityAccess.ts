@@ -425,6 +425,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ChainException: { area: 'BUDGET_COST', sensitivity: 'COMMERCIAL_L3' },
 
   // Contracts, change and claims — legal
+  // What the buyer said about the shape of the submission, and the record of a
+  // person starting the upload. Both sit with the bid they belong to: the rule
+  // set quotes the invitation and the start names what was and was not checked.
+  SubmissionRuleSet: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  SubmissionStart: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Contract: { area: 'CONTRACTS_CLAIMS', sensitivity: 'LEGAL_L4' },
   // Which standard form governs and what was amended. Every notice period and
   // time bar on the project follows from it, so it sits with the contract.

@@ -1,8 +1,9 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, table, time, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
+import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
 /**
@@ -584,7 +585,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -600,8 +601,13 @@ export async function pipeline(root) {
         // packs rather than behind a click, because a review that found a
         // critical problem is the reason the issue button is refusing.
         api.read(`/v1/projects/${projectId}/assurance`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        // The port, and what has gone out through it. The adapter register is
+        // loaded so the screen says what can actually be done rather than
+        // offering an upload control that would silently do nothing.
+        api.get('/v1/portal/adapters').catch((error) => ({ error })),
+        api.read(`/v1/projects/${projectId}/submissions`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3').catch((error) => ({ error })),
       ])
-    : [null, null, null, null, null];
+    : [null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -1305,6 +1311,97 @@ export async function pipeline(root) {
       ],
       transform: ({ findingId: _findingId, ...rest }) => rest,
     },
+    /*
+     * The tender portal port — §4.8.1.
+     *
+     * The rules come from the invitation and are recorded against it; starting
+     * the upload is a separate act with its own gate, because the check that
+     * matters happens before anybody opens the portal.
+     */
+    'submission-rules': {
+      title: 'Record the buyer’s submission rules',
+      intent:
+        'What the invitation said about filenames, formats, page and word limits and which documents are mandatory. ' +
+        'Quote the buyer’s own words on each one — a rule with nothing behind it cannot be argued from when the ' +
+        'submission is challenged. Mark a rule hard where failing it loses the bid.',
+      path: (v) => `/v1/projects/${projectId}/tender/${v.analysisId}/submission-rules`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
+          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+        { name: 'kind', label: 'What kind of rule', type: 'select',
+          options: [
+            { value: 'REQUIRED_DOCUMENT', label: 'A document that must be in the submission' },
+            { value: 'FILENAME', label: 'A naming convention every file must follow' },
+            { value: 'FORMAT', label: 'The formats the buyer permits' },
+            { value: 'WORD_LIMIT', label: 'A word limit on a response' },
+            { value: 'PAGE_LIMIT', label: 'A page limit (recorded, and checked by a person)' },
+            { value: 'FILE_SIZE', label: 'A file size limit (recorded, and checked by a person)' },
+          ] },
+        { name: 'stated', label: 'What the buyer said', type: 'textarea', rows: 2,
+          hint: 'Their words, at least 8 characters. This is what gets quoted back.' },
+        { name: 'hard', label: 'Does failing it lose the bid?', type: 'select',
+          options: [
+            { value: 'true', label: 'Yes — a hard rule, and readiness cannot reach 100 without it' },
+            { value: 'false', label: 'No — reported, and does not block' },
+          ] },
+        { name: 'documentName', label: 'Document name', type: 'text', required: false,
+          hint: 'For a required document' },
+        { name: 'pattern', label: 'Naming pattern', type: 'text', required: false,
+          hint: 'For a filename rule, as an expression — for example ^ABC-[0-9]{4}' },
+        { name: 'formats', label: 'Permitted formats', type: 'text', required: false,
+          hint: 'For a format rule. Comma separated, for example pdf, docx' },
+        { name: 'maxWords', label: 'Word limit', type: 'number', required: false, min: 1 },
+        { name: 'sectionKey', label: 'Which response section', type: 'text', required: false,
+          hint: 'Leave blank to apply the limit to every section' },
+        { name: 'maxPages', label: 'Page limit', type: 'number', required: false, min: 1 },
+        { name: 'maxBytes', label: 'File size limit (bytes)', type: 'number', required: false, min: 1 },
+      ],
+      transform: ({ analysisId: _analysisId, kind, stated, hard, formats, ...rest }) => ({
+        rules: [
+          {
+            kind,
+            stated,
+            hard: hard === 'true' || hard === true,
+            ...(formats ? { formats: String(formats).split(',').map((x) => x.trim()).filter(Boolean) } : {}),
+            ...Object.fromEntries(
+              Object.entries(rest).filter(([, value]) => value !== undefined && value !== '' && value !== null),
+            ),
+          },
+        ],
+      }),
+    },
+    'submission-start': {
+      title: 'Start the upload',
+      intent:
+        'A person works the buyer’s portal; this records that they started, what was checked first and how long was ' +
+        'left. Refused unless the pack is locked and every hard rule the record can check is satisfied — and a hard ' +
+        'rule the record cannot check, a page count or a file size, blocks too, because a check that could not run is ' +
+        'not a check that passed. Inside the deadline buffer it needs a named director’s authorisation, and the ' +
+        'authorisation is recorded with its reason.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/submission-start`,
+      submitLabel: 'Start',
+      fields: [
+        { name: 'packId', label: 'Locked bid pack', type: 'text',
+          hint: 'The pack the receipt will be bound to. Only a locked pack has a hash to bind to.' },
+        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
+          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+        { name: 'adapterId', label: 'Through', type: 'select',
+          options: (portalPort?.adapters ?? []).filter((adapter) => adapter.live).map((adapter) => ({ value: adapter.id, label: adapter.name })) },
+        { name: 'returnBy', label: 'Returns by', type: 'datetime-local',
+          hint: 'The buyer’s own deadline, which the buffer is measured back from' },
+        { name: 'authorisedBy', label: 'Authorised by', type: 'text', required: false,
+          hint: 'Only needed inside the deadline buffer. Name the director.' },
+        { name: 'reason', label: 'Why so late', type: 'textarea', rows: 2, required: false,
+          hint: 'At least 20 characters. Recorded, because the question afterwards is never whether somebody was in a hurry.' },
+      ],
+      transform: ({ packId: _packId, authorisedBy, reason, ...rest }) => ({
+        ...rest,
+        ...(String(authorisedBy ?? '').trim()
+          ? { override: { authorisedBy: String(authorisedBy).trim(), reason: String(reason ?? '').trim() } }
+          : {}),
+      }),
+    },
     'bid-outcome': {
       title: 'Record how a bid ended',
       intent:
@@ -1714,6 +1811,17 @@ export async function pipeline(root) {
       open.textContent = 'Open';
     }
   });
+
+  wireLookups(root, [
+    {
+      id: 'submission-readiness',
+      path: (v) => `/v1/projects/${projectId}/tender/${v.analysisId}/submission-readiness`,
+      sections: [
+        { key: 'checks', label: 'Every rule, checked', empty: 'No rule has been recorded against this invitation.' },
+        { key: 'summary', label: 'Where it stands' },
+      ],
+    },
+  ]);
 
   void insightPanel(root.querySelector('#pipeline-insight'), {
     projectId,

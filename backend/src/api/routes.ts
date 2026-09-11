@@ -138,6 +138,7 @@ import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as learning from '../domain/learning.ts';
+import * as portal from '../domain/portal.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
 import * as redteam from '../domain/redteam.ts';
 import * as evidenceclaim from '../domain/evidenceclaim.ts';
@@ -21379,6 +21380,105 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/awards',
     description: 'Submission packs, their receipts, the award departures and what has converted',
     handler: (platform, ctx) => award.awardPosition(projectContext(platform, ctx)),
+  },
+  /*
+   * The tender portal port — §4.8.1, L7.7.
+   *
+   * One adapter: a person works the buyer's portal. Every check that matters
+   * sits on this side of the port, so a real portal adapter is an adapter and a
+   * configuration entry rather than a change to any of this.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/portal/adapters',
+    readOnly: true,
+    description: 'Every portal adapter this deployment has, what each can actually do, and what is not built',
+    handler: () => portal.portalAdapters(),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/:analysisId/submission-rules',
+    description:
+      'What the buyer said about filenames, formats, page and word limits and mandatory documents. A submission rejected on a filename is rejected as completely as one rejected on price',
+    schema: {
+      type: 'object',
+      required: ['rules'],
+      properties: {
+        rules: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['kind', 'stated', 'hard'],
+            properties: {
+              kind: { type: 'string', enum: [...portal.RULE_KIND] },
+              stated: { type: 'string', minLength: 8 },
+              hard: { type: 'boolean' },
+              pattern: stringField,
+              formats: { type: 'array', items: stringField },
+              maxWords: { type: 'integer', minimum: 1 },
+              maxPages: { type: 'integer', minimum: 1 },
+              maxBytes: { type: 'integer', minimum: 1 },
+              sectionKey: stringField,
+              documentName: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      portal.recordRuleSet(projectContext(platform, ctx), {
+        analysisId: ctx.params.analysisId as string,
+        ...body<{ rules: portal.SubmissionRule[] }>(ctx),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/:analysisId/submission-readiness',
+    readOnly: true,
+    description:
+      'What was assembled against what the buyer asked for. A hard rule the record cannot check blocks rather than passing quietly',
+    handler: (platform, ctx) =>
+      portal.submissionReadiness(projectContext(platform, ctx), {
+        analysisId: ctx.params.analysisId as string,
+        ...(ctx.query.get('packId') ? { packId: ctx.query.get('packId') as string } : {}),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/submissions',
+    readOnly: true,
+    description: 'Every upload started through the port, which were started inside the deadline buffer, and which have a receipt',
+    handler: (platform, ctx) => portal.submissionRegister(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/submission-start',
+    description:
+      'A human starts the upload. Refused unless the pack is locked and every hard rule is satisfied, and refused inside the deadline buffer without a named director’s authorisation',
+    schema: {
+      type: 'object',
+      required: ['analysisId', 'adapterId', 'returnBy'],
+      properties: {
+        analysisId: stringField,
+        adapterId: stringField,
+        returnBy: stringField,
+        override: {
+          type: 'object',
+          required: ['authorisedBy', 'reason'],
+          properties: { authorisedBy: stringField, reason: { type: 'string', minLength: 20 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      portal.beginSubmission(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ analysisId: string; adapterId: string; returnBy: string }>(ctx),
+      }),
   },
   {
     method: 'POST',

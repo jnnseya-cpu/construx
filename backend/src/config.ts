@@ -255,6 +255,18 @@ export const config = {
   buildCommit: str('BUILD_COMMIT', ''),
 
   /**
+   * How long before a tender's return deadline the platform refuses to start an
+   * upload without a director's authorisation — §4.8.1.
+   *
+   * Four hours by default, and the number is a judgement rather than a law,
+   * which is exactly why it is configuration. Starting an upload twenty minutes
+   * before the deadline is how a portal timeout becomes a lost bid, and the
+   * buffer is what turns "we were cutting it fine" into a decision somebody
+   * made and signed.
+   */
+  submissionBufferHours: num('SUBMISSION_BUFFER_HOURS', 4),
+
+  /**
    * Durability. An empty path means the ledger is in-process only, which is
    * correct for a test run and is total data loss on restart anywhere else —
    * so `assertProductionSafety` refuses to stay quiet about it.
