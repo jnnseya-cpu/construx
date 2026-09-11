@@ -242,6 +242,7 @@ import * as quality from '../engines/quality.ts';
 import * as safetycontrol from '../domain/safetycontrol.ts';
 import * as safety from '../engines/safety.ts';
 import * as tender from '../engines/tender.ts';
+import { stateAsOf, temporalHistory } from '../goldenthread/bitemporal.ts';
 import { lineage } from '../goldenthread/lineage.ts';
 import { replayProject, replayTimeline } from '../goldenthread/replay.ts';
 import { visiblePage } from '../goldenthread/visibility.ts';
@@ -1354,6 +1355,56 @@ function teamPosition(platform: Platform, tenantId: string) {
       mfaPolicySetAt: policy.setAt ?? null,
     },
   };
+}
+
+/**
+ * The gate a raw entity read passes, whichever axis it is asking about.
+ *
+ * Three reads reach a record by type and id rather than through a typed
+ * endpoint: the list of a type, the state on both time axes, and the temporal
+ * history. Each of them can return any record in the system, so each has to
+ * apply the same capability and sensitivity rules the typed endpoints do —
+ * otherwise it is a way around every one of them. Written once so the three
+ * cannot drift apart, which is precisely how the membership gate was reached
+ * around the first time.
+ */
+function entityReadGate(
+  platform: Platform,
+  ctx: RequestContext,
+): { actor: AuthContext; projectId: string; refType: string } {
+  const actor = auth(ctx);
+  const projectId = ctx.params.projectId as string;
+  const refType = ctx.params.refType as string;
+
+  const classification = classifyEntity(refType);
+  if (!classification) throw new NotFoundError(`No entity type named ${refType}`);
+
+  // An external member is confined to the projects their membership names; this
+  // family of routes takes the project id straight from the path, so the
+  // confinement has to be applied here rather than assumed from the context.
+  const scope = platform.externalScope(actor);
+  if (scope && !scope.projectIds.includes(projectId)) {
+    throw new ForbiddenError(
+      'You are not a member of this project',
+      projectId === `${actor.tenantId}-governance` ? 'EXTERNAL_MEMBER_SCOPE' : 'PROJECT_PERMISSION_DENIED',
+    );
+  }
+
+  const decision = evaluateAccess(
+    actor,
+    classification.area,
+    'R',
+    { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
+    AUTHZ_OPTIONS,
+  );
+
+  // A REDACT verdict is a refusal here: there is no partial view of a record's
+  // history worth returning, and the shells would still say how many exist.
+  if (decision.decision !== 'ALLOW') {
+    throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
+  }
+
+  return { actor, projectId, refType };
 }
 
 export const ROUTES: Route[] = [
@@ -11365,49 +11416,10 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/entities/:refType',
     description: 'List materialised entities of a type within a project',
     handler: (platform, ctx) => {
-      // This endpoint can return any record in the system, so it has to apply
-      // the same capability and sensitivity rules the typed endpoints do —
-      // otherwise it is a way around every one of them.
-      const actor = auth(ctx);
-      const projectId = ctx.params.projectId as string;
-      const refType = ctx.params.refType as string;
-
-      const classification = classifyEntity(refType);
-      if (!classification) {
-        throw new NotFoundError(`No entity type named ${refType}`);
-      }
-
-      // The membership gate, which this route reached around.
-      //
-      // The typed project routes build a context through `platform.context`,
-      // which confines a guest to the project their membership names. This one
-      // takes the project id straight from the path and filters on the tenant
-      // alone — so an external member of project A could read project B's
-      // risks, estimates and memberships, and the host's governance chain with
-      // them, by asking for a different id on this one URL. The confinement the
-      // rest of the model rests on had a way around it.
-      const scope = platform.externalScope(actor);
-      if (scope && !scope.projectIds.includes(projectId)) {
-        throw new ForbiddenError(
-          'You are not a member of this project',
-          projectId === `${actor.tenantId}-governance` ? 'EXTERNAL_MEMBER_SCOPE' : 'PROJECT_PERMISSION_DENIED',
-        );
-      }
-
-      const decision = evaluateAccess(
-        actor,
-        classification.area,
-        'R',
-        { tenantId: actor.tenantId, projectId, dataSensitivity: classification.sensitivity },
-        AUTHZ_OPTIONS,
-      );
-
-      // A REDACT verdict is a refusal here: there is no partial view of a list
-      // of commercial records worth returning, and returning the shells would
-      // still leak how many exist.
-      if (decision.decision !== 'ALLOW') {
-        throw new ForbiddenError(decision.reason ?? 'Not permitted', 'ACCESS_DENIED');
-      }
+      // Any record in the system can come back through here, so the same
+      // capability, sensitivity and membership rules the typed endpoints apply
+      // are applied by the shared gate — see `entityReadGate`.
+      const { actor, projectId, refType } = entityReadGate(platform, ctx);
 
       return {
         entities: platform.ledger
@@ -11415,6 +11427,60 @@ export const ROUTES: Route[] = [
           .filter((r) => r.tenantId === actor.tenantId)
           .map((r) => ({ refId: r.refId, version: r.version, stateHash: r.stateHash, state: r.state })),
       };
+    },
+  },
+  /*
+   * Two time axes — `L7.4`.
+   *
+   * Both reads are projections over the ledger, computed on every request.
+   * Nothing is stored: a materialised bitemporal table would be a second copy
+   * of the truth that could disagree with the chain, and the chain is what the
+   * platform's whole argument rests on.
+   */
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/entities/:refType/:refId/as-of',
+    readOnly: true,
+    description:
+      'The state of one record on both time axes: what was recorded by an instant, limited to what was already true at another. ?recordedBy= and ?validAt=',
+    handler: (platform, ctx) => {
+      const { actor, projectId, refType } = entityReadGate(platform, ctx);
+      const refId = ctx.params.refId as string;
+
+      // The record has to be this tenancy's and this project's before its
+      // history is described. Asking about a record that is not yours must read
+      // as "no such record", never as an empty history — an empty answer is
+      // still an answer about whether it exists.
+      const record = platform.ledger.get({ refType, refId });
+      if (!record || record.tenantId !== actor.tenantId || record.projectId !== projectId) {
+        throw new NotFoundError(`No ${refType} ${refId} in project ${projectId}`);
+      }
+
+      return stateAsOf(
+        platform.ledger,
+        { refType, refId },
+        {
+          ...(ctx.query.get('recordedBy') ? { recordedBy: ctx.query.get('recordedBy') as string } : {}),
+          ...(ctx.query.get('validAt') ? { validAt: ctx.query.get('validAt') as string } : {}),
+        },
+      );
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/entities/:refType/:refId/temporal',
+    readOnly: true,
+    description: 'Both time axes of one record, event by event, and which of them were recorded after they became true',
+    handler: (platform, ctx) => {
+      const { actor, projectId, refType } = entityReadGate(platform, ctx);
+      const refId = ctx.params.refId as string;
+
+      const record = platform.ledger.get({ refType, refId });
+      if (!record || record.tenantId !== actor.tenantId || record.projectId !== projectId) {
+        throw new NotFoundError(`No ${refType} ${refId} in project ${projectId}`);
+      }
+
+      return temporalHistory(platform.ledger, { refType, refId });
     },
   },
 

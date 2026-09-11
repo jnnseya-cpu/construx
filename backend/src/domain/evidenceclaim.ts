@@ -234,6 +234,13 @@ export function assertClaim(
     entity: { refType: 'EvidenceClaim', refId: id },
     nextState: record as unknown as Record<string, unknown>,
     evidenceRefs: [evidence],
+    // The certificate issued in March and filed in June. The claim became true
+    // on the day the document was issued, not the day somebody attached it, and
+    // an adjudicator asking what cover was in place in April must get the
+    // certificate rather than "nothing was on file yet". Absent where no issue
+    // date is stated, which leaves the two axes coincident as they are for
+    // nearly every other event.
+    ...(record.issuedAt === undefined ? {} : { validFrom: `${record.issuedAt}T00:00:00.000Z` }),
   });
 
   return record;

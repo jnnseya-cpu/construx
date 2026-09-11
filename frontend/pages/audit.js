@@ -270,6 +270,36 @@ export async function audit(root) {
         <div id="trace-result" style="margin-top:13px"></div>
       </div>
 
+      <div class="card" style="margin-bottom:14px">
+        <h2>As at two dates</h2>
+        <p class="metric-sub" style="margin-bottom:12px">
+          <b>What did we know then</b> and <b>what was true then</b> are two different questions, and a claim usually turns on
+          the difference. Every event carries when it was recorded; some also carry when the fact became true — a certificate
+          issued in March and filed in June is true from March. Leave the second date blank to ask both questions about the
+          same moment.
+        </p>
+        <form class="input-zone" id="asof">
+          <div class="field">
+            <label for="a-entity">Record</label>
+            <select id="a-entity" name="entity">
+              ${[...new Map(events.slice(-120).reverse().map((e) => [`${e.entity.refType}/${e.entity.refId}`, e])).entries()]
+                .slice(0, 60)
+                .map(([key, e]) => html`<option value="${key}">${e.entity.refType} · ${reference(e.entity.refId)} · ${e.eventType}</option>`)}
+            </select>
+          </div>
+          <div class="field">
+            <label for="a-recorded">Known by</label>
+            <input type="date" id="a-recorded" name="recordedBy">
+          </div>
+          <div class="field">
+            <label for="a-valid">True at</label>
+            <input type="date" id="a-valid" name="validAt">
+          </div>
+          <div class="actions"><button class="btn" type="submit">Read</button></div>
+        </form>
+        <div id="asof-result" style="margin-top:13px"></div>
+      </div>
+
       <div class="card">
         <h2>How to verify this yourself</h2>
         <div class="code">
@@ -437,6 +467,78 @@ export async function audit(root) {
             A <b>reference</b> link was read out of a record's state; every other kind was declared by an event at the time, and
             names it. The difference matters when somebody is relying on the chain.
           </div>
+        `,
+      );
+    } catch (error) {
+      render(host, html`<div class="notice err">${error.message}</div>`);
+    }
+  });
+
+  document.getElementById('asof')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const host = document.getElementById('asof-result');
+    const [refType, refId] = document.getElementById('a-entity').value.split('/');
+    const recorded = document.getElementById('a-recorded').value;
+    const valid = document.getElementById('a-valid').value;
+
+    // A date entered here means the end of that day, so "known by the
+    // fourteenth" includes everything recorded on the fourteenth. Asking for
+    // midnight would silently exclude the day the reader named.
+    const endOf = (day) => `${day}T23:59:59.999Z`;
+    const params = new URLSearchParams();
+    if (recorded) params.set('recordedBy', endOf(recorded));
+    if (valid) params.set('validAt', endOf(valid));
+
+    render(host, html`<div class="notice info">Replaying the record on both axes…</div>`);
+
+    try {
+      // Both paths written out rather than assembled from a shared prefix: the
+      // doors invariant reads the console for the route it is looking for, and
+      // a path split across a variable is a door it cannot see. The separator
+      // is unconditional for the same reason — an empty query is harmless, and
+      // a ternary inside the path is something no scanner can read.
+      const [asAt, history] = await Promise.all([
+        api.get(`/v1/projects/${projectId}/entities/${refType}/${refId}/as-of?${params}`),
+        api.get(`/v1/projects/${projectId}/entities/${refType}/${refId}/temporal`),
+      ]);
+
+      const fields = Object.entries(asAt.state ?? {}).filter(([, value]) => value !== null && typeof value !== 'object');
+      const held = asAt.excluded.notYetRecorded + asAt.excluded.notYetTrue;
+
+      render(
+        host,
+        html`
+          <div class="notice ${raw(asAt.state === undefined ? 'warn' : 'info')}">
+            ${
+              asAt.state === undefined
+                ? html`Nothing about this record had been recorded by ${time(asAt.recordedBy)}. It did not exist yet.`
+                : html`${asAt.applied} event(s) applied${held > 0
+                    ? html`, ${asAt.excluded.notYetRecorded} not yet recorded and ${asAt.excluded.notYetTrue} not yet true`
+                    : ''}.`
+            }
+          </div>
+          ${
+            fields.length > 0
+              ? table({
+                  headers: ['Field', 'Value then'],
+                  rows: fields.slice(0, 24).map(([key, value]) => [key, String(value)]),
+                  empty: 'The record carried no simple fields at that moment.',
+                })
+              : ''
+          }
+          <h3 style="margin:15px 0 7px;font-size:13px">Both axes, event by event</h3>
+          ${table({
+            headers: ['Event', 'Recorded', 'True from', 'Gap'],
+            align: ['', '', '', 'num'],
+            rows: history.steps.map((step) => [
+              step.eventType,
+              time(step.recordedAt),
+              step.backdated ? time(step.validFrom) : '—',
+              step.backdated ? badge(`${step.backdatedDays}d late`, 'warn') : badge('as it happened', 'ok'),
+            ]),
+            empty: 'No event has been written against this record.',
+          })}
+          <div class="metric-sub" style="margin-top:9px">${history.summary}</div>
         `,
       );
     } catch (error) {

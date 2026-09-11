@@ -162,6 +162,29 @@ export type GoldenThreadEvent = {
   /** Device timestamp preserved verbatim when the record originated offline. */
   deviceTimestamp?: string;
   /**
+   * When the fact became true in the world, where that differs from when the
+   * platform learned it.
+   *
+   * `timestamp` is the second time axis and always answers *when was this
+   * recorded*. Most events need only that, because for most of them the two are
+   * the same instant. Some are not: a certificate issued in March and filed in
+   * June, a site instruction given verbally on Tuesday and written up on
+   * Friday, a drawing superseded on the day it was reissued rather than the day
+   * somebody uploaded it.
+   *
+   * Without both, the question a claim turns on cannot be asked. *What did we
+   * know on the fourteenth about the twelfth* is not the same question as *what
+   * was true on the twelfth*, and a record holding one axis can answer neither
+   * properly — it reports today's understanding of the past as though it were
+   * what was understood at the time.
+   *
+   * Absent means the two coincide, and every read treats an absent value as
+   * equal to `timestamp`. Nothing is backfilled onto an event already
+   * hash-chained, and an absent field is not part of the canonical body, so
+   * adding this changed no hash already written.
+   */
+  validFrom?: string;
+  /**
    * The roles the actor held at the moment they acted.
    *
    * A snapshot, not a reference. Roles change: somebody promoted, moved team or

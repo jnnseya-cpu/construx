@@ -15,11 +15,11 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,572 passing, 0 failing, 0 skipped, across 308 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,589 passing, 0 failing, 0 skipped, across 309 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 325 TypeScript files, 211,700 lines |
-| Application | 80 ES modules, 48,259 lines (including a service worker) |
-| API routes | 1,139 — 779 writes, 360 reads (51 public across both) |
+| Backend | 332 TypeScript files, 215,858 lines |
+| Application | 80 ES modules, 49,223 lines (including a service worker) |
+| API routes | 1,163 — 793 writes, 370 reads (51 public across both) |
 | Event types | 763 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 343, all classified for access |
 | Agents | 81 across the divisions the registry declares |
@@ -20305,15 +20305,17 @@ it defines:
 | | Property | Here |
 |---|---|---|
 | L7.1 | Contract-native reasoning from a clause library | **Partial** — obligations are derived per project, not loaded from a versioned standard-form package with an amendment overlay |
-| L7.2 | Evidence-bound assertion, enforced as a gate | **Partial** — the discipline exists, the `EvidenceObject` registry and its gate do not |
+| L7.2 | Evidence-bound assertion, enforced as a gate | **Built** — `EvidenceClaim` is the registry, `bidCompleteness` is the gate, and a claim that lapses before the return date blocks the submission |
 | L7.3 | Adversarial self-challenge | **Not built** — no red-team agent attacks another agent's output |
-| L7.4 | Time-travel state | **Partial** — the chain is replayable; there is no second time axis, so "as known on the 14th about the 12th" cannot be asked |
-| L7.5 | Full lineage | **Built in part** — the data is carried; the materialised graph and the click-through view are not |
+| L7.4 | Time-travel state | **Built** — `validFrom` is the second axis and `stateAsOf` asks both questions, so "as known on the 14th about the 12th" is one read |
+| L7.5 | Full lineage | **Built** — `pricelineage.ts` walks a figure back to its drawing as a projection over the ledger, and says what it cannot answer |
 | L7.6 | Governed learning | **Partial** — lessons are human-approved corporate memory; nothing feeds delivery variance back into a tender rate or a win probability |
 | L7.7 | Platform-agnostic core | **Built** — zero runtime dependencies is the strongest form of the rule, and every provider already sits behind a port |
 
-Three are genuinely absent: adversarial self-challenge, the evidence registry as
-a gate, and bitemporal state.
+Three were genuinely absent when this was written: adversarial self-challenge,
+the evidence registry as a gate, and bitemporal state. Two have since been
+built — see *A claim is what is asserted* and *Two time axes* below. **One
+remains: adversarial self-challenge.**
 
 **On the reference stack.** The specification names a service-per-engine
 deployment on Kafka with Python workers. That is not adopted and is not
@@ -20333,7 +20335,9 @@ confirmation are all manual.
 Its §8 orders the work by value per unit of effort. The first three items —
 the evidence registry and its gate, the lineage projection, and bitemporal
 columns on the ledger — close the three absent properties, and none of them is a
-rewrite.
+rewrite. **All three are now built.** What remains from that ordering is the
+evaluator-simulation red-team agent (L7.3), the portal port, the standard-form
+clause library with an amendment overlay (L7.1), and the learning loop (L7.6).
 
 **The wider edition, merged as Part I.** A second and larger edition of the same
 specification followed: product definition, an L0–L7 autonomy ladder, six action
@@ -20679,3 +20683,61 @@ places.
 Three routes, a panel inside the matrix on Pipeline & Bids with two doors, and
 fifteen tests. Among them: an addendum that changed nothing raises nothing, and
 exactly one section goes stale when exactly one requirement moves.
+
+## Two time axes
+
+`L7.4`, and the last of the three properties both parts of the Level 7
+specification named as genuinely absent.
+
+*What did we know on the fourteenth about the twelfth* is not the same question
+as *what was true on the twelfth*, and neither is *what do we know now*. The
+ledger could answer the first pair only by accident: it is append-only and every
+event is timestamped, so replaying a stream up to a moment gives the state as it
+stood — but nothing recorded **when the fact became true**. Answering the second
+question by reading today's state reports the present understanding of the past
+as though it had been understood at the time, which is exactly the mistake an
+adjudicator is looking for.
+
+**One optional field, and nothing rewritten.** `GoldenThreadEvent` gained
+`validFrom`. It is absent wherever the two axes coincide, which is nearly every
+event, and an absent value reads as equal to the timestamp. That is not a
+convenience: an absent optional field is not in the canonical body, so **no hash
+already written changed**, and nothing is backfilled onto an event that is
+already chained. A test asserts both — that `chainBody` of an old event does not
+mention the field, and that the whole chain still verifies with a backdated
+event in it.
+
+**A projection, not a second store.** `backend/src/goldenthread/bitemporal.ts`
+replays the entity's own stream on both axes and is recomputed on every request.
+A materialised bitemporal table would be a copy of the truth that could disagree
+with the chain, and the chain is what the platform's whole argument rests on. A
+test asserts the projection and the materialised record agree about now.
+
+**It refuses a question about the future.** Asking what was true at a moment
+later than the last thing you knew is not an arithmetic error — it is asking the
+platform to predict, and answering with today's state would be the confident
+wrong answer. `VALID_AFTER_RECORDED`, with the sentence saying why. Asking about
+a record that has nothing recorded is different and returns an empty answer,
+because "nothing was recorded" is true.
+
+**It says what it excluded and why.** `notYetRecorded` and `notYetTrue` are
+counted separately and reported, rather than left as a silent difference between
+two numbers.
+
+**The first real producer is the certificate.** `assertClaim` writes
+`validFrom` from the document's issue date, so a certificate issued in March and
+filed in June is true from March. An adjudicator asking what cover was in place
+in April gets the certificate rather than "nothing was on file yet". Where no
+issue date is stated nothing is invented, and the two axes stay coincident.
+
+Two read routes, both declared read-only, both behind the same gate the generic
+entity read uses — which was extracted into `entityReadGate` so the three raw
+entity reads cannot drift apart. A lookup on the Golden Thread screen asks both
+questions and shows every event's two axes side by side, marking which were
+recorded late and by how many days. Seventeen tests.
+
+**What this does not do.** It does not let anybody rewrite history.
+`validFrom` is stated when the event is written and is inside the hash from that
+moment; there is no path that edits it afterwards. A fact recorded wrongly is
+corrected by recording the correction, which is what an append-only ledger is
+for.

@@ -42,6 +42,14 @@ export type CommitInput = {
   timestamp?: string;
   deviceTimestamp?: string;
   /**
+   * When the fact became true in the world, where that differs from now.
+   *
+   * Absent means the two coincide, which is the normal case and stays the
+   * default. Supplying it is how a certificate issued in March and filed in
+   * June reads as true from March.
+   */
+  validFrom?: string;
+  /**
    * The roles the actor held at this moment, and the project's lifecycle phase.
    *
    * Filled by `write()` and `runAI` rather than by each command, so no call site
@@ -381,6 +389,10 @@ export class GoldenThreadLedger {
     if (input.policy) event.policy = structuredClone(input.policy);
     if (input.causationId) event.causationId = input.causationId;
     if (input.deviceTimestamp) event.deviceTimestamp = input.deviceTimestamp;
+    // Only when it differs. Writing it on every event would change the
+    // canonical body of every event for no gain, and an absent value already
+    // means "true from when it was recorded".
+    if (input.validFrom && input.validFrom !== timestamp) event.validFrom = input.validFrom;
 
     const previousChainHash = this.#chainHeads.get(input.projectId) ?? EMPTY_STATE_HASH;
     event.previousChainHash = previousChainHash;
