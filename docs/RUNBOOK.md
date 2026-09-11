@@ -931,6 +931,48 @@ of the host's package seats. What the host may need to act on:
 
 ---
 
+## A payment webhook is refusing deliveries
+
+"The Stripe webhook is not working" is true of eight causes with eight
+different fixes. Do not guess between them — the deployment names the one it
+actually issued.
+
+**Read the verdict.** Sign in as the operator and open *Billing & invoices*.
+The card and mobile-money panels each carry a state, why, what to do next, and
+whether money is at risk. It is the same content the API publishes on
+`GET /v1/admin/payments` under `cardPayments.diagnosis`, so a shell works too.
+
+The states, and what each means:
+
+| State | What it is |
+|---|---|
+| `HEALTHY` | Deliveries are verifying. Nothing to do. |
+| `NEVER_DELIVERED` | Nothing has reached the endpoint since the process started. Check the endpoint URL in the provider's dashboard, and that it is subscribed to the events this platform acts on. |
+| `ALL_REFUSED` | Everything sent has been refused. The panel names the dominant refusal code and the remedy for that code specifically. |
+| `SOME_REFUSED` | A mix. A public URL attracts probes, so a few signature refusals beside a working rail are expected. |
+| `SECRET_MALFORMED` | The configured secret is quoted, padded or not a signing secret at all. Decided before the deliveries, because it explains them. |
+| `NOT_CONFIGURED` | The rail is not keyed. Both variables are needed; neither works alone. |
+
+**Three refusals are commonly mistaken for each other.** `STRIPE_SIGNATURE_INVALID`
+is a wrong secret or a body altered in transit. `STRIPE_SIGNATURE_STALE` is
+almost always the host clock, not the secret — check time synchronisation
+before touching anything in the dashboard. `STRIPE_TEST_EVENT` is a test-mode
+delivery to a deployment running as production, which is refused **by design**:
+the rail is working, and the test has to be run in live mode with a real card.
+
+**The tally resets on restart.** The deploy timer rebuilds the container, so a
+zeroed tally after a deploy means "since the last one", not "never". The
+verdict says so; do not read it as health.
+
+**Before a deploy**, `./deploy/env-check.sh` reads the file and reports a
+signing secret that is quoted, padded, truncated or missing its `whsec_`
+prefix. Those are the two mistakes no other check can see: the API key pasted
+into `STRIPE_WEBHOOK_SECRET`, and a value that carried its quotes into the
+environment. Neither is visible at boot, because both leave a secret that is
+present and well-formed.
+
+---
+
 ## What this deployment does not have
 
 Stated so it is not mistaken for an omission somebody can fix with a flag.

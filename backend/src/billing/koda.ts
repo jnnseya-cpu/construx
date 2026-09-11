@@ -1,6 +1,17 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
+import {
+  deliveryHealth,
+  diagnose,
+  recordAccepted,
+  recordRefused,
+  resetDelivery,
+  secretShape,
+  type SecretShape,
+  type WebhookDiagnosis,
+  type WebhookHealthRecord,
+} from './webhookdelivery.ts';
 
 /**
  * KODA — mobile money, as a second rail beside the card.
@@ -53,29 +64,38 @@ export function kodaConfigured(): boolean {
 
 // ------------------------------------------------------------- delivery health
 
-export type KodaWebhookHealth = {
-  accepted: number;
-  rejected: number;
-  lastRejection?: { code: string; at: string };
-  lastAcceptedAt?: string;
-};
-
-const health: KodaWebhookHealth = { accepted: 0, rejected: 0 };
+export type KodaWebhookHealth = WebhookHealthRecord;
 
 export function kodaWebhookHealth(): KodaWebhookHealth {
-  return { ...health };
+  return deliveryHealth('MOBILE_MONEY');
 }
 
 export function resetKodaWebhookHealth(): void {
-  health.accepted = 0;
-  health.rejected = 0;
-  delete health.lastRejection;
-  delete health.lastAcceptedAt;
+  resetDelivery('MOBILE_MONEY');
+}
+
+/**
+ * The shape of the configured signing secret, with no prefix asserted: KODA
+ * publishes no prefix for its signing secrets, and inventing one here would
+ * report a correct secret as malformed. Length, padding and stray quotes are
+ * checkable without knowing the format, and are the mistakes that matter.
+ */
+export function kodaWebhookSecretShape(): SecretShape {
+  return secretShape(config.koda.webhookSecret);
+}
+
+/** What is wrong with the mobile-money webhook and what to do next, or that nothing is. */
+export function kodaWebhookDiagnosis(): WebhookDiagnosis {
+  return diagnose({
+    rail: 'MOBILE_MONEY',
+    configured: kodaConfigured(),
+    shape: kodaWebhookSecretShape(),
+    health: deliveryHealth('MOBILE_MONEY'),
+  });
 }
 
 function reject(error: DomainError): never {
-  health.rejected += 1;
-  health.lastRejection = { code: error.code, at: new Date().toISOString() };
+  recordRefused('MOBILE_MONEY', error.code);
   throw error;
 }
 
@@ -150,8 +170,12 @@ export type KodaEvent = {
  * payload influence the code deciding whether to trust it.
  */
 export function verifyKodaWebhook(rawBody: Buffer, signatureHeader: string | undefined): KodaEvent {
+  // Counted, not thrown past the tally. An unconfigured rail refusing every
+  // delivery is exactly the state the tally exists to make visible, and this
+  // was the one refusal it could not see — the card rail already counted its
+  // equivalent, so the two read differently for no reason.
   if (!kodaConfigured()) {
-    throw new DomainError('KODA_UNCONFIGURED', 'Mobile money is not configured on this deployment', 503);
+    reject(new DomainError('KODA_UNCONFIGURED', 'Mobile money is not configured on this deployment', 503));
   }
   if (!signatureHeader) {
     reject(new DomainError('KODA_SIGNATURE_MISSING', 'No KODA signature on the request', 400));
@@ -180,8 +204,7 @@ export function verifyKodaWebhook(rawBody: Buffer, signatureHeader: string | und
     reject(new DomainError('KODA_PAYLOAD_INVALID', 'The KODA payload is not valid JSON', 400));
   }
 
-  health.accepted += 1;
-  health.lastAcceptedAt = new Date().toISOString();
+  recordAccepted('MOBILE_MONEY');
   return event;
 }
 

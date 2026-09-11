@@ -97,7 +97,15 @@ describe('every SHOUTED_NAME the runbook uses', () => {
     // The table an operator works down before going live. Every row of it has
     // to be a variable they can actually find in the example file, or the
     // instruction "set this" has nowhere to be carried out.
-    const table = runbook.slice(runbook.indexOf('## Configuration that decides whether this is production'));
+    // Bounded at the next heading, not at the end of the file. Unbounded, this
+    // read every later table too and demanded that anything in a first column —
+    // a diagnosis state, a refusal code — be an environment variable in
+    // `.env.example`. The section this test is about is the section it should
+    // read.
+    const from = runbook.indexOf('## Configuration that decides whether this is production');
+    const rest = runbook.slice(from + 1);
+    const until = rest.indexOf('\n## ');
+    const table = until === -1 ? rest : rest.slice(0, until);
     const rows = [...table.matchAll(/^\| `([A-Z][A-Z0-9_]+)` \|/gm)].map((found) => found[1]!);
     assert.ok(rows.length >= 7, `the production configuration table has shrunk to ${rows.length} rows`);
 

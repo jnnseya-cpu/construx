@@ -22507,10 +22507,23 @@ export const ROUTES: Route[] = [
         cardPayments: {
           configured: stripe.stripeConfigured(),
           webhook: stripe.webhookHealth(),
+          // Which refusal, and what to do about it. The tally alone says a
+          // delivery failed; eight different causes produce that, with eight
+          // different fixes, and the screen used to name only one of them.
+          // Published rather than derived in the browser, because the rule is
+          // the platform's.
+          diagnosis: stripe.webhookDiagnosis(),
+          // The configured signing secret measured without being read out:
+          // present, the right prefix, unquoted, unpadded. It catches the API
+          // key pasted into the wrong variable and the value that carried its
+          // quotes into the environment — the two mistakes no other check sees.
+          secret: stripe.webhookSecretShape(),
         },
         mobileMoney: {
           configured: koda.kodaConfigured(),
           webhook: koda.kodaWebhookHealth(),
+          diagnosis: koda.kodaWebhookDiagnosis(),
+          secret: koda.kodaWebhookSecretShape(),
           // The rate every mobile-money credit is computed at, so a wrong one
           // is visible here rather than only in the arithmetic of a receipt.
           usdPerGbp: config.koda.usdPerGbp,

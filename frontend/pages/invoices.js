@@ -18,6 +18,25 @@ import { badge, date, html, money, raw, render, table, time } from '../lib/ui.js
  * changed their mind. Both need somebody to look.
  */
 
+/** The verdict's own name, in words rather than as a constant. */
+const STATE_LABEL = {
+  HEALTHY: 'Deliveries are verifying',
+  NEVER_DELIVERED: 'Nothing has reached this endpoint',
+  ALL_REFUSED: 'Every delivery is being refused',
+  SOME_REFUSED: 'Some deliveries are being refused',
+  NOT_CONFIGURED: 'This rail is not keyed',
+  SECRET_MALFORMED: 'The configured signing secret is the wrong shape',
+};
+
+const STATE_TONE = {
+  HEALTHY: 'ok',
+  NEVER_DELIVERED: 'warn',
+  ALL_REFUSED: 'bad',
+  SOME_REFUSED: 'warn',
+  NOT_CONFIGURED: 'warn',
+  SECRET_MALFORMED: 'bad',
+};
+
 export async function invoices(root) {
   const [payments, overview, estate] = await Promise.all([
     api.get('/v1/admin/payments').catch((error) => ({ error })),
@@ -33,6 +52,43 @@ export async function invoices(root) {
   const names = new Map((estate?.tenants ?? []).map((tenant) => [tenant.id, tenant.legalName]));
   const cardBroken = payments.cardPayments.webhook.rejected > 0 && payments.cardPayments.webhook.accepted === 0;
   const mobileBroken = payments.mobileMoney.webhook.rejected > 0 && payments.mobileMoney.webhook.accepted === 0;
+
+  /**
+   * The rail's own verdict, rendered.
+   *
+   * Every word of it comes from the API. The browser decides nothing about why
+   * a webhook is failing: the platform knows which refusal it issued, and a
+   * second copy of that reasoning here would be a second thing to keep true.
+   */
+  const railPanel = (rail) => {
+    const { diagnosis, secret, webhook } = rail;
+    if (!diagnosis) return '';
+    const tone = STATE_TONE[diagnosis.state] ?? 'warn';
+    const codes = Object.entries(webhook.byCode ?? {}).sort((a, b) => b[1] - a[1]);
+    return html`
+      <div class="notice ${raw(tone === 'ok' ? '' : tone === 'warn' ? 'warn' : 'bad')}" style="margin-top:10px">
+        <div>
+          <b>${STATE_LABEL[diagnosis.state] ?? diagnosis.state}</b>
+          ${diagnosis.moneyAtRisk ? badge('money at risk', 'bad') : ''}<br />
+          ${diagnosis.because}<br />
+          <b>Next:</b> ${diagnosis.remedy}
+          ${webhook.lastRejection
+            ? html`<br /><span class="metric-sub">Last refusal ${webhook.lastRejection.code} at ${time(webhook.lastRejection.at)}${
+                webhook.firstRejectionAt ? html`, first at ${time(webhook.firstRejectionAt)}` : ''
+              }.</span>`
+            : ''}
+          ${codes.length > 1
+            ? html`<br /><span class="metric-sub">Refusals by code: ${raw(codes.map(([code, count]) => `${code} ×${count}`).join(', '))}</span>`
+            : ''}
+          ${secret && secret.present
+            ? html`<br /><span class="metric-sub">The configured signing secret is ${secret.length} characters${
+                secret.prefixOk === false ? ' and does not begin whsec_' : secret.prefixOk === true ? ', prefixed whsec_' : ''
+              }${secret.padded ? ', with whitespace around it' : ''}${secret.quoted ? ', wrapped in quotes' : ''}. Its value is never read here.</span>`
+            : ''}
+        </div>
+      </div>
+    `;
+  };
 
   render(
     root,
@@ -74,9 +130,9 @@ export async function invoices(root) {
             <div>
               <b>Every ${cardBroken && mobileBroken ? 'webhook' : cardBroken ? 'card webhook' : 'mobile money webhook'} so far
               has been rejected.</b><br />
-              A signing secret can be present and wrong. When it is, customers pay, the platform refuses the delivery,
-              and nothing is credited — so the customer has paid and has no service. Check the secret against the
-              endpoint in the provider's dashboard.
+              ${cardBroken ? payments.cardPayments.diagnosis?.because ?? '' : payments.mobileMoney.diagnosis?.because ?? ''}
+              ${cardBroken && mobileBroken ? html`<br />${payments.mobileMoney.diagnosis?.because ?? ''}` : ''}<br />
+              <b>Next:</b> ${cardBroken ? payments.cardPayments.diagnosis?.remedy ?? '' : payments.mobileMoney.diagnosis?.remedy ?? ''}
             </div>
           </div>`
         : ''}
@@ -91,9 +147,10 @@ export async function invoices(root) {
               <span class="val">${badge(String(payments.cardPayments.webhook.rejected), payments.cardPayments.webhook.rejected > 0 ? 'warn' : 'ok')}</span>
             </div>
           </div>
+          ${railPanel(payments.cardPayments)}
           <div class="metric-sub" style="margin-top:12px">
             ${payments.cardPayments.configured
-              ? 'A rejection is a signature that did not verify. A handful is somebody probing the endpoint; a rising count with no acceptances is the secret being wrong.'
+              ? 'A refusal is not always a bad signature. The panel above names the one this deployment actually issued; the tally is since the last restart, so a deploy zeroes it.'
               : 'No card rail is keyed on this deployment, so nobody can pay by card. Top-ups can still be credited by hand against a bank transfer.'}
           </div>
         </div>
@@ -107,6 +164,7 @@ export async function invoices(root) {
             </div>
             <div class="row"><span class="lbl">USD per GBP</span><span class="val">${payments.mobileMoney.usdPerGbp}</span></div>
           </div>
+          ${railPanel(payments.mobileMoney)}
           <div class="metric-sub" style="margin-top:12px">
             The rate is quoted onto the intent when it is raised, so somebody mid-payment gets what they were quoted
             even if this figure moves underneath them.

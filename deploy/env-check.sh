@@ -172,6 +172,51 @@ pair() {
 pair STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET "payments could be taken and never credited, so the rail stays off"
 pair KODA_SECRET_KEY KODA_WEBHOOK_SECRET     "payments could be taken and never credited, so the rail stays off"
 
+# A secret that is present, plausible and wrong.
+#
+# Every check above asks whether a value is there. These ask what shape it is,
+# because the two commonest webhook mistakes both leave a value that passes
+# `is_set` and fails every signature: the API key pasted into the signing-secret
+# variable, and a value that carried the quotes it was copied with into the
+# file. Both produce STRIPE_SIGNATURE_INVALID on every delivery, hours after
+# this script said the rail was configured.
+#
+# The value is read to measure it and is never printed. Stripe's own prefixes
+# are what make this checkable at all: `whsec_` for a signing secret, `sk_` for
+# an API key.
+value_of() {
+  grep -E "^[[:space:]]*$1[[:space:]]*=" "$ENV_FILE" | head -1 | cut -d= -f2-
+}
+
+shape_check() {
+  local key="$1" prefix="$2" raw trimmed
+  is_set "$key" || return 0
+  raw="$(value_of "$key")"
+  trimmed="$(printf '%s' "$raw" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+
+  if [[ "$trimmed" == \"*\" || "$trimmed" == \'*\' ]]; then
+    echo "  WARNING  $key is wrapped in quotes — they become part of the secret and every signature fails"
+    missing_critical=$((missing_critical + 1))
+    # Unwrapped for the remaining checks, so a quoted-but-otherwise-correct
+    # secret raises the one warning that is true of it rather than three.
+    trimmed="${trimmed:1:${#trimmed}-2}"
+  fi
+  if [[ -n "$prefix" && "$trimmed" != "$prefix"* ]]; then
+    echo "  WARNING  $key does not begin ${prefix} — an API key pasted into the signing-secret variable looks exactly like this"
+    missing_critical=$((missing_critical + 1))
+  fi
+  if [[ ${#trimmed} -lt 16 ]]; then
+    echo "  WARNING  $key is only ${#trimmed} characters — a truncated paste"
+    missing_critical=$((missing_critical + 1))
+  fi
+}
+
+shape_check STRIPE_WEBHOOK_SECRET whsec_
+shape_check STRIPE_SECRET_KEY sk_
+# No prefix asserted: KODA publishes none, and inventing one would report a
+# correct secret as broken.
+shape_check KODA_WEBHOOK_SECRET ""
+
 if is_set AI_MODE && [[ "$(grep -E '^[[:space:]]*AI_MODE[[:space:]]*=' "$ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '[:space:]')" != "local" ]]; then
   if ! is_set OPENAI_API_KEY && ! is_set GEMINI_API_KEY && ! is_set ANTHROPIC_API_KEY; then
     echo "  WARNING  AI_MODE is not local but no provider key is set — every AI request will fail"

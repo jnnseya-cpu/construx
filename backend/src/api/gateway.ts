@@ -6,6 +6,7 @@ import { config } from '../config.ts';
 import { DomainError, ForbiddenError, NotFoundError, ValidationError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import { notifyWalletSignal } from '../billing/usagealerts.ts';
+import { countedByRail, railForRoute, recordRefused } from '../billing/webhookdelivery.ts';
 import {
   applyRateLimit,
   authenticate,
@@ -551,6 +552,25 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
     if ((error as { bodyAbandoned?: boolean })?.bodyAbandoned) {
       res.setHeader('Connection', 'close');
     }
+
+    // A payment webhook refused before it reached the rail that verifies it.
+    //
+    // Two refusals are decided here and nowhere else: a body over the route's
+    // ceiling, and a rate limit. Counted only inside `verifyWebhook`, both
+    // would leave the delivery tally reading zero accepted and zero rejected —
+    // which looks like a healthy endpoint nobody has used, not a broken one
+    // nothing can get through. That is the exact reading an operator would act
+    // on wrongly, so it is counted here against the rail it was aimed at.
+    //
+    // Codes the rail counts for itself are skipped: by the time one of those
+    // reaches this block it has already been tallied, and counting it again
+    // would double every refusal the rail can see.
+    const rail = railForRoute(ctx.routeId);
+    if (rail) {
+      const code = error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'UNKNOWN';
+      if (!countedByRail(code)) recordRefused(rail, code);
+    }
+
     sendProblem(res, ctx, error);
     logRequest(ctx, error instanceof Error && 'status' in error ? (error as { status: number }).status : 500, error);
   }

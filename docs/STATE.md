@@ -15,10 +15,10 @@ and claims of completion that did not hold.
 
 | | |
 |---|---|
-| Tests | 6,681 passing, 0 failing, 0 skipped, across 313 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
+| Tests | 6,709 passing, 0 failing, 0 skipped, across 314 files · plus 25 against a live Postgres 16 (the client, the ledger store and a follower), also run in CI |
 | Typecheck | clean |
-| Backend | 336 TypeScript files, 220,051 lines |
-| Application | 80 ES modules, 49,801 lines (including a service worker) |
+| Backend | 337 TypeScript files, 220,532 lines |
+| Application | 80 ES modules, 49,859 lines (including a service worker) |
 | API routes | 1,183 — 803 writes, 380 reads (51 public across both) |
 | Event types | 784 Golden Thread (closed) · the communication catalogue is separate and closed |
 | Entity types | 350, all classified for access |
@@ -786,6 +786,47 @@ never the signature, which is still a credential somebody attempted. Rejections
 climbing while accepted stays at zero has one likely cause. Boot warnings cover
 the halves that *are* detectable: a secret key with no webhook secret, a webhook
 secret with no key, and a `sk_test_` key on a production deployment.
+
+**Naming the refusal, not just counting it.** A report that "the Stripe webhook
+is not working" is true of eight causes with eight different fixes, and until
+`billing/webhookdelivery.ts` the deployment could not say which. It knew: every
+refusal carries a code. It published a count instead, beside a screen that named
+a wrong signing secret whatever had actually happened.
+
+That module is now the delivery record for both inbound payment rails, and it
+closes three gaps rather than one.
+
+- **The tally counts by code**, keeps the first refusal as well as the last, and
+  is published with an explanation and a remedy per code — server-side, because
+  the browser holds no rule the API does not publish. `webhookdelivery.test.ts`
+  reads the rails' source for every code passed to `reject` and fails if one has
+  no entry, so a refusal added later cannot reach an operator as a bare string.
+- **Two refusals never reached the rail at all.** A body over the route's 256KB
+  ceiling and a rate limit are both decided in the gateway. Counted only inside
+  `verifyWebhook`, they left the tally reading nought accepted and nought
+  rejected — a healthy endpoint nobody had used, which is the opposite of the
+  truth. The gateway now counts them against the rail the delivery was aimed at,
+  skipping the codes the rail counts for itself so nothing is doubled. KODA's
+  `KODA_UNCONFIGURED` threw past its own tally for the same reason and no longer
+  does.
+- **The secret is measured without being read.** `secretShape` reports present,
+  prefix, length, padding and stray quotes — never the value. It catches the two
+  mistakes no other check can see: the API key pasted into
+  `STRIPE_WEBHOOK_SECRET`, and a value that carried its quotes into the
+  environment. `deploy/env-check.sh` makes the same three checks against the
+  file before a deploy.
+
+`diagnose` turns tally, configuration and shape into one verdict — the state,
+why, what to do next, and whether a customer may have paid without being
+credited. It separates *never delivered* from *healthy*, which two integers
+could not, and it says plainly that a production deployment refuses test-mode
+events: a launch-day test in Stripe's test mode is refused by design and looks
+identical to a broken rail from the dashboard. Billing & invoices renders the
+verdict; nothing about it is decided in the browser.
+
+What this is not: it is process memory, reset by a restart, so a zeroed tally
+after a deploy means "since the last one". The verdict says so rather than
+letting it read as health. The receipts remain the record.
 
 Found while testing that: **refusing an oversized upload poisoned the
 connection.** The body is rejected as it streams, so the unread remainder stayed

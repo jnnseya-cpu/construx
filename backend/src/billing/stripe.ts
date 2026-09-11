@@ -2,6 +2,17 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
 import { BILLING_CURRENCY } from './payments.ts';
+import {
+  deliveryHealth,
+  diagnose,
+  recordAccepted,
+  recordRefused,
+  resetDelivery,
+  secretShape,
+  type SecretShape,
+  type WebhookDiagnosis,
+  type WebhookHealthRecord,
+} from './webhookdelivery.ts';
 
 /**
  * Stripe, over `fetch` and `node:crypto`.
@@ -68,25 +79,35 @@ export function stripeConfigured(): boolean {
  * In-process and reset by a restart, like everything else here. It is
  * operational telemetry, not a record — the receipts are the record.
  */
-export type WebhookHealth = {
-  accepted: number;
-  rejected: number;
-  /** The failure code of the most recent rejection, never the signature itself. */
-  lastRejection?: { code: string; at: string };
-  lastAcceptedAt?: string;
-};
-
-const health: WebhookHealth = { accepted: 0, rejected: 0 };
+export type WebhookHealth = WebhookHealthRecord;
 
 export function webhookHealth(): WebhookHealth {
-  return { ...health };
+  return deliveryHealth('CARD');
 }
 
 export function resetWebhookHealth(): void {
-  health.accepted = 0;
-  health.rejected = 0;
-  delete health.lastRejection;
-  delete health.lastAcceptedAt;
+  resetDelivery('CARD');
+}
+
+/**
+ * What can be said about the configured signing secret without reading it out.
+ *
+ * Stripe prefixes every signing secret `whsec_`, so the two mistakes no other
+ * check can see — the API key pasted into the wrong variable, and a value that
+ * carried its quotes into the environment — are both visible from the shape.
+ */
+export function webhookSecretShape(): SecretShape {
+  return secretShape(config.stripe.webhookSecret, 'whsec_');
+}
+
+/** What is wrong with the card webhook and what to do next, or that nothing is. */
+export function webhookDiagnosis(): WebhookDiagnosis {
+  return diagnose({
+    rail: 'CARD',
+    configured: stripeConfigured(),
+    shape: webhookSecretShape(),
+    health: deliveryHealth('CARD'),
+  });
 }
 
 /**
@@ -97,8 +118,7 @@ export function resetWebhookHealth(): void {
  * matters, since an uncounted rejection is an invisible one.
  */
 function reject(error: DomainError): never {
-  health.rejected += 1;
-  health.lastRejection = { code: error.code, at: new Date().toISOString() };
+  recordRefused('CARD', error.code);
   throw error;
 }
 
@@ -397,8 +417,7 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
     ));
   }
 
-  health.accepted += 1;
-  health.lastAcceptedAt = new Date().toISOString();
+  recordAccepted('CARD');
   return event;
 }
 
