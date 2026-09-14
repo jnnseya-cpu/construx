@@ -70,18 +70,18 @@ export const NAV = [
       // where the estate is: enterprise, portfolios, people, invitations and
       // seats. Ordering a menu by what a first-time customer needs and what a
       // daily user needs gives the same answer here.
-      { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers', tenantScoped: true },
+      { id: 'enterprise', label: 'Enterprise & Portfolio', area: 'PROJECT_SETUP', icon: 'layers', tenantScoped: true, hostOnly: true },
       // The estate's delivery and commercial standing, across every project at
       // once. `ENTERPRISE_STRUCTURE`, not `PROJECT_SETUP`: the roll-up is what
       // `/v1/enterprise/command` authorises against, and a role that can set a
       // project up is not automatically a role that may read the whole estate's
       // commercial position.
-      { id: 'portfolio', label: 'Portfolio Dashboard', area: 'ENTERPRISE_STRUCTURE', icon: 'chart', tenantScoped: true },
+      { id: 'portfolio', label: 'Portfolio Dashboard', area: 'ENTERPRISE_STRUCTURE', icon: 'chart', tenantScoped: true, hostOnly: true },
       // Who is in the tenancy and what each of them may do: the identity
       // directory, the organisation structure, invitations, credentials and
       // the governance in force. Under ENTERPRISE_STRUCTURE, which is the
       // area that governs people; every action on it needs the administrator.
-      { id: 'team', label: 'Team & Access', area: 'ENTERPRISE_STRUCTURE', icon: 'key', tenantScoped: true },
+      { id: 'team', label: 'Team & Access', area: 'ENTERPRISE_STRUCTURE', icon: 'key', tenantScoped: true, hostOnly: true },
       // The group above the companies: directory, usage, statement, roles.
       // Shown only to a person holding a group role; the route refuses
       // everybody else by name, so this is a courtesy rather than a control.
@@ -147,7 +147,7 @@ export const NAV = [
   {
     group: 'Commercial',
     items: [
-      { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true },
+      { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true, hostOnly: true },
       { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
       // Measurement and the supplier's own return sit on this screen. The
       // BIM manager takes off quantities from the model and a supplier answers
@@ -182,13 +182,13 @@ export const NAV = [
   {
     group: 'Platform',
     items: [
-      { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter', tenantScoped: true },
+      { id: 'billing', label: 'ACU & Billing', area: 'BILLING_ACU', icon: 'meter', tenantScoped: true, hostOnly: true },
       // Beside billing, and distinct from the Cost & Value screen that also
       // carries the word "commercial". That one is the customer's money on
       // their own jobs; this is their account with us — what we earned on money
       // we carried for them, what they are against in their entitlement,
       // whether the platform is still being used, and the benchmark consent.
-      { id: 'platformCommercial', label: 'Your account with us', area: 'ENTERPRISE_STRUCTURE', icon: 'coins', tenantScoped: true },
+      { id: 'platformCommercial', label: 'Your account with us', area: 'ENTERPRISE_STRUCTURE', icon: 'coins', tenantScoped: true, hostOnly: true },
       // Under ENTERPRISE_STRUCTURE read, which is what the key register needs.
       // Issuing a credential needs G on the same area and the command bar reads
       // that separately, so the screen is visible to somebody who can see what
@@ -199,7 +199,7 @@ export const NAV = [
       // enterprise administrator holds it, so in the first group it was the
       // most prominent thing on the screen for the eleven delivery roles who
       // cannot open it. It belongs beside the other administration items.
-      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers', tenantScoped: true },
+      { id: 'developer', label: 'Developer', area: 'ENTERPRISE_STRUCTURE', icon: 'layers', tenantScoped: true, hostOnly: true },
       { id: 'admin', label: 'Platform Admin', area: 'PLATFORM_ADMINISTRATION', icon: 'cog', tenantScoped: true },
       // The self-managing layer, the telemetry egress and the agent fleet. All
       // of it ran for weeks with no door: an operator saw five items, three of
@@ -1031,6 +1031,14 @@ function reachable(item) {
   // The group console is for a group role, which is not a capability area:
   // absent for everybody else, whatever areas they hold.
   if (item.groupOnly) return Boolean(state.me?.group?.roles?.length);
+  // Somebody on this organisation's project as a guest from another company.
+  //
+  // The gateway refuses them every tenant-scoped route that has not declared
+  // itself safe, so these screens would load and then show a refusal — a menu
+  // of seven doors that all say no. A guest is here to do the work on one
+  // project, and that is what they are shown. The refusal is the control and
+  // this is the courtesy, exactly as `groupOnly` above.
+  if (item.hostOnly && state.me?.guest) return false;
   return readableAreas(item).some((area) => can(area, 'R'));
 }
 

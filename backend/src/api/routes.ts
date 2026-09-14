@@ -412,7 +412,51 @@ export type Route = {
    * a session that is not bound to a device at all.
    */
   webOnly?: string;
+  /**
+   * What a guest from another organisation may read here, and why.
+   *
+   * A membership confines somebody invited from another company to the project
+   * they were invited onto. That gate reads the project in the path — so it
+   * checks nothing at all on a route that names no project, and **every
+   * tenant-scoped read answered a guest in full**. Measured rather than
+   * supposed: a subcontractor invited onto one project could read the host's
+   * opportunity pipeline with client names and values, its whole supplier list
+   * with contacts, its estate forecast, its API keys, its people directory and
+   * the tenancy's entire change feed. Five routes had been fixed one at a time
+   * with `externalsRefused`; sixty had not, and nothing could tell which.
+   *
+   * So the rule is inverted: a tenant-scoped route refuses a guest **unless it
+   * says why it is safe**, enforced once in the gateway rather than remembered
+   * per handler. Absent means refused, which is what makes the next route added
+   * to this file safe by default instead of safe by somebody noticing.
+   *
+   *   `OWN`       — answers about the caller themselves: their own security,
+   *                 their own inbox, their own erasure. A guest is a person and
+   *                 their own record is theirs wherever they are signed in.
+   *   `REFERENCE` — the platform's own vocabulary, identical in every tenancy
+   *                 and containing nothing about this company: units, the
+   *                 permission matrix, the lifecycle gates, the price list.
+   *   `SCOPED`    — tenant-scoped in shape, but the handler already confines
+   *                 the answer to the guest's own projects. Only claim this
+   *                 where a test proves it: `/v1/projects` returns the one
+   *                 project the guest is on, not the estate.
+   *
+   * Routes that name a `:projectId` are not classified here — the membership
+   * gate has a project to check and does it.
+   */
+  guest?: 'OWN' | 'REFERENCE' | 'SCOPED';
 };
+
+/**
+ * Whether this route is one the guest rule applies to.
+ *
+ * A route naming a project is confined by the membership gate. Everything else
+ * that is not public is tenant-scoped, and answers about the host company
+ * unless it has said otherwise.
+ */
+export function tenantScoped(route: Route): boolean {
+  return route.public !== true && !route.pattern.includes(':projectId');
+}
 
 function body<T>(ctx: RequestContext): T {
   return (ctx.body ?? {}) as T;
@@ -1743,6 +1787,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/me/authenticator',
+    guest: 'OWN',
     readOnly: true,
     description: 'Whether this account holds an authenticator app, and whether the organisation requires one',
     handler: (platform, ctx) => {
@@ -3285,6 +3330,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/me/newsletter',
+    guest: 'OWN',
     description: 'My own email preference and what the next issue would say',
     handler: (platform, ctx) => {
       const user = platform.user(auth(ctx).actorId);
@@ -3554,6 +3600,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/agents/fleet',
+    guest: 'REFERENCE',
     description: 'The agent fleet by division, with each mandate',
     handler: () => ({
       divisions: AGENT_DIVISIONS.map((d) => ({
@@ -3583,6 +3630,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/control/standard',
+    guest: 'REFERENCE',
     description: 'The corporate control standard: four stages and every item in them',
     handler: () => ({ stages: lifecycleControl.CONTROL_STAGES, items: lifecycleControl.CONTROL_ITEMS.map(publishableControlItem) }),
   },
@@ -4376,6 +4424,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/supply-chain/trades',
+    guest: 'REFERENCE',
     description: 'The trade catalogue, and which trades require third-party accreditation',
     handler: () => ({ trades: supplychain.TRADES, scrutiny: supplychain.SCRUTINY_THRESHOLDS }),
   },
@@ -4593,6 +4642,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/cdm/documents',
+    guest: 'REFERENCE',
     description: 'The CDM document catalogue and the sections each one requires',
     handler: () => ({ documents: cdm.CDM_DOCUMENTS }),
   },
@@ -4761,6 +4811,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/safety/permit-requirements',
+    guest: 'REFERENCE',
     description: 'Which competency each permitted activity requires',
     readOnly: true,
     handler: () => ({ requirements: safety.permitRequirements() }),
@@ -5179,6 +5230,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/controller-licences/permissions',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'Which permissions make a role a Controller, and which roles are Controllers, as the platform derives them from the matrix',
     handler: (_platform, ctx) => {
@@ -5565,6 +5617,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/me/security',
+    guest: 'OWN',
     description: 'This person’s devices, passkeys, this session’s risk assessment and the published risk model',
     readOnly: true,
     handler: (platform, ctx) => {
@@ -6247,6 +6300,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/me/erasure',
+    guest: 'OWN',
     description: 'Whether an erasure is outstanding for the signed-in identity, and what it would and would not remove',
     readOnly: true,
     handler: (platform, ctx) => {
@@ -6932,6 +6986,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/localisation',
+    guest: 'REFERENCE',
     description: 'Currencies, the locale resolved from this request, and the tax rules held per jurisdiction',
     handler: (_platform, ctx) => ({
       locale: ctx.locale,
@@ -6945,6 +7000,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/billing/catalogue',
+    guest: 'REFERENCE',
     description: 'Seat prices, packages and ACU bundles',
     handler: () => ({
       seats: Object.values(SEATS),
@@ -7069,6 +7125,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/permissions/matrix',
+    guest: 'REFERENCE',
     description: 'The enforceable permission matrix and the phases each area may be written in',
     handler: (platform, ctx) => ({
       matrix: PERMISSION_MATRIX,
@@ -7416,6 +7473,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/notifications/catalogue',
+    guest: 'REFERENCE',
     description: 'The communication event catalogue — 177 events, 15 categories, channel coverage',
     handler: (_platform, ctx) => {
       // Readable by any authenticated identity: a person is entitled to know
@@ -7456,6 +7514,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/notifications/inbox',
+    guest: 'OWN',
     description: 'The caller’s own in-app notifications',
     readOnly: true,
     handler: (platform, ctx) => {
@@ -7466,6 +7525,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/notifications/preferences',
+    guest: 'OWN',
     description: 'The caller’s notification preferences, and which of them are switchable',
     handler: (platform, ctx) => {
       const actor = auth(ctx);
@@ -8174,6 +8234,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/users/me',
+    guest: 'OWN',
     description: 'This person: the active company, every membership, the group and its roles, and what the active company is entitled to',
     readOnly: true,
     handler: (platform, ctx) => whoAmI(platform, auth(ctx)),
@@ -9016,6 +9077,10 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/portfolios',
+    // Already confined: the handler below filters to the portfolios the guest's
+    // own projects sit in, never the shape of the host's estate. Asserted in
+    // `crossorg.test.ts`.
+    guest: 'SCOPED',
     description: 'List portfolios for the tenant',
     handler: (platform, ctx) => {
       const actor = auth(ctx);
@@ -9133,6 +9198,10 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects',
+    // Already confined: the handler returns the guest's own project, not the
+    // estate. Asserted in `guests.test.ts` rather than trusted, because the
+    // whole point of this classification is that it is checked.
+    guest: 'SCOPED',
     description: 'List projects for the tenant',
     handler: (platform, ctx) => {
       // A guest sees the projects they were invited onto and no others. The
@@ -9279,6 +9348,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/lifecycle/gates',
+    guest: 'REFERENCE',
     description: 'The lifecycle phases and their exit criteria',
     handler: () => ({
       phases: LIFECYCLE_ORDER,
@@ -11139,6 +11209,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/site-reconstruction/capabilities',
+    guest: 'REFERENCE',
     description: 'Which kinds of reconstruction this platform provides, and which it does not',
     handler: () => ({ capabilities: reconstruction.reconstructionCapabilities() }),
   },
@@ -11408,6 +11479,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/site-elements',
+    guest: 'REFERENCE',
     description: 'The site element catalogue and how each is drawn, so a plan, a DXF and the 3D view share one palette',
     // Published for the same reason the permission matrix is: the browser holds
     // no rule the API does not. A viewer with its own colour table would drift
@@ -11418,6 +11490,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/site-capture/protocol',
+    guest: 'REFERENCE',
     description: 'The three-minute capture protocol: stages, what each is for, and the directions the coach gives',
     // Published rather than held in the app, on the same argument as the
     // permission matrix and the phase gates: the browser holds no rule the API
@@ -11755,6 +11828,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/tender/cost-heads',
+    guest: 'REFERENCE',
     description: 'The twenty tender cost heads and the basis each one is priced on',
     handler: () => ({ heads: costModel.COST_HEADS }),
   },
@@ -17778,6 +17852,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/units',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'Every unit the platform reads, what it measures, and which units it can be converted against',
     handler: (_platform, ctx) => {
@@ -17792,6 +17867,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/correspondence/matrix',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'Which letters may be written, who may send them, who they must be served on, and the reply period each form allows',
     handler: (_platform, ctx) => {
@@ -18795,6 +18871,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/contract-forms',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'The standard forms the library carries, their editions and package versions',
     handler: () => ({ forms: clauselibrary.standardForms(), agreement: clauselibrary.citationAgreement() }),
@@ -18802,6 +18879,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/contract-forms/:formId/response/:category',
+    guest: 'REFERENCE',
     readOnly: true,
     description:
       'What one kind of site event means under one form: the clause, the period, and whether missing it ends the entitlement',
@@ -19534,6 +19612,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/agents',
+    guest: 'REFERENCE',
     description: 'The agent fleet, each with the mandate it can never exceed',
     handler: () => ({ agents: fleetManifest() }),
   },
@@ -19639,6 +19718,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/command-centre/functions',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'The seven command-centre functions and what each is for, so a client never hardcodes them',
     handler: () => ({ functions: centreCatalogue() }),
@@ -19663,6 +19743,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/agents/ladder',
+    guest: 'REFERENCE',
     description: 'The four rungs of the mandate ladder and who is in the loop at each',
     handler: () => ({ ladder: LADDER, automatableCommands: AUTOMATABLE_COMMANDS }),
   },
@@ -20172,6 +20253,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/exports/render-quote',
+    guest: 'REFERENCE',
     description: 'What taking one document out costs, in either form, before anybody presses anything',
     handler: (platform, ctx) => {
       // Quoted before the control is offered, exactly as an AI command is. The
@@ -21547,6 +21629,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/portal/adapters',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'Every portal adapter this deployment has, what each can actually do, and what is not built',
     handler: () => portal.portalAdapters(),
@@ -22759,6 +22842,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/ai/control-plane',
+    guest: 'REFERENCE',
     description: 'AI routing matrix and provider health',
     handler: (platform) => platform.orchestrator.controlPlaneStatus(),
   },
@@ -23788,6 +23872,7 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/commands',
+    guest: 'REFERENCE',
     readOnly: true,
     description: 'Every write command with the schema that governs it, so the console can render a door for each',
     handler: (_platform, ctx) => {

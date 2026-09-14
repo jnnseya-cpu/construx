@@ -21352,3 +21352,80 @@ Per-user permission toggles. A company role is named, appears on a register, has
 holders and is amended or retired once for everybody, so it can be accounted
 for; a permission attached to one person outside any role cannot be, and remains
 absent.
+
+## What a guest from another organisation could read
+
+Found by asking, rather than by reading: sign in as a subcontractor invited onto
+one project, then call every tenant-scoped read in the route table and see what
+answers. **Seventy of a hundred and twenty-eight answered in full.**
+
+Among them, with the demonstration tenancy's own data in the response body: the
+**opportunity pipeline** with client names, estimated values and bid stage; the
+**entire supplier list** with contact names and email addresses; the **estate
+position** — forecast final value, forecast cost, variance, unapproved change;
+the **API keys** the tenancy had issued; the **people directory**, every name,
+address, unit, manager and risk signal; the **morning briefing** across the
+whole business; and the tenancy's **entire change feed**.
+
+On a platform where a main contractor's subcontractors are frequently their
+competitors, that is the failure the whole cross-organisation model exists to
+avoid.
+
+### Why it was open, and why nobody could see it
+
+The membership gate confines a guest to the project they were invited onto by
+reading the project **out of the path**. A tenant-scoped route names no project,
+so the gate had nothing to check and never fired. This was already understood —
+`externalsRefused` exists, and five routes call it, each added when somebody
+noticed that one. Sixty others were never noticed, and nothing in the codebase
+could say which had been thought about and which had not.
+
+A rule every handler has to remember is a rule the next handler will not.
+
+### The rule, inverted
+
+`Route.guest` classifies a tenant-scoped route, and the gateway enforces it once
+for every route rather than in each handler. **Absent means refused** — so a
+route added to `routes.ts` tomorrow is closed before anybody thinks about it,
+which is the opposite of how this file behaved for sixty routes.
+
+Three classifications, and each claims something specific:
+
+- **`OWN`** — answers about the caller themselves: their own security posture,
+  their own inbox, their own erasure. A guest is a person, and their own record
+  is theirs wherever they are signed in. Seven routes.
+- **`REFERENCE`** — the platform's own vocabulary, identical in every tenancy
+  and containing nothing about this company: units, the permission matrix, the
+  lifecycle gates, the CDM catalogue, the price list. Twenty-five routes, most
+  of which take no `platform` argument at all.
+- **`SCOPED`** — tenant-scoped in shape, but the handler already confines the
+  answer. Two routes, `/v1/projects` and `/v1/portfolios`, both of which were
+  already written to filter on `externalScope` and both of which are asserted
+  rather than trusted: a guest sees the one project they are on, and the
+  portfolio it sits in, never the shape of the estate.
+
+Everything else is refused with `EXTERNAL_MEMBER_SCOPE`, naming what the person
+is and what they are not.
+
+`/v1/portfolios` is the reason the classification is checked rather than
+declared: it was first classified as a leak, and `crossorg.test.ts` failed
+because that route had been written guest-aware a long time ago. The test was
+right and the classification was wrong.
+
+### On the console
+
+A guest was being shown the host company's menu — Enterprise & Portfolio,
+Portfolio Dashboard, Team & Access, Pipeline & Bids, ACU & Billing, the account
+page and Developer — seven doors that would now all answer 403. `whoAmI`
+publishes `guest`, and those entries carry `hostOnly: true`, which the nav
+filter reads exactly as it already reads `groupOnly`. The refusal is the
+control; this is the courtesy, and `guests.test.ts` asserts the two agree so a
+screen cannot be marked in one place and not the other.
+
+### What this does not change
+
+Nothing for the host's own people: the rule fires only on an identity with
+`external: true` holding a live membership. Project-scoped routes are untouched
+— the membership gate has a project to check there and always did. Six tests in
+`guests.test.ts`, the first of which is a zero-with-no-exemption-list assertion
+over the whole route table.

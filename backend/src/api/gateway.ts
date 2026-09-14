@@ -27,7 +27,7 @@ import { requiredScope } from '../identity/scopes.ts';
 import { resolveLocale } from '../domain/locale.ts';
 import { recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { clientAddress } from './clientaddress.ts';
-import { matchRoute, ROUTES } from './routes.ts';
+import { matchRoute, ROUTES, tenantScoped } from './routes.ts';
 import { onFieldSurface, webOnlyRefusal } from '../field/modules.ts';
 import { renderLanding } from '../site/index.ts';
 import { llms, robots, sitemap } from '../site/discovery.ts';
@@ -459,6 +459,29 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
         'Your organisation requires a second factor. Set up an authenticator app on Security before continuing.',
         'MFA_ENROLMENT_REQUIRED',
       );
+    }
+
+    // A guest from another organisation, on a route that names no project.
+    //
+    // The membership gate confines a guest to the project they were invited
+    // onto by reading the project in the path. A tenant-scoped route has no
+    // project in its path, so that gate checked nothing — and the host's
+    // pipeline, supplier list, estate forecast, API keys, people directory and
+    // change feed all answered a guest in full. See `Route.guest` for the
+    // measurement and for what the three classifications mean.
+    //
+    // Enforced here rather than in each handler for the same reason the account
+    // layer is: a rule that every handler has to remember is a rule the next
+    // handler will not. Absent classification means refused, so a route added
+    // to `routes.ts` tomorrow is closed before anybody thinks about it.
+    if (ctx.auth && !isPublic && tenantScoped(matched.route) && !matched.route.guest) {
+      if (platform.externalScope(ctx.auth)) {
+        throw new ForbiddenError(
+          `You are on this organisation's project as a guest, and this is the organisation's own record rather than ` +
+            'the project you were invited onto.',
+          'EXTERNAL_MEMBER_SCOPE',
+        );
+      }
     }
 
     // The account layer, before the body is looked at.

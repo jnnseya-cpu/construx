@@ -437,6 +437,18 @@ export function whoAmI(platform: Platform, actor: AuthContext): {
   memberships: Membership[];
   group: { id: string; slug: string; displayName: string; roles: GroupRoleName[] } | null;
   entitlements: string[];
+  /**
+   * Whether this person is on somebody else's project as a guest, and whose
+   * they are.
+   *
+   * Published so the console can show a guest a menu made of what they can
+   * actually reach. The gateway refuses a guest every tenant-scoped route that
+   * has not declared itself safe — see `Route.guest` — and without this the
+   * console had no way to know, so it drew the host company's screens for a
+   * subcontractor and every one of them answered 403. The refusal is the
+   * control; this is the courtesy, exactly as `groupOnly` already is.
+   */
+  guest: { external: true; homeOrganisation: string | null } | null;
 } {
   const user = platform.user(actor.actorId);
   const tenant = platform.tenant(user.tenantId);
@@ -454,6 +466,7 @@ export function whoAmI(platform: Platform, actor: AuthContext): {
     memberships: membershipsByEmail(platform, user.email),
     group: group ? { id: group.id, slug: group.slug, displayName: group.displayName, roles: groupRolesFor(platform, group.id, user.email) } : null,
     entitlements: entitlementClaims(platform, tenant.id),
+    guest: user.external === true ? { external: true, homeOrganisation: user.homeOrganisation ?? null } : null,
   };
 }
 
