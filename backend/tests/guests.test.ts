@@ -100,6 +100,39 @@ describe('a guest from another organisation', () => {
     );
   });
 
+  it('keeps the self-service a person needs wherever they are signed in', async () => {
+    /*
+     * The half that was missed, and it locked people out.
+     *
+     * The first version of this rule classified reads and left every write
+     * unclassified, which is "refused". So a guest could no longer enrol an
+     * authenticator app — and where the host organisation requires a second
+     * factor, that session may do *nothing but* enrol. A guest admitted to a
+     * project they were invited onto was permanently stuck at a screen whose
+     * only button now returned 403. They could not sign out of it either.
+     *
+     * These are a person's own record, and a person is not less of a person for
+     * being a guest. Asserted with a real request rather than by reading the
+     * classification, because the classification is what was wrong.
+     */
+    for (const [method, path, body] of [
+      ['POST', '/v1/me/authenticator/begin', {}],
+      ['POST', '/v1/me/newsletter', { subscribed: false }],
+      ['POST', '/v1/support', { subject: 'Cannot open the drawing register', body: 'The register refuses on this project.' }],
+    ] as const) {
+      const response = await fetch(base + path, {
+        method,
+        headers: { Authorization: `Bearer ${guestToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      assert.notEqual(
+        response.status,
+        403,
+        `${method} ${path} refused a guest their own record: ${await response.text()}`,
+      );
+    }
+  });
+
   it('is refused the host organisation’s own business, by name', async () => {
     // One per kind of thing that was open, because a single sample would not
     // show that the rule is general.

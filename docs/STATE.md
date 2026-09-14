@@ -21422,10 +21422,29 @@ filter reads exactly as it already reads `groupOnly`. The refusal is the
 control; this is the courtesy, and `guests.test.ts` asserts the two agree so a
 screen cannot be marked in one place and not the other.
 
+### The half that was missed, and locked people out
+
+The first version of this classified reads and left every **write**
+unclassified — which, under a rule whose whole point is that absent means
+refused, refused all of them. A guest could no longer enrol an authenticator
+app; and where the host organisation requires a second factor, that session may
+do *nothing but* enrol. A guest was permanently stuck at a screen whose only
+button now returned 403, and could not sign out of it either.
+
+Twenty-one writes are `OWN`: enrolling and revoking an authenticator, passkeys
+and devices, step-up, the newsletter preference, notification preferences, an
+account picture, an erasure request, raising and replying to a support request,
+switching company, and signing out. A person's own record is theirs wherever
+they are signed in, and a guest is not less of a person for being a guest. The
+other 185 tenant-scoped writes stay refused.
+
+`guests.test.ts` now asserts the self-service with real requests rather than by
+reading the classification, because the classification is what was wrong.
+
 ### What this does not change
 
 Nothing for the host's own people: the rule fires only on an identity with
 `external: true` holding a live membership. Project-scoped routes are untouched
-— the membership gate has a project to check there and always did. Six tests in
-`guests.test.ts`, the first of which is a zero-with-no-exemption-list assertion
-over the whole route table.
+— the membership gate has a project to check there and always did. Seven tests in
+`guests.test.ts`, one of which is a zero-with-no-exemption-list assertion over
+the whole route table.

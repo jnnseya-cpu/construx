@@ -1802,6 +1802,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/authenticator/begin',
+    guest: 'OWN',
     description: 'Start enrolling an authenticator app: the secret and its otpauth address, shown once. Nothing is recorded until a code confirms it',
     schema: { type: 'object', properties: { label: { type: 'string' } }, additionalProperties: false },
     handler: (platform, ctx) => {
@@ -1814,6 +1815,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/authenticator/confirm',
+    guest: 'OWN',
     description: 'Confirm enrolment with a code the app produced. Returns the recovery codes, once, and a session that satisfies the second factor',
     schema: {
       type: 'object',
@@ -1853,6 +1855,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/authenticator/recovery-codes',
+    guest: 'OWN',
     description: 'Replace every unused recovery code with a fresh set, shown once. Needs the app’s current code',
     schema: { type: 'object', required: ['code'], properties: { code: stringField }, additionalProperties: false },
     handler: async (platform, ctx) => {
@@ -1878,6 +1881,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/authenticator/revoke',
+    guest: 'OWN',
     description: 'Remove the authenticator app. Needs its current code, and is refused while the organisation requires one',
     schema: { type: 'object', required: ['code'], properties: { code: stringField }, additionalProperties: false },
     handler: async (platform, ctx) => {
@@ -1953,6 +1957,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/auth/logout',
+    guest: 'OWN',
     description: 'End this session: revoke the token pair so neither half is accepted again',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (_platform, ctx) => {
@@ -2917,6 +2922,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/support',
+    guest: 'OWN',
     description: 'Raise a support request',
     schema: {
       type: 'object',
@@ -2937,6 +2943,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/support/:ticketId/reply',
+    guest: 'OWN',
     description: 'Reply on a support request — the side is taken from the actor, never from the request',
     schema: { type: 'object', required: ['body'], properties: { body: stringField }, additionalProperties: false },
     handler: (platform, ctx) => support.reply(platform, auth(ctx), ctx.params.ticketId ?? '', body<{ body: string }>(ctx).body),
@@ -3358,6 +3365,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/newsletter',
+    guest: 'OWN',
     description: 'Set my own email preference',
     schema: {
       type: 'object',
@@ -4905,6 +4913,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/picture',
+    guest: 'OWN',
     upload: true,
     // A face, not a drawing set. The evidence ceiling is sized for the latter
     // and leaving it here would let anybody make this process buffer 50MB.
@@ -4923,6 +4932,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/cover',
+    guest: 'OWN',
     upload: true,
     maxBytes: config.site.mediaMaxBytes,
     description: 'Set your own account cover image. PNG, JPEG or WebP, read from the file rather than what it claims',
@@ -5634,6 +5644,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/devices',
+    guest: 'OWN',
     description: 'Enrol this machine as a device, returning a secret shown exactly once',
     schema: {
       type: 'object',
@@ -5702,6 +5713,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/devices/:deviceId/revoke',
+    guest: 'OWN',
     description: 'Revoke a device, ending every session bound to it on its next request',
     schema: { type: 'object', required: ['reason'], properties: { reason: stringField }, additionalProperties: false },
     handler: (_platform, ctx) => {
@@ -5718,6 +5730,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/passkeys/register/begin',
+    guest: 'OWN',
     description: 'Start a WebAuthn registration ceremony',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => {
@@ -5729,6 +5742,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/passkeys/register/complete',
+    guest: 'OWN',
     description: 'Finish a WebAuthn registration ceremony and store the credential',
     schema: {
       type: 'object',
@@ -5750,6 +5764,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/passkeys/:passkeyId/revoke',
+    guest: 'OWN',
     description: 'Revoke a passkey',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (_platform, ctx) => {
@@ -5812,6 +5827,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/step-up',
+    guest: 'OWN',
     description: 'Satisfy a step-up demand for this session with a fresh verification',
     schema: {
       type: 'object',
@@ -5849,6 +5865,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/step-up/challenge',
+    guest: 'OWN',
     description: 'Ask for a fresh verification code to satisfy a step-up',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) => {
@@ -6339,6 +6356,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/me/erasure',
+    guest: 'OWN',
     description: 'Ask for this identity to be erased. Starts the grace period; does not erase anything yet',
     schema: {
       type: 'object',
@@ -6381,6 +6399,7 @@ export const ROUTES: Route[] = [
   {
     method: 'DELETE',
     pattern: '/v1/me/erasure',
+    guest: 'OWN',
     description: 'Call off an outstanding erasure request and restore the identity',
     // It takes no body, and this says so rather than saying nothing. A route
     // with no schema is not validated at all, which is the debt the register in
@@ -7542,6 +7561,7 @@ export const ROUTES: Route[] = [
   {
     method: 'PUT',
     pattern: '/v1/notifications/preferences',
+    guest: 'OWN',
     description: 'Set the caller’s notification preferences',
     schema: {
       type: 'object',
@@ -8242,6 +8262,7 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/auth/switch-company',
+    guest: 'OWN',
     description: 'Move this session to another company the same person is a member of. A new session; nothing already running changes',
     schema: { type: 'object', required: ['tenantId'], properties: { tenantId: stringField }, additionalProperties: false },
     handler: (platform, ctx) => {
