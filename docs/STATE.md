@@ -21448,3 +21448,68 @@ Nothing for the host's own people: the rule fires only on an identity with
 — the membership gate has a project to check there and always did. Seven tests in
 `guests.test.ts`, one of which is a zero-with-no-exemption-list assertion over
 the whole route table.
+
+## The commercial overview, on one read
+
+Prompted by a competitor's project dashboard: six headline figures, a cost
+against value curve, a cost breakdown, a milestone timeline, the top cost codes,
+an activity feed and a risk list, all on one screen.
+
+**None of those figures was missing from this platform.** The contract sum is on
+the executed contract, the committed value is the sum of the commitments, the
+certified value is the sum of the payment certificates, the forecast final cost,
+the forecast margin and the unapproved exposure are fields the CVR engine
+already publishes, the cost codes are the approved budget's own, the actuals are
+posted against those same codes, the activity feed is the Golden Thread, and the
+chart library has carried line, pie, gantt and KPI components for some time. The
+flows behind the competitor's left-hand nav — estimating, tender analysis,
+procurement, orders, applications, variations, CVR, forecasting, final account —
+all exist as engines with routes and tests.
+
+What was missing was **the read that puts them beside each other**. Answering
+"where is this job commercially" meant opening the Command Centre for three of
+the numbers and Cost & Value for the rest, and the Command Centre showed the
+commercial position as four rows of a list.
+
+`GET /v1/projects/:projectId/commercial-overview` composes it.
+`domain/commercialoverview.ts` computes nothing and writes nothing, and two
+properties are what keep that honest:
+
+**It never derives a figure an engine already publishes.** The margin on the
+screen is `forecastMarginMinor` off the CVR, not a subtraction done in the
+projection. A second arithmetic for the same number is a second answer, and the
+one on the dashboard would be the one nobody had tested. `commercialoverview.test.ts`
+asserts each of the four CVR figures equals the CVR's own.
+
+**An absent record reads as absent.** A project with no published CVR has no
+forecast, and the figure comes back `null` with `absent` naming the record that
+would carry it. £0 forecast final cost on a project nobody has forecast looks
+like an answer and is not one. The cost-against-value curve states how many
+months of record it was drawn from, because a line through two points is not a
+trend.
+
+Authorised on `BUDGET_COST:R` at `COMMERCIAL_L3` — this read *is* the margin, so
+it is gated on the area that owns it rather than on the project read every seat
+holds. A safety lead is refused.
+
+The Command Centre gains the six tiles through the design system's own `metric`
+and `track`, the curve through `lineChart`, the breakdown through `pieChart`,
+and a top-cost-codes table. Verified against the seeded project: £20.52M
+contract, £8.58M committed (41.8%), £6.20M certified (30.2%), £17.93M forecast
+final cost, £3.45M margin (16.14%), £861K exposure, six cost codes with their
+actuals, client and contract form resolved off the contract's party list rather
+than shown as the party key.
+
+### What is deliberately not there
+
+**Opportunities.** A dashboard of this shape usually carries priced upside beside
+the risks — value engineering, design development savings. `scoreRisk` takes a
+probability and an impact and returns an expected cost: it models downside only,
+and no record on this platform holds a priced upside. The read says so in words
+rather than rendering an empty "Opportunities" panel, which would tell a reader
+this project has none when the truth is the register cannot hold one.
+
+**A project reference and a photograph.** The project record carries neither.
+The header shows what the record has.
+
+Eight tests in `commercialoverview.test.ts`.

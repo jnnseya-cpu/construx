@@ -1,6 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
-import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, time } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, metric, money, pct, raw, render, statusTone, table, time, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
+import { lineChart, pieChart } from '../lib/charts.js';
 import { can, draw, state } from '../app.js';
 import { sectorLabel } from '../lib/enums.js';
 
@@ -17,7 +18,7 @@ const PHASES = ['CONCEPT', 'DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 
 export async function overview(root) {
   const projectId = state.session.projectId;
 
-  const [briefing, bundle, events] = await Promise.all([
+  const [briefing, bundle, events, commercial] = await Promise.all([
     // The greeting uses the signed-in person's own name. A briefing addressed
     // to nobody reads like a report; addressed to somebody it reads like a
     // handover, which is what it is.
@@ -42,6 +43,9 @@ export async function overview(root) {
       'Defect',
     ]),
     api.get(`/v1/projects/${projectId}/audit/events`),
+    // The commercial position as one read. Null where the reader is not cleared
+    // for Commercial-L3 — a denial is shown as a denial, never as zero.
+    can('BUDGET_COST', 'R') ? api.get(`/v1/projects/${projectId}/commercial-overview`).catch(() => null) : Promise.resolve(null),
   ]);
 
   const project = state.project;
@@ -310,6 +314,8 @@ export async function overview(root) {
         </div>
       </div>
 
+      ${commercialBand(commercial)}
+
       <div class="grid g2">
         <div class="card">
           <h2>Open risk register</h2>
@@ -363,4 +369,118 @@ export async function overview(root) {
     subject: 'this project',
     onChange: draw,
   });
+}
+
+/**
+ * The commercial band: six headline figures, cost against value, and where the
+ * money sits.
+ *
+ * Every figure comes from `GET /v1/projects/:id/commercial-overview`, which
+ * composes records that already exist and computes nothing of its own. Nothing
+ * here is derived in the browser — settled decision 6 applied to money, and the
+ * reason a margin on this screen is the same margin the CVR published.
+ *
+ * A missing record reads as missing. `absent` names the record that would carry
+ * the figure, because "£0 forecast final cost" on a project nobody has forecast
+ * looks like an answer and is not one.
+ */
+function commercialBand(commercial) {
+  if (!commercial) return '';
+  const cur = commercial.header.currency;
+  // Through the design system's own `metric`, not hand-rolled markup. The
+  // progress track goes in `sub`, which is the slot it already has, so the six
+  // tiles are the same component every other headline figure on the platform
+  // uses and pick up any change to it.
+  const tile = (item) =>
+    raw(
+      metric({
+        label: item.label,
+        value: item.amountMinor === null ? '—' : money(item.amountMinor, cur),
+        tone: item.key === 'exposure' && item.percent !== null && item.percent > 5 ? 'warn' : '',
+        sub: item.absent
+          ? item.absent
+          : item.percent === null
+            ? ''
+            : html`${item.percent}% of ${item.percentOf}
+                ${track(item.percent, item.key === 'exposure' ? 'warn' : item.key === 'forecastMargin' ? 'ok' : '')}`,
+      }),
+    );
+
+  const curve = commercial.costVsValue;
+  const codes = commercial.breakdown.byCostCode;
+
+  return html`
+    <div class="grid g3" style="margin-bottom:14px">${commercial.headline.map(tile)}</div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        ${raw(
+          lineChart({
+            title: 'Cost against value',
+            data: curve.periods.map((period, index) => ({
+              label: period,
+              contract: curve.contractValueMinor[index],
+              forecast: curve.forecastFinalCostMinor[index],
+              certified: curve.certifiedMinor[index],
+              actual: curve.actualCostMinor[index],
+            })),
+            series: [
+              { key: 'contract', label: 'Contract value' },
+              { key: 'forecast', label: 'Forecast final cost' },
+              { key: 'certified', label: 'Certified value' },
+              { key: 'actual', label: 'Actual cost' },
+            ],
+            format: (value) => money(value, cur),
+            empty: curve.note,
+            footnote: curve.note,
+          }),
+        )}
+      </div>
+      <div class="card">
+        ${raw(
+          pieChart({
+            title: 'Cost breakdown',
+            data: codes.map((code) => ({ label: code.description || code.costCode, value: code.budgetMinor })),
+            format: (value) => money(value, cur),
+            centreLabel: money(commercial.breakdown.totalMinor, cur),
+            empty: commercial.breakdown.absent ?? 'The approved baseline names no cost code.',
+            footnote: commercial.breakdown.absent ?? 'The approved cost baseline, by its own cost codes.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Top cost codes by value</h2>
+        ${table({
+          headers: ['Code', 'Description', 'Baseline', 'Actual', 'Share'],
+          align: ['', '', 'num', 'num', 'num'],
+          rows: codes.slice(0, 8).map((code) => [
+            code.costCode,
+            code.description,
+            money(code.budgetMinor, cur),
+            money(code.actualMinor, cur),
+            `${code.share}%`,
+          ]),
+          empty: commercial.breakdown.absent ?? 'No cost code on the approved baseline.',
+        })}
+      </div>
+      <div class="card">
+        <h2>Risk exposure</h2>
+        ${table({
+          headers: ['Risk', 'Category', 'Severity', 'Expected'],
+          align: ['', '', '', 'num'],
+          rows: commercial.risks.slice(0, 6).map((risk) => [
+            risk.title,
+            humanise(risk.category),
+            badge(risk.severity, statusTone(risk.severity)),
+            money(risk.expectedCostMinor, cur),
+          ]),
+          empty: 'No open risk is scored against this project.',
+        })}
+        <div class="metric-sub" style="margin-top:10px">${commercial.opportunities.because}</div>
+      </div>
+    </div>
+  `;
 }

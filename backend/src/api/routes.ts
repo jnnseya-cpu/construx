@@ -294,6 +294,7 @@ import * as outbox from '../notifications/outbox.ts';
 import * as aievaluation from '../ai/evaluation.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
+import * as commercialoverview from '../domain/commercialoverview.ts';
 import * as signing from '../signing/signature.ts';
 import { ownersByRole, ownersFor, ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
@@ -12848,6 +12849,13 @@ export const ROUTES: Route[] = [
   },
 
   // ------------------------------------------ CN-WF-09 and CN-WF-10 five values, and a deadline somebody checked
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/commercial-overview',
+    readOnly: true,
+    description: 'Where this job is commercially, on one read: the contract, what is committed, certified, forecast and exposed, the cost against value curve, the cost breakdown and the open risks',
+    handler: (platform, ctx) => commercialoverview.commercialOverview(projectContext(platform, ctx)),
+  },
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/commercial-control',
