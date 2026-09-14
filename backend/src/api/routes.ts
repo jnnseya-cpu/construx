@@ -295,6 +295,7 @@ import * as aievaluation from '../ai/evaluation.ts';
 import * as designreview from '../engines/designreview.ts';
 import * as perception from '../engines/perception.ts';
 import * as commercialoverview from '../domain/commercialoverview.ts';
+import * as standards from '../domain/standards.ts';
 import * as signing from '../signing/signature.ts';
 import { ownersByRole, ownersFor, ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
@@ -9366,6 +9367,42 @@ export const ROUTES: Route[] = [
         actionId: ctx.params.actionId!,
         ...body<{ evidenceNote: string }>(ctx),
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/riba-stages',
+    readOnly: true,
+    description: 'Where this project is across RIBA Plan of Work 2020 stages 0–7, what each stage is for, and what the record holds for it',
+    handler: (platform, ctx) => {
+      const context = projectContext(platform, ctx);
+      authorise(context, 'PROJECT_SETUP', 'R');
+      const gate = structure.evaluateCurrentGate(context);
+      // The latest assessment's discipline scores. RIBA stages inside DESIGN
+      // are more precise than the phase is, and this is where that precision
+      // already lives — assessed, not asserted.
+      const assessments = context.ledger.list(context.projectId, 'DesignMaturityAssessment');
+      const latest = assessments[assessments.length - 1]?.state as Record<string, unknown> | undefined;
+      const disciplineStages =
+        (latest?.disciplineScores as Array<{ discipline: string; ribaStage: number; frozen: boolean }> | undefined) ?? [];
+      return {
+        projectId: context.projectId,
+        phase: gate.currentPhase,
+        stages: standards.stagePosition({
+          phase: gate.currentPhase,
+          disciplineStages,
+          gate: gate.criteria.map((criterion) => ({ description: criterion.description, satisfied: criterion.satisfied })),
+        }),
+        assessedAt: latest?.assessedAt ? String(latest.assessedAt) : null,
+      };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/standards',
+    readOnly: true,
+    guest: 'REFERENCE',
+    description: 'The standards this platform works to, what it does about each, and whether it enforces or carries it',
+    handler: () => ({ standards: standards.STANDARDS, ribaStages: standards.RIBA_STAGES, lifecycle: standards.lifecycleWithStages() }),
   },
   {
     method: 'GET',

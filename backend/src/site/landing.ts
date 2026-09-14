@@ -9,6 +9,7 @@ import { CONTROLLER_PASS, UNCHARGED_ROLES } from '../billing/seats.ts';
 import { DEMO_TENANCY } from '../seed.ts';
 import { page } from './layout.ts';
 import { MEDIA_SLOTS, slotFile } from './media.ts';
+import { STANDARDS, lifecycleWithStages } from '../domain/standards.ts';
 
 /**
  * The landing page.
@@ -553,6 +554,64 @@ ${figure('command-centre')}
       </article>`,
       ).join('\n      ')}
     </div>
+  </div>
+</section>
+
+<!--
+  What the platform works to, and how much of it is enforcement.
+
+  Named standards are the first thing a buyer's compliance officer asks about
+  and the easiest thing on a marketing page to overstate. So none of this is
+  typed here: the stages, the phases, the gate criteria, the CDM document count
+  and the document that gates construction are all read out of
+  domain/standards.ts, which reads them from the code that enforces them. If
+  a gate is removed the page stops claiming it the same day.
+
+  Each entry says whether the platform *refuses* work without the standard or
+  *carries* the record to it, and each says what it does not claim. A page that
+  only lists the strengths is the page nobody in procurement believes.
+-->
+<section class="standards">
+  <div class="wrap">
+    <h2 class="section-h">Stage 0 to year thirty, on one record</h2>
+    <p class="section-lede">
+      RIBA Plan of Work 2020 across seven gated phases, CDM 2015 duty documents that stop the job when they are
+      unapproved, the payment statute, ISO 19650 suitability and the golden thread the Building Safety Act expects.
+      Not a compliance checklist bolted on — the gates are what the platform refuses on.
+    </p>
+
+    <ol class="stage-ribbon">
+      ${lifecycleWithStages()
+        .map(
+          (entry) => `<li>
+        <span class="stage-nums">${entry.stages.length > 0 ? entry.stages.map((stage) => `RIBA ${stage}`).join(' · ') : 'Procurement task bar'}</span>
+        <b>${esc(entry.phase.charAt(0) + entry.phase.slice(1).toLowerCase())}</b>
+        <span class="stage-purpose">${esc(entry.purpose)}</span>
+        ${entry.gate.length > 0 ? `<span class="stage-gate">${entry.gate.map((criterion) => esc(criterion)).join('<br>')}</span>` : '<span class="stage-gate">Runs for the life of the asset.</span>'}
+      </li>`,
+        )
+        .join('\n      ')}
+    </ol>
+
+    <div class="standard-grid">
+      ${STANDARDS.map(
+        (standard) => `<article class="standard">
+        <span class="standard-strength ${standard.strength === 'ENFORCED' ? 'is-enforced' : 'is-carried'}">${standard.strength === 'ENFORCED' ? 'Enforced' : 'Carried'}</span>
+        <h3>${esc(standard.name)}</h3>
+        <p>${esc(standard.does)}</p>
+        <p class="standard-where">${esc(standard.mechanism)}</p>
+        ${standard.notClaimed ? `<p class="standard-not">Not claimed — ${esc(standard.notClaimed)}</p>` : ''}
+      </article>`,
+      ).join('\n      ')}
+    </div>
+
+    <p class="standards-foot">
+      <b>Enforced</b> means the platform refuses the work without it — an unapproved Construction Phase Plan stops the
+      construction phase, a design with no maturity assessment cannot leave design, a suitability code the standard
+      does not define is rejected. <b>Carried</b> means the record is structured to the standard and a person still
+      decides. Every line above is read from the module that implements it, so this page cannot claim a gate the
+      platform has stopped enforcing.
+    </p>
   </div>
 </section>
 

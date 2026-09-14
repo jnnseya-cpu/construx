@@ -18,7 +18,7 @@ const PHASES = ['CONCEPT', 'DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING', 
 export async function overview(root) {
   const projectId = state.session.projectId;
 
-  const [briefing, bundle, events, commercial] = await Promise.all([
+  const [briefing, bundle, events, commercial, riba] = await Promise.all([
     // The greeting uses the signed-in person's own name. A briefing addressed
     // to nobody reads like a report; addressed to somebody it reads like a
     // handover, which is what it is.
@@ -46,6 +46,11 @@ export async function overview(root) {
     // The commercial position as one read. Null where the reader is not cleared
     // for Commercial-L3 — a denial is shown as a denial, never as zero.
     can('BUDGET_COST', 'R') ? api.get(`/v1/projects/${projectId}/commercial-overview`).catch(() => null) : Promise.resolve(null),
+    // Where the project is in RIBA Plan of Work terms. Derived from the same
+    // phase and the same design maturity assessment the gate reads, never
+    // stored — see `domain/standards.ts` for why a second stage number beside
+    // the lifecycle would be a second answer.
+    api.get(`/v1/projects/${projectId}/riba-stages`).catch(() => null),
   ]);
 
   const project = state.project;
@@ -209,6 +214,7 @@ export async function overview(root) {
               html`<div class="${raw(i < currentIndex ? 'done' : i === currentIndex ? 'current' : '')}">${humanise(phase)}</div>`,
           )}
         </div>
+        ${ribaRibbon(riba)}
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -483,4 +489,39 @@ function commercialBand(commercial) {
       </div>
     </div>
   `;
+}
+
+/**
+ * RIBA Plan of Work 2020, stages 0 to 7, against this project.
+ *
+ * The same seven phases in the rail above, read the way a practice working to
+ * the Plan of Work reads them. Not a second lifecycle: the state of every stage
+ * is derived server-side from the phase the project is in and the design
+ * maturity already assessed per discipline, so the ribbon and the rail cannot
+ * disagree.
+ *
+ * Each stage carries its own goal and the reason it is in the state it is in,
+ * because "Stage 3" on its own tells a client nothing and a tooltip that says
+ * what the stage is *for* is the difference between a progress bar and a
+ * position somebody can act on.
+ */
+function ribaRibbon(riba) {
+  if (!riba) return '';
+  const tone = { COMPLETE: 'done', CURRENT: 'current', NOT_STARTED: '' };
+  return html`<div class="metric-sub" style="margin:12px 0 6px">RIBA Plan of Work 2020</div>
+    <div class="rail">
+      ${riba.stages.map(
+        (stage) => html`<div
+          class="${raw(tone[stage.state] ?? '')}"
+          title="${`Stage ${stage.stage} · ${stage.name} — ${stage.goal} ${stage.because}${stage.evidence.length > 0 ? ` (${stage.evidence.join('; ')})` : ''}`}"
+        >${stage.stage} ${stage.name}</div>`,
+      )}
+    </div>
+    ${riba.assessedAt
+      ? html`<div class="metric-sub" style="margin-top:6px">
+          Stages 2–4 read from the design maturity assessed on ${date(riba.assessedAt)}, per discipline.
+        </div>`
+      : html`<div class="metric-sub" style="margin-top:6px">
+          No design maturity has been assessed, so the record cannot say which design stage has been reached.
+        </div>`}`;
 }

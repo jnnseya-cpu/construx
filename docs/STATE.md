@@ -21513,3 +21513,79 @@ this project has none when the truth is the register cannot hold one.
 The header shows what the record has.
 
 Eight tests in `commercialoverview.test.ts`.
+
+## RIBA 0–7, CDM 2015, and what the landing page is allowed to claim
+
+Asked for as: put on the landing page that CONSTRUX takes a project through
+RIBA stages 0–7, CDM 2015 and the rest — and make sure the system can actually
+do it.
+
+Those are two different pieces of work and the second is the one that matters.
+A marketing page naming a standard is a claim, and a claim nothing checks drifts
+the first time somebody edits a gate.
+
+### What was already true, and what was not
+
+**CDM 2015, the payment statute, ISO 19650 and the golden thread were already
+implemented and enforced.** `domain/cdm.ts` carries every duty document type with
+the sections the regulations require, and the Construction Phase Plan gates the
+construction phase. `engines/maths/constructionAct.ts` counts statutory periods
+as the Act counts them. `domain/cde.ts` refuses a suitability code ISO 19650
+does not define. The ledger is the golden thread. The contract clause library
+resolves obligations to the clause under JCT 2016, NEC4, FIDIC 2017 Red Book,
+IChemE and MF/1.
+
+**RIBA 0–7 was not.** `ribaStage` existed as an integer on design maturity
+discipline scores and nowhere else. The platform had seven gated phases and no
+way to answer "which RIBA stage is this project at", which is the question a
+practice working to the Plan of Work actually asks.
+
+### Stages as a view, never a second state machine
+
+`domain/standards.ts` carries the eight stages with the goal of each, and
+`stagePosition` derives where a project is across them. **Derived, never
+stored.** There is one lifecycle on this platform; a stored stage number beside
+it would be a second answer to "where is this project", and the two would
+disagree the first time somebody advanced one and not the other. An invariant in
+`standards.test.ts` asserts the view can never contradict the phase it comes
+from, for every phase.
+
+Where a phase carries several stages the platform refines rather than guesses.
+DESIGN carries stages 2, 3 and 4, and `assessDesignMaturity` already records a
+RIBA stage per discipline — so the furthest assessed discipline is the stage the
+design is at, and the disciplines are named on it. With no assessment the read
+says the record cannot tell, rather than putting a number on a screen nothing
+behind it supports.
+
+Two places the mapping is not one-to-one, both stated rather than smoothed over:
+
+- **TENDER carries no stage.** Procurement is a task bar in the Plan of Work,
+  running across stages rather than being one. Here it is a gated phase, because
+  an award is a decision with money on it. The ribbon says "procurement task
+  bar" rather than inventing a stage number.
+- **Stage 6 spans two phases.** COMMISSIONING proves the asset performs and
+  HANDOVER transfers responsibility for it — one RIBA stage, two gates, because
+  they are different decisions. `alsoPhase` records it, so neither phase reports
+  as carrying no stage.
+
+### The landing page states what the code enforces
+
+The new section is generated from `domain/standards.ts`, which reads
+`PHASE_GATES`, `CDM_DOCUMENTS` and `LIFECYCLE_ORDER` rather than restating them.
+The CDM document count and the document that gates construction are read from
+the catalogue, so removing the gate removes the claim the same day.
+
+Every standard declares a **strength** and a **mechanism**: `ENFORCED` means the
+platform refuses the work without it, `CARRIED` means the record is structured to
+it and a person still decides. Five are enforced; the contract clause library is
+carried. Each enforced standard also names what is **not claimed** — that this is
+not a RIBA-certified tool, that drafting a duty document is not discharging the
+duty, that the Act places duties on dutyholders and not on software. A test
+requires it: an enforced standard that names no boundary fails.
+
+`GET /v1/standards` publishes the same thing to the console, where Project
+Control shows it beside the control standard the project is measured against.
+The Command Centre gains a RIBA ribbon under the lifecycle rail, each stage
+carrying its goal and the reason it is in the state it is in.
+
+Twelve tests in `standards.test.ts`.

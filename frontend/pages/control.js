@@ -150,7 +150,7 @@ function responsibilityPanel(matrix) {
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions, standard, stages, decisions, actions, reusable, responsibility] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.read('/v1/lessons', 'RISK_REGISTER').catch(() => null),
@@ -163,6 +163,10 @@ export async function control(root) {
     // has occupied, every open commitment in one place, and the lessons other
     // projects have already paid for. All four had engines and no screen.
     api.get('/v1/control/standard').catch((error) => ({ error })),
+    // The standards the platform itself works to, beside the control standard
+    // this project is measured against. Published from `domain/standards.ts`,
+    // which reads the gates rather than restating them.
+    api.get('/v1/standards').catch(() => null),
     api.get(`/v1/projects/${projectId}/stages`).catch((error) => ({ error })),
     api.read(`/v1/projects/${projectId}/decisions`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error })),
     api.read(`/v1/projects/${projectId}/actions`, 'LOOKAHEAD_CONSTRAINTS').catch((error) => ({ error })),
@@ -530,6 +534,8 @@ export async function control(root) {
           </div>
         </div>
       </div>
+
+      ${standardsPanel(platformStandards)}
 
       ${
         project.blockingGaps.length > 0
@@ -1110,4 +1116,51 @@ export async function control(root) {
       toast('The exception could not be raised', error.detail ?? error.message ?? '', 'err');
     }
   });
+}
+
+/**
+ * The standards this platform works to, beside the control standard this
+ * project is measured against.
+ *
+ * Read from `GET /v1/standards`, which publishes `domain/standards.ts` — and
+ * that module reads the gates, the CDM catalogue and the lifecycle rather than
+ * restating them. So a gate removed from the platform stops being claimed here
+ * the same day, which is the only way a compliance claim stays true.
+ *
+ * Each entry says whether the platform *refuses* the work without the standard
+ * or *carries* the record to it, and what it does not claim. A panel that
+ * listed only the strengths is the one a compliance officer stops believing.
+ */
+function standardsPanel(published) {
+  if (!published) return '';
+  return html`<div class="card" style="margin-bottom:14px">
+    <h2>What this platform works to</h2>
+    <p class="metric-sub" style="margin-bottom:12px">
+      RIBA Plan of Work 2020 across the seven gated phases, CDM 2015 duty documents, the payment statute, ISO 19650
+      suitability, the golden thread and the standard contract forms. <b>Enforced</b> means the platform refuses the
+      work without it; <b>carried</b> means the record is structured to it and a person still decides.
+    </p>
+    ${table({
+      headers: ['Standard', 'What the platform does', 'Strength', 'Where'],
+      rows: published.standards.map((entry) => [
+        entry.name,
+        html`${entry.does}${entry.notClaimed ? html`<div class="metric-sub" style="margin-top:6px">Not claimed — ${entry.notClaimed}</div>` : ''}`,
+        badge(entry.strength === 'ENFORCED' ? 'enforced' : 'carried', entry.strength === 'ENFORCED' ? 'ok' : 'neutral'),
+        html`<span class="metric-sub">${entry.mechanism}</span>`,
+      ]),
+      empty: 'No standard is published.',
+    })}
+    <h3 style="margin-top:16px">RIBA Plan of Work 2020, against the lifecycle</h3>
+    ${table({
+      headers: ['Stage', 'Goal', 'Phase here', 'What the gate asks'],
+      rows: published.ribaStages.map((stage) => [
+        html`<b>${stage.stage}</b> ${stage.name}`,
+        stage.goal,
+        humanise(stage.phase),
+        html`${(published.lifecycle.find((entry) => entry.phase === stage.phase)?.gate ?? []).join('; ') || html`<span class="metric-sub">Runs for the life of the asset.</span>`}
+          ${stage.note ? html`<div class="metric-sub" style="margin-top:6px">${stage.note}</div>` : ''}`,
+      ]),
+      empty: 'No stage mapping is published.',
+    })}
+  </div>`;
 }
