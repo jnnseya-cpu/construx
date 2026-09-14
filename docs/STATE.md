@@ -9378,15 +9378,17 @@ administrator; the operator is barred by account-layer separation. The entry
 sits under Command beside Enterprise & Portfolio. `team.test.ts` drives it
 over HTTP, including the restart.
 
-**Deliberately not built, and why.** Custom role templates and per-user
-permission toggles: the permission matrix is the one published source of what
-a role may do, and a permission granted outside a role is one no screen can
-account for; change what somebody may do by changing their roles. Approval-rule
-switches ("finance access requires owner approval") and four-eyes thresholds:
-the controls in force are the ones the engines enforce, listed as such; a
-switch nothing reads would be a promise with nothing behind it. An "expected
-ACU band per role group": there is no measured figure to publish, and an
-invented one would be a fake number on a governance screen.
+**Deliberately not built, and why.** Per-user permission toggles: a permission
+granted outside any role is one no screen can account for. (Roles a company
+defines *for itself* were previously listed here too, and are now built — see
+the section below; the distinction that made them buildable is that a company
+role is named, appears on a register, has holders, and is amended or retired
+once for everybody.) Approval-rule switches ("finance access requires owner
+approval") and four-eyes thresholds: the controls in force are the ones the
+engines enforce, listed as such; a switch nothing reads would be a promise with
+nothing behind it. An "expected ACU band per role group": there is no measured
+figure to publish, and an invented one would be a fake number on a governance
+screen.
 
 ### Closing a tenancy, and what it is owed
 
@@ -21237,3 +21239,116 @@ have never been installed, no screens, and no build ever run. Packaging it would
 mean standing up EAS, Apple and Play accounts and the review cycle, against a
 client that does not yet render a screen. That work is parked, deliberately, and
 is not counted anywhere as complete.
+## Roles a company writes for itself
+
+Asked for as: let an enterprise administrator add a new role, decide what it
+can reach, and give it to people.
+
+Half of that already existed. Assigning roles is `POST /v1/users/:userId/roles`
+with a **Roles** action on every row of the user directory, and it was not
+rebuilt. What was missing was *defining* a role: the built-in matrix describes
+the roles this industry has — a quantity surveyor is a quantity surveyor — and
+an administrator running a real organisation hits two walls with it. "Our QS
+does not approve awards": the built-in role carries an authority their internal
+governance withholds, and the only way to remove it was a weaker role that also
+removed things the person needs. "Our document controller also raises RFIs":
+the reverse, a role nearly right and missing one capability, with no way to add
+it short of granting a second whole role.
+
+A **custom role** is a named set of capability grants, defined by the company,
+held alongside a person's built-in roles. `identity/customroles.ts` holds the
+model; `CUSTOM_ROLE_DEFINED`, `CUSTOM_ROLE_AMENDED`, `CUSTOM_ROLE_RETIRED` and
+`USER_CUSTOM_ROLES_CHANGED` are the events; the register, the definition form
+and the per-person assignment are on Team & Access.
+
+### The bounds, because this is an escalation engine without them
+
+A permission system that lets an administrator author permissions is a
+privilege-escalation engine unless it is bounded. Four bounds, all enforced in
+the domain and all asserted as refusals in `customroles.test.ts`.
+
+**Nobody grants what they do not hold.** Every capability in a definition is
+checked against the definer's own authority, and again against the *assigner's*
+when the role is handed over — two acts, two people, two checks
+(`GRANT_EXCEEDS_AUTHORITY`). The bound is the definer's **built-in** roles, so a
+capability held only through a custom role is not re-grantable: no chain of
+delegations can end anywhere its first link could not have reached directly.
+
+**The operator's layer is not reachable.** `PLATFORM_ADMINISTRATION` is refused
+outright (`ACCOUNT_LAYER_SEPARATION`) rather than left to the rule above,
+because a mistake there would cross the account layer rather than widen a role
+inside a tenancy. The route schema does not offer it either, so the generated
+form cannot present a choice that is always refused.
+
+**A seat is still a seat.** A definition names the built-in role whose seat it
+occupies. *Which* Controller role is a declaration — a company knows whether its
+new role sits at QS or PM, and deriving it would move the price whenever
+somebody ticked a box. Whether it is a Controller seat **at all** is not:
+`checkSeatClass` refuses a participant seat class on a role carrying Controller
+authority (`CUSTOM_ROLE_SEAT_UNDERSTATED`), on amendment as well as definition,
+and `checkSeatCover` refuses to give a Controller-class role to somebody holding
+no Controller seat (`CUSTOM_ROLE_SEAT_REQUIRED`). `assignRoles` refuses the same
+hole walked backwards — reducing somebody to a participant while the company
+role stays on. Controller authority is `isControllerGrant`, derived from the
+same `CONTROLLER_PERMISSIONS` table `isControllerRole` reads, not a second list.
+Without these a company could define a role granting payment certification, name
+it truthfully after a Viewer, and have the person certifying payments counted as
+a free participant.
+
+**Nobody changes their own authority.** `SELF_ROLE_CHANGE`, the same rule that
+already governs built-in roles.
+
+### Where it is enforced, and why retirement is immediate
+
+`evaluateAccess` in `identity/abac.ts` — the single decision point every engine,
+the conversational router and the exporter reach — consults grants beside the
+matrix. One line, in the one place, so a capability granted this way cannot be
+honoured on one path and refused on another.
+
+Grants are resolved **per request** in the gateway from the live record, never
+baked into a token. That is what makes retiring a role take effect now rather
+than at the holder's next sign-in, which is the case that matters when an
+authority is being withdrawn in a hurry. Retirement edits nobody: a retired
+definition simply contributes nothing, so one write withdraws it from everybody,
+and the ids stay on those people so the decision is reversible rather than a
+list somebody has to rebuild from memory.
+
+Two consequences of resolving per request, both deliberate. An **API key is not
+widened** — a key is issued with an explicit scope list narrower than its
+issuer, and pulling in whatever authority that person later acquired would
+defeat the narrowing. A **session's scopes are extended** by the grants, because
+scopes are minted at sign-in from `scopesForRoles`, which reads the built-in
+matrix and knows nothing about a role written last week; without this the RBAC
+line would admit a granted capability and the scope line beside it would refuse
+the same request.
+
+### On the console
+
+**Roles this company defined** on Team & Access: every definition, what it
+grants in words, its seat class, its holders, and Amend/Retire. **Define a
+role** builds its capability picker from `yours` on `GET /v1/custom-roles` — the
+reader's own flattened authority — so an administrator who cannot grant payment
+certification never sees it offered rather than picking it and being refused.
+The permission codes are labelled from `PERMISSION_CODE_MEANING` in
+`identity/roles.ts` rather than a copy kept in the browser. A **Company roles**
+action on each directory row sets the whole set, pre-selected from what the
+person holds.
+
+Twenty tests in `customroles.test.ts`, fifteen of them refusals.
+
+### Fixed on the way: the multiselect that pre-selected nothing
+
+`frontend/lib/command.js` rendered `multiselect` options without honouring
+`field.value`. Every endpoint behind one **replaces** the set rather than adding
+to it, and the existing roles form passed the person's current roles and had
+them ignored — so an administrator opening "Change what Ana may do" saw nothing
+selected and submitted whatever they ticked, silently stripping every role they
+had not remembered to re-tick. A pre-selection there is not a convenience; it is
+the difference between amending an authority and replacing it by accident.
+
+### Still not built
+
+Per-user permission toggles. A company role is named, appears on a register, has
+holders and is amended or retired once for everybody, so it can be accounted
+for; a permission attached to one person outside any role cannot be, and remains
+absent.

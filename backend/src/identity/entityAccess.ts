@@ -66,6 +66,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   StageInstance: { area: 'PROJECT_SETUP' },
   GateReview: { area: 'PROJECT_SETUP' },
   User: { area: 'ENTERPRISE_STRUCTURE' },
+  // What a company decided somebody may do. Same area as the people it applies to.
+  CustomRole: { area: 'ENTERPRISE_STRUCTURE' },
 
   // ETABLIX site services — reachable only by a tenancy holding the module.
   // Classified so the generic entity route enforces the capability boundary on

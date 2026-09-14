@@ -23,6 +23,7 @@ import {
   type RequestContext,
   sendDocument,
 } from './middleware.ts';
+import { requiredScope } from '../identity/scopes.ts';
 import { resolveLocale } from '../domain/locale.ts';
 import { recordSecurityEvent, truncateAddress } from './telemetry.ts';
 import { clientAddress } from './clientaddress.ts';
@@ -396,6 +397,43 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
 
     authenticate(req, ctx, isPublic);
 
+    // A credential that is an integration rather than a person.
+    const viaApiKey = /^Bearer ck_(live|test)_/.test(req.headers.authorization ?? '');
+
+    // Capabilities from roles this company defined for itself.
+    //
+    // Resolved here, once per request, from the live record — not carried in
+    // the token. That is the difference between retiring a role taking effect
+    // now and taking effect whenever the holder next signs in, and an authority
+    // being withdrawn in a hurry is the case that matters. Everything
+    // downstream reads `evaluateAccess`, which consults these alongside the
+    // built-in matrix, so a capability granted this way cannot be honoured on
+    // one path and refused on another.
+    //
+    // Two things this deliberately does not do.
+    //
+    // **It does not widen an API key.** A key is issued by a person with an
+    // explicit scope list, narrower than the person who issued it, and that
+    // narrowing is the whole point of a key. Pulling the issuer's custom roles
+    // in behind it would hand a build-status integration whatever authority its
+    // author happened to acquire afterwards.
+    //
+    // **It does extend the session's scopes.** Scopes are minted at sign-in
+    // from `scopesForRoles`, which reads the built-in matrix and knows nothing
+    // about a role written last week — so without this the RBAC line would
+    // admit a granted capability and the scope line below it would refuse the
+    // same request. A person's session is scoped to their authority, and their
+    // authority now includes what their company granted them.
+    if (ctx.auth && !viaApiKey) {
+      const grants = platform.grantsFor(ctx.auth.actorId);
+      if (grants.length > 0) {
+        ctx.auth.grants = grants;
+        ctx.auth.scopes = [
+          ...new Set([...ctx.auth.scopes, ...grants.map((grant) => requiredScope(grant.area, grant.code))]),
+        ];
+      }
+    }
+
     // Re-apply post-auth so the tenant-aware key takes effect once known.
     if (ctx.auth && !IS_PROBE.has(ctx.routeId)) {
       await applyRateLimit(ctx, remote);
@@ -414,7 +452,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       !ctx.auth.mfaSatisfied &&
       !isPublic &&
       !ENROLMENT_ROUTES.has(ctx.routeId) &&
-      !/^Bearer ck_(live|test)_/.test(req.headers.authorization ?? '') &&
+      !viaApiKey &&
       platform.secondFactorRequiredFor(ctx.auth.actorId)
     ) {
       throw new ForbiddenError(

@@ -103,6 +103,26 @@ export const CONTROLLER_PERMISSIONS: readonly ControllerPermission[] = [
 /** The matrix tests that make a role a Controller, from the table above. */
 const CONTROLLER_BASES = CONTROLLER_PERMISSIONS.map((entry) => entry.basis).filter((basis): basis is NonNullable<ControllerPermission['basis']> => basis !== null);
 
+/**
+ * Is this one capability Controller-level authority?
+ *
+ * The same table as `isControllerRole`, asked of a capability rather than a
+ * role, because a role a company writes for itself is a set of capabilities and
+ * not a row on the matrix. Without this the whole seat model could be stepped
+ * around: define a role granting `BUDGET_COST:A`, declare its seat class
+ * honestly as `VIEWER` — the declaration is about the *name*, and nothing
+ * checked it against the contents — and a person approving budgets is counted
+ * as a participant who takes no seat.
+ *
+ * Derived from `CONTROLLER_BASES` rather than a second list, so a permission
+ * that becomes Controller-level becomes Controller-level in both places.
+ */
+export function isControllerGrant(area: CapabilityArea, code: PermissionCode): boolean {
+  return CONTROLLER_BASES.some(
+    (basis) => (basis.area === 'ANY' || basis.area === area) && basis.codes.includes(code),
+  );
+}
+
 /** Does one role hold Controller-level authority anywhere on the matrix? */
 export function isControllerRole(role: Role): boolean {
   const row = PERMISSION_MATRIX[role] ?? {};

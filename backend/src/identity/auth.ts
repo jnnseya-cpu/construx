@@ -3,6 +3,7 @@ import { config } from '../config.ts';
 import { AuthError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Role } from './roles.ts';
+import type { CapabilityGrant } from './customroles.ts';
 import { clearFailures, lockState, recordFailure } from './lockout.ts';
 import { scopesForRoles } from './scopes.ts';
 import { signFor, verifyFor } from './secrets.ts';
@@ -23,6 +24,16 @@ export type AuthContext = {
   /** Party this actor belongs to — the supplier confinement anchor. */
   partyId?: string;
   roles: Role[];
+  /**
+   * Capabilities from roles this company defined for itself, resolved per
+   * request rather than carried in the token.
+   *
+   * Absent on most sessions, which is the common case and costs nothing:
+   * `evaluateAccess` consults the built-in matrix first and only reaches these
+   * when a built-in role does not already allow the thing. Resolved live so a
+   * retired role stops working immediately — see `identity/customroles.ts`.
+   */
+  grants?: CapabilityGrant[];
   scopes: string[];
   tokenId: string;
   mfaSatisfied: boolean;
@@ -56,6 +67,16 @@ type TokenClaims = {
   eid?: string;
   pid?: string;
   roles: Role[];
+  /**
+   * Capabilities from roles this company defined for itself, resolved per
+   * request rather than carried in the token.
+   *
+   * Absent on most sessions, which is the common case and costs nothing:
+   * `evaluateAccess` consults the built-in matrix first and only reaches these
+   * when a built-in role does not already allow the thing. Resolved live so a
+   * retired role stops working immediately — see `identity/customroles.ts`.
+   */
+  grants?: CapabilityGrant[];
   scopes: string[];
   jti: string;
   mfa: boolean;

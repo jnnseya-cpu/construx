@@ -115,6 +115,24 @@ export type PermissionCode =
   | 'X' // Run AI (ACU consuming)
   | 'G'; // Governance (users / policies)
 
+/**
+ * What each code means, in the words a person picking one needs.
+ *
+ * A single letter is a fine key and a poor label. Any screen that asks somebody
+ * to choose a capability — the custom-role form is the first — needs the words,
+ * and if it carried its own copy of them the published meaning and the enforced
+ * one would be two lists maintained by two people.
+ */
+export const PERMISSION_CODE_MEANING: Record<PermissionCode, { label: string; meaning: string }> = {
+  R: { label: 'Read', meaning: 'See the records in this area' },
+  C: { label: 'Create', meaning: 'Add new records' },
+  U: { label: 'Update', meaning: 'Change existing records' },
+  A: { label: 'Approve', meaning: 'Approve, freeze or execute — the authority that commits the business' },
+  I: { label: 'Import / export', meaning: 'Take data in or out, including evidence exports' },
+  X: { label: 'Run AI', meaning: 'Start an AI task in this area. Consumes ACUs from the wallet' },
+  G: { label: 'Govern', meaning: 'Change users, roles and policies in this area' },
+};
+
 export type CapabilityArea =
   | 'PLATFORM_ADMINISTRATION'
   | 'BUSINESS_DEVELOPMENT'

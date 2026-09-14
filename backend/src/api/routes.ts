@@ -298,8 +298,10 @@ import * as signing from '../signing/signature.ts';
 import { ownersByRole, ownersFor, ownershipMap } from '../identity/ownership.ts';
 import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
   assertTenantGrantable,
+  PERMISSION_CODE_LIST,
   TENANT_GRANTABLE_ROLES,
 } from '../identity/roles.ts';
+import { customRoleRegister, GRANTABLE_AREAS } from '../identity/customroles.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
@@ -1280,6 +1282,11 @@ function teamPosition(platform: Platform, tenantId: string) {
       name: person.name,
       email: person.email,
       roles: person.roles,
+      // The ids of this company's own roles they hold. Ids rather than names,
+      // because the directory is what the "give somebody a company role" form
+      // pre-selects from, and that form replaces the whole set — so it has to
+      // start from what the person actually holds, not a label it re-matched.
+      customRoles: person.customRoles ?? [],
       status: person.status,
       state,
       erasureDueAt: person.erasureDueAt ?? null,
@@ -5408,6 +5415,132 @@ export const ROUTES: Route[] = [
         userId: ctx.params.userId as string,
       });
     },
+  },
+  // ------------------------------------------------- roles a company writes
+  //
+  // The built-in matrix describes the roles this industry has. These are the
+  // ones a particular company has, and the five routes below are the whole of
+  // it: define, amend, retire, read the register, give one to somebody.
+  //
+  // Every one authorises on `ENTERPRISE_STRUCTURE:G`, the same governance
+  // capability that already gates changing a person's built-in roles — so the
+  // question "who may write our own roles" has one answer, not a second one
+  // invented here. The escalation bound is in `identity/customroles.ts` and is
+  // checked against the actor's *built-in* roles at definition and again at
+  // assignment: a capability somebody holds only through a custom role is not
+  // re-grantable, so no chain of delegations can end anywhere its first link
+  // could not reach directly.
+  {
+    method: 'GET',
+    pattern: '/v1/custom-roles',
+    readOnly: true,
+    description: 'The roles this company has defined for itself, what each one grants, and the capabilities you may put in one',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return customRoleRegister(platform.customRoles(actor.tenantId), actor.roles);
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/custom-roles',
+    description: 'Define a role of this company’s own, naming the capabilities it carries and the seat it occupies',
+    schema: {
+      type: 'object',
+      required: ['name', 'description', 'seatClass', 'grants'],
+      properties: {
+        name: { type: 'string', minLength: 3 },
+        description: { type: 'string', minLength: 12 },
+        seatClass: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        grants: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['area', 'code'],
+            properties: {
+              area: { type: 'string', enum: GRANTABLE_AREAS },
+              code: { type: 'string', enum: PERMISSION_CODE_LIST },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      platform.defineCustomRole(
+        authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'G'),
+        body<{ name: string; description: string; seatClass: string; grants: Array<{ area: string; code: string }> }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/custom-roles/:roleId/amend',
+    description: 'Change what a role of this company’s own grants, or what it is called',
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 3 },
+        description: { type: 'string', minLength: 12 },
+        seatClass: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        grants: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['area', 'code'],
+            properties: {
+              area: { type: 'string', enum: GRANTABLE_AREAS },
+              code: { type: 'string', enum: PERMISSION_CODE_LIST },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      platform.amendCustomRole(
+        authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'G'),
+        ctx.params.roleId as string,
+        body<{ name?: string; description?: string; seatClass?: string; grants?: Array<{ area: string; code: string }> }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/custom-roles/:roleId/retire',
+    description: 'Withdraw a role of this company’s own. Everyone holding it loses its capabilities on their next request',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      platform.retireCustomRole(
+        authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'G'),
+        ctx.params.roleId as string,
+        body<{ reason: string }>(ctx).reason,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/users/:userId/custom-roles',
+    description: 'Give somebody the roles this company defined, or take them away. The whole set is named, not added to',
+    schema: {
+      type: 'object',
+      required: ['roleIds', 'reason'],
+      properties: {
+        roleIds: { type: 'array', items: { type: 'string', minLength: 1 } },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      platform.setCustomRoles(authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'G'), {
+        ...body<{ roleIds: string[]; reason: string }>(ctx),
+        userId: ctx.params.userId as string,
+      }),
   },
   {
     method: 'GET',

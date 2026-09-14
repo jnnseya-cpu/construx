@@ -91,9 +91,19 @@ function control(field) {
     // integration may do needs to see the whole list of what they could
     // grant, and typing them means typos that fail server-side with a
     // message about a scope nobody meant to ask for.
+    //
+    // `field.value` marks what is already chosen, and it has to, because every
+    // endpoint behind a multiselect *replaces* the set rather than adding to
+    // it. The roles form passed the person's current roles and this ignored
+    // them, so an administrator opening "Change what Ana may do" saw nothing
+    // selected and submitted whatever they ticked — silently stripping every
+    // role they had not remembered to re-tick. A pre-selection is not a
+    // convenience here; it is the difference between amending an authority and
+    // replacing it by accident.
+    const chosen = new Set((Array.isArray(field.value) ? field.value : field.value == null ? [] : [field.value]).map(String));
     return `<select id="${id}" name="${esc(field.name)}" multiple size="${Math.min(10, Math.max(4, (field.options ?? []).length))}" ${required}>
       ${(field.options ?? [])
-        .map((o) => `<option value="${esc(o.value)}">${esc(o.label)}</option>`)
+        .map((o) => `<option value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' selected' : ''}>${esc(o.label)}</option>`)
         .join('')}
     </select>`;
   }

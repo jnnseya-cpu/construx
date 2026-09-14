@@ -94,6 +94,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ENTERPRISE_CREATED', 'Enterprise', 'CREATE', 'GOVERNANCE'),
   def('USER_CREATED', 'User', 'CREATE', 'GOVERNANCE'),
   def('USER_ROLE_ASSIGNED', 'User', 'UPDATE', 'GOVERNANCE'),
+  // A role a company wrote for itself, and who holds it.
+  //
+  // Governance rather than an ordinary update: defining what somebody may do is
+  // the same class of act as saying who somebody is, and it is never an agent's
+  // to perform — `aiAllowed` stays false on all four by the catalogue's default.
+  def('CUSTOM_ROLE_DEFINED', 'CustomRole', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('CUSTOM_ROLE_AMENDED', 'CustomRole', 'UPDATE', 'GOVERNANCE'),
+  def('CUSTOM_ROLE_RETIRED', 'CustomRole', 'UPDATE', 'GOVERNANCE'),
+  def('USER_CUSTOM_ROLES_CHANGED', 'User', 'UPDATE', 'GOVERNANCE'),
   // Erasure is three events, not one, because the gap between them is the
   // point: a request starts a grace period the person can still call off, and
   // the record has to show which of the two actually happened.
@@ -2216,6 +2225,10 @@ export const PLATFORM_GOVERNANCE_EVENTS: readonly string[] = [
   // Identity — who exists, what they may do, and their removal
   'USER_CREATED',
   'USER_ROLE_ASSIGNED',
+  'CUSTOM_ROLE_DEFINED',
+  'CUSTOM_ROLE_AMENDED',
+  'CUSTOM_ROLE_RETIRED',
+  'USER_CUSTOM_ROLES_CHANGED',
   'IDENTITY_SEAT_ASSIGNED',
   'IDENTITY_SEAT_REVOKED',
   'USER_ERASURE_REQUESTED',

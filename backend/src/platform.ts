@@ -53,6 +53,17 @@ import { bindCredentialStores } from './identity/credentialstore.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
 import type { Role } from './identity/roles.ts';
+import { accessClassOf } from './identity/licence.ts';
+import {
+  amendCustomRole,
+  checkAssignable,
+  checkSeatCover,
+  defineCustomRole,
+  requireCustomRole,
+  resolveGrants,
+  type CapabilityGrant,
+  type CustomRole,
+} from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
@@ -160,6 +171,16 @@ export type PlatformUser = {
   name: string;
   email: string;
   roles: Role[];
+  /**
+   * Ids of roles this company defined for itself that this person holds.
+   *
+   * Held beside the built-in roles rather than mixed into them: `Role` is a
+   * closed union the whole codebase reasons about, and widening it to accept
+   * arbitrary strings would put an unchecked value into every switch that
+   * handles a role. These resolve to capability grants at the point of an
+   * access decision and nowhere else.
+   */
+  customRoles?: string[];
   partyId?: string;
   status: 'ACTIVE' | 'SUSPENDED';
   /**
@@ -1073,6 +1094,32 @@ export class Platform {
       );
     }
 
+    // The seat rule, from the other direction.
+    //
+    // `checkSeatCover` refuses a Controller-class company role to somebody who
+    // holds no Controller seat. This is the same hole reached by walking
+    // backwards: give them a QS role, add the company role, then reduce them to
+    // a Viewer. The Controller authority stays — it is in the company role —
+    // and the seat goes back. The company role has to come off first, which is
+    // one more deliberate act by somebody who can see what they are removing.
+    if (accessClassOf(input.roles) !== 'CONTROLLER' && (user.customRoles ?? []).length > 0) {
+      const defined = this.customRoles(user.tenantId);
+      const blocking = (user.customRoles ?? [])
+        .map((id) => defined.find((role) => role.id === id))
+        .filter((role): role is CustomRole => Boolean(role) && role!.status === 'ACTIVE')
+        .filter((role) => accessClassOf([role.seatClass]) === 'CONTROLLER');
+      if (blocking.length > 0) {
+        throw new DomainError(
+          'CUSTOM_ROLE_SEAT_REQUIRED',
+          `${user.name} holds ${blocking.map((role) => `"${role.name}"`).join(' and ')}, which ` +
+            `${blocking.length === 1 ? 'carries' : 'carry'} Controller authority and ${blocking.length === 1 ? 'occupies a' : 'occupy'} ` +
+            `${blocking.length === 1 ? `${blocking[0]!.seatClass} seat` : 'Controller seats'}. ` +
+            'Take that off them on Team & Access first, then reduce their built-in roles.',
+          409,
+        );
+      }
+    }
+
     return this.#applyRoles(user, input.roles, input.reason, { refType: 'User', refId: actor.actorId }, 'WEB');
   }
 
@@ -1129,6 +1176,191 @@ export class Platform {
     });
 
     return { userId: user.id, previousRoles, roles };
+  }
+
+  // --- Roles a company writes for itself -----------------------------------
+
+  /** Every custom role this company has defined, retired ones included. */
+  customRoles(tenantId: string): CustomRole[] {
+    return this.ledger
+      .listByTenant(tenantId, 'CustomRole')
+      .map((record) => record.state as unknown as CustomRole)
+      .filter((role) => role.tenantId === tenantId);
+  }
+
+  /**
+   * The capability grants a person holds from custom roles, resolved now.
+   *
+   * Called once per authenticated request from the gateway. Live rather than
+   * cached in the token, so retiring a role or taking it off somebody takes
+   * effect on their next request instead of their next sign-in — which is the
+   * behaviour anybody revoking an authority in a hurry expects.
+   */
+  grantsFor(userId: string): CapabilityGrant[] {
+    const user = this.#users.get(userId);
+    if (!user || user.status !== 'ACTIVE' || !user.customRoles?.length) return [];
+    return resolveGrants(user.customRoles, this.customRoles(user.tenantId));
+  }
+
+  /**
+   * Define a role, bounded by what the definer holds.
+   *
+   * The guard lives in `identity/customroles.ts` and is asserted twice — here,
+   * and again when the role is handed to somebody — because the two acts can be
+   * performed by different people with different authority.
+   */
+  defineCustomRole(
+    actor: AuthContext,
+    input: { name: string; description: string; seatClass: string; grants: Array<{ area: string; code: string }> },
+  ): CustomRole {
+    const role = defineCustomRole({
+      tenantId: actor.tenantId,
+      actorId: actor.actorId,
+      actorRoles: actor.roles,
+      existing: this.customRoles(actor.tenantId),
+      name: input.name,
+      description: input.description,
+      seatClass: input.seatClass,
+      grants: input.grants,
+    });
+    this.#commitCustomRole(actor, role, { eventType: 'CUSTOM_ROLE_DEFINED' });
+    return role;
+  }
+
+  amendCustomRole(
+    actor: AuthContext,
+    roleId: string,
+    input: { name?: string; description?: string; seatClass?: string; grants?: Array<{ area: string; code: string }> },
+  ): CustomRole {
+    const existing = this.customRoles(actor.tenantId);
+    const amended = amendCustomRole(requireCustomRole(existing, roleId), {
+      actorRoles: actor.roles,
+      existing,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.seatClass !== undefined ? { seatClass: input.seatClass } : {}),
+      ...(input.grants !== undefined ? { grants: input.grants } : {}),
+    });
+    this.#commitCustomRole(actor, amended, { eventType: 'CUSTOM_ROLE_AMENDED' });
+    return amended;
+  }
+
+  /**
+   * Retire a role. Everyone holding it loses its grants on their next request.
+   *
+   * The holders are not edited. A retired definition simply contributes nothing
+   * to `resolveGrants`, which means one write withdraws an authority from
+   * everybody at once — and the ids stay on those people, so restoring the role
+   * is a decision somebody can still make rather than a list they have to
+   * rebuild from memory.
+   */
+  retireCustomRole(actor: AuthContext, roleId: string, reason: string): CustomRole {
+    if (reason.trim().length < 10) {
+      throw new DomainError('CUSTOM_ROLE_RETIREMENT_UNEXPLAINED', 'Say why the role is being withdrawn');
+    }
+    const role = requireCustomRole(this.customRoles(actor.tenantId), roleId);
+    if (role.status === 'RETIRED') return role;
+    const retired: CustomRole = {
+      ...role,
+      status: 'RETIRED',
+      retiredReason: reason.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.#commitCustomRole(actor, retired, { eventType: 'CUSTOM_ROLE_RETIRED' });
+    return retired;
+  }
+
+  /**
+   * Give somebody the company's own roles, or take them away.
+   *
+   * The whole set is named rather than added to, for the same reason
+   * `assignRoles` replaces rather than appends: an authority somebody should no
+   * longer hold has to be removable by the same act that grants one, or the only
+   * way down is a route nobody built.
+   */
+  setCustomRoles(
+    actor: AuthContext,
+    input: { userId: string; roleIds: string[]; reason: string },
+  ): { userId: string; roleIds: string[]; grants: CapabilityGrant[] } {
+    const user = this.#users.get(input.userId);
+    if (!user || user.tenantId !== actor.tenantId) throw new NotFoundError(`No user ${input.userId}`);
+    if (actor.actorId === input.userId) {
+      throw new DomainError(
+        'SELF_ROLE_CHANGE',
+        'An identity cannot change its own roles. Somebody else with the permission has to do it.',
+        403,
+      );
+    }
+    if (input.reason.trim().length < 10) {
+      throw new DomainError('ROLE_CHANGE_UNEXPLAINED', 'Say why the roles are changing');
+    }
+
+    const defined = this.customRoles(actor.tenantId);
+    const roleIds = [...new Set(input.roleIds)];
+    // Rule 1, at the moment it matters most: a role defined by an owner may
+    // carry more than the administrator handing it over holds.
+    for (const id of roleIds) {
+      const role = requireCustomRole(defined, id);
+      checkAssignable(actor.roles, role);
+      // Rule 3, where the seat is actually taken: a Controller-class role goes
+      // to somebody who already holds a Controller seat, or it does not go.
+      checkSeatCover(role, user.roles, user.name);
+    }
+
+    const previous = user.customRoles ?? [];
+    user.customRoles = roleIds;
+
+    this.ledger.commit({
+      tenantId: user.tenantId,
+      projectId: `${user.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'USER_CUSTOM_ROLES_CHANGED',
+      entity: { refType: 'User', refId: user.id },
+      nextState: {
+        id: user.id,
+        tenantId: user.tenantId,
+        name: user.name,
+        email: user.email,
+        roles: user.roles,
+        customRoles: roleIds,
+        previousCustomRoles: previous,
+        status: user.status,
+        reason: input.reason.trim(),
+        changedBy: actor.actorId,
+        changedAt: new Date().toISOString(),
+      },
+    });
+
+    return { userId: user.id, roleIds, grants: resolveGrants(roleIds, defined) };
+  }
+
+  /**
+   * The one writer of a custom-role event.
+   *
+   * The event type arrives as a named field rather than a bare positional
+   * string, and typed to the three it can be. Both halves matter: the type
+   * makes a typo a compile error, and the field makes the emission findable by
+   * the same `eventType:` search `catalogue.test.ts` runs to prove no event in
+   * the closed catalogue is one nothing can produce. An emission that only a
+   * human reading the call chain can see is one that invariant cannot check.
+   */
+  #commitCustomRole(
+    actor: AuthContext,
+    role: CustomRole,
+    { eventType }: { eventType: 'CUSTOM_ROLE_DEFINED' | 'CUSTOM_ROLE_AMENDED' | 'CUSTOM_ROLE_RETIRED' },
+  ): void {
+    this.ledger.commit({
+      tenantId: role.tenantId,
+      projectId: `${role.tenantId}-governance`,
+      actor: { refType: 'User', refId: actor.actorId },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType,
+      entity: { refType: 'CustomRole', refId: role.id },
+      nextState: { ...role },
+    });
   }
 
   /**

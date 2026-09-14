@@ -3,6 +3,7 @@ import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import type { AuthContext } from './auth.ts';
 import type { CapabilityArea, PermissionCode, Role } from './roles.ts';
 import { accountLayerFor, rolesAllow } from './roles.ts';
+import { grantsAllow } from './customroles.ts';
 import { requiredScope, scopesAllow } from './scopes.ts';
 
 /**
@@ -111,8 +112,25 @@ export function evaluateAccess(
   }
 
   // --- RBAC ------------------------------------------------------------------
-  if (options.rbacEnabled && !rolesAllow(auth.roles, area, code)) {
-    return { decision: 'DENY', policyId, reason: `No role of ${auth.roles.join('/')} holds "${code}" on ${area}` };
+  //
+  // Built-in roles first, then any grants the person holds from a role their
+  // own company defined. One check, here, because this function is the single
+  // place every authorisation decision on the platform is made — engines, the
+  // conversational router and the exporter all arrive at this line — so a
+  // capability added by a custom role cannot be honoured on one path and
+  // refused on another.
+  //
+  // `auth.grants` is resolved per request from the live record rather than
+  // carried in the token. That is what makes retiring a role take effect now
+  // instead of at the holder's next sign-in.
+  if (options.rbacEnabled && !rolesAllow(auth.roles, area, code) && !grantsAllow(auth.grants, area, code)) {
+    return {
+      decision: 'DENY',
+      policyId,
+      reason:
+        `No role of ${auth.roles.join('/')} holds "${code}" on ${area}` +
+        ((auth.grants ?? []).length > 0 ? ', and no role this company defined carries it either' : ''),
+    };
   }
 
   // --- Scopes ----------------------------------------------------------------

@@ -13,14 +13,20 @@ import { command, commandBar } from '../lib/command.js';
  * rather than kept as a screen of its own, so nothing here can disagree with
  * the record behind it.
  *
- * What is deliberately not here, and why. Custom role templates and per-user
- * permission toggles: the permission matrix is the one published source of
- * what a role may do, the browser holds no rule the API does not publish, and
- * a permission granted to one person outside their role is a permission no
- * screen can account for. Approval-rule toggles ("finance access requires owner
- * approval"): the controls in force are the ones the engines enforce, and they
- * are listed as such below; a switch that nothing reads would be a promise
- * with nothing behind it.
+ * Roles a company defines for itself are here, and per-user permission toggles
+ * still are not. The distinction is the whole design: a company role is a
+ * *named* set of capabilities that appears on a register, has holders, can be
+ * amended once for everybody and retired once for everybody — so it can be
+ * accounted for. A permission granted to one person outside any role is a
+ * permission no screen can account for, and that remains absent. The browser
+ * still holds no rule the API does not publish: the capabilities offered in the
+ * picker are the ones `GET /v1/custom-roles` says this reader may grant, and the
+ * API refuses anything else whatever the picker shows.
+ *
+ * Approval-rule toggles ("finance access requires owner approval") are also not
+ * here: the controls in force are the ones the engines enforce, and they are
+ * listed as such below; a switch that nothing reads would be a promise with
+ * nothing behind it.
  */
 
 const STATE_TONE = { ACTIVE: 'good', DEACTIVATED: 'warn', DELETION_PENDING: 'bad', ERASED: 'neutral' };
@@ -43,7 +49,7 @@ function administers() {
 
 export async function team(root) {
   let position;
-  const [support, transfers, reporting, away, licensing] = await Promise.all([
+  const [support, transfers, reporting, away, licensing, ownRoles] = await Promise.all([
     api.get('/v1/team/support-access').catch(() => null),
     api.get('/v1/team/transfer-cases').catch(() => null),
     api.get('/v1/company/reporting-grants').catch(() => null),
@@ -53,6 +59,9 @@ export async function team(root) {
     api.get('/v1/users/external-projects').catch(() => null),
     // Which roles are Controllers and why, as the platform derives it.
     api.get('/v1/controller-licences/permissions').catch(() => null),
+    // The roles this company wrote for itself, and the capabilities the person
+    // reading this may put into one. Null where they may not see governance.
+    api.get('/v1/custom-roles').catch(() => null),
   ]);
   try {
     position = await api.get('/v1/team');
@@ -86,13 +95,20 @@ export async function team(root) {
     return parts.join(' › ');
   };
 
+  // The words for a permission code, from the platform's own vocabulary rather
+  // than a copy kept here — `humanise('A')` is 'A', which tells nobody anything.
+  const codeWords = new Map((ownRoles?.vocabulary?.codes ?? []).map((entry) => [entry.code, entry.label]));
+  const meaningOf = (code) => codeWords.get(code) ?? code;
+
   const personActions = (person) => {
     if (!admin || person.id === me || person.state === 'ERASED') return '';
     const act = (action, label, tone = 'quiet') =>
       html`<button class="btn ${tone} sm" data-person-action="${action}" data-user="${person.id}" data-name="${person.name}">${label}</button>`;
     if (person.state === 'DELETION_PENDING') return act('cancel-erasure', 'Cancel deletion');
     if (person.state === 'DEACTIVATED') return html`${act('reactivate', 'Reactivate')} ${act('delete', 'Delete', 'quiet danger')}`;
-    return html`${act('roles', 'Roles')} ${act('place', 'Place')} ${act('deactivate', 'Deactivate')}`;
+    return html`${act('roles', 'Roles')}
+      ${(ownRoles?.roles ?? []).some((role) => role.status === 'ACTIVE') ? act('company-roles', 'Company roles') : ''}
+      ${act('place', 'Place')} ${act('deactivate', 'Deactivate')}`;
   };
 
   render(
@@ -193,6 +209,13 @@ export async function team(root) {
                 person.managerName ? ` · reports to ${person.managerName}` : ''
               }${person.reports > 0 ? ` · manages ${person.reports}` : ''}</div>`,
             html`${(person.roles ?? []).map((role) => badge(humanise(role), 'neutral'))}
+              ${(person.customRoles ?? [])
+                .map((id) => (ownRoles?.roles ?? []).find((role) => role.id === id))
+                // A role that no longer resolves — retired, or defined after
+                // this reader's register was fetched — is not shown as a name
+                // the company does not have. It grants nothing either way.
+                .filter((role) => role && role.status === 'ACTIVE')
+                .map((role) => badge(role.name, 'ai'))}
               <div class="metric-sub">${person.accessClass === 'CONTROLLER' ? (person.external ? 'Controller · licensed elsewhere' : 'Controller · one of this package’s seats') : 'Participant · no seat'}</div>`,
             html`${badge(ACTIVITY_LABEL[person.activity] ?? person.activity, ACTIVITY_TONE[person.activity] ?? 'neutral')}
               ${person.lastActivityAt ? html`<div class="metric-sub">${date(person.lastActivityAt)}</div>` : ''}`,
@@ -354,6 +377,42 @@ export async function team(root) {
               </details>`
             : ''}
         </div>
+
+        ${ownRoles
+          ? html`<div class="card" data-own-roles>
+              <h2>Roles this company defined</h2>
+              <p class="metric-sub" style="margin-bottom:12px">
+                ${ownRoles.summary} A role of your own is a named set of the capabilities above, held alongside somebody’s
+                built-in roles. You can only put in it what you hold yourself, and it still occupies the seat of the built-in
+                role you name — so authority can be shaped without a way to compose a Controller out of tick boxes. Retiring
+                one takes its capabilities off everybody holding it on their next request.
+              </p>
+              ${table({
+                headers: ['Role', 'Seat', 'Grants', 'Holders', 'Standing', ''],
+                rows: (ownRoles.roles ?? []).map((role) => [
+                  html`<strong>${role.name}</strong><div class="metric-sub">${role.description}</div>`,
+                  humanise(role.seatClass),
+                  html`${role.grants.map((grant) => badge(`${humanise(grant.area)} · ${meaningOf(grant.code)}`, 'neutral'))}`,
+                  String(people.filter((person) => (person.customRoles ?? []).includes(role.id)).length),
+                  role.status === 'ACTIVE'
+                    ? badge('active', 'ok')
+                    : html`${badge('retired', 'neutral')}<div class="metric-sub">${role.retiredReason ?? ''}</div>`,
+                  admin && role.status === 'ACTIVE'
+                    ? html`<button class="btn quiet sm" data-own-role="amend" data-role="${role.id}" data-name="${role.name}">Amend</button>
+                        <button class="btn quiet danger sm" data-own-role="retire" data-role="${role.id}" data-name="${role.name}">Retire</button>`
+                    : '',
+                ]),
+                empty: 'This company has defined no roles of its own. The built-in roles are in force.',
+              })}
+              ${admin
+                ? html`<div class="actions" style="margin-top:10px">
+                    <button class="btn sm" data-own-role="define">Define a role</button>
+                  </div>`
+                : html`<div class="metric-sub" style="margin-top:10px">
+                    Only an enterprise admin or the owner may write this company’s own roles.
+                  </div>`}
+            </div>`
+          : ''}
 
         <div class="card" data-support-access>
           <h2>Support access</h2>
@@ -648,6 +707,107 @@ export async function team(root) {
     });
   }
 
+  // --- Roles this company writes for itself ---------------------------------
+  //
+  // The capability picker is built from `yours` — the flattened authority of
+  // whoever is looking — rather than from the whole matrix. That is the same
+  // bound the API enforces, offered rather than merely refused: an
+  // administrator who cannot grant budget approval never sees it on the list,
+  // instead of picking it and being told no.
+  const grantOptions = (ownRoles?.yours ?? [])
+    .map((grant) => ({
+      value: `${grant.area}:${grant.code}`,
+      label: `${humanise(grant.area)} — ${meaningOf(grant.code)}`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const toGrants = (values) => (values ?? []).map((entry) => {
+    const split = String(entry).lastIndexOf(':');
+    return { area: String(entry).slice(0, split), code: String(entry).slice(split + 1) };
+  });
+  const seatOptions = (ownRoles?.seatClasses ?? []).map((role) => ({ value: role, label: humanise(role) }));
+
+  root.querySelector('[data-own-roles]')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-own-role]');
+    if (!button) return;
+    const action = button.dataset.ownRole;
+    const roleId = button.dataset.role;
+    const roleName = button.dataset.name ?? 'this role';
+    const existing = (ownRoles?.roles ?? []).find((role) => role.id === roleId);
+    try {
+      if (action === 'define') {
+        const done = await command({
+          title: 'Define a role of this company’s own',
+          intent:
+            'A named set of capabilities, held alongside somebody’s built-in roles. You may put in it only what you hold ' +
+            'yourself, and the seat class you name is the seat it occupies — a role carrying Controller work is a Controller ' +
+            'seat whatever it is called.',
+          path: '/v1/custom-roles',
+          submitLabel: 'Define',
+          fields: [
+            { name: 'name', label: 'Name', hint: 'What people in this company will call it — "Document Controller (RFI)".' },
+            {
+              name: 'description',
+              label: 'What it is for',
+              type: 'textarea',
+              hint: 'At least twelve characters. Written for whoever is asked about this role in a year.',
+            },
+            {
+              name: 'seatClass',
+              label: 'Seat class',
+              type: 'select',
+              // No default. A select with no placeholder opens on its first
+              // option, and the first grantable role is the enterprise
+              // administrator — so the most privileged seat on the list would
+              // be the one somebody got by not reading the field. This decides
+              // what the role costs; it is worth one deliberate choice.
+              placeholder: '— choose the seat this role occupies —',
+              options: seatOptions,
+              hint: 'The built-in role whose seat this occupies. Declared, so the price does not move when a box is ticked.',
+            },
+            { name: 'grants', label: 'Capabilities', type: 'multiselect', options: grantOptions },
+          ],
+          transform: (values) => ({ ...values, grants: toGrants(values.grants) }),
+        });
+        if (done) await refresh();
+      } else if (action === 'amend') {
+        const done = await command({
+          title: `Amend ${roleName}`,
+          intent: 'Everyone holding this role picks up the change on their next request. The same bound applies: you may put in it only what you hold.',
+          path: `/v1/custom-roles/${roleId}/amend`,
+          submitLabel: 'Amend',
+          fields: [
+            { name: 'name', label: 'Name', value: existing?.name ?? '' },
+            { name: 'description', label: 'What it is for', type: 'textarea', value: existing?.description ?? '' },
+            { name: 'seatClass', label: 'Seat class', type: 'select', value: existing?.seatClass ?? '', options: seatOptions },
+            {
+              name: 'grants',
+              label: 'Capabilities',
+              type: 'multiselect',
+              value: (existing?.grants ?? []).map((grant) => `${grant.area}:${grant.code}`),
+              options: grantOptions,
+            },
+          ],
+          transform: (values) => ({ ...values, grants: toGrants(values.grants) }),
+        });
+        if (done) await refresh();
+      } else if (action === 'retire') {
+        const holders = people.filter((person) => (person.customRoles ?? []).includes(roleId)).length;
+        const done = await command({
+          title: `Retire ${roleName}`,
+          intent:
+            `${holders === 0 ? 'Nobody holds this role.' : `${holders} ${holders === 1 ? 'person holds' : 'people hold'} this role and ${holders === 1 ? 'loses' : 'lose'} its capabilities on their next request.`} ` +
+            'Nobody is edited — the role simply stops granting anything, and the ids stay where they are so the decision can be reversed by defining it again.',
+          path: `/v1/custom-roles/${roleId}/retire`,
+          submitLabel: 'Retire',
+          fields: [reason('At least ten characters. Why this authority is being withdrawn.')],
+        });
+        if (done) await refresh();
+      }
+    } catch (error) {
+      toast('Could not change the role', error.message, 'err');
+    }
+  });
+
   root.querySelector('[data-mfa-policy]')?.addEventListener('click', async () => {
     try {
       const done = await command({
@@ -846,6 +1006,36 @@ export async function team(root) {
             },
             reason('Why their authority is changing.'),
           ],
+        });
+        if (done) await refresh();
+      } else if (action === 'company-roles') {
+        const active = (ownRoles?.roles ?? []).filter((role) => role.status === 'ACTIVE');
+        const done = await command({
+          title: `Company roles for ${name}`,
+          intent:
+            'The roles this company wrote for itself, held alongside their built-in roles. The whole set is named here, ' +
+            'so unticking one takes it away. You can only give a role whose capabilities you hold yourself.',
+          path: `/v1/users/${userId}/custom-roles`,
+          submitLabel: 'Set company roles',
+          fields: [
+            {
+              name: 'roleIds',
+              label: 'Company roles',
+              type: 'multiselect',
+              required: false,
+              value: person?.customRoles ?? [],
+              options: active.map((role) => ({
+                value: role.id,
+                label: `${role.name} — ${role.grants.length} capabilit${role.grants.length === 1 ? 'y' : 'ies'}`,
+              })),
+            },
+            reason('Why their authority is changing.'),
+          ],
+          // An empty multiselect is how somebody is taken off every company
+          // role, so the field is optional here and the absence is sent as the
+          // empty set rather than dropped — otherwise the one change nobody
+          // could make would be the one that removes an authority.
+          transform: (values) => ({ roleIds: values.roleIds ?? [], reason: values.reason }),
         });
         if (done) await refresh();
       } else if (action === 'place') {
