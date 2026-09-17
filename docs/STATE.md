@@ -21843,3 +21843,67 @@ Every console page carries charts except `account`, `blueprint`, `commands`,
 `company`, `copilot`, `developer`, `influencers`, `reports`, `settings` and
 `siteservices`, plus the four that are not console screens at all (`index`,
 `login`, `onboarding`, `signup`). Named rather than implied.
+
+## Every console screen now carries charts
+
+The last of them, and two more defects the drawing found.
+
+### Reports: the figure is published beside its presentation
+
+A report section is label-value pairs, and every value was a formatted string —
+`£6,500.00`, `4`, `withheld`. Charting that means parsing a currency string back
+into a number in the browser, which breaks silently the day the format changes
+and leaves a chart quietly empty.
+
+So `ReportSection.rows` now carries an optional `figure` and `unit` beside
+`value`: the same number before it was formatted, published by the server that
+formatted it. All fifty numeric rows across the six reports carry one. A row
+with no figure — `withheld`, `not measured`, a date, a hash — has no single
+number in it and is left out of the chart rather than guessed at.
+
+The section chart sits under the list rather than over it, because the list is
+the report and the chart is a second reading of it. A section is not drawn at
+all where drawing it would mislead: fewer than two figures is not a comparison,
+and a section mixing money with counts would put pounds and tenancies on one
+axis.
+
+### Two chart defects the screenshots found
+
+**The heatmap was unusable at four columns.** A four-column, sixteen-row grid —
+the notification preference matrix — is 354px wide at one square cell size, and
+the frame scales its viewBox to the card, so that narrow box was blown up 2.6x
+and the chart ran two thousand pixels down the page. Cell width and height are
+now set separately, rows compress when there are many of them, and a narrow grid
+is centred inside a frame widened towards normal rather than stretched to fill
+one.
+
+**A waterfall of nothing drew a forecast of nil.** The site-services estimate at
+completion before any contract line is open has every term at a real, measured
+zero, so `finite` passed on all of them and the chart drew a flat build-up at
+zero. It reads as "the forecast is nil" where the fact is "there is nothing to
+forecast from" — opposite readings of the same picture, and the second is the
+engine's own sentence. `waterfallChart` now refuses a build-up whose every term
+is zero and shows the caller's empty sentence instead. A forecast with *some*
+zero terms — an untouched contingency, an agreed change of nothing — still
+draws, and there is a test for each case.
+
+### Site Services, after all
+
+The module was granted to the demonstration tenancy and ETABLIX appointed on a
+project, so the screen could be read rather than guessed at. It carries the cash
+funnel (earned, certified, paid — the first drop is accrual, the second is what
+is owed), outstanding by payer, and the estimate at completion as a waterfall
+built from the engine's own terms and closing on the engine's own `eacMinor`
+rather than a sum this screen made.
+
+On the demonstration data all three draw their empty states, carrying the
+engine's sentences rather than a chart's. That is the correct picture of a
+project with an appointment and no budget lines, and it is what the screen will
+show until there are.
+
+### Coverage
+
+Every console page carries charts. The four that do not are `index`, `login`,
+`onboarding` and `signup`, which are the unauthenticated flow rather than
+console screens; `influencers` delegates wholly to `partners`, which carries
+them.

@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, funnelChart, pieChart, waterfallChart } from '../lib/charts.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { head, refusal } from '../lib/estate.js';
@@ -4619,6 +4620,7 @@ function cashCard(cash, eac, forecast, portfolio) {
         <div class="card"><h2>Paid</h2><div class="metric">${money(t.paidMinor)}</div><div class="metric-sub">what has actually arrived</div></div>
         <div class="card ${raw(t.outstandingMinor > 0 ? 'warn' : '')}"><h2>Outstanding</h2><div class="metric">${money(t.outstandingMinor)}</div><div class="metric-sub">${money(t.outstandingByPayer.ETABLIX)} ETABLIX’s own liability · ${money(t.outstandingByPayer.CUSTOMER)} the customer’s</div></div>
       </section>
+      ${cashCharts(cash, eac, portfolio)}
       ${table({
         headers: ['Valuation', 'Status', 'Payer', 'Certified', 'Paid', 'Outstanding'],
         align: ['', '', '', 'num', 'num', 'num'],
@@ -4941,5 +4943,129 @@ function briefReading(perception, evidence) {
             .join(' · ')}</div>`
         : ''}
     </div>
+  `;
+}
+
+/**
+ * Where the money is, and where it stops.
+ *
+ * Three pictures for the three questions the cards above answer as eight
+ * separate figures.
+ *
+ * **The cash funnel** is earned, certified, paid. The drop from earned to
+ * certified is accrual — work done that no certificate carries — and the drop
+ * from certified to paid is what is owed. Both are already stated in words by
+ * the engine; the funnel is where their relative size shows.
+ *
+ * **The EAC waterfall** is the forecast built from its own terms, in the order
+ * the engine publishes them, closing on the EAC. A stack of label-amount rows
+ * makes committed cost and risk-adjusted unagreed change look like the same
+ * kind of number, and the whole point of the golden rule — nothing open is zero
+ * — is that they are not.
+ *
+ * Nothing here recomputes: every figure is a field the position published, and
+ * the waterfall's closing bar is the engine's own `eacMinor` rather than a sum
+ * this screen made.
+ */
+function cashCharts(cash, eac, portfolio) {
+  const totals = cash?.totals;
+  const flow = totals
+    ? [
+        { label: 'Earned', value: Number(totals.earnedMinor ?? 0) },
+        { label: 'Certified', value: Number(totals.certifiedMinor ?? 0) },
+        { label: 'Paid', value: Number(totals.paidMinor ?? 0) },
+      ].filter((stage) => stage.value > 0)
+    : [];
+
+  const payers = totals?.outstandingByPayer
+    ? [
+        { label: 'ETABLIX’s own liability', value: Number(totals.outstandingByPayer.ETABLIX ?? 0), tone: 'warn' },
+        { label: 'The customer’s', value: Number(totals.outstandingByPayer.CUSTOMER ?? 0) },
+      ].filter((slice) => slice.value > 0)
+    : [];
+
+  // The engine's terms in its own order, closing on the figure it published
+  // rather than on a total this screen added up.
+  const build = eac?.error
+    ? []
+    : [
+        { label: 'Budget', value: Number(eac.budgetMinor ?? 0) },
+        ...(eac.terms ?? []).map((term) => ({ label: term.term, value: Number(term.amountMinor ?? 0) })),
+        { label: 'Contingency drawn', value: Number(eac.contingencyDrawnMinor ?? 0) },
+        { label: 'Estimate at completion', value: Number(eac.eacMinor ?? 0), total: true },
+      ];
+
+  const estate = (portfolio?.error ? [] : portfolio?.projects ?? [])
+    .map((project) => ({ label: String(project.name ?? project.projectId).slice(0, 40), value: Number(project.eacMinor ?? 0) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  return html`
+    <div class="grid g2" style="margin:14px 0">
+      <div class="card">
+        <h2>Where the money stops</h2>
+        ${raw(
+          funnelChart({
+            title: 'Earned, certified, paid',
+            stages: flow,
+            format: (value) => money(value),
+            empty: cash?.statement ?? 'Nothing is certified, so nothing is owed and nothing can be paid.',
+            footnote:
+              'Earned above certified is accrual — work done that no certificate carries — and is shown as accrual ' +
+              'rather than as cash. Certified above paid is what is owed.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Whose liability the outstanding is</h2>
+        ${raw(
+          pieChart({
+            title: 'Outstanding by payer',
+            data: payers,
+            centreLabel: totals ? money(totals.outstandingMinor ?? 0) : '—',
+            format: (value) => money(value),
+            empty: 'Nothing is outstanding.',
+            footnote:
+              'Under Prime, ETABLIX holds the contract and the liability with it. Under Advisory and Management the ' +
+              'customer does, and the split is the whole difference between the appointments.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h2>How the forecast is built</h2>
+      ${raw(
+        waterfallChart({
+          title: 'Estimate at completion, term by term',
+          steps: build,
+          format: (value) => money(value),
+          empty: eac?.statement ?? 'No contract line is open, so there is nothing to forecast from.',
+          footnote:
+            'The engine’s own terms, in its order, closing on the EAC it published rather than on a sum made here. ' +
+            'Unagreed change is carried at value times probability: nothing open is zero.',
+        }),
+      )}
+    </div>
+
+    ${
+      estate.length > 1
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>The same forecast across every appointed project</h2>
+            ${raw(
+              barChart({
+                title: 'Estimate at completion by project',
+                horizontal: true,
+                data: estate,
+                format: (value) => money(value),
+                empty: 'No project carries a forecast.',
+                footnote:
+                  `${(portfolio?.skipped ?? []).length} project${(portfolio?.skipped ?? []).length === 1 ? ' is' : 's are'} left out because nothing is appointed on ` +
+                  'them. They are skipped and named rather than counted as zero.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
   `;
 }

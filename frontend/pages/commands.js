@@ -1,4 +1,5 @@
 import { commandCatalogue, groupCommands, specFor } from '../lib/catalogue.js';
+import { barChart, treemap } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { badge, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { draw, state } from '../app.js';
@@ -61,6 +62,8 @@ export async function commands(root) {
           <div class="metric-sub">no published schema — the form can only offer free text</div>
         </div>
       </div>
+
+      ${commandCharts(catalogue, groups)}
 
       <div class="card" style="margin-bottom:14px">
         <div class="field">
@@ -127,4 +130,72 @@ export async function commands(root) {
       toast('Could not run', error.message, 'err');
     }
   });
+}
+
+/**
+ * A directory that can be scanned as well as searched.
+ *
+ * This screen is deliberately plain, and it stays plain: a directory that tries
+ * to be a dashboard is harder to search, and the search box above is still the
+ * fastest way to reach one command. What the two charts add is the thing a
+ * search cannot give you — the shape of the whole surface, for somebody who
+ * does not yet know the name of what they are looking for.
+ *
+ * The unchecked bar is the one that earns its place. A command with no
+ * published schema can only be offered as free text, so the form here cannot
+ * validate before the platform does. That is a property of the surface rather
+ * than of any one command, and it is invisible in a list.
+ */
+function commandCharts(catalogue, groups) {
+  const all = catalogue?.commands ?? [];
+  if (all.length === 0) return '';
+
+  const byArea = (groups ?? [])
+    .map((group) => ({ label: humanise(String(group.area ?? group.title ?? 'Other')), value: (group.commands ?? []).length }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const schema = (groups ?? [])
+    .map((group) => ({
+      label: humanise(String(group.area ?? group.title ?? 'Other')),
+      checked: (group.commands ?? []).filter((entry) => entry.schema ?? entry.hasSchema ?? true).length,
+      unchecked: (group.commands ?? []).filter((entry) => !(entry.schema ?? entry.hasSchema ?? true)).length,
+    }))
+    .filter((row) => row.unchecked > 0)
+    .sort((a, b) => b.unchecked - a.unchecked);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where the platform accepts writing</h2>
+        ${raw(
+          treemap({
+            title: 'Commands by capability area',
+            items: byArea,
+            format: (value) => `${value} command${value === 1 ? '' : 's'}`,
+            empty: 'The command catalogue is empty.',
+            footnote:
+              'Grouped as the platform groups them, not as this screen chooses to. A command you may not run is still ' +
+              'counted — pressing it produces the platform’s own refusal, with the reason.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where a form can only offer free text</h2>
+        ${raw(
+          barChart({
+            title: 'Commands with no published schema, by area',
+            horizontal: true,
+            data: schema,
+            series: [{ key: 'unchecked', label: 'No schema', colour: 'warn' }],
+            format: (value) => `${value} command${value === 1 ? '' : 's'}`,
+            empty: `Every one of the ${all.length} commands publishes a schema, so every generated form validates before a handler sees the body.`,
+            footnote:
+              'A command with no schema can only be offered as free text here, so the form cannot check anything the ' +
+              'platform will check a moment later. The refusal still arrives; it just arrives after the press.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

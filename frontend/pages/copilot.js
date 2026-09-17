@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { heatmap, pieChart } from '../lib/charts.js';
 import { badge, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
 
@@ -66,6 +67,8 @@ export async function copilot(root) {
       <div class="chips" style="margin-bottom:20px" id="suggestions">
         ${SUGGESTIONS.map((s) => html`<button class="chip" data-q="${s}" style="cursor:pointer">${s}</button>`)}
       </div>
+
+      ${copilotCharts(modes, phase)}
 
       ${
         modes.length > 0
@@ -196,4 +199,69 @@ export async function copilot(root) {
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Which engine answers, and where a charged run would be refused.
+ *
+ * The distinction this screen has to keep straight is the one the table's last
+ * column makes in four words. Asking reads project state and spends nothing, so
+ * the copilot answers a commercial question at OPERATIONS from the final
+ * account — while a *charged* commercial engine run at OPERATIONS is refused
+ * before any ACU is held.
+ *
+ * The grid is the same fact across every phase at once: a row lit only at
+ * TENDER is an engine whose paid runs belong there, not an engine that stops
+ * talking to you afterwards. The footnote says so, because a grid of lit and
+ * unlit cells reads as "available" and "unavailable" unless it is told not to.
+ */
+function copilotCharts(modes, phase) {
+  if (modes.length === 0) return '';
+
+  const phases = [...new Set(modes.flatMap((mode) => mode.activeInPhases ?? []))];
+  if (phases.length === 0) return '';
+
+  const values = modes.map((mode) => phases.map((entry) => ((mode.activeInPhases ?? []).includes(entry) ? 1 : 0)));
+
+  const here = [
+    { label: 'Charged runs allowed here', value: modes.filter((mode) => mode.runsHere).length, tone: 'ok' },
+    { label: 'Charged runs refused here', value: modes.filter((mode) => !mode.runsHere).length, tone: 'warn' },
+  ].filter((slice) => slice.value > 0);
+
+  return html`
+    <div class="card" style="margin-bottom:20px">
+      <h2>Where each engine's charged runs belong</h2>
+      ${raw(
+        heatmap({
+          title: 'Engines against project phase',
+          rows: modes.map((mode) => humanise(String(mode.name ?? mode.engine))),
+          columns: phases.map((entry) => humanise(entry)),
+          values,
+          format: (value) => (value === 1 ? 'a charged run may execute' : 'a charged run is refused'),
+          empty: 'No engine publishes a phase contract.',
+          footnote:
+            `This project is at ${phase ? humanise(phase) : 'no phase'}. ` +
+            'An unlit cell is not an engine that stops answering — asking reads project state and spends nothing, so a ' +
+            'commercial question at OPERATIONS is answered from the final account. It is where a *paid* run is refused, ' +
+            'before any ACU is held.',
+        }),
+      )}
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <h2>What would be charged at this phase</h2>
+      ${raw(
+        pieChart({
+          title: 'Engines by whether a paid run may execute here',
+          data: here,
+          centreLabel: String(modes.length),
+          format: (value) => `${value} engine${value === 1 ? '' : 's'}`,
+          empty: 'No engine publishes a phase contract.',
+          footnote:
+            'The copilot proposes commands rather than executing them, and every figure it quotes names the record it ' +
+            'came from. Neither half of this chart changes that.',
+        }),
+      )}
+    </div>
+  `;
 }

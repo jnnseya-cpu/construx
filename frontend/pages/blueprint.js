@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
+import { barChart, funnelChart, pieChart } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
-import { badge, html, render, table } from '../lib/ui.js';
+import { badge, html, humanise, raw, render, table } from '../lib/ui.js';
 
 /**
  * The blueprint, against the build.
@@ -63,6 +64,8 @@ export async function blueprint(root) {
         </div>
       </section>
 
+      ${blueprintCharts(position)}
+
       ${!position.available
         ? html`<div class="notice warn" style="margin-bottom:14px">
             <div><b>${position.title}</b><br />${position.note}</div>
@@ -117,4 +120,89 @@ export async function blueprint(root) {
           `}
     `,
   );
+}
+
+/**
+ * The blueprint against the build.
+ *
+ * The blueprint is a document and the four tiles are measurements of a running
+ * process. The only useful thing to draw is where the two meet: how much of the
+ * event catalogue has ever actually been written, and how much of the specified
+ * scope is still marked new or as an extension.
+ *
+ * A closed catalogue with types nobody has written is not a defect — some
+ * events belong to workflows this deployment has not run. It is a fact about
+ * coverage, and it is the fact a reader of a blueprint wants.
+ */
+function blueprintCharts(position) {
+  const measured = position?.measured ?? {};
+  const sections = position?.sections ?? [];
+
+  const catalogue = [
+    { label: 'Event types declared', value: Number(measured.eventTypes ?? 0) },
+    { label: 'Ever written', value: Number(measured.eventTypesEverWritten ?? 0) },
+  ].filter((stage) => stage.value > 0);
+
+  const status = [
+    { label: 'Specified and built', value: sections.filter((section) => !section.status).length },
+    { label: 'New in this revision', value: sections.filter((section) => section.status === 'NEW').length, tone: 'warn' },
+    { label: 'Extended', value: sections.filter((section) => section.status === 'EXTEND').length },
+  ].filter((slice) => slice.value > 0);
+
+  const surface = [
+    { label: 'Routes', value: Number(measured.routes ?? 0) },
+    { label: 'Event types', value: Number(measured.eventTypes ?? 0) },
+    { label: 'Entity types', value: Number(measured.entityTypes ?? 0) },
+    { label: 'Agents', value: Number(measured.agents ?? 0) },
+  ].filter((row) => row.value > 0);
+
+  if (catalogue.length === 0 && status.length === 0 && surface.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How much of the catalogue has actually been used</h2>
+        ${raw(
+          funnelChart({
+            title: 'Event types declared against written',
+            stages: catalogue,
+            format: (value) => `${value} type${value === 1 ? '' : 's'}`,
+            empty: 'No event catalogue is published.',
+            footnote:
+              'The catalogue is closed, so the gap is coverage rather than a defect — some events belong to workflows ' +
+              'this deployment has not run. It is the figure a blueprint reader is actually asking for.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the blueprint still calls new</h2>
+        ${raw(
+          pieChart({
+            title: 'Sections by standing',
+            data: status,
+            centreLabel: String(sections.length),
+            format: (value) => `${value} section${value === 1 ? '' : 's'}`,
+            empty: position?.available ? 'The blueprint publishes no sections.' : 'No blueprint is carried on this deployment.',
+            footnote: 'The document’s own marks, not an assessment of the code. The tiles above are the running process.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h2>The size of the surface this process actually carries</h2>
+      ${raw(
+        barChart({
+          title: 'Declared surface, measured live',
+          horizontal: true,
+          data: surface,
+          format: (value) => String(value),
+          empty: 'Nothing could be measured from this process.',
+          footnote:
+            `${Number(measured.eventsWritten ?? 0).toLocaleString('en-GB')} events across ${measured.tenancies ?? 0} tenanc${(measured.tenancies ?? 0) === 1 ? 'y' : 'ies'}. ` +
+            'Every figure is counted from the running gateway rather than read off the document.',
+        }),
+      )}
+    </div>
+  `;
 }

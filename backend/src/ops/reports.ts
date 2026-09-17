@@ -37,8 +37,18 @@ export type ReportSection = {
   heading: string;
   /** A sentence about what the section is, for somebody reading it cold. */
   intent?: string;
-  /** Label/value pairs. The shape most of these positions are already in. */
-  rows?: { label: string; value: string; note?: string }[];
+  /**
+   * Label/value pairs. The shape most of these positions are already in.
+   *
+   * `value` is the presentation and `figure` is the same number before it was
+   * formatted. Both, because a report is read and also drawn, and recovering
+   * `6500` from `£6,500.00` in the browser means parsing a currency string
+   * back into a number — which breaks silently the day the format changes and
+   * leaves a chart quietly empty. A row with no `figure` is one that has no
+   * single number in it (`withheld`, `not measured`, a date) and is left out of
+   * any chart rather than guessed at.
+   */
+  rows?: { label: string; value: string; figure?: number; unit?: 'MONEY' | 'COUNT'; note?: string }[];
   table?: { headers: string[]; rows: (string | number)[][]; empty?: string };
   /** Stated where a section has nothing to report, rather than rendering blank. */
   empty?: string;
@@ -144,10 +154,10 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
         heading: 'Revenue',
         intent: 'Every settled payment the platform has recorded. Money received, not money invoiced or expected.',
         rows: [
-          { label: 'Today', value: money(overview.revenue.todayMinor) },
-          { label: 'Month to date', value: money(overview.revenue.monthToDateMinor) },
-          { label: 'Previous month', value: money(overview.revenue.previousMonthMinor) },
-          { label: 'Lifetime', value: money(overview.revenue.lifetimeMinor), note: `${overview.revenue.receipts} receipts` },
+          { label: 'Today', value: money(overview.revenue.todayMinor), figure: overview.revenue.todayMinor, unit: 'MONEY' },
+          { label: 'Month to date', value: money(overview.revenue.monthToDateMinor), figure: overview.revenue.monthToDateMinor, unit: 'MONEY' },
+          { label: 'Previous month', value: money(overview.revenue.previousMonthMinor), figure: overview.revenue.previousMonthMinor, unit: 'MONEY' },
+          { label: 'Lifetime', value: money(overview.revenue.lifetimeMinor), figure: overview.revenue.lifetimeMinor, unit: 'MONEY', note: `${overview.revenue.receipts} receipts` },
           {
             label: 'Run rate this month',
             value: overview.revenue.runRateMinor === null ? 'withheld' : money(overview.revenue.runRateMinor),
@@ -156,21 +166,21 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
                 ? `${money(overview.revenue.runRateBasis.monthToDateMinor)} ÷ ${overview.revenue.runRateBasis.elapsedDays} days × ${overview.revenue.runRateBasis.daysInMonth}. Arithmetic, not a forecast.`
                 : 'Too little of the month has elapsed to extrapolate honestly.',
           },
-          { label: 'Raised and unsettled', value: money(overview.awaitingPayment.amountMinor), note: `${overview.awaitingPayment.count} top-ups` },
+          { label: 'Raised and unsettled', value: money(overview.awaitingPayment.amountMinor), figure: overview.awaitingPayment.amountMinor, unit: 'MONEY', note: `${overview.awaitingPayment.count} top-ups` },
         ],
       },
       {
         heading: 'Tenancies',
         rows: [
-          { label: 'Total', value: String(overview.tenancies.total) },
-          { label: 'Active', value: String(overview.tenancies.active) },
-          { label: 'On trial', value: String(overview.tenancies.onTrial) },
-          { label: 'Suspended', value: String(overview.tenancies.suspended) },
-          { label: 'Cancelled', value: String(overview.tenancies.cancelled) },
-          { label: 'New in the last 30 days', value: String(overview.tenancies.newInWindow) },
+          { label: 'Total', value: String(overview.tenancies.total), figure: overview.tenancies.total, unit: 'COUNT' },
+          { label: 'Active', value: String(overview.tenancies.active), figure: overview.tenancies.active, unit: 'COUNT' },
+          { label: 'On trial', value: String(overview.tenancies.onTrial), figure: overview.tenancies.onTrial, unit: 'COUNT' },
+          { label: 'Suspended', value: String(overview.tenancies.suspended), figure: overview.tenancies.suspended, unit: 'COUNT' },
+          { label: 'Cancelled', value: String(overview.tenancies.cancelled), figure: overview.tenancies.cancelled, unit: 'COUNT' },
+          { label: 'New in the last 30 days', value: String(overview.tenancies.newInWindow), figure: overview.tenancies.newInWindow, unit: 'COUNT' },
           {
             label: 'With no administrator',
-            value: String(overview.tenancies.unreachable),
+            value: String(overview.tenancies.unreachable), figure: overview.tenancies.unreachable, unit: 'COUNT',
             note: overview.tenancies.unreachable > 0 ? 'Nobody can run these. They are paying for something they cannot configure.' : undefined,
           },
         ],
@@ -178,14 +188,14 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
       {
         heading: 'Identities and seats',
         rows: [
-          { label: 'Identities', value: String(overview.identities.total) },
-          { label: 'Active', value: String(overview.identities.active) },
-          { label: 'Seats assigned', value: String(overview.identities.seatsUsed) },
+          { label: 'Identities', value: String(overview.identities.total), figure: overview.identities.total, unit: 'COUNT' },
+          { label: 'Active', value: String(overview.identities.active), figure: overview.identities.active, unit: 'COUNT' },
+          { label: 'Seats assigned', value: String(overview.identities.seatsUsed), figure: overview.identities.seatsUsed, unit: 'COUNT' },
           {
             label: 'Seats included',
             value: overview.identities.seatsIncluded === null ? 'uncapped tier on the estate' : String(overview.identities.seatsIncluded),
           },
-          { label: 'Platform operators', value: String(overview.identities.operators) },
+          { label: 'Platform operators', value: String(overview.identities.operators), figure: overview.identities.operators, unit: 'COUNT' },
         ],
       },
       {
@@ -213,8 +223,8 @@ function estateReport(platform: Platform): { sections: ReportSection[]; excludes
         rows: [
           { label: 'Held', value: gb(positions.reduce((sum, position) => sum + position.usedBytes, 0)) },
           { label: 'Committed', value: gb(positions.reduce((sum, position) => sum + position.limitBytes, 0)) },
-          { label: 'Tenancies at warning', value: String(positions.filter((position) => position.state === 'WARNING').length) },
-          { label: 'Tenancies at limit', value: String(positions.filter((position) => position.state === 'FULL').length) },
+          { label: 'Tenancies at warning', value: String(positions.filter((position) => position.state === 'WARNING').length), figure: positions.filter((position) => position.state === 'WARNING').length, unit: 'COUNT' },
+          { label: 'Tenancies at limit', value: String(positions.filter((position) => position.state === 'FULL').length), figure: positions.filter((position) => position.state === 'FULL').length, unit: 'COUNT' },
         ],
       },
     ],
@@ -240,15 +250,15 @@ function economicsReport(platform: Platform): { sections: ReportSection[]; exclu
       {
         heading: `Estate position — last ${burn.windowDays} days`,
         rows: [
-          { label: 'Charged for AI', value: money(burn.billedMinor) },
-          { label: 'Provider cost', value: money(burn.rawCostMinor) },
-          { label: 'Margin', value: money(burn.marginMinor) },
-          { label: 'Per day', value: money(burn.dailyBurnMinor) },
+          { label: 'Charged for AI', value: money(burn.billedMinor), figure: burn.billedMinor, unit: 'MONEY' },
+          { label: 'Provider cost', value: money(burn.rawCostMinor), figure: burn.rawCostMinor, unit: 'MONEY' },
+          { label: 'Margin', value: money(burn.marginMinor), figure: burn.marginMinor, unit: 'MONEY' },
+          { label: 'Per day', value: money(burn.dailyBurnMinor), figure: burn.dailyBurnMinor, unit: 'MONEY' },
           { label: 'ACU consumed', value: burn.acuUnits.toLocaleString('en-GB') },
           { label: 'Realised multiplier', value: burn.realisedMultiplier === null ? '—' : `${burn.realisedMultiplier}x` },
           {
             label: 'Absorbed',
-            value: money(burn.absorbedMinor),
+            value: money(burn.absorbedMinor), figure: burn.absorbedMinor, unit: 'MONEY',
             note: 'An estimation-quality signal, not a leak: a charge is capped at the amount reserved, so nobody is billed above what was disclosed.',
           },
           {
@@ -313,7 +323,7 @@ function healthReport(platform: Platform): { sections: ReportSection[]; excludes
           { label: 'Median', value: `${performance.p50DurationMs}ms` },
           { label: 'p95', value: `${performance.p95DurationMs}ms` },
           { label: 'p99', value: `${performance.p99DurationMs}ms` },
-          { label: 'Failures per thousand', value: String(performance.failuresPerThousand) },
+          { label: 'Failures per thousand', value: String(performance.failuresPerThousand), figure: performance.failuresPerThousand, unit: 'COUNT' },
         ],
       },
       {
@@ -365,18 +375,20 @@ function integrityReport(platform: Platform): { sections: ReportSection[]; exclu
         heading: 'Chain verification',
         intent: 'Verification is a rotating slice through the estate, so the date each chain was last proved matters as much as the verdict.',
         rows: [
-          { label: 'Chains', value: String(events.chains) },
+          { label: 'Chains', value: String(events.chains), figure: events.chains, unit: 'COUNT' },
           {
             label: 'Chains ever proved',
             value: String(assurance.projects.filter((project) => project.lastVerifiedAt).length),
+            figure: assurance.projects.filter((project) => project.lastVerifiedAt).length,
+            unit: 'COUNT',
             note: 'Verification rotates through the estate, so a chain not yet in this count is unproved rather than suspect.',
           },
           {
             label: 'Diverged',
-            value: String(assurance.diverged.length),
+            value: String(assurance.diverged.length), figure: assurance.diverged.length, unit: 'COUNT',
             note: assurance.diverged.length > 0 ? 'A chain has been altered, deleted from or reordered. Treat it as unreliable until investigated.' : undefined,
           },
-          { label: 'Passes for a full sweep', value: String(assurance.passesForFullSweep) },
+          { label: 'Passes for a full sweep', value: String(assurance.passesForFullSweep), figure: assurance.passesForFullSweep, unit: 'COUNT' },
           { label: 'Last pass', value: assurance.lastPassAt ?? 'never — verification has not run on this process' },
         ],
       },
@@ -384,7 +396,7 @@ function integrityReport(platform: Platform): { sections: ReportSection[]; exclu
         heading: 'The record',
         rows: [
           { label: 'Events', value: events.total.toLocaleString('en-GB') },
-          { label: 'Tenancies writing', value: String(events.tenancies) },
+          { label: 'Tenancies writing', value: String(events.tenancies), figure: events.tenancies, unit: 'COUNT' },
           { label: 'Written by a person', value: events.authorship.human.toLocaleString('en-GB') },
           { label: 'Written by a model', value: events.authorship.ai.toLocaleString('en-GB') },
           { label: 'Written by the platform', value: events.authorship.system.toLocaleString('en-GB') },
@@ -403,9 +415,9 @@ function integrityReport(platform: Platform): { sections: ReportSection[]; exclu
         heading: 'Catalogue coverage',
         intent: 'An event type defined and never emitted is either a feature nobody uses or a command nobody can reach.',
         rows: [
-          { label: 'Codes defined', value: String(events.catalogue.defined) },
-          { label: 'Codes ever written', value: String(events.catalogue.used) },
-          { label: 'Never written', value: String(events.catalogue.unused.length) },
+          { label: 'Codes defined', value: String(events.catalogue.defined), figure: events.catalogue.defined, unit: 'COUNT' },
+          { label: 'Codes ever written', value: String(events.catalogue.used), figure: events.catalogue.used, unit: 'COUNT' },
+          { label: 'Never written', value: String(events.catalogue.unused.length), figure: events.catalogue.unused.length, unit: 'COUNT' },
         ],
       },
     ],
@@ -426,11 +438,11 @@ function commercialReport(platform: Platform, actor: AuthContext): { sections: R
         heading: 'What lands next',
         intent: forecast.note,
         rows: [
-          { label: 'Critical', value: String(forecast.counts.critical) },
-          { label: 'Warning', value: String(forecast.counts.warning) },
-          { label: 'Watch', value: String(forecast.counts.watch) },
-          { label: `Renewing inside ${forecast.windowDays} days`, value: money(forecast.renewalExposureMinor) },
-          { label: `Quiet for ${forecast.quietThresholdDays}+ days`, value: String(forecast.quietTenancies) },
+          { label: 'Critical', value: String(forecast.counts.critical), figure: forecast.counts.critical, unit: 'COUNT' },
+          { label: 'Warning', value: String(forecast.counts.warning), figure: forecast.counts.warning, unit: 'COUNT' },
+          { label: 'Watch', value: String(forecast.counts.watch), figure: forecast.counts.watch, unit: 'COUNT' },
+          { label: `Renewing inside ${forecast.windowDays} days`, value: money(forecast.renewalExposureMinor), figure: forecast.renewalExposureMinor, unit: 'MONEY' },
+          { label: `Quiet for ${forecast.quietThresholdDays}+ days`, value: String(forecast.quietTenancies), figure: forecast.quietTenancies, unit: 'COUNT' },
         ],
       },
       {
@@ -451,13 +463,13 @@ function commercialReport(platform: Platform, actor: AuthContext): { sections: R
         heading: 'Growth programme',
         intent: 'Commission is computed from settled receipts, never from signups — so nothing here is owed against money that has not arrived.',
         rows: [
-          { label: 'Active agreements', value: String(programme.totals.active) },
-          { label: 'Tenancies attributed', value: String(programme.totals.referredTenancies) },
-          { label: 'Of those, paying', value: String(programme.totals.convertedTenancies) },
-          { label: 'Revenue attributed', value: money(programme.totals.attributedRevenueMinor) },
-          { label: 'Earned', value: money(programme.totals.earnedMinor) },
-          { label: 'Paid', value: money(programme.totals.paidMinor) },
-          { label: 'Owed', value: money(programme.totals.owedMinor) },
+          { label: 'Active agreements', value: String(programme.totals.active), figure: programme.totals.active, unit: 'COUNT' },
+          { label: 'Tenancies attributed', value: String(programme.totals.referredTenancies), figure: programme.totals.referredTenancies, unit: 'COUNT' },
+          { label: 'Of those, paying', value: String(programme.totals.convertedTenancies), figure: programme.totals.convertedTenancies, unit: 'COUNT' },
+          { label: 'Revenue attributed', value: money(programme.totals.attributedRevenueMinor), figure: programme.totals.attributedRevenueMinor, unit: 'MONEY' },
+          { label: 'Earned', value: money(programme.totals.earnedMinor), figure: programme.totals.earnedMinor, unit: 'MONEY' },
+          { label: 'Paid', value: money(programme.totals.paidMinor), figure: programme.totals.paidMinor, unit: 'MONEY' },
+          { label: 'Owed', value: money(programme.totals.owedMinor), figure: programme.totals.owedMinor, unit: 'MONEY' },
         ],
       },
     ],
@@ -476,11 +488,11 @@ function serviceReport(platform: Platform, actor: AuthContext): { sections: Repo
       {
         heading: 'The queue',
         rows: [
-          { label: 'Live', value: String(position.open) },
-          { label: 'Waiting on us', value: String(position.awaitingPlatform) },
-          { label: 'Waiting on the customer', value: String(position.awaitingCustomer) },
-          { label: 'Unassigned', value: String(position.unassigned) },
-          { label: 'Resolved or closed', value: String(position.resolved) },
+          { label: 'Live', value: String(position.open), figure: position.open, unit: 'COUNT' },
+          { label: 'Waiting on us', value: String(position.awaitingPlatform), figure: position.awaitingPlatform, unit: 'COUNT' },
+          { label: 'Waiting on the customer', value: String(position.awaitingCustomer), figure: position.awaitingCustomer, unit: 'COUNT' },
+          { label: 'Unassigned', value: String(position.unassigned), figure: position.unassigned, unit: 'COUNT' },
+          { label: 'Resolved or closed', value: String(position.resolved), figure: position.resolved, unit: 'COUNT' },
         ],
       },
       {
@@ -491,7 +503,7 @@ function serviceReport(platform: Platform, actor: AuthContext): { sections: Repo
             label: 'Median first response',
             value: position.medianFirstResponseHours === null ? 'nothing answered yet' : `${position.medianFirstResponseHours} hours`,
           },
-          { label: 'Past the target', value: String(position.overdue) },
+          { label: 'Past the target', value: String(position.overdue), figure: position.overdue, unit: 'COUNT' },
           { label: 'Urgent target', value: `${position.responseTargets.URGENT} hours` },
           { label: 'Normal target', value: `${position.responseTargets.NORMAL} hours` },
           { label: 'Low target', value: `${position.responseTargets.LOW} hours` },

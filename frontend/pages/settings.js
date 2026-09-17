@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, pieChart, treemap } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table } from '../lib/ui.js';
 
@@ -74,6 +75,8 @@ export async function settings(root) {
           <div class="metric-sub">variables set · change them on the server, never here</div>
         </div>
       </section>
+
+      ${settingsCharts(routes, publicRoutes, ready, orderedRoles, orderedAreas, matrix)}
 
       <div class="notice info" style="margin-bottom:14px">
         <div>
@@ -166,4 +169,122 @@ export async function settings(root) {
       </div>
     `,
   );
+}
+
+/**
+ * The enforced surface, sized.
+ *
+ * Four counts and two long tables. What the counts cannot answer is the
+ * question somebody opens this screen with: is the public surface small, and is
+ * it small in the places that matter. Twelve public routes is meaningless;
+ * twelve public routes of which none writes is a fact.
+ *
+ * Nothing here is editable and nothing here is computed. Every figure is the
+ * matrix and the route list the server published, which is the same pair the
+ * navigation and the enforcement use.
+ */
+function settingsCharts(routes, publicRoutes, ready, orderedRoles, orderedAreas, matrix) {
+  const all = routes?.routes ?? [];
+  if (all.length === 0) return '';
+
+  const byMethod = [...new Set(all.map((route) => String(route.method)))]
+    .map((method) => ({
+      label: method,
+      value: all.filter((route) => String(route.method) === method).length,
+      tone: method === 'GET' ? undefined : 'warn',
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  // Public routes split by whether they write. A public read is a landing page
+  // or a probe; a public write is the thing worth being certain about.
+  const exposure = [
+    { label: 'Reachable with no session', reads: publicRoutes.filter((route) => String(route.method) === 'GET').length, writes: publicRoutes.filter((route) => String(route.method) !== 'GET').length },
+    { label: 'Needs a session', reads: all.filter((route) => !route.public && String(route.method) === 'GET').length, writes: all.filter((route) => !route.public && String(route.method) !== 'GET').length },
+  ];
+
+  // How much authority each area attracts, across every role at once. A wide
+  // area is one many roles touch, which is where a mistake in the matrix costs
+  // the most.
+  const areaWeight = (orderedAreas ?? [])
+    .map((area) => ({
+      label: humanise(area),
+      value: (orderedRoles ?? []).reduce((total, role) => total + (matrix?.matrix?.[role]?.[area] ?? matrix?.[role]?.[area] ?? []).length, 0),
+    }))
+    .filter((row) => row.value > 0);
+
+  const variables = ready
+    ? [
+        { label: 'Set', value: ready.variables.filter((entry) => entry.present).length, tone: 'ok' },
+        { label: 'Not set', value: ready.variables.filter((entry) => !entry.present).length },
+      ].filter((slice) => slice.value > 0)
+    : [];
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How much of the API is reachable without signing in</h2>
+        ${raw(
+          barChart({
+            title: 'Routes by session requirement and kind',
+            horizontal: true,
+            stacked: true,
+            data: exposure,
+            series: [
+              { key: 'reads', label: 'Reads' },
+              { key: 'writes', label: 'Writes', colour: 'warn' },
+            ],
+            format: (value) => `${value} route${value === 1 ? '' : 's'}`,
+            empty: 'No route list is published.',
+            footnote:
+              'A public read is a landing page or a probe. A public write is the bar worth checking, and the second ' +
+              'table below names every one of them.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the API is mostly for</h2>
+        ${raw(
+          pieChart({
+            title: 'Routes by method',
+            data: byMethod,
+            centreLabel: String(all.length),
+            format: (value) => `${value} route${value === 1 ? '' : 's'}`,
+            empty: 'No route list is published.',
+            footnote:
+              'Every route is declared explicitly — there is no backend discovery, so this list is the API rather than ' +
+              'a snapshot of it.',
+          }),
+        )}
+        ${raw(
+          pieChart({
+            title: 'Environment variables',
+            data: variables,
+            centreLabel: String(ready ? ready.variables.length : 0),
+            format: (value) => `${value} variable${value === 1 ? '' : 's'}`,
+            empty: 'The readiness report could not be read.',
+            footnote: 'Whether a value arrived, never what it is. Set them on the server; a console that could write them could turn off authentication.',
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      areaWeight.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Where authority concentrates across every role at once</h2>
+            ${raw(
+              treemap({
+                title: 'Permission codes granted, by capability area',
+                items: areaWeight,
+                format: (value) => `${value} grant${value === 1 ? '' : 's'}`,
+                empty: 'The permission matrix could not be read.',
+                footnote:
+                  'Every role’s letters on an area, added together. A large tile is an area many roles touch, which is ' +
+                  'where an error in the matrix reaches the most people — not an area that matters more.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

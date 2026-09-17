@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
+import { barChart } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
-import { badge, html, raw, render, table, time, toast } from '../lib/ui.js';
+import { badge, html, money, raw, render, table, time, toast } from '../lib/ui.js';
 
 /**
  * Reports.
@@ -85,6 +86,7 @@ export async function reports(root) {
                         </div>
                       </div>`
                     : ''}
+                  ${sectionChart(section)}
                   ${section.table
                     ? table({
                         headers: section.table.headers,
@@ -138,4 +140,54 @@ export async function reports(root) {
   };
 
   wire(null);
+}
+
+/**
+ * A section drawn beside itself, where it can honestly be drawn.
+ *
+ * A report is composed for a board or an investor, and a column of label-value
+ * pairs is the format that makes six comparable figures look like six unrelated
+ * ones. So a section whose rows carry figures gets a bar chart above its list —
+ * the same numbers, in the order the report put them.
+ *
+ * **Only rows the server published a figure for.** Each row carries `value` for
+ * reading and `figure` for drawing, and a row with no figure — `withheld`, `not
+ * measured`, a date, a hash — is left out rather than parsed back out of its
+ * own presentation. The list below is always complete; the chart is only ever a
+ * subset of it, and the footnote says so when it is.
+ *
+ * A section is not drawn at all where drawing it would mislead: fewer than two
+ * figures is not a comparison, and a section mixing money with counts would put
+ * pounds and tenancies on one axis.
+ */
+function sectionChart(section) {
+  const rows = (section.rows ?? []).filter((row) => Number.isFinite(Number(row.figure)));
+  if (rows.length < 2) return '';
+
+  const units = new Set(rows.map((row) => row.unit ?? 'COUNT'));
+  if (units.size > 1) return '';
+  const unit = [...units][0];
+
+  // Negative or all-zero figures would draw an axis that says nothing.
+  const data = rows.map((row) => ({ label: row.label, value: Number(row.figure) }));
+  if (data.every((row) => row.value === 0) || data.some((row) => row.value < 0)) return '';
+
+  const omitted = (section.rows ?? []).length - rows.length;
+
+  return html`<div style="padding:4px 17px 6px">
+    ${raw(
+      barChart({
+        title: section.heading,
+        horizontal: true,
+        data,
+        format: (value) => (unit === 'MONEY' ? money(value) : String(value)),
+        empty: '',
+        footnote:
+          omitted > 0
+            ? `${omitted} row${omitted === 1 ? '' : 's'} in this section ${omitted === 1 ? 'carries' : 'carry'} no single figure — ` +
+              `withheld, not measured, or not a number — and ${omitted === 1 ? 'is' : 'are'} listed above rather than drawn.`
+            : undefined,
+      }),
+    )}
+  </div>`;
 }

@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, gauge, lineChart } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, raw, render, table, time, toast } from '../lib/ui.js';
 
@@ -83,6 +84,8 @@ export async function company(root) {
             </div>
           </div>`
         : ''}
+
+      ${companyCharts(media, filled, blog)}
 
       <div class="card" id="site-media" style="margin-bottom:14px">
         <h2>Pictures on the landing page</h2>
@@ -185,4 +188,83 @@ export async function company(root) {
       }
     });
   }
+}
+
+/**
+ * The public face, measured.
+ *
+ * Two things here are counts of requests and are labelled as such everywhere
+ * they appear, including on this chart. A view is one server-rendered request
+ * for a post's page: a crawler counts, one person reading twice counts twice,
+ * and nobody is identified because no cookie, address or fingerprint is
+ * recorded. It is not a count of readers and the axis does not pretend it is.
+ */
+function companyCharts(media, filled, blog) {
+  const slots = media?.slots ?? [];
+
+  const daily = (blog?.views?.daily ?? []).map((entry) => ({
+    label: String(entry.day ?? entry.date ?? '').slice(5),
+    value: Number(entry.views ?? entry.count ?? 0),
+  }));
+
+  const bySlug = (blog?.views?.bySlug ?? [])
+    .map((entry) => ({ label: String(entry.slug ?? '').slice(0, 40), value: Number(entry.views ?? entry.count ?? 0) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  if (slots.length === 0 && daily.length === 0 && bySlug.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How much of the landing page has a picture</h2>
+        ${raw(
+          gauge({
+            title: 'Slots filled',
+            value: slots.length > 0 ? (filled.length / slots.length) * 100 : undefined,
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            desc: `${filled.length} of ${slots.length} slots · an empty slot renders nothing at all rather than a placeholder`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Requests for the blog, by day</h2>
+        ${raw(
+          lineChart({
+            title: `Page requests over a ${blog?.views?.windowDays ?? 30}-day window`,
+            data: daily,
+            format: (value) => `${value} request${value === 1 ? '' : 's'}`,
+            empty: 'No request for a post has been recorded.',
+            footnote:
+              'Server-rendered requests, one per request — a crawler counts and one person reading twice counts twice. ' +
+              'Nobody is identified: the log holds a slug and a day. This is not a count of readers and is not labelled ' +
+              'as one anywhere.',
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      bySlug.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Which posts are being asked for</h2>
+            ${raw(
+              barChart({
+                title: 'Requests by post',
+                horizontal: true,
+                data: bySlug,
+                format: (value) => `${value} request${value === 1 ? '' : 's'}`,
+                empty: 'No post has been requested.',
+                footnote:
+                  `${blog?.views?.shares ?? 0} share${(blog?.views?.shares ?? 0) === 1 ? '' : 's'} and ` +
+                  `${blog?.views?.clicks ?? 0} call-to-action press${(blog?.views?.clicks ?? 0) === 1 ? '' : 'es'} reported by the page’s script. ` +
+                  'A reader with scripting off is not counted in either.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

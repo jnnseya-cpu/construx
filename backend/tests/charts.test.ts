@@ -93,6 +93,43 @@ describe('every chart refuses to draw nothing', () => {
     });
   }
 
+  it('a build-up whose every term is zero is empty, not a forecast of nil', () => {
+    // The site-services estimate at completion before any contract line is
+    // open. Every term is a real, measured zero — so `finite` passes on all of
+    // them — and the picture reads "the forecast is nil" where the fact is
+    // "there is nothing to forecast from". The engine's own sentence says the
+    // second, and it is the one that has to survive.
+    const markup = svg(
+      waterfallChart({
+        steps: [
+          { label: 'Budget', value: 0 },
+          { label: 'Committed', value: 0 },
+          { label: 'Agreed change', value: 0 },
+          { label: 'Estimate at completion', value: 0, total: true },
+        ],
+        empty: 'No contract line is open, so there is nothing to forecast from.',
+      }),
+    );
+    assert.match(markup, /nothing to forecast from/);
+    assert.ok(!markup.includes('<svg'), 'a nil build-up was drawn as a chart');
+  });
+
+  it('still draws a build-up where only some terms are zero', () => {
+    // The guard above must not swallow a real forecast that happens to carry an
+    // untouched contingency or an agreed change of nothing.
+    const markup = svg(
+      waterfallChart({
+        steps: [
+          { label: 'Budget', value: 400_000 },
+          { label: 'Agreed change', value: 0 },
+          { label: 'Estimate at completion', value: 400_000, total: true },
+        ],
+        empty: 'Nothing to build up',
+      }),
+    );
+    assert.ok(markup.includes('<svg'), 'a forecast with one zero term was refused');
+  });
+
   it('a chart of entirely unusable values is empty, not a flat line at zero', () => {
     // Non-numeric values are not zeroes. A histogram of three nulls has no
     // distribution; drawing one at zero would report a measurement nobody took.

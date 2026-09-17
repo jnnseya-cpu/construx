@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
+import { barChart, heatmap, pieChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, initials, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, initials, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 
 /**
  * Account — and the one control on it that cannot be undone.
@@ -60,6 +61,8 @@ export async function account(root) {
             </div>`
           : ''
       }
+
+      ${accountCharts(preferences, inbox)}
 
       <div class="card" style="margin-bottom:14px">
         <h2>Identity</h2>
@@ -243,4 +246,100 @@ export async function account(root) {
     toast('Request cancelled', 'The account is active again.', 'ok');
     await account(root);
   });
+}
+
+/**
+ * What this account will and will not be told.
+ *
+ * The preference matrix is a grid — categories down, channels across — and was
+ * a stack of toggles. Drawn, the two things a person actually wants to know are
+ * one read each: which categories can only reach them one way, and where the
+ * switch is not theirs to throw.
+ *
+ * A mandatory notice is drawn as held rather than as switched on, because those
+ * are different facts. A security notice is sent whatever the toggle says, and
+ * a grid that showed it as an ordinary enabled channel would imply it could be
+ * turned off.
+ */
+function accountCharts(preferences, inbox) {
+  const matrix = preferences?.error ? [] : preferences?.matrix ?? [];
+  if (matrix.length === 0) return '';
+
+  const channels = [...new Set(matrix.flatMap((row) => (row.channels ?? []).map((entry) => String(entry.channel))))];
+  const rows = matrix.map((row) => humanise(String(row.category)));
+  // 2 = carries a notice that cannot be switched off, 1 = on, 0 = off,
+  // undefined = this category does not use that channel at all.
+  const values = matrix.map((row) =>
+    channels.map((channel) => {
+      const entry = (row.channels ?? []).find((candidate) => String(candidate.channel) === channel);
+      if (!entry) return undefined;
+      if (Number(entry.mandatoryEvents ?? 0) > 0) return 2;
+      return entry.enabled ? 1 : 0;
+    }),
+  );
+
+  const byCategory = matrix
+    .map((row) => ({ label: humanise(String(row.category)), value: Number(row.events ?? 0) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const unread = inbox?.error ? [] : (inbox?.notifications ?? inbox?.items ?? []).filter((item) => !item.readAt);
+  const inboxMix = Object.entries(
+    unread.reduce((counts, item) => {
+      const key = humanise(String(item.category ?? 'Other'));
+      counts[key] = (counts[key] ?? 0) + 1;
+      return counts;
+    }, {}),
+  ).map(([label, value]) => ({ label, value }));
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>How each kind of notice can reach you</h2>
+      ${raw(
+        heatmap({
+          title: 'Categories against channels',
+          rows,
+          columns: channels.map((channel) => humanise(channel)),
+          values,
+          format: (value) => (value === 2 ? 'always sent — not switchable' : value === 1 ? 'on' : 'off'),
+          empty: 'No preference matrix is published.',
+          footnote:
+            'The brightest cells carry a notice that is sent whatever the toggle says — a security notice is owed to ' +
+            'you rather than offered. An empty cell is a channel that category never uses; a row with one lit column is ' +
+            'a category that reaches you exactly one way.',
+        }),
+      )}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How much each kind of notice covers</h2>
+        ${raw(
+          barChart({
+            title: 'Events in the catalogue, by category',
+            horizontal: true,
+            data: byCategory,
+            format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+            empty: 'The catalogue publishes no events.',
+            footnote:
+              'The catalogue is closed — this is every notice the platform can send you, not a sample. Switching a ' +
+              'channel off applies to the whole row except anything mandatory in it.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What is waiting for you</h2>
+        ${raw(
+          pieChart({
+            title: 'Unread notices by category',
+            data: inboxMix,
+            centreLabel: String(unread.length),
+            format: (value) => `${value} notice${value === 1 ? '' : 's'}`,
+            empty: inbox?.error ? 'Your inbox could not be read.' : 'Nothing is unread.',
+            footnote: 'Your own inbox, not the tenancy’s. Nobody else’s notices appear here and yours appear nowhere else.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

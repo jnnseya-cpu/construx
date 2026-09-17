@@ -1254,8 +1254,17 @@ export function heatmap({
   const flat = values.flat().filter(finite).map(Number);
   if (flat.length === 0) return emptyChart(empty);
   const max = Math.max(...flat);
+  // Cell width and height are set separately, and the box has a floor.
+  //
+  // A four-column, sixteen-row grid — the notification preference matrix — is
+  // 354px wide and 800 tall at one square cell size. The frame scales its
+  // viewBox to the card, so that narrow box was blown up 2.6x and the chart ran
+  // two thousand pixels down the page: legible, and unusable.
+  //
+  // So rows compress when there are many of them, and a narrow grid is centred
+  // inside a normal-width frame rather than stretched to fill one.
   const cell = Math.min(46, Math.max(18, Math.floor(560 / columns.length)));
-  const left = 150;
+  const cellHigh = Math.min(cell, Math.max(18, Math.floor(430 / rows.length)));
   const base = paint(tone);
 
   // Column headings, upright or on the diagonal.
@@ -1276,7 +1285,13 @@ export function heatmap({
   // top of the box. 22 characters at 45 degrees is about 90px of rise.
   const headings = columns.map((column) => (slanted ? fitLabel(column, 128, 10) : column));
   const top = slanted ? Math.min(150, 34 + Math.min(longest, 22) * 4.4) : 46;
-  const box = { w: left + columns.length * cell + (slanted ? 90 : 20), h: top + rows.length * cell + 22 };
+  const natural = 150 + columns.length * cell + (slanted ? 90 : 20);
+  // Widened towards a normal frame, but never more than half again its natural
+  // width: padding a 354px grid all the way out to 720 leaves the grid sitting
+  // in a field of empty card, which looks like a rendering fault rather than a
+  // deliberate margin.
+  const box = { w: Math.min(720, Math.max(natural, Math.round(natural * 1.4))), h: top + rows.length * cellHigh + 22 };
+  const left = 150 + (box.w - natural) / 2;
 
   return frame({
     title,
@@ -1300,16 +1315,16 @@ export function heatmap({
     })}
     ${rows.map(
       (row, rowIndex) => html`<g>
-        <text class="chart-cat" x="${raw(left - 10)}" y="${raw(r2(top + rowIndex * cell + cell / 2 + 4))}" text-anchor="end">${row}</text>
+        <text class="chart-cat" x="${raw(r2(left - 10))}" y="${raw(r2(top + rowIndex * cellHigh + cellHigh / 2 + 4))}" text-anchor="end">${row}</text>
         ${columns.map((column, columnIndex) => {
           const value = values[rowIndex]?.[columnIndex];
           const share = finite(value) && max > 0 ? Number(value) / max : 0;
           return html`<rect
             class="chart-cell"
             x="${raw(r2(left + columnIndex * cell))}"
-            y="${raw(r2(top + rowIndex * cell))}"
+            y="${raw(r2(top + rowIndex * cellHigh))}"
             width="${raw(cell - 2)}"
-            height="${raw(cell - 2)}"
+            height="${raw(cellHigh - 2)}"
             rx="2"
             fill="${raw(base)}"
             fill-opacity="${raw(finite(value) ? r2(0.08 + share * 0.86) : 0)}"
@@ -1407,6 +1422,12 @@ export function waterfallChart({
 }) {
   const entries = steps.filter((step) => step && finite(step.value));
   if (entries.length === 0) return emptyChart(empty);
+  // A build-up whose every term is zero has nothing to build up, and drawing it
+  // says "the forecast is nil" where the fact is "there is nothing to forecast
+  // from". Those are opposite readings of the same picture, and the second one
+  // is the caller's own empty sentence — which the engine usually words far
+  // better than a chart could.
+  if (entries.every((step) => Number(step.value) === 0)) return emptyChart(empty);
 
   // Walk once to find where each bar sits, and how high the running total goes.
   let running = 0;

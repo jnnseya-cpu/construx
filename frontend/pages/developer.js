@@ -1,5 +1,6 @@
 import { api } from '../lib/api.js';
-import { badge, html, raw, render, table, time } from '../lib/ui.js';
+import { barChart, funnelChart, pieChart } from '../lib/charts.js';
+import { badge, html, humanise, raw, render, table, time } from '../lib/ui.js';
 import { command, commandBar } from '../lib/command.js';
 import { can, blockedReason, draw } from '../app.js';
 
@@ -132,6 +133,8 @@ export async function developer(root) {
         <div class="metric"><span>Abandoned</span><strong>${position.abandoned}</strong></div>
       </section>
 
+      ${developerCharts(keys, live, position, grantable)}
+
       ${position.abandoned > 0
         ? html`<div class="notice warn">
             <div>
@@ -223,4 +226,114 @@ export async function developer(root) {
     }
     await draw();
   });
+}
+
+/**
+ * The integration surface, and whether it is being told anything.
+ *
+ * Four counts. The one that matters is the last, and it matters as a
+ * proportion: two abandoned deliveries out of five is a broken endpoint, two
+ * out of fifty thousand is the internet. A count cannot tell those apart and a
+ * funnel can.
+ *
+ * The scope chart is about issuance rather than traffic. A key is never wider
+ * than the person who issued it, so the shape of what has actually been granted
+ * against what could be is the honest measure of how much of this tenancy an
+ * integration can reach.
+ */
+function developerCharts(keys, live, position, grantable) {
+  const issued = keys?.keys ?? [];
+
+  const delivery = [
+    { label: 'Queued or sent', value: Number(position.queued ?? 0) + Number(position.delivered ?? 0) + Number(position.abandoned ?? 0) },
+    { label: 'Delivered', value: Number(position.delivered ?? 0) },
+  ].filter((stage) => stage.value > 0);
+
+  // How many live keys carry each scope, against the scopes that exist.
+  const scopeUse = (grantable ?? [])
+    .map((scope) => ({
+      label: scope,
+      value: live.filter((key) => (key.scopes ?? []).includes(scope)).length,
+    }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 12);
+
+  const reach = [
+    { label: 'Read only', value: (grantable ?? []).filter((scope) => scope.endsWith(':read')).length },
+    { label: 'Can write', value: (grantable ?? []).filter((scope) => scope.endsWith(':write')).length },
+    { label: 'Other', value: (grantable ?? []).filter((scope) => !scope.endsWith(':read') && !scope.endsWith(':write')).length },
+  ].filter((slice) => slice.value > 0);
+
+  const standing = [
+    { label: 'Live', value: live.length, tone: 'ok' },
+    { label: 'Sandbox', value: issued.filter((key) => !key.live && !key.revokedAt).length },
+    { label: 'Revoked', value: issued.filter((key) => key.revokedAt).length, tone: 'bad' },
+  ].filter((slice) => slice.value > 0);
+
+  return html`
+    <div class="grid g2" style="margin-top:14px;margin-bottom:14px">
+      <div class="card">
+        <h2>Is anything actually being told</h2>
+        ${raw(
+          funnelChart({
+            title: 'Webhook deliveries since start',
+            stages: delivery,
+            format: (value) => `${value} deliver${value === 1 ? 'y' : 'ies'}`,
+            empty: 'No endpoint has been subscribed, so nothing has been attempted.',
+            footnote:
+              `${position.abandoned ?? 0} abandoned across ${position.active ?? 0} active endpoint${(position.active ?? 0) === 1 ? '' : 's'}. ` +
+              'Two abandoned out of five is a broken endpoint; two out of fifty thousand is the internet. The proportion ' +
+              'is the finding, never the count.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>${standing.length > 0 ? 'What has been issued' : 'How wide the API can be opened'}</h2>
+        ${raw(
+          standing.length > 0
+            ? pieChart({
+                title: 'Keys by standing',
+                data: standing,
+                centreLabel: String(issued.length),
+                format: (value) => `${value} key${value === 1 ? '' : 's'}`,
+                empty: 'No key has been issued.',
+                footnote:
+                  'A sandbox key acts on a separate tenancy rather than on live data behind a flag, which is why the two ' +
+                  'are counted apart and never summed.',
+              })
+            : pieChart({
+                title: 'Grantable scopes by what they allow',
+                data: reach,
+                centreLabel: String((grantable ?? []).length),
+                format: (value) => `${value} scope${value === 1 ? '' : 's'}`,
+                empty: 'No scope may be granted on this package.',
+                footnote:
+                  'What could be granted, not what has been. A key is never wider than the person who issued it, so this ' +
+                  'is the ceiling rather than the exposure.',
+              }),
+        )}
+      </div>
+    </div>
+
+    ${
+      scopeUse.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>What the live keys can reach</h2>
+            ${raw(
+              barChart({
+                title: 'Live keys carrying each scope',
+                horizontal: true,
+                data: scopeUse,
+                format: (value) => `${value} key${value === 1 ? '' : 's'}`,
+                empty: 'No live key carries a scope.',
+                footnote:
+                  `${(grantable ?? []).length} scopes may be granted on this package. ` +
+                  'A write scope on several keys is worth checking against who issued each of them.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }
