@@ -2234,6 +2234,9 @@ export const CHART_TYPES = [
   'waterfall',
   'treemap',
   'gantt',
+  'radar',
+  'sankey',
+  'flow',
   'proportion',
 ];
 

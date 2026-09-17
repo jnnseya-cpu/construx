@@ -9,6 +9,7 @@ function localNow() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 import { command, commandBar } from '../lib/command.js';
+import { barChart, gauge, heatmap } from '../lib/charts.js';
 import { badge, date, days, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -495,6 +496,8 @@ export async function control(root) {
       }
 
       <div id="control-insight" style="margin-bottom:14px"></div>
+
+      ${controlCharts(project, estate)}
 
       <div class="grid g5" style="margin-bottom:14px">
         <div ${raw(drillable('This project', presentSources))}>
@@ -1163,4 +1166,91 @@ function standardsPanel(published) {
       empty: 'No stage mapping is published.',
     })}
   </div>`;
+}
+
+/**
+ * The control standard as a shape, stage by stage.
+ *
+ * A single completeness percentage says a project is 68% controlled and tells
+ * nobody which end is weak. Broken down by stage it answers the question the
+ * number was standing in for: preconstruction complete and handover empty is a
+ * different project from the reverse, and they need different conversations.
+ *
+ * The estate heatmap is the same standard across every project — the point
+ * being that a gap appearing on one job is a project problem and the same gap
+ * on all of them is a process problem, and only the grid tells them apart.
+ */
+function controlCharts(project, estate) {
+  const stages = (project?.stages ?? []).map((stage) => ({
+    label: humanise(stage.stage),
+    present: stage.items.filter((item) => item.status === 'PRESENT').length,
+    missing: stage.items.filter((item) => item.status === 'MISSING').length,
+    notProportionate: Number(stage.notProportionate ?? 0),
+  }));
+  if (stages.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Control by stage</h2>
+        ${raw(
+          barChart({
+            title: 'Present against missing',
+            stacked: true,
+            data: stages,
+            series: [
+              { key: 'present', label: 'In place' },
+              { key: 'missing', label: 'Missing' },
+              { key: 'notProportionate', label: 'Not at this size' },
+            ],
+            format: (value) => `${value} item${value === 1 ? '' : 's'}`,
+            empty: 'No stage of the standard applies to this project yet.',
+            footnote:
+              'A single completeness figure cannot say which end is weak. Preconstruction complete with handover empty ' +
+              'is a different project from the reverse.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How complete the control is</h2>
+        ${raw(
+          gauge({
+            title: 'Of what is due and trackable',
+            value: Number(project.completenessPercent ?? 0),
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            footnote:
+              `${project.gaps.length} gap${project.gaps.length === 1 ? '' : 's'}` +
+              `${project.blockingGaps.length > 0 ? `, ${project.blockingGaps.length} of which stop the project at the gate` : ''}. ` +
+              `${project.notTracked.length} real control item${project.notTracked.length === 1 ? '' : 's'} have no home in the platform and are excluded rather than hidden.`,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      (estate?.projects ?? []).length > 1
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>The same standard across the estate</h2>
+            ${raw(
+              heatmap({
+                title: 'Completeness by project and stage',
+                // `heatmap` takes the labels and the grid separately, so the
+                // rows are names and the values are the matrix beside them.
+                rows: estate.projects.map((entry) => entry.name ?? entry.projectName ?? '—'),
+                columns: (estate.projects[0]?.stages ?? []).map((stage) => humanise(stage.stage)),
+                values: estate.projects.map((entry) =>
+                  (entry.stages ?? []).map((stage) => Number(stage.completenessPercent ?? 0)),
+                ),
+                format: (value) => `${Math.round(value)}%`,
+                empty: 'Only one project reports against the standard.',
+                footnote:
+                  'A gap on one job is a project problem. The same gap on all of them is a process problem, and only the ' +
+                  'grid tells them apart.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

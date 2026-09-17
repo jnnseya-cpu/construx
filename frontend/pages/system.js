@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, funnelChart, gauge, pieChart } from '../lib/charts.js';
 import { envGroups, head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
@@ -85,6 +86,8 @@ export async function system(root) {
           </div>
         </div>
       </section>
+
+      ${systemCharts(ready, outbox, egress, repairs)}
 
       ${ready.blocking.length > 0
         ? html`<div class="notice bad" style="margin-bottom:14px">
@@ -293,4 +296,145 @@ export async function system(root) {
     const report = await api.post('/v1/admin/telemetry/flush', {});
     toast('Telemetry flushed', `${report.shipped ?? 0} shipped`, 'ok');
   });
+}
+
+/**
+ * Readiness as a shape, not a fraction.
+ *
+ * "4 of 12 configured" is one number covering two different situations: eight
+ * capabilities nobody has set, and eight that are set to a development default
+ * and will start and then fail. `DEGRADED` is the dangerous state — it boots.
+ * The tile cannot separate them and the chart can.
+ *
+ * The outbox funnel is the other half of the same question. Queued, due, sent
+ * and abandoned are four numbers on the tile above and one sequence in fact: a
+ * notification that was owed, became due, and either left or ran out of
+ * attempts. What matters is the drop at the end, and a drop is what a funnel is.
+ */
+function systemCharts(ready, outbox, egress, repairs) {
+  const states = new Map();
+  for (const capability of ready?.capabilities ?? []) {
+    const state = String(capability.state ?? 'NOT_SET');
+    states.set(state, (states.get(state) ?? 0) + 1);
+  }
+  const tone = { CONFIGURED: 'ok', DEGRADED: 'warn', NOT_SET: 'bad' };
+  const byState = [...states.entries()]
+    .map(([state, count]) => ({ label: humanise(state), value: count, tone: tone[state] }))
+    .filter((slice) => slice.value > 0);
+
+  // Critical capabilities apart from the rest. A non-critical rail that is not
+  // set is a feature nobody has switched on; a critical one is a deployment
+  // that should not take a customer.
+  const criticality = [
+    {
+      label: 'Cannot do without',
+      configured: (ready?.capabilities ?? []).filter((capability) => capability.critical && capability.state === 'CONFIGURED').length,
+      degraded: (ready?.capabilities ?? []).filter((capability) => capability.critical && capability.state === 'DEGRADED').length,
+      missing: (ready?.capabilities ?? []).filter((capability) => capability.critical && capability.state === 'NOT_SET').length,
+    },
+    {
+      label: 'Optional',
+      configured: (ready?.capabilities ?? []).filter((capability) => !capability.critical && capability.state === 'CONFIGURED').length,
+      degraded: (ready?.capabilities ?? []).filter((capability) => !capability.critical && capability.state === 'DEGRADED').length,
+      missing: (ready?.capabilities ?? []).filter((capability) => !capability.critical && capability.state === 'NOT_SET').length,
+    },
+  ].filter((row) => row.configured + row.degraded + row.missing > 0);
+
+  const post = outbox?.error
+    ? []
+    : [
+        { label: 'Owed', value: Number(outbox.queued ?? 0) + Number(outbox.sent ?? 0) + Number(outbox.abandoned ?? 0) },
+        { label: 'Left the building', value: Number(outbox.sent ?? 0) },
+      ].filter((stage) => stage.value > 0);
+
+  const total = (ready?.capabilities ?? []).length;
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Which rails are set, and which only look set</h2>
+        ${raw(
+          barChart({
+            title: 'Capabilities by importance and state',
+            horizontal: true,
+            stacked: true,
+            data: criticality,
+            series: [
+              { key: 'configured', label: 'Configured' },
+              { key: 'degraded', label: 'Development default', colour: 'warn' },
+              { key: 'missing', label: 'Not set', colour: 'bad' },
+            ],
+            format: (value) => `${value} capabilit${value === 1 ? 'y' : 'ies'}`,
+            empty: 'No readiness report could be read from this process.',
+            footnote:
+              'A development default is the dangerous state, because the process boots on it. A capability that is not ' +
+              'set at all fails loudly the first time something needs it.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How much of this deployment is real</h2>
+        ${raw(
+          gauge({
+            title: 'Capabilities configured',
+            value: total > 0 ? (Number(ready.configured ?? 0) / total) * 100 : undefined,
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            desc:
+              (ready?.blocking ?? []).length > 0
+                ? `${ready.blocking.length} of these block go-live`
+                : `${ready?.degraded ?? 0} half-configured · nothing blocking`,
+          }),
+        )}
+        ${raw(
+          pieChart({
+            title: 'Capabilities by state',
+            data: byState,
+            centreLabel: String(total),
+            format: (value) => `${value} capabilit${value === 1 ? 'y' : 'ies'}`,
+            empty: 'No capabilities are published.',
+            footnote: 'Every value is read from this running process, never from a checklist, and never shown — only whether it is set.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What was owed, and what actually left</h2>
+        ${raw(
+          funnelChart({
+            title: 'Notifications since start',
+            stages: post,
+            format: (value) => `${value} notification${value === 1 ? '' : 's'}`,
+            empty: 'Nothing has been queued for delivery.',
+            footnote:
+              `${outbox?.error ? 'The outbox could not be read.' : `${outbox.queued ?? 0} still queued · ${outbox.abandoned ?? 0} out of attempts · ${outbox.due ?? 0} due now.`} ` +
+              'A notification out of attempts is a person who was told nothing and does not know it.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What this process has fixed by itself</h2>
+        ${raw(
+          barChart({
+            title: 'Auto-repairs by action',
+            horizontal: true,
+            data: Object.entries(
+              (repairs?.error ? [] : repairs?.repairs ?? []).reduce((counts, repair) => {
+                const key = humanise(String(repair.action ?? repair.what ?? 'Repair'));
+                counts[key] = (counts[key] ?? 0) + 1;
+                return counts;
+              }, {}),
+            ).map(([label, value]) => ({ label, value, tone: (repairs?.repeating ?? []).some((entry) => humanise(String(entry.action ?? '')) === label) ? 'warn' : undefined })),
+            format: (value) => `${value} time${value === 1 ? '' : 's'}`,
+            empty: 'Nothing has needed repairing since this process started.',
+            footnote:
+              'The repair set is deliberately small: restart a stopped drain, flush a stalled queue, and nothing else. ' +
+              'A repair that keeps recurring is a defect the repair is hiding, which is why repeats are marked.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

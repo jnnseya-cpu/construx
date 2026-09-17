@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, pieChart, treemap } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, humanise, metric, money, notice, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
@@ -108,6 +109,8 @@ export async function group(root) {
         ${raw(metric({ label: 'AI spend, last 30 days', value: money((usage.companies ?? []).reduce((sum, c) => sum + (c.meters?.acu?.billedMinor ?? 0), 0), currency), sub: 'billed, every company' }))}
         ${raw(metric({ label: 'Documents issued', value: (usage.companies ?? []).reduce((sum, c) => sum + (c.meters?.document ?? 0), 0), sub: 'last 30 days' }))}
       </div>
+
+      ${groupCharts(companies, usage, statement, currency)}
 
       <div class="card pad0" style="margin-bottom:14px" data-directory>
         <h2 style="padding:15px 17px 0">Companies</h2>
@@ -555,4 +558,126 @@ function recentMonths() {
 /** The nav needs to know whether to show the page at all. */
 export function groupVisible() {
   return Boolean(state.me?.group);
+}
+
+/**
+ * The group, seen as a shape rather than a ledger.
+ *
+ * A group exists because one agreement covers several companies, and the
+ * question a group role is holding is always comparative: which company is
+ * carrying the cost, which is carrying the people, and whether those are the
+ * same company.
+ *
+ * The statement answers it exactly and in a table of nine columns. Drawn, the
+ * two anomalies that matter — a cost centre spending far beyond its headcount,
+ * and one paying for a package it is not using — are visible without reading a
+ * row.
+ *
+ * **Nothing here reaches into a company's records.** Every figure is a meter
+ * the group is already billed on, which is the only thing a group role may see.
+ */
+function groupCharts(companies, usage, statement, currency) {
+  const metered = usage?.companies ?? [];
+  const sections = statement?.error ? [] : statement?.sections ?? [];
+
+  const spend = metered
+    .map((company) => ({
+      label: companies.find((row) => row.tenantId === company.tenantId)?.code ?? company.name ?? company.tenantId,
+      value: Number(company.meters?.acu?.billedMinor ?? 0),
+    }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const people = companies
+    .map((company) => ({ label: company.code, value: Number(company.people ?? 0) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const standing = [
+    { label: 'Active', value: companies.filter((company) => company.status === 'ACTIVE' && !company.awaitingFirstPayment).length, tone: 'ok' },
+    { label: 'Awaiting first payment', value: companies.filter((company) => company.awaitingFirstPayment).length, tone: 'warn' },
+    { label: 'Not active', value: companies.filter((company) => company.status !== 'ACTIVE').length, tone: 'bad' },
+  ].filter((slice) => slice.value > 0);
+
+  // Plan against usage, per cost centre. The comparison the statement makes a
+  // reader do in their head across two columns.
+  const composition = sections.map((section) => ({
+    label: section.code,
+    plan: Number(section.plan?.chargedMinor ?? 0),
+    ai: Number(section.acuBilledMinor ?? 0),
+  }));
+
+  if (spend.length === 0 && people.length === 0 && composition.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What each cost centre is being charged for</h2>
+        ${raw(
+          barChart({
+            title: 'Subscription against AI, by cost centre',
+            horizontal: true,
+            stacked: true,
+            data: composition,
+            series: [
+              { key: 'plan', label: 'Package' },
+              { key: 'ai', label: 'AI, billed' },
+            ],
+            format: (value) => money(value, currency),
+            empty: 'No statement has been produced for this month.',
+            footnote:
+              'A cost centre showing package and no AI is paying for a platform nobody is using it on. The reverse is a ' +
+              'company that has outgrown its package.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the group stands</h2>
+        ${raw(
+          pieChart({
+            title: 'Companies by standing',
+            data: standing,
+            centreLabel: String(companies.length),
+            format: (value) => `${value} compan${value === 1 ? 'y' : 'ies'}`,
+            empty: 'No companies in this group.',
+            footnote:
+              'A company awaiting its first payment is live and unbilled. It is not suspended, and its people are ' +
+              'working — which is why it is shown apart from both of the others.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Who is spending the wallet</h2>
+        ${raw(
+          treemap({
+            title: 'AI spend by company, last 30 days',
+            items: spend,
+            format: (value) => money(value, currency),
+            empty: 'No company has drawn on the wallet in the last 30 days.',
+            footnote:
+              'One wallet, several companies. A tile far larger than the company’s share of the people is the case for ' +
+              'a hard limit, which is set per company from the table below.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the people are</h2>
+        ${raw(
+          barChart({
+            title: 'Active people by company',
+            horizontal: true,
+            data: people,
+            format: (value) => `${value} ${value === 1 ? 'person' : 'people'}`,
+            empty: 'No company has anybody active.',
+            footnote:
+              'Read against the spend beside it. Cost tracking headcount is a platform being used; cost without ' +
+              'headcount is usually one workflow, run by one person, at scale.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

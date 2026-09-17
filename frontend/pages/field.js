@@ -3,6 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, pct, raw, reference, render, statusTone, table, time, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
+import { barChart, gauge, pieChart } from '../lib/charts.js';
 import * as outbox from '../lib/outbox.js';
 import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
 import { mountSiteTwin } from '../lib/sitetwin.js';
@@ -836,6 +837,8 @@ export async function field(root) {
               })}
             </div>`
       }
+
+      ${fieldCharts(diary, walk, plant)}
 
       ${capturePanel(missions, brief)}
 
@@ -2468,4 +2471,85 @@ export async function field(root) {
       }
     });
   });
+}
+
+/**
+ * The field record as coverage and exposure, before it is read as a list.
+ *
+ * Two questions a site manager is asked and a diary cannot answer a page at a
+ * time. **How much of the record is actually there** — a gap in the diary is
+ * the first thing the other side's expert looks for, and a list of entries
+ * shows what exists rather than what is missing. **What is still open and how
+ * late** — a walk register sorted by date buries the overdue item at the
+ * bottom.
+ *
+ * Both come from positions the API already computes; nothing is counted here.
+ */
+function fieldCharts(diary, walk, plant) {
+  if (!diary && !walk) return '';
+
+  const recorded = Number(diary?.recorded ?? 0);
+  const inWindow = Number(diary?.daysInWindow ?? 0);
+  const missing = Math.max(0, inWindow - recorded);
+  const categories = Object.entries(walk?.byCategory ?? {}).map(([category, count]) => ({
+    label: humanise(category),
+    value: Number(count),
+  }));
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Diary coverage</h2>
+        ${raw(
+          gauge({
+            title: 'Days recorded in the window',
+            value: inWindow === 0 ? 0 : Math.round((recorded / inWindow) * 100),
+            max: 100,
+            format: (value) => `${value}%`,
+            footnote:
+              inWindow === 0
+                ? 'No window to measure against yet.'
+                : `${recorded} of ${inWindow} days recorded. ${missing} missing — and a gap is what a delay claim is argued into.`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the walks are finding</h2>
+        ${raw(
+          pieChart({
+            title: 'Observations by category',
+            data: categories,
+            format: (value) => `${value} observation${value === 1 ? '' : 's'}`,
+            centreLabel: String(walk?.total ?? 0),
+            empty: 'No observation has been raised on a walk.',
+            footnote: walk
+              ? `${walk.open} open, ${walk.closedLate ?? 0} closed late, ${walk.averageDaysToClose ?? '—'} days to close on average.`
+              : undefined,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      (walk?.overdue ?? []).length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>How far past the date</h2>
+            ${raw(
+              barChart({
+                title: 'Overdue observations',
+                horizontal: true,
+                data: walk.overdue.map((entry) => ({
+                  label: `${entry.reference} ${entry.description}`.slice(0, 60),
+                  value: entry.daysOverdue,
+                  tone: entry.daysOverdue > 14 ? 'bad' : 'warn',
+                })),
+                format: (value) => `${value} days`,
+                empty: 'Nothing is past the date somebody agreed to.',
+                footnote: walk.summary,
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

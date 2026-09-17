@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, pieChart, proportionBar } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, notice, raw, render, statusTone, table } from '../lib/ui.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -108,6 +109,23 @@ function indicatorCard(indicator) {
     <div class="card">
       <h2>${indicator.label}</h2>
       <div class="metric">${String(indicator.total)}</div>
+      ${
+        // The whole breakdown, not the top three, because the bar is the one
+        // place the remainder is visible at all. The sentence below keeps its
+        // three: a tile that reads out eleven states reads as nothing.
+        (indicator.breakdown ?? []).length > 0
+          ? html`<div style="margin:8px 0 6px">${raw(
+              proportionBar({
+                parts: (indicator.breakdown ?? []).map((entry) => ({
+                  label: humanise(entry.key),
+                  value: Number(entry.count ?? 0),
+                  tone: statusTone(entry.key),
+                })),
+                format: (value) => `${value} record${value === 1 ? '' : 's'}`,
+              }),
+            )}</div>`
+          : ''
+      }
       <div class="metric-sub">
         ${top.length > 0
           ? raw(top.map((entry) => `${humanise(entry.key)} ${entry.count}`).join(' · '))
@@ -237,6 +255,8 @@ export async function work(root) {
         <h2 id="wk-ind-h">Home indicators</h2>
         <div class="grid g4">${raw(position.indicators.map((entry) => indicatorCard(entry).html ?? '').join(''))}</div>
       </section>
+
+      ${workCharts(position)}
 
       <section class="card" aria-labelledby="wk-tabs-h">
         <h2 id="wk-tabs-h">${position.tabs.find((tab) => tab.id === chosen.tab)?.label ?? 'Records'}</h2>
@@ -489,4 +509,88 @@ export async function work(root) {
     chosen.status = chosen.owner = chosen.location = '';
     draw();
   });
+}
+
+/**
+ * The module's own shape.
+ *
+ * The indicator tiles answer "how many" one figure at a time. What they cannot
+ * show is proportion across the module — four tiles reading 12, 3, 40 and 7 do
+ * not tell a site manager where the work is, because the four count different
+ * things and sit in four boxes.
+ *
+ * Unmeasured indicators are left out of both charts rather than plotted as
+ * zero. That is the same rule the tiles follow and the reason they say "not
+ * measured": a zero and an unknown look identical on a chart and mean opposite
+ * things.
+ */
+function workCharts(position) {
+  const measured = (position.indicators ?? []).filter((indicator) => indicator.measured);
+  if (measured.length === 0) return '';
+
+  // Every state any indicator carries, so the stacked bars share a key.
+  const states = [...new Set(measured.flatMap((indicator) => (indicator.breakdown ?? []).map((entry) => String(entry.key))))];
+
+  const rows = measured
+    .filter((indicator) => (indicator.breakdown ?? []).length > 0)
+    .map((indicator) => {
+      const row = { label: indicator.label };
+      // Not named `state` — that is the app's session object, imported above,
+      // and shadowing it inside a loop is how a later edit reads the wrong one.
+      for (const key of states) {
+        row[key] = Number((indicator.breakdown ?? []).find((entry) => String(entry.key) === key)?.count ?? 0);
+      }
+      return row;
+    });
+
+  const totals = measured.map((indicator) => ({ label: indicator.label, value: Number(indicator.total ?? 0) })).filter((row) => row.value > 0);
+
+  const tabs = (position.tabs ?? [])
+    .map((tab) => ({ label: tab.label, value: Number(tab.count ?? 0) }))
+    .filter((row) => row.value > 0);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where the work on this module is sitting</h2>
+        ${raw(
+          rows.length > 0
+            ? barChart({
+                title: 'Records by indicator and state',
+                horizontal: true,
+                stacked: true,
+                data: rows,
+                series: states.map((key) => ({ key, label: humanise(key), colour: statusTone(key) || undefined })),
+                format: (value) => `${value} record${value === 1 ? '' : 's'}`,
+                empty: 'No indicator carries a breakdown.',
+                footnote:
+                  'Only indicators the platform can measure appear. An indicator with no source is shown above as not ' +
+                  'measured and is left off here rather than drawn at zero.',
+              })
+            : barChart({
+                title: 'Records by indicator',
+                horizontal: true,
+                data: totals,
+                format: (value) => `${value} record${value === 1 ? '' : 's'}`,
+                empty: 'Nothing measured on this module yet.',
+              }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What this module is made of</h2>
+        ${raw(
+          pieChart({
+            title: 'Records by tab',
+            data: tabs,
+            centreLabel: String(tabs.reduce((sum, tab) => sum + tab.value, 0)),
+            format: (value) => `${value} record${value === 1 ? '' : 's'}`,
+            empty: 'No records on any tab yet.',
+            footnote:
+              'The counts the tab buttons carry, in one picture. The filters above narrow the table below them and not ' +
+              'this — it is the module whole.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

@@ -1,4 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
+import { barChart, funnelChart, pieChart, sankeyDiagram } from '../lib/charts.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
@@ -341,6 +342,8 @@ export async function contracts(root) {
           <div class="metric-sub">contract basis · causation · evidence · procedure</div>
         </div>
       </div>
+
+      ${contractCharts(register, calendar, disputes)}
 
       <div id="contracts-insight" style="margin-bottom:14px"></div>
 
@@ -1306,4 +1309,112 @@ function contractLabel(contract) {
   const form = String(contract.form ?? '').trim();
   if (!form) return suite || 'Contract';
   return form.startsWith(suite) ? form : `${suite} ${form}`.trim();
+}
+
+/**
+ * Change, and where it is stuck.
+ *
+ * A variation register is a table of rows that each look similar and behave
+ * completely differently, and the two things that decide whether the money is
+ * ever recovered are invisible in it.
+ *
+ * **Where the value stops.** Captured downstream, instructed, agreed — the
+ * funnel between them is the loss. A subcontractor's claim that has been
+ * captured and never instructed is not a variation, it is an argument waiting,
+ * and the drop between two stages is the number to act on.
+ *
+ * **Who it came from and where it landed.** A Sankey from origin to status
+ * shows whether client instructions are being agreed while subcontractor claims
+ * sit unresolved, which is a pattern no per-row reading reveals.
+ */
+function contractCharts(register, calendar, disputes) {
+  const lines = register?.lines ?? [];
+  if (lines.length === 0) return '';
+
+  const sum = (key) => lines.reduce((total, line) => total + Number(line[key] ?? 0), 0);
+  const stages = [
+    { label: 'Captured downstream', value: sum('downstreamCapturedMinor') },
+    { label: 'Instructed', value: sum('instructedMinor') },
+    { label: 'Agreed', value: sum('agreedMinor') },
+  ].filter((stage) => stage.value > 0);
+
+  const flows = lines
+    .filter((line) => Number(line.downstreamCapturedMinor ?? line.instructedMinor ?? 0) > 0)
+    .map((line) => ({
+      from: humanise(String(line.origin ?? 'UNKNOWN')),
+      to: humanise(String(line.status ?? 'UNKNOWN')),
+      value: Number(line.downstreamCapturedMinor || line.instructedMinor || line.agreedMinor || 0),
+    }));
+
+  const byStatus = [...new Set(lines.map((line) => line.status))].map((status) => ({
+    label: humanise(String(status)),
+    value: lines.filter((line) => line.status === status).length,
+    tone: status === 'CLAIMED' ? 'warn' : status === 'AGREED' ? 'ok' : '',
+  }));
+
+  const timeImpact = lines
+    .filter((line) => Number(line.timeImpactDays ?? 0) > 0)
+    .sort((a, b) => Number(b.timeImpactDays) - Number(a.timeImpactDays))
+    .slice(0, 8)
+    .map((line) => ({ label: `${line.reference} ${line.description}`.slice(0, 58), value: Number(line.timeImpactDays) }));
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where the value stops</h2>
+        ${raw(
+          funnelChart({
+            title: 'Captured, instructed, agreed',
+            stages,
+            format: (value) => money(value),
+            empty: 'No variation carries a value yet.',
+            footnote:
+              'The drop between two stages is the exposure. Value captured downstream and never instructed is an argument ' +
+              'waiting rather than a variation.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where change is sitting</h2>
+        ${raw(
+          pieChart({
+            title: 'Variations by status',
+            data: byStatus,
+            format: (value) => `${value} variation${value === 1 ? '' : 's'}`,
+            centreLabel: String(lines.length),
+            empty: 'No variation on the register.',
+            footnote: disputes ? `${disputes.open ?? 0} dispute${(disputes.open ?? 0) === 1 ? '' : 's'} open.` : undefined,
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>From whom, to where</h2>
+        ${raw(
+          sankeyDiagram({
+            title: 'Origin against status',
+            flows,
+            format: (value) => money(value),
+            empty: 'No valued variation to trace.',
+            footnote: 'Client instructions being agreed while subcontractor claims sit unresolved is a pattern no row-by-row reading shows.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What change is doing to the programme</h2>
+        ${raw(
+          barChart({
+            title: 'Time impact by variation',
+            horizontal: true,
+            data: timeImpact,
+            format: (value) => `${value} days`,
+            empty: 'No variation claims a time impact.',
+            footnote: 'Days claimed, not days awarded — an extension of time is granted against the programme, not against this list.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

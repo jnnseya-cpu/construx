@@ -3,6 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { DISCIPLINE, today } from '../lib/enums.js';
 import { badge, date, drillable, html, humanise, money, pct, positionReport, raw, reference, render, resolveHtml, statusTone, table, time, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
+import { barChart, gauge, pieChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -240,6 +241,8 @@ export async function design(root) {
           ]))}
         </div>
       </div>
+
+      ${designCharts(clashes, rfi, readiness, spec)}
 
       ${
         exposure && exposure.overdueCount > 0
@@ -1511,4 +1514,104 @@ export async function design(root) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+/**
+ * Design and BIM, as position rather than register.
+ *
+ * Three questions that a list of drawings, a list of clashes and a list of RFIs
+ * each answer a third of. **Is the model clean enough to build from** — the
+ * number that matters is open criticals, not total clashes. **Is the design
+ * ahead of the work** — readiness against the lookahead, because information
+ * arriving after the gang does is the most expensive kind of late. **How were
+ * the clashes actually closed** — a clash resolved on site is rework at
+ * installed cost, and one resolved by revising the model is not, so the split
+ * is a cost story rather than a tidy-up statistic.
+ */
+function designCharts(clashes, rfi, readiness, spec) {
+  if (!clashes && !rfi && !readiness) return '';
+
+  const methods = Object.entries(clashes?.byMethod ?? {}).map(([method, count]) => ({
+    label: humanise(method),
+    value: Number(count),
+    // Resolved on site is the expensive one and is coloured as such.
+    tone: method === 'RESOLVED_ON_SITE' ? 'warn' : '',
+  }));
+
+  const rfiStates = rfi
+    ? [
+        { label: 'Open', value: Number(rfi.open ?? 0), tone: 'warn' },
+        { label: 'Awaiting closure', value: Number(rfi.awaitingClosure ?? 0) },
+        { label: 'Closed', value: Number(rfi.closed ?? 0), tone: 'ok' },
+      ].filter((entry) => entry.value > 0)
+    : [];
+
+  return html`
+    <div class="grid g3" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Design ahead of the work</h2>
+        ${raw(
+          gauge({
+            title: 'Lookahead activities with their information',
+            value: Number(readiness?.plannedActivities ?? 0) === 0
+              ? 0
+              : Math.round((Number(readiness.ready) / Number(readiness.plannedActivities)) * 100),
+            max: 100,
+            format: (value) => `${value}%`,
+            footnote: readiness?.summary ?? 'No lookahead to measure design readiness against.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How clashes were closed</h2>
+        ${raw(
+          pieChart({
+            title: 'Resolution method',
+            data: methods,
+            format: (value) => `${value} clash${value === 1 ? '' : 'es'}`,
+            centreLabel: String(clashes?.total ?? 0),
+            empty: 'No clash has been resolved yet.',
+            footnote: clashes?.summary,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the questions are</h2>
+        ${raw(
+          pieChart({
+            title: 'RFIs by state',
+            data: rfiStates,
+            format: (value) => `${value} RFI${value === 1 ? '' : 's'}`,
+            centreLabel: String(rfi?.total ?? 0),
+            empty: 'No RFI has been raised on this project.',
+            footnote: rfi
+              ? `${rfi.answeredLate ?? 0} answered late, ${rfi.averageDaysToAnswer ?? '—'} days to answer on average, ${rfi.designChanges ?? 0} became a design change.`
+              : undefined,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      (clashes?.openCritical ?? 0) > 0 || (clashes?.modelOutOfDate ?? 0) > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>What is still in the way</h2>
+            ${raw(
+              barChart({
+                title: 'Open model problems',
+                horizontal: true,
+                data: [
+                  { label: 'Critical clashes still open', value: Number(clashes.openCritical ?? 0), tone: 'bad' },
+                  { label: 'Models out of date', value: Number(clashes.modelOutOfDate ?? 0), tone: 'warn' },
+                  { label: 'Clashes dismissed as critical', value: Number(clashes.dismissedCritical ?? 0), tone: 'warn' },
+                ].filter((entry) => entry.value > 0),
+                format: (value) => String(value),
+                empty: 'Nothing critical is open against the model.',
+                footnote: 'A critical clash that reaches site is rework at installed cost.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

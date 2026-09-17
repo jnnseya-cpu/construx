@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { badge, date, html, humanise, metric, notice, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
+import { barChart, gauge, pieChart, treemap } from '../lib/charts.js';
 
 /**
  * Team & Access — identity governance for the tenancy.
@@ -169,6 +170,8 @@ export async function team(root) {
           }),
         )}
       </div>
+
+      ${teamCharts(summary, seats, people, roles, units)}
 
       ${billable
         ? html`<div class="card" style="margin-bottom:14px" data-billable>
@@ -1099,4 +1102,100 @@ export async function team(root) {
       toast('Could not do that', error.message, 'err');
     }
   });
+}
+
+/**
+ * Who is here, what they may do, and what it costs.
+ *
+ * A directory answers "who", and the three questions an administrator actually
+ * opens this screen for are shape questions. **Where is the authority** — a
+ * table of roles beside holder counts buries the fact that nine people hold a
+ * read-only role and one holds everything. **Where are the seats going** — the
+ * package is bought in Controller seats and participants are free, so the split
+ * is the invoice. **Is the second factor actually enrolled** — a percentage
+ * with no picture gets read as a target rather than a gap.
+ */
+function teamCharts(summary, seats, people, roles, units) {
+  const active = (people ?? []).filter((person) => person.state === 'ACTIVE');
+  if (active.length === 0) return '';
+
+  const byRole = (roles ?? [])
+    .filter((entry) => entry.holders > 0)
+    .map((entry) => ({ label: humanise(entry.role), value: entry.holders }))
+    .sort((a, b) => b.value - a.value);
+
+  const byClass = [
+    { label: 'Controller — takes a seat', value: active.filter((person) => person.accessClass === 'CONTROLLER').length, tone: 'ai' },
+    { label: 'Participant — no seat', value: active.filter((person) => person.accessClass !== 'CONTROLLER').length },
+  ].filter((entry) => entry.value > 0);
+
+  const byUnit = (units ?? [])
+    .filter((unit) => !unit.retiredAt)
+    .map((unit) => ({ label: unit.name, value: active.filter((person) => person.unitId === unit.id).length }))
+    .filter((entry) => entry.value > 0);
+
+  return html`
+    <div class="grid g3" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where the authority sits</h2>
+        ${raw(
+          barChart({
+            title: 'People per role',
+            horizontal: true,
+            data: byRole,
+            format: (value) => `${value} ${value === 1 ? 'person' : 'people'}`,
+            empty: 'No role is held by anybody in this company.',
+            footnote: 'A person may hold several roles, so this counts holdings rather than heads.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the package is paying for</h2>
+        ${raw(
+          pieChart({
+            title: 'Controllers against participants',
+            data: byClass,
+            format: (value) => `${value} ${value === 1 ? 'person' : 'people'}`,
+            centreLabel: String(active.length),
+            empty: 'Nobody is active in this company.',
+            footnote:
+              seats.cap === null
+                ? `${seats.package} package, unlimited seats.`
+                : `${seats.used} of ${seats.cap} seats taken on the ${seats.package} package. Only a Controller consumes one.`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Second factor enrolled</h2>
+        ${raw(
+          gauge({
+            title: 'Of active identities',
+            value: Number(summary.secondFactor?.coverage ?? 0),
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            footnote:
+              `${summary.secondFactor?.enrolled ?? 0} of ${summary.secondFactor?.of ?? 0} active identities hold a passkey or an ` +
+              'authenticator app. The rest sign in on an emailed code alone.',
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      byUnit.length > 1
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>How the company is arranged</h2>
+            ${raw(
+              treemap({
+                title: 'People by unit',
+                items: byUnit,
+                format: (value) => `${value} ${value === 1 ? 'person' : 'people'}`,
+                empty: 'Nobody has been placed in a unit.',
+                footnote: 'Placement is structure, not authority — a unit changes who somebody reports to and nothing about what they may do.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

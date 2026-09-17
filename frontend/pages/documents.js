@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, gauge, pieChart, treemap } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { badge, date, html, humanise, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
 // No `can` gate on the row buttons: the navigation already reaches this screen
@@ -140,6 +141,8 @@ export async function documents(root) {
           </div>
         </div>
       </div>
+
+      ${documentCharts(all, evidence)}
 
       ${
         waitingOn.size > 0
@@ -1373,4 +1376,119 @@ async function issuerPanels(host) {
       }
     });
   }
+}
+
+/**
+ * What can be issued, and what the record behind it looks like.
+ *
+ * Four tiles say how many types can be generated. The question they cannot
+ * answer is *which part of the project* is short — a programme with every
+ * safety document generable and no commercial one is a different problem from
+ * the reverse, and both read as the same number.
+ *
+ * Evidence coverage is the other half. A document is composed from records; the
+ * records are only as good as the evidence held against them, and `held: 0` of
+ * 121 is a fact the document list does not mention because every one of those
+ * documents will still generate.
+ */
+function documentCharts(all, evidence) {
+  const byCategory = new Map();
+  for (const document of all ?? []) {
+    const category = humanise(String(document.category ?? 'OTHER'));
+    const row = byCategory.get(category) ?? { label: category, ready: 0, blocked: 0, value: 0 };
+    if (document.generable && (document.missing ?? []).length === 0) row.ready += 1;
+    else row.blocked += 1;
+    row.value += 1;
+    byCategory.set(category, row);
+  }
+  const categories = [...byCategory.values()].sort((a, b) => b.value - a.value);
+
+  const byType = new Map();
+  for (const entry of evidence?.entries ?? []) {
+    const type = humanise(String(entry.type ?? 'OTHER'));
+    byType.set(type, (byType.get(type) ?? 0) + 1);
+  }
+  const evidenceTypes = [...byType.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  const coverage = evidence?.coverage;
+  if (categories.length === 0 && evidenceTypes.length === 0 && !coverage) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Which part of the project can issue, and which cannot</h2>
+        ${raw(
+          barChart({
+            title: 'Document types by category',
+            horizontal: true,
+            stacked: true,
+            data: categories,
+            series: [
+              { key: 'ready', label: 'Can be generated now' },
+              { key: 'blocked', label: 'Waiting on a record', colour: 'warn' },
+            ],
+            format: (value) => `${value} type${value === 1 ? '' : 's'}`,
+            empty: 'No document catalogue is published for this project.',
+            footnote:
+              'Blocked means a record the document composes from does not exist yet, not that generation failed. ' +
+              'The table below names the records, one row each, because one missing register blocks several documents.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How much of the record has a file behind it</h2>
+        ${raw(
+          gauge({
+            title: 'Evidence held in the store',
+            value: coverage && Number(coverage.total) > 0 ? (Number(coverage.held) / Number(coverage.total)) * 100 : undefined,
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            desc: coverage
+              ? `${coverage.held} of ${coverage.total} entries have a file held${evidence?.storeConfigured ? '' : ' · no evidence store is configured'}`
+              : 'No evidence position could be read.',
+          }),
+        )}
+        <div class="metric-sub" style="margin-top:10px">
+          An entry records a hash whether or not the file itself is held. A document generates either way — what a
+          low figure costs is the ability to produce the original later, which is what an enquiry asks for.
+        </div>
+      </div>
+    </div>
+
+    ${
+      evidenceTypes.length > 1
+        ? html`<div class="grid g2" style="margin-bottom:14px">
+            <div class="card">
+              <h2>What the project has captured</h2>
+              ${raw(
+                pieChart({
+                  title: 'Evidence entries by type',
+                  data: evidenceTypes.slice(0, 8),
+                  centreLabel: String(evidence?.coverage?.total ?? evidenceTypes.reduce((sum, row) => sum + row.value, 0)),
+                  format: (value) => `${value} entr${value === 1 ? 'y' : 'ies'}`,
+                  empty: 'Nothing has been captured as evidence.',
+                  footnote: 'The eight commonest types. Capture follows the workflow, so the mix is a picture of what the project has been doing.',
+                }),
+              )}
+            </div>
+            <div class="card">
+              <h2>Where the evidence is concentrated</h2>
+              ${raw(
+                treemap({
+                  title: 'Evidence by type',
+                  items: evidenceTypes,
+                  format: (value) => `${value} entr${value === 1 ? 'y' : 'ies'}`,
+                  empty: 'Nothing has been captured as evidence.',
+                  footnote:
+                    'Concentration is not coverage. A single type dominating usually means one workflow is well used and ' +
+                    'the others are not, rather than that the project is well evidenced.',
+                }),
+              )}
+            </div>
+          </div>`
+        : ''
+    }
+  `;
 }

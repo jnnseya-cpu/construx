@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
+import { barChart, gauge, radarChart } from '../lib/charts.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -176,6 +177,8 @@ export async function concept(root) {
           </div>
         </div>
       </div>
+
+      ${conceptCharts(diligence, options, compliance)}
 
       ${initiationPanel(initiation)}
       ${briefPanel(brief, requirements.requirements ?? [])}
@@ -878,4 +881,91 @@ function compliancePanel(compliance) {
       </div>
     </div>
   </div>`;
+}
+
+/**
+ * Concept, as coverage and comparison.
+ *
+ * Due diligence is a coverage question before it is a list: the disciplines
+ * nobody has surveyed are the ones the risk allowance is quietly carrying, and
+ * a register of four completed surveys does not show the one that is missing.
+ *
+ * Options are a *profile* comparison, which is what the radar is for. A table
+ * of scores invites a reader to total them and pick the biggest; the shape
+ * shows that the cheapest option is also the one that scores worst on
+ * buildability, and that is the trade-off the decision is actually about.
+ */
+function conceptCharts(diligence, options, compliance) {
+  if (!diligence && !options) return '';
+
+  const covered = diligence?.readiness?.covered ?? [];
+  const uncovered = diligence?.readiness?.uncovered ?? [];
+
+  // Every option scored on the same criteria, if the appraisal carries them.
+  const appraised = (options?.options ?? []).filter((option) => option.scores && typeof option.scores === 'object');
+  const criteria = appraised.length > 0 ? Object.keys(appraised[0].scores) : [];
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What has been surveyed, and what has not</h2>
+        ${raw(
+          gauge({
+            title: 'Due-diligence coverage',
+            value: Number(diligence?.readiness?.percent ?? 0),
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            footnote:
+              uncovered.length === 0
+                ? `All ${covered.length} disciplines surveyed.`
+                : `${uncovered.map((entry) => humanise(entry)).join(', ')} not surveyed. An unsurveyed discipline is a risk the allowance is carrying without being asked.`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the investigations stand</h2>
+        ${raw(
+          barChart({
+            title: 'Surveys and investigations',
+            horizontal: true,
+            data: [
+              { label: 'Surveys live', value: Number(diligence?.liveSurveys ?? 0), tone: 'ok' },
+              { label: 'Surveys expired', value: Number(diligence?.expiredSurveys ?? 0), tone: 'warn' },
+              { label: 'Surveys superseded', value: Number(diligence?.supersededSurveys ?? 0) },
+              { label: 'Constraints assessed', value: Number(diligence?.assessed ?? 0), tone: 'ok' },
+              { label: 'Critical constraints open', value: Number(diligence?.criticalOpen ?? 0), tone: 'bad' },
+              { label: 'Investigations open', value: Number(diligence?.investigationsOpen ?? 0), tone: 'warn' },
+              { label: 'Investigations overdue', value: Number(diligence?.investigationsOverdue ?? 0), tone: 'bad' },
+            ].filter((entry) => entry.value > 0),
+            format: (value) => String(value),
+            empty: 'No survey or constraint has been recorded.',
+            footnote: compliance ? `Residual risk exposure ${money(compliance.residualExposureMinor)} against an allowance of ${money(compliance.costPlanAllowanceMinor)}.` : undefined,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      appraised.length > 1 && criteria.length >= 3
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>How the options compare</h2>
+            ${raw(
+              radarChart({
+                title: 'Option appraisal',
+                axes: criteria.map((criterion) => humanise(criterion)),
+                series: appraised.map((option) => ({
+                  label: option.name ?? option.reference ?? '—',
+                  values: criteria.map((criterion) => Number(option.scores[criterion] ?? 0)),
+                })),
+                format: (value) => String(value),
+                empty: 'No option carries a comparable score.',
+                footnote:
+                  'Every axis is on the same scale deliberately. Scaling each one to its own best makes every option look ' +
+                  'balanced, which flatters the one that is strong in a single place.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

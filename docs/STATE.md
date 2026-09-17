@@ -21655,3 +21655,103 @@ API already published, so the picture and the table beneath it cannot disagree.
 A resource histogram under the Gantt, and a zoom control for day/week/month.
 The Gantt is fixed-width and pages at sixty activities. Those are named here
 rather than implied to exist.
+
+## "Dashboards everywhere", taken literally
+
+The chart kit had eighteen types and three screens. The instruction was every
+screen, every role, and the full list — comparison, trend, part-of-whole,
+distribution, relationship and flow. That is what this section records.
+
+### Three chart types were missing entirely
+
+`radarChart`, `sankeyDiagram` and `flowChart` did not exist. All three are in
+`frontend/lib/charts.js` now, with the same contracts as the rest: they refuse
+to draw nothing, they carry the value in a `<title>` on every shape, and they
+take one options object.
+
+- **Radar** scales every series against one ceiling, so two profiles are
+  comparable. It refuses fewer than three axes, which has no shape, and drops a
+  series whose value count does not match the axes, which would attribute each
+  reading to the wrong measure.
+- **Sankey** is two columns deliberately. A multi-level Sankey needs a layout
+  solver to avoid crossings, and ribbons crossing arbitrarily are harder to read
+  than the table they replaced. Ribbon thickness is the quantity; both columns
+  carry the same total.
+- **Flowchart** lays out by breadth-first depth from every node nothing points
+  at, so a process that loops back — rejected work returning to assessment —
+  still terminates. A link to a step that is not there is dropped rather than
+  drawn into empty space.
+
+Each has geometry tests in `backend/tests/charts.test.ts`, asserting on the
+numbers inside the SVG rather than that something was returned, which is the
+only place a chart's lie would be.
+
+### The bug that made this worth a test, not a sweep
+
+Every chart takes one options object and destructures the keys it knows.
+JavaScript does not mind an unknown key. So `funnelChart({ data: stages })` —
+where the parameter is `stages` — binds `stages` to its default `[]`, the
+function takes its empty path, and the screen renders one card fewer than it was
+written to render. Nothing throws, nothing logs, the suite passes, and the panel
+is simply not there.
+
+It happened twice: `funnelChart({ data })` on Contracts and `treemap({ data })`
+on Team. Both were found by counting rendered `figure.chart` elements in a
+browser, which is not a thing a test suite does.
+
+`backend/tests/chartcalls.test.ts` now reads the destructuring pattern of every
+exported chart function, reads the top-level keys of every call to one across
+`frontend/`, and fails on a key the function does not take. It is a spelling
+check and nothing more — not a parser, and a call it cannot read (an options
+object built in a variable, a spread) is skipped rather than guessed at.
+
+### The Gantt
+
+Rewritten rather than extended. It now draws total float as its own bar, runs
+the float backwards and marks it when float is negative, routes FS/SS/FF logic
+links between activities, and groups under WBS summary rows. The timescale
+control is `DAY`, `WEEK` or `MONTH`, and it sets the chart's width as well as
+its gridlines, because those are the same decision: asking for days on a
+two-year programme inside a 760px box would draw seven hundred gridlines into a
+grey block. The container scrolls; the activity cap is per scale.
+
+**The resource histogram was already there.** `resourcePanel` has always drawn
+one from `histogram({ buckets: profile.weeks })`. It was empty because the seed
+defined no resources — so the fix was four resources and eight assignments in
+`backend/src/seed.ts`, not a new chart. Recorded because the opposite was
+claimed here before it was checked.
+
+### Screens that now carry charts
+
+Field, Design & BIM, Control, Team, Concept, Contracts, Procurement, Autopilot,
+Risk & Alerts, Field Module Workspace, Site Documents, Group and System Control,
+in addition to Enterprise, Command Centre, Project Overview and Programme.
+
+Three of them are worth naming for what the chart shows that the table could
+not:
+
+- **Procurement.** The bid table is a defensible record and a poor explanation.
+  Score composition per bidder says which criterion the winner led on; the price
+  against total score scatter is the whole of the justification when the
+  cheapest bid did not win.
+- **Autopilot.** The mandate ladder was four paragraphs of prose. Drawn as a
+  flow, the thing a reader needs — that ACT is the only rung reached without a
+  person in the loop at the moment of acting, and that reaching it needs a grant
+  somebody made earlier — is one picture.
+- **Risk & Alerts.** A rule that has fired forty times and is currently clear
+  appears in none of the four tiles. Flapping is its own finding, and the fired
+  count is the only place it shows.
+
+Every chart is a projection of a payload the API already published. None of them
+computes, so a picture and the table beneath it cannot disagree.
+
+### What is deliberately not charted
+
+- **Site Services.** The screen is behind a module the CONSTRUX subscription
+  does not include, and the demonstration tenancy does not hold it. Charts have
+  not been added to a screen whose data could not be read in this environment,
+  because a chart nobody has seen render is a claim rather than a feature.
+- **The remaining account-layer screens** — Tenants, Billing & Invoices, Audit
+  Logs, AI Engine, Communications, Support, Bookings, Predictive Intel, Platform
+  Operations. They are next, and they are named here rather than implied to be
+  done.

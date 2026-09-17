@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, ganttChart, gauge, pieChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
@@ -126,6 +127,8 @@ export async function alerts(root) {
           <div class="metric-sub">auth failures, denials, rate limits and admin access</div>
         </div>
       </section>
+
+      ${alertCharts(watch, assurance, security, oncall)}
 
       ${diverged.length > 0
         ? html`<div class="notice bad" style="margin-bottom:14px">
@@ -373,4 +376,130 @@ export async function alerts(root) {
       button.textContent = 'Verify the next slice now';
     }
   });
+}
+
+/**
+ * Is anything wrong right now, drawn.
+ *
+ * Four tiles already answer it as numbers, and numbers are the right answer to
+ * "how many". They are the wrong answer to two questions this screen exists
+ * for: *which* rules are unhealthy and *when* is the pager changing hands.
+ *
+ * The rota is a timeline and was a table of ISO strings. A handover at 02:00 on
+ * a Saturday is obvious as a bar and invisible as a row, and "who has it in
+ * three days" took counting.
+ *
+ * A rule that has fired forty times since boot and is currently clear does not
+ * appear in any of the four tiles. Flapping is its own finding — an alert
+ * nobody can act on trains people to ignore the ones they can — and the fired
+ * count is the only place it shows.
+ */
+function alertCharts(watch, assurance, security, oncall) {
+  const rules = watch?.error ? [] : [...(watch.firing ?? []), ...(watch.clear ?? [])];
+  const severityOf = (ruleId) => (watch?.rules ?? []).find((rule) => rule.id === ruleId)?.severity;
+
+  const health = [
+    { label: 'Firing', value: (watch?.firing ?? []).length, tone: 'bad' },
+    { label: 'Clear', value: (watch?.clear ?? []).length, tone: 'ok' },
+  ].filter((slice) => slice.value > 0);
+
+  // Flapping, worst first. Only rules that have actually fired — a rule with a
+  // count of zero is healthy and its bar would be noise.
+  const flapping = rules
+    .filter((rule) => Number(rule.firedCount ?? 0) > 0)
+    .sort((a, b) => Number(b.firedCount) - Number(a.firedCount))
+    .slice(0, 10)
+    .map((rule) => ({
+      label: humanise(String(rule.ruleId)),
+      value: Number(rule.firedCount),
+      tone: rule.firing ? 'bad' : severityOf(rule.ruleId) === 'CRITICAL' ? 'warn' : undefined,
+    }));
+
+  const handovers = (oncall?.error ? [] : oncall.schedule ?? []).map((slot, index) => ({
+    id: `slot-${index}`,
+    label: slot.person.name,
+    start: String(slot.from),
+    end: String(slot.until),
+    tone: index === 0 ? 'ok' : undefined,
+  }));
+
+  const refusals = Object.entries(security?.error ? {} : security.summary?.byKind ?? {})
+    .map(([kind, count]) => ({ label: humanise(kind), value: Number(count) }))
+    .filter((slice) => slice.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const chains = assurance?.error ? [] : assurance.projects ?? [];
+  const proved = chains.filter((project) => project.lastVerifiedAt).length;
+
+  if (rules.length === 0 && handovers.length === 0 && refusals.length === 0 && chains.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Which rules are unhealthy, not how many</h2>
+        ${raw(
+          barChart({
+            title: 'Times fired since boot',
+            horizontal: true,
+            data: flapping,
+            format: (value) => `${value} time${value === 1 ? '' : 's'}`,
+            empty: 'No rule has fired since the platform started.',
+            footnote:
+              'A rule high on this list and currently clear is flapping, which the tiles above cannot show. Flapping is ' +
+              'its own finding: an alert that cannot be acted on teaches people to ignore the ones that can.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Who holds the pager, and when it changes hands</h2>
+        ${raw(
+          ganttChart({
+            title: 'On-call handovers ahead',
+            tasks: handovers,
+            scale: 'DAY',
+            showFloat: false,
+            showLinks: false,
+            empty: 'No rota is set, so every alert goes to every operator and names nobody.',
+            footnote:
+              'Time decides the handover, not a person. A handover falling at an unsociable hour is a property of the ' +
+              'rotation length and start, both of which can be changed above.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What the platform is refusing</h2>
+        ${raw(
+          pieChart({
+            title: 'Gateway refusals by kind',
+            data: refusals,
+            centreLabel: String(security?.error ? 0 : security.summary?.total ?? 0),
+            format: (value) => `${value} refusal${value === 1 ? '' : 's'}`,
+            empty: 'The gateway has refused nothing since it started.',
+            footnote:
+              'A refusal is the platform working. What matters is the mix: a rise in authentication failures from few ' +
+              'sources is a different event from a rise in denials across many.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How much of the record has been proved</h2>
+        ${raw(
+          gauge({
+            title: 'Chains verified at least once',
+            value: chains.length === 0 ? undefined : (proved / chains.length) * 100,
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            desc: `${proved} of ${chains.length} chains proved · a full circuit takes ${assurance?.passesForFullSweep ?? '—'} passes`,
+          }),
+        )}
+        <div class="metric-sub" style="margin-top:10px">
+          Assurance detects and never repairs. A divergence in an append-only hash chain cannot be repaired, and a
+          process that claimed to fix one would be indistinguishable from the tampering it exists to catch.
+        </div>
+      </div>
+    </div>
+  `;
 }

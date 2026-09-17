@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, flowChart, pieChart, treemap } from '../lib/charts.js';
 import { badge, ellipsis, html, humanise, positionReport, raw, reference, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -144,6 +145,8 @@ export async function autopilot(root) {
               ${open.map(proposalCard)}
             </div>`
       }
+
+      ${autopilotCharts(open, fleet, ladder, runs, ai)}
 
       ${dispositionPanel(ai)}
 
@@ -484,4 +487,147 @@ function proposalCard(proposal) {
       </div>
     </div>
   </div>`;
+}
+
+/**
+ * The fleet, its authority and what it has produced.
+ *
+ * The ladder is the safety property this whole screen rests on, and it was
+ * published as four paragraphs of prose. Drawn as a flow, the thing a reader
+ * needs — that ACT is the only rung reached without a person in the loop at the
+ * moment of acting, and that reaching it needs a grant somebody made earlier —
+ * is one picture rather than four readings.
+ *
+ * The rest is composition. 81 agents in a table answers "which agent watches
+ * this"; it does not answer "how much of this platform is watched, and by
+ * agents allowed to do what", which is the question an enterprise administrator
+ * signing an envelope is actually asking.
+ */
+function autopilotCharts(open, fleet, ladder, runs, ai) {
+  const agents = fleet?.agents ?? [];
+  const rungs = ladder?.ladder ?? [];
+
+  const byDivision = new Map();
+  for (const agent of agents) {
+    const division = humanise(String(agent.division ?? 'OTHER'));
+    const row = byDivision.get(division) ?? { label: division, observe: 0, propose: 0, act: 0, value: 0 };
+    const level = String(agent.maxUnattended ?? 'OBSERVE');
+    if (level === 'ACT') row.act += 1;
+    else if (level === 'PROPOSE' || level === 'DRAFT') row.propose += 1;
+    else row.observe += 1;
+    row.value += 1;
+    byDivision.set(division, row);
+  }
+  const divisions = [...byDivision.values()].sort((a, b) => b.value - a.value);
+
+  const bySeverity = ['URGENT', 'ATTENTION', 'INFO']
+    .map((severity) => ({
+      label: humanise(severity),
+      value: (open ?? []).filter((proposal) => String(proposal.severity ?? 'INFO') === severity).length,
+      tone: TONE[severity],
+    }))
+    .filter((slice) => slice.value > 0);
+
+  // The ladder drawn as it is actually climbed. Each rung leads to the next,
+  // and the agent's mandate is the rung it stops at.
+  const steps = rungs.map((rung, index) => ({
+    id: String(rung.level),
+    label: String(rung.level),
+    kind: index === 0 ? 'START' : String(rung.level) === 'ACT' ? 'END' : 'STEP',
+    tone: String(rung.level) === 'ACT' ? 'warn' : undefined,
+    next: index + 1 < rungs.length ? [String(rungs[index + 1].level)] : [],
+  }));
+
+  const disposal = [
+    { label: 'Accepted as written', value: Number(ai?.accepted ?? 0), tone: 'ok' },
+    { label: 'Accepted with a change', value: Number(ai?.acceptedWithChange ?? 0), tone: 'warn' },
+    { label: 'Rejected', value: Number(ai?.rejected ?? 0), tone: 'bad' },
+    {
+      label: 'Still undisposed',
+      value: Math.max(0, Number(ai?.executions ?? 0) - Number(ai?.disposed ?? 0)),
+    },
+  ].filter((slice) => slice.value > 0);
+
+  if (agents.length === 0 && rungs.length === 0 && disposal.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-top:14px;margin-bottom:14px">
+      <div class="card">
+        <h2>How far an agent can go on its own</h2>
+        ${raw(
+          flowChart({
+            title: 'The mandate ladder',
+            steps,
+            empty: 'No ladder is published, which would mean nothing constrains an agent.',
+            footnote:
+              'A person is in the loop at every rung. At ACT the person was in it earlier — an enterprise administrator ' +
+              'granted a named envelope with a value ceiling and an end date, on the record, and can withdraw it. ' +
+              'No agent grants one to itself.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the fleet is allowed to do</h2>
+        ${raw(
+          barChart({
+            title: 'Agents by division and highest mandate',
+            horizontal: true,
+            stacked: true,
+            data: divisions,
+            series: [
+              { key: 'observe', label: 'Observe only' },
+              { key: 'propose', label: 'May draft or propose' },
+              { key: 'act', label: 'May act in an envelope', colour: 'warn' },
+            ],
+            format: (value) => `${value} agent${value === 1 ? '' : 's'}`,
+            empty: 'No agents registered.',
+            footnote:
+              'The mandate is a ceiling, not a default. An agent that may act still only acts inside a granted envelope, ' +
+              'and the runtime refuses a proposal outside the mandate whether or not one exists.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where the fleet is concentrated</h2>
+        ${raw(
+          treemap({
+            title: 'Agents by division',
+            items: divisions,
+            format: (value) => `${value} agent${value === 1 ? '' : 's'}`,
+            empty: 'No agents registered.',
+            footnote:
+              'Size is headcount, not coverage. A division with two agents is not necessarily thinly watched — it may ' +
+              'have two engines.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>${open.length > 0 ? 'What is waiting, and how hard it is pressing' : 'What people did with what the fleet produced'}</h2>
+        ${raw(
+          bySeverity.length > 0
+            ? pieChart({
+                title: 'Open proposals by severity',
+                data: bySeverity,
+                centreLabel: String(open.length),
+                format: (value) => `${value} proposal${value === 1 ? '' : 's'}`,
+                empty: 'Nothing is waiting on a decision.',
+                footnote: 'Severity is the agent’s own reading of its finding. It sets the order, never the outcome.',
+              })
+            : pieChart({
+                title: 'How AI output was disposed of',
+                data: disposal,
+                centreLabel: String(Number(ai?.executions ?? 0)),
+                format: (value) => `${value} execution${value === 1 ? '' : 's'}`,
+                empty: 'The fleet has produced nothing to dispose of yet.',
+                footnote:
+                  'Every execution is disposed of by a person, and the disposal is kept. A high acceptance rate is not ' +
+                  'a quality measure on its own — it is only meaningful next to how many were read.',
+              }),
+        )}
+      </div>
+    </div>
+  `;
 }

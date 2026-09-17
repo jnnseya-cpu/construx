@@ -1,4 +1,5 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
+import { barChart, boxPlot, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
@@ -977,6 +978,8 @@ export async function procurement(root) {
             </div>`
           : ''
       }
+
+      ${procurementCharts(scores, coverage, costIntel)}
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Bid evaluation${evaluation ? ` — ${evaluation.method.price} price / ${evaluation.method.programme} programme / ${humanise(evaluation.method.risk)} risk` : ''}</h2>
@@ -2176,5 +2179,172 @@ function supplierPortalPanel(portal) {
       </div>
     </div>
     ${supplierPaymentCard(portal)}
+  `;
+}
+
+/**
+ * The award, seen rather than read.
+ *
+ * A bid evaluation table is a defensible record and a poor explanation. The
+ * question a challenged award has to answer is not "what did each bidder
+ * score" — that is in the table — but "why did this one win", and that is a
+ * shape: which criterion the winner led on, and by how much over the field.
+ *
+ * The scatter exists for one specific case. `cheapestIsNotWinner` is already
+ * flagged in words above; plotted, the reader sees how far the cheapest bid sat
+ * below the winner on quality, which is the whole of the justification.
+ */
+function procurementCharts(scores, coverage, costIntel) {
+  const ranked = (scores ?? []).filter((score) => score && Number.isFinite(Number(score.totalScore)));
+
+  // Coverage is a tenancy fact rather than a project one, and it is the only
+  // chart here that draws when no tender is running.
+  const groups = new Map();
+  for (const trade of coverage?.trades ?? []) {
+    const group = String(trade.group ?? 'OTHER');
+    const row = groups.get(group) ?? { eligible: 0, registered: 0, trades: 0, covered: 0 };
+    row.eligible += Number(trade.eligible ?? 0);
+    row.registered += Number(trade.registered ?? 0);
+    row.trades += 1;
+    if (Number(trade.eligible ?? 0) > 0) row.covered += 1;
+    groups.set(group, row);
+  }
+  const coverageRows = [...groups.entries()].map(([group, row]) => ({
+    label: humanise(group),
+    eligible: row.eligible,
+    // Trades with nobody eligible are the finding. A group of eight trades and
+    // three eligible firms is not "three suppliers", it is five packages that
+    // cannot be competed.
+    uncovered: row.trades - row.covered,
+  }));
+
+  // Rate spread, widest first. A rate the business has priced once is a data
+  // point and the engine says so; a box of one observation is a line, which is
+  // the honest picture of it.
+  const spreads = (costIntel?.rates ?? [])
+    .filter((rate) => Number(rate.observations ?? 0) > 1)
+    .sort((a, b) => Number(b.spreadPercent ?? 0) - Number(a.spreadPercent ?? 0))
+    .slice(0, 6)
+    .map((rate) => ({
+      label: `${String(rate.description).slice(0, 26)} /${rate.unit}`,
+      values: [Number(rate.lowMinor), Number(rate.medianMinor), Number(rate.highMinor)],
+    }));
+
+  if (ranked.length === 0 && coverageRows.length === 0 && spreads.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What each bid scored, and on what</h2>
+        ${raw(
+          barChart({
+            title: 'Score composition by bidder',
+            stacked: true,
+            data: ranked.map((score) => ({
+              label: score.supplierName,
+              price: Number(score.priceScore ?? 0),
+              programme: Number(score.programmeScore ?? 0),
+              risk: Number(score.riskScore ?? 0),
+            })),
+            series: [
+              { key: 'price', label: 'Price' },
+              { key: 'programme', label: 'Programme' },
+              { key: 'risk', label: 'Risk' },
+            ],
+            format: (value) => value.toFixed(3),
+            empty: 'No evaluation has been run on this package.',
+            footnote:
+              'The weightings are the ones recorded with the evaluation, not defaults — a bar taller on price means the ' +
+              'method favoured price, which is a decision somebody made before the returns were opened.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Price against what the money buys</h2>
+        ${raw(
+          scatterPlot({
+            title: 'Bid price against total score',
+            points: ranked.map((score, index) => ({
+              x: Number(score.priceMinor ?? 0),
+              y: Number(score.totalScore ?? 0),
+              label: score.supplierName,
+              tone: index === 0 ? 'ok' : score.blockedFromAward ? 'bad' : undefined,
+            })),
+            xLabel: 'Tendered price',
+            yLabel: 'Total score',
+            formatX: (value) => money(value),
+            formatY: (value) => value.toFixed(3),
+            empty: 'No priced returns to compare.',
+            footnote:
+              'A cheapest bid sitting low and left of the recommendation is the award that has to be justified in writing. ' +
+              'The distance between the two points is the size of that argument.',
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      ranked.length > 1
+        ? html`<div class="grid g2" style="margin-bottom:14px">
+            <div class="card">
+              <h2>The shortlist, side by side</h2>
+              ${raw(
+                radarChart({
+                  title: 'Profile across the three criteria',
+                  axes: ['Price', 'Programme', 'Risk'],
+                  max: 1,
+                  series: ranked.slice(0, 4).map((score) => ({
+                    label: score.supplierName,
+                    values: [Number(score.priceScore ?? 0), Number(score.programmeScore ?? 0), Number(score.riskScore ?? 0)],
+                  })),
+                  format: (value) => value.toFixed(2),
+                  empty: 'Only one bidder — there is no field to compare against.',
+                  footnote:
+                    'Each axis is the normalised criterion score, so the shapes are comparable. A bidder strong on two ' +
+                    'axes and weak on the third is a conditional award, not a rejection.',
+                }),
+              )}
+            </div>
+            <div class="card">
+              <h2>Where the rates have been tested</h2>
+              ${raw(
+                boxPlot({
+                  title: 'Observed rate spread',
+                  groups: spreads,
+                  format: (value) => money(value),
+                  empty: 'No rate has more than one observation behind it yet.',
+                  footnote:
+                    'Low, median and high of the observations actually recorded. A wide box is a rate the estimate should ' +
+                    'not carry at its median without knowing which end of it this project resembles.',
+                }),
+              )}
+            </div>
+          </div>`
+        : ''
+    }
+
+    ${
+      coverageRows.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Where the supply chain can and cannot compete</h2>
+            ${raw(
+              barChart({
+                title: 'Eligible firms and uncovered trades, by group',
+                horizontal: true,
+                data: coverageRows,
+                series: [
+                  { key: 'eligible', label: 'Eligible firms' },
+                  { key: 'uncovered', label: 'Trades with nobody eligible', colour: 'bad' },
+                ],
+                format: (value) => String(value),
+                empty: 'The trade catalogue has not been populated.',
+                footnote:
+                  'Eligible means prequalified and in date. An enquiry containing one firm that is not is refused whole, ' +
+                  'so an uncovered trade is a package that cannot go out, not one that goes out thin.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
   `;
 }

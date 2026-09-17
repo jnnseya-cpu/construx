@@ -11,6 +11,7 @@ import {
   boxPlot,
   bubbleChart,
   donutChart,
+  flowChart,
   funnelChart,
   ganttChart,
   gauge,
@@ -21,6 +22,8 @@ import {
   niceScale,
   pieChart,
   proportionBar,
+  radarChart,
+  sankeyDiagram,
   scatterPlot,
   sparkline,
   treemap,
@@ -77,6 +80,9 @@ describe('every chart refuses to draw nothing', () => {
     ['waterfall', waterfallChart({ steps: [], empty: 'Nothing to build up' })],
     ['treemap', treemap({ items: [], empty: 'Nothing to size' })],
     ['gantt', ganttChart({ tasks: [], empty: 'No dated activities' })],
+    ['radar', radarChart({ axes: [], series: [], empty: 'No criteria scored' })],
+    ['sankey', sankeyDiagram({ flows: [], empty: 'Nothing flows yet' })],
+    ['flow', flowChart({ steps: [], empty: 'No steps defined' })],
   ];
 
   for (const [name, output] of empties) {
@@ -882,5 +888,180 @@ describe('a zero-based axis grows upwards only', () => {
     const axis = niceScale(5000, 5000);
     assert.equal(axis.min, 0);
     assert.ok(axis.max >= 5000);
+  });
+});
+
+/**
+ * Radar — one subject measured against several criteria at once.
+ *
+ * The chart's one job is comparing shapes, and the shape is only comparable if
+ * every axis is scaled against the same ceiling and the axes are evenly spaced.
+ * A radar that normalises each axis to its own maximum draws a picture where a
+ * weak option and a strong one have the same outline.
+ */
+describe('radar', () => {
+  const axes = ['Cost', 'Programme', 'Buildability', 'Carbon', 'Risk'];
+
+  it('places the axes evenly around the circle, starting at the top', () => {
+    const markup = svg(radarChart({ axes, series: [{ label: 'Option A', values: [4, 4, 4, 4, 4] }], max: 4 }));
+    // An all-maximum profile sits on the outer ring, so its polygon's vertices
+    // are the axis endpoints — the geometry the grid is built from.
+    const ring = markup.match(/class="chart-grid chart-radar-ring"\s+points="([^"]+)"/g);
+    assert.ok(ring && ring.length === 4, 'a radar without rings gives a reader no scale to judge distance against');
+
+    const outer = [...markup.matchAll(/<line class="chart-grid" x1="([\d.-]+)" y1="([\d.-]+)" x2="([\d.-]+)" y2="([\d.-]+)"/g)];
+    assert.equal(outer.length, axes.length, 'one spoke per criterion');
+    const cx = Number(outer[0]![1]);
+    const cy = Number(outer[0]![2]);
+    const angles = outer.map((spoke) => Math.atan2(Number(spoke[4]) - cy, Number(spoke[3]) - cx));
+    // First spoke at twelve o'clock, i.e. -90 degrees in SVG coordinates.
+    assert.ok(Math.abs(angles[0]! + Math.PI / 2) < 0.01, `first axis drawn at ${((angles[0]! * 180) / Math.PI).toFixed(1)}°, expected -90°`);
+    // Normalised into one turn: `atan2` wraps at ±π, so a raw difference across
+    // the wrap reads as -288° where the spokes are in fact 72° apart.
+    const gaps = angles.slice(1).map((angle, index) => (angle - angles[index]! + Math.PI * 2) % (Math.PI * 2));
+    for (const gap of gaps) {
+      assert.ok(Math.abs(gap - (Math.PI * 2) / axes.length) < 0.01, `axes ${((gap * 180) / Math.PI).toFixed(1)}° apart, expected ${360 / axes.length}°`);
+    }
+  });
+
+  it('scales every series against one ceiling, so two profiles can be compared', () => {
+    const markup = svg(
+      radarChart({
+        axes,
+        max: 10,
+        series: [
+          { label: 'Strong', values: [10, 10, 10, 10, 10] },
+          { label: 'Weak', values: [5, 5, 5, 5, 5] },
+        ],
+      }),
+    );
+    // The rings carry a `class` before their points; a series polygon opens
+    // straight onto `points`, which is what separates the two here.
+    const polygons = [...markup.matchAll(/<polygon points="([^"]+)" fill=/g)].map((found) =>
+      String(found[1])
+        .split(' ')
+        .map((pair) => pair.split(',').map(Number) as [number, number]),
+    );
+    assert.equal(polygons.length, 2, 'both profiles should be drawn');
+    const spread = (points: [number, number][]): number => {
+      const xs = points.map((point) => point[0]);
+      const ys = points.map((point) => point[1]);
+      return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    };
+    const ratio = spread(polygons[1]!) / spread(polygons[0]!);
+    assert.ok(Math.abs(ratio - 0.5) < 0.02, `half the score drew ${(ratio * 100).toFixed(0)}% of the shape — the axes are not sharing a ceiling`);
+  });
+
+  it('refuses a profile with fewer than three criteria, which has no shape', () => {
+    const markup = svg(radarChart({ axes: ['Cost', 'Risk'], series: [{ label: 'A', values: [1, 2] }], empty: 'Two measures is a bar chart' }));
+    assert.match(markup, /Two measures is a bar chart/);
+  });
+
+  it('drops a series whose values do not line up with the axes', () => {
+    // Four readings against five criteria is a data error, and drawing it would
+    // silently attribute each reading to the wrong measure.
+    const markup = svg(radarChart({ axes, series: [{ label: 'Short', values: [1, 2, 3, 4] }], empty: 'Nothing scored' }));
+    assert.match(markup, /Nothing scored/);
+  });
+});
+
+/**
+ * Sankey — quantity moving from one set of things to another.
+ *
+ * Ribbon thickness is the only quantity in the picture, so it has to be
+ * proportional to the value and the ribbons leaving a node have to add up to
+ * that node. Anything else is a diagram that looks quantitative and is not.
+ */
+describe('sankey', () => {
+  const flows = [
+    { from: 'Client', to: 'Agreed', value: 60 },
+    { from: 'Subcontractor', to: 'Claimed', value: 30 },
+    { from: 'Subcontractor', to: 'Agreed', value: 10 },
+  ];
+
+  it('draws one ribbon per flow and one node per distinct end', () => {
+    const markup = svg(sankeyDiagram({ flows, title: 'Origin against status' }));
+    assert.equal([...markup.matchAll(/class="chart-sankey"/g)].length, 3);
+    // Two sources, two destinations.
+    assert.equal([...markup.matchAll(/class="chart-node"/g)].length, 4);
+  });
+
+  it('sizes each node by the total passing through it', () => {
+    const markup = svg(sankeyDiagram({ flows }));
+    const heights = [...markup.matchAll(/class="chart-node"[^>]*height="([\d.]+)"/g)].map((found) => Number(found[1]));
+    // Draw order is sources then targets, each in first-seen order:
+    // Client 60, Subcontractor 40, Agreed 70, Claimed 30.
+    const [client, subcontractor, agreed, claimed] = heights as [number, number, number, number];
+    assert.ok(Math.abs(client / subcontractor - 60 / 40) < 0.02, `sources sized ${client}:${subcontractor}, expected 60:40`);
+    assert.ok(Math.abs(agreed / claimed - 70 / 30) < 0.02, `destinations sized ${agreed}:${claimed}, expected 70:30`);
+    // Both sides carry the same total, so both columns are the same height.
+    assert.ok(Math.abs(client + subcontractor - (agreed + claimed)) < 0.5, 'the two columns do not carry the same total');
+  });
+
+  it('refuses a flow with no quantity rather than drawing a hairline', () => {
+    // A zero-value ribbon is a relationship, not a quantity, and a Sankey that
+    // draws one invites the reader to compare it against a real one.
+    const markup = svg(sankeyDiagram({ flows: [{ from: 'A', to: 'B', value: 0 }], empty: 'Nothing valued' }));
+    assert.match(markup, /Nothing valued/);
+  });
+
+  it('names the share in each ribbon, because thickness alone is not readable to a number', () => {
+    const markup = svg(sankeyDiagram({ flows, format: (value) => `£${value}` }));
+    assert.match(markup, /Client → Agreed: £60 \(60%\)/);
+  });
+});
+
+/**
+ * Flowchart — the order steps happen in.
+ *
+ * The only chart here with no quantity in it. What it has to get right is
+ * depth: a step sits below everything that leads to it, and a process that
+ * loops back still lays out rather than running forever.
+ */
+describe('flow', () => {
+  const steps = [
+    { id: 'raise', label: 'Raise change', next: ['assess'] },
+    { id: 'assess', label: 'Assess', next: ['instruct', 'reject'] },
+    { id: 'instruct', label: 'Instruct', next: ['value'] },
+    { id: 'reject', label: 'Reject' },
+    { id: 'value', label: 'Value', next: [] },
+  ];
+
+  it('puts each step below the step that leads to it', () => {
+    const markup = svg(flowChart({ steps, title: 'Change control' }));
+    // Lazily, and anchored on the `x` before it: a greedy run to `y="` lands
+    // on the `y="0.2"` inside `fill-opacity`, which is the same for every node.
+    const ys = [...markup.matchAll(/class="chart-flow-node" x="[\d.]+" y="([\d.]+)"/g)].map((found) => Number(found[1]));
+    assert.equal(ys.length, 5);
+    const [raise, assess, instruct, reject, value] = ys as [number, number, number, number, number];
+    assert.ok(raise < assess, 'the first step was not drawn first');
+    assert.ok(assess < instruct && assess < reject, 'both branches should sit below the decision');
+    assert.ok(Math.abs(instruct - reject) < 0.5, 'two steps at the same depth belong on the same row');
+    assert.ok(instruct < value, 'valuation follows instruction');
+  });
+
+  it('draws one arrow per link and none to a step that is not there', () => {
+    const markup = svg(flowChart({ steps: [...steps, { id: 'orphan', label: 'Orphan', next: ['nowhere'] }] }));
+    // 1 + 2 + 1 = 4 real links; the dangling one is dropped rather than drawn
+    // into empty space.
+    assert.equal([...markup.matchAll(/class="chart-flow-link"/g)].length, 4);
+  });
+
+  it('lays out a process that loops back on itself', () => {
+    // Rejected work returning to assessment is a real process, and a
+    // depth-first layout that follows it without a guard never terminates.
+    const looping = [
+      { id: 'a', label: 'Submit', next: ['b'] },
+      { id: 'b', label: 'Review', next: ['c'] },
+      { id: 'c', label: 'Rework', next: ['b'] },
+    ];
+    const markup = svg(flowChart({ steps: looping }));
+    assert.equal([...markup.matchAll(/class="chart-flow-node"/g)].length, 3);
+    assert.match(markup, /Rework/);
+  });
+
+  it('refuses a step with no label, which would draw an empty box', () => {
+    const markup = svg(flowChart({ steps: [{ id: 'x', label: '' }], empty: 'No process' }));
+    assert.match(markup, /No process/);
   });
 });
