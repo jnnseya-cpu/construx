@@ -668,7 +668,7 @@ function horizontalBars({ rows, keys, title, desc, format, footnote }) {
  * interpolation, interpolation is invention, and a reader cannot tell an
  * invented segment from a measured one once it is drawn.
  */
-/** @param {{data?: Row[], series?: Series[], title?: string, desc?: string, format?: Formatter, area?: boolean, empty?: string, markers?: boolean, footnote?: string, reference?: {value: number, label: string, tone?: string}[]}} options */
+/** @param {{data?: Row[], series?: Series[], title?: string, desc?: string, format?: Formatter, area?: boolean, empty?: string, markers?: boolean, footnote?: string, reference?: {value: number, label: string, tone?: string}[], forecastFrom?: string, band?: {low: string, high: string}}} options */
 export function lineChart({
   data = [],
   series = [{ key: 'value', label: 'Value' }],
@@ -680,11 +680,39 @@ export function lineChart({
   markers = true,
   footnote,
   reference,
+  /**
+   * The point from which values stop being measurements.
+   *
+   * A row whose label is at or past this is a forecast. Rows before it are
+   * facts. Nothing else about the data changes — the caller passes one series
+   * running through both — and this chart draws the two halves differently.
+   */
+  forecastFrom,
+  /**
+   * Keys carrying the low and high edge of the forecast's confidence interval.
+   *
+   * A forecast line with no band on it reads as a prediction somebody is sure
+   * about, which is the one thing a forecast never is. Where a band is given it
+   * is shaded behind the line and named in the caption.
+   */
+  band,
 }) {
   const rows = data.filter((row) => row && row.label !== undefined);
   if (rows.length === 0) return emptyChart(empty);
 
-  const values = rows.flatMap((row) => series.map((s) => row[s.key])).filter(finite).map(Number);
+  // The index at which measurement stops. -1 when nothing is forecast, which is
+  // every chart that does not ask for one.
+  const forecastAt = forecastFrom === undefined ? -1 : rows.findIndex((row) => String(row.label) >= String(forecastFrom));
+  const forecasting = forecastAt >= 0;
+
+  const bandValues = band
+    ? rows.flatMap((row) => [row[band.low], row[band.high]]).filter(finite).map(Number)
+    : [];
+  const values = rows
+    .flatMap((row) => series.map((s) => row[s.key]))
+    .concat(bandValues)
+    .filter(finite)
+    .map(Number);
   if (values.length === 0) return emptyChart(empty);
 
   const referenceValues = (reference ?? []).map((line) => num(line.value));
@@ -700,23 +728,63 @@ export function lineChart({
   const step = rows.length === 1 ? 0 : areaBox.w / (rows.length - 1);
   const px = (index) => areaBox.x + (rows.length === 1 ? areaBox.w / 2 : index * step);
 
+  /*
+   * The confidence band, drawn behind everything.
+   *
+   * A forecast line with no band reads as a prediction somebody is sure about,
+   * which is the one thing a forecast never is. The standard requires the band
+   * and it is right to: the width of it is the whole message, and a reader
+   * given only the central line will quote it as a number.
+   */
+  const bandPath = (() => {
+    if (!band) return '';
+    const edge = rows
+      .map((row, index) => ({ index, low: row[band.low], high: row[band.high] }))
+      .filter((point) => finite(point.low) && finite(point.high));
+    if (edge.length < 2) return '';
+    const top = edge.map((point) => `${r2(px(point.index))} ${r2(y(point.high))}`);
+    const bottom = [...edge].reverse().map((point) => `${r2(px(point.index))} ${r2(y(point.low))}`);
+    return `M${top.join(' L')} L${bottom.join(' L')} Z`;
+  })();
+
   const paths = series.map((s, seriesIndex) => {
     const colour = paint(s.colour, seriesIndex);
     // Segments, not one path: a gap in the data is a gap on the chart.
+    //
+    // And a third reason to segment: where the caller named a data date, the
+    // measured half and the forecast half are two paths, so the forecast can be
+    // dotted and purple while the measurement stays solid. They meet at the
+    // data date rather than leaving a gap, because the forecast starts from the
+    // last thing actually measured.
     const segments = [];
     let current = [];
     rows.forEach((row, index) => {
-      if (finite(row[s.key])) current.push([px(index), y(row[s.key])]);
-      else if (current.length) {
+      if (finite(row[s.key])) {
+        current.push([px(index), y(row[s.key])]);
+        // Close the measured run at the data date, and start the forecast from
+        // the same point so the two halves join.
+        if (forecasting && index === forecastAt) {
+          segments.push(current);
+          current = [[px(index), y(row[s.key])]];
+        }
+      } else if (current.length) {
         segments.push(current);
         current = [];
       }
     });
     if (current.length) segments.push(current);
 
-    const line = segments
-      .map((segment) => segment.map(([cx, cy], i) => `${i === 0 ? 'M' : 'L'}${r2(cx)} ${r2(cy)}`).join(' '))
-      .join(' ');
+    const toPath = (list) =>
+      list.map((segment) => segment.map(([cx, cy], i) => `${i === 0 ? 'M' : 'L'}${r2(cx)} ${r2(cy)}`).join(' ')).join(' ');
+
+    // Where a data date was named, everything drawn at or past the boundary x
+    // is prediction. Split by geometry rather than by index because a gap in
+    // the data may already have split the run.
+    const boundary = forecasting ? px(forecastAt) : undefined;
+    const measuredSegments = forecasting ? segments.filter((segment) => segment[segment.length - 1][0] <= boundary) : segments;
+    const predictedSegments = forecasting ? segments.filter((segment) => segment[segment.length - 1][0] > boundary) : [];
+    const line = toPath(measuredSegments);
+    const predicted = toPath(predictedSegments);
 
     const fill = filled
       ? segments
@@ -736,13 +804,39 @@ export function lineChart({
     // able to tell a forecast from a measurement.
     const dash = toneDash(s.colour ?? s.tone);
 
-    return html`${filled && fill ? html`<path d="${raw(fill)}" fill="${raw(colour)}" opacity="0.16" />` : ''}
+    return html`${seriesIndex === 0 && bandPath
+        ? html`<path class="chart-band" d="${raw(bandPath)}" fill="${raw(paint('forecast'))}">
+            <title>Forecast confidence band</title>
+          </path>`
+        : ''}
+      ${filled && fill ? html`<path d="${raw(fill)}" fill="${raw(colour)}" opacity="0.16" />` : ''}
       <path class="chart-line" d="${raw(line)}" stroke="${raw(colour)}" fill="none"${raw(dash ? ` stroke-dasharray="${dash}"` : '')} />
+      ${predicted
+        ? html`<path
+            class="chart-line chart-predicted"
+            d="${raw(predicted)}"
+            stroke="${raw(paint('forecast'))}"
+            fill="none"
+            stroke-dasharray="${raw(toneDash('forecast'))}"
+          >
+            <title>${s.label} — forecast, not measured</title>
+          </path>`
+        : ''}
       ${markers
         ? rows.map((row, index) =>
             finite(row[s.key])
-              ? html`<circle class="chart-dot" cx="${raw(r2(px(index)))}" cy="${raw(r2(y(row[s.key])))}" r="3.4" fill="${raw(colour)}">
-                  <title>${row.label} · ${s.label}: ${format(row[s.key])}</title>
+              ? html`<circle
+                  class="chart-dot"
+                  cx="${raw(r2(px(index)))}"
+                  cy="${raw(r2(y(row[s.key])))}"
+                  r="3.4"
+                  fill="${raw(forecasting && index > forecastAt ? paint('forecast') : colour)}"
+                >
+                  <title>
+                    ${row.label} · ${s.label}: ${format(row[s.key])}${raw(
+                      forecasting ? (index > forecastAt ? ' — forecast' : ' — measured') : '',
+                    )}
+                  </title>
                 </circle>`
               : '',
           )
@@ -754,13 +848,27 @@ export function lineChart({
     desc:
       desc ??
       `${rows.length} point${rows.length === 1 ? '' : 's'} from ${rows[0].label} to ${rows[rows.length - 1].label}. ` +
-        `Range ${format(Math.min(...values))} to ${format(Math.max(...values))}.`,
+        `Range ${format(Math.min(...values))} to ${format(Math.max(...values))}.` +
+        (forecasting ? ` Measured to ${rows[forecastAt].label}; everything after it is forecast.` : '') +
+        (band ? ' The shaded band is the forecast confidence interval.' : ''),
     footnote,
     table: {
-      columns: ['Point', ...series.map((s) => s.label), ...(reference ?? []).map((line) => line.label)],
-      rows: rows.map((row) => [
+      columns: [
+        'Point',
+        ...series.map((s) => s.label),
+        ...(band ? ['Low', 'High'] : []),
+        ...(forecasting ? ['Basis'] : []),
+        ...(reference ?? []).map((line) => line.label),
+      ],
+      rows: rows.map((row, index) => [
         row.label,
         ...series.map((s) => (finite(row[s.key]) ? format(Number(row[s.key])) : 'not measured')),
+        ...(band ? [finite(row[band.low]) ? format(Number(row[band.low])) : '—', finite(row[band.high]) ? format(Number(row[band.high])) : '—'] : []),
+        // The distinction the chart draws in a dotted purple line, said in a
+        // word. A reader using the table is using it because they cannot see
+        // the line, and a table that omitted this would hand them a forecast
+        // presented as a measurement.
+        ...(forecasting ? [index > forecastAt ? 'Forecast' : 'Measured'] : []),
         ...(reference ?? []).map((line) => format(num(line.value))),
       ]),
     },
@@ -2170,6 +2278,23 @@ export function ganttChart({
         ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
         : String(date.getUTCDate());
 
+  /*
+   * Every gridline, but not every label.
+   *
+   * A twelve-month payment schedule at week granularity is fifty-two
+   * gridlines, and "31 Aug" needs about 38px. At 3.2px a day a week is 22px
+   * across, so the labels overlapped into an unreadable band — the calendar
+   * became a smear precisely where somebody is reading dates off it.
+   *
+   * The lines all stay: they are the calendar, and thinning them would change
+   * the grid the bars are measured against. Only the text is thinned, to every
+   * nth line, where n is whatever it takes to give a label its width. The
+   * reader loses no gridline and gains a date they can read.
+   */
+  const labelWidth = timeScale === 'MONTH' ? 44 : timeScale === 'WEEK' ? 40 : 16;
+  const spacing = months.length > 1 ? (x(months[months.length - 1].getTime()) - x(months[0].getTime())) / (months.length - 1) : labelWidth;
+  const labelEvery = Math.max(1, Math.ceil(labelWidth / Math.max(1, spacing)));
+
   const dayMs = 86_400_000;
   const geometry = new Map();
   rows.forEach((row, index) => {
@@ -2209,11 +2334,11 @@ export function ganttChart({
         `${showLinks && links.length > 0 ? `, ${links.length} logic links drawn` : ''}` +
         `${negativeFloat > 0 ? `, ${negativeFloat} carrying negative float` : ''}.`,
     body: html`${months.map(
-      (month) => html`<g class="chart-grid">
+      (month, index) => html`<g class="chart-grid">
         <line x1="${raw(r2(x(month.getTime())))}" y1="30" x2="${raw(r2(x(month.getTime())))}" y2="${raw(box.h - 20)}" />
-        <text x="${raw(r2(x(month.getTime())))}" y="22" text-anchor="middle">
-          ${raw(gridLabel(month))}
-        </text>
+        ${index % labelEvery === 0
+          ? html`<text x="${raw(r2(x(month.getTime())))}" y="22" text-anchor="middle">${raw(gridLabel(month))}</text>`
+          : ''}
       </g>`,
     )}
     ${Number.isFinite(nowAt) && nowAt >= min && nowAt <= max

@@ -508,7 +508,7 @@ export function positionReport({ title, intent, data, error, sections = [] }) {
       const columns = section.columns ?? columnsOf(rows);
 
       return html`<div style="margin:10px 0">
-        <h4 style="margin:0 0 6px">${section.label}${rows.length > 0 ? ` (${rows.length})` : ''}</h4>
+        <h3 style="margin:0 0 6px">${section.label}${rows.length > 0 ? ` (${rows.length})` : ''}</h3>
         ${rows.length === 0
           ? // Rendered here rather than through `table`, whose empty state ends
             // "this becomes populated as the project progresses". That is right

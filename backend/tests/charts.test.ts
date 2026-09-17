@@ -1382,3 +1382,135 @@ describe('a chart refuses the misuses the standard prohibits', () => {
     assert.ok(ticks.includes('0'), `the axis does not include zero: ${ticks.join(', ')}`);
   });
 });
+
+/**
+ * A forecast never looks like a measurement.
+ *
+ * Section 3.3 requires predicted values to be marked distinctly from actual
+ * ones and requires a confidence band, and it is the most consequential rule in
+ * the standard: a prediction that reads as a fact is how a forecast ends up in
+ * a board pack as a number. The rule is enforced three times over — the line
+ * changes colour *and* stroke, the band is drawn, and the table says which
+ * rows are which — because a reader who cannot see the chart still has to be
+ * told.
+ */
+describe('a forecast is drawn as a forecast', () => {
+  const months = [
+    { label: '2026-01', cost: 100, low: 95, high: 105 },
+    { label: '2026-02', cost: 210, low: 200, high: 220 },
+    { label: '2026-03', cost: 320, low: 290, high: 350 },
+    { label: '2026-04', cost: 450, low: 380, high: 520 },
+  ];
+
+  it('splits the line at the data date, and dots the half that is predicted', () => {
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: months,
+        series: [{ key: 'cost', label: 'Cost', colour: 'actual' }],
+        forecastFrom: '2026-02',
+      }),
+    );
+    const measured = /<path class="chart-line" d="([^"]+)"/.exec(markup)?.[1] ?? '';
+    const predicted = /<path\s+class="chart-line chart-predicted"\s+d="([^"]+)"/.exec(markup)?.[1] ?? '';
+    assert.ok(measured, 'the measured half was not drawn');
+    assert.ok(predicted, 'the predicted half was not drawn');
+    assert.match(markup, /class="chart-line chart-predicted"[\s\S]*?stroke="var\(--viz-forecast\)"/);
+    assert.match(markup, /class="chart-line chart-predicted"[\s\S]*?stroke-dasharray="2 4"/);
+  });
+
+  it('joins the two halves at the data date rather than leaving a gap', () => {
+    // The forecast starts from the last thing actually measured. A gap would
+    // read as missing data between the fact and the prediction.
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: months,
+        series: [{ key: 'cost', label: 'Cost', colour: 'actual' }],
+        forecastFrom: '2026-02',
+      }),
+    );
+    const measured = /<path class="chart-line" d="([^"]+)"/.exec(markup)?.[1] ?? '';
+    const predicted = /<path\s+class="chart-line chart-predicted"\s+d="([^"]+)"/.exec(markup)?.[1] ?? '';
+    const lastMeasured = measured.trim().split(/[ML]/).filter(Boolean).at(-1)?.trim();
+    const firstPredicted = predicted.trim().split(/[ML]/).filter(Boolean)[0]?.trim();
+    assert.equal(firstPredicted, lastMeasured, 'the forecast does not start where the measurement ended');
+  });
+
+  it('shades the confidence band behind the line', () => {
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: months,
+        series: [{ key: 'cost', label: 'Cost', colour: 'actual' }],
+        forecastFrom: '2026-02',
+        band: { low: 'low', high: 'high' },
+      }),
+    );
+    assert.match(markup, /class="chart-band"/, 'no confidence band was drawn');
+    assert.match(markup, /class="chart-band"[^>]*fill="var\(--viz-forecast\)"/);
+    // Behind, not in front: it is drawn before the line in document order.
+    assert.ok(markup.indexOf('chart-band') < markup.indexOf('class="chart-line"'), 'the band was drawn over the line');
+  });
+
+  it('says in the table which rows are measured and which are forecast', () => {
+    // The chart says it in a colour and a stroke. A reader using the table is
+    // using it because they cannot see either.
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: months,
+        series: [{ key: 'cost', label: 'Cost', colour: 'actual' }],
+        forecastFrom: '2026-02',
+        band: { low: 'low', high: 'high' },
+      }),
+    );
+    assert.match(markup, /<th scope="col">Basis<\/th>/);
+    assert.match(markup, /<th scope="col">Low<\/th>/);
+    assert.match(markup, /<th scope="col">High<\/th>/);
+    const cells = [...markup.matchAll(/<td>(Measured|Forecast)<\/td>/g)].map((found) => found[1]);
+    assert.deepEqual(cells, ['Measured', 'Measured', 'Forecast', 'Forecast']);
+  });
+
+  it('tells a screen reader where measurement stops', () => {
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: months,
+        series: [{ key: 'cost', label: 'Cost', colour: 'actual' }],
+        forecastFrom: '2026-02',
+        band: { low: 'low', high: 'high' },
+      }),
+    );
+    assert.match(markup, /Measured to 2026-02; everything after it is forecast\./);
+    assert.match(markup, /shaded band is the forecast confidence interval/);
+  });
+
+  it('draws an ordinary line where nothing is forecast', () => {
+    // The overwhelming majority of charts. None of this may cost them anything.
+    const markup = svg(lineChart({ title: 'PPC', data: months, series: [{ key: 'cost', label: 'Cost' }] }));
+    assert.ok(!markup.includes('chart-predicted'), 'a chart with no forecast drew a predicted half');
+    assert.ok(!markup.includes('chart-band'), 'a chart with no band drew one');
+  });
+
+  it('widens the axis to fit the band, so an interval is never clipped', () => {
+    // A band whose high edge runs past the top of the plot is a band that
+    // understates the uncertainty, which is the opposite of its purpose.
+    const markup = svg(
+      lineChart({
+        title: 'Cost forecast',
+        data: [
+          { label: '2026-01', cost: 100, low: 90, high: 110 },
+          { label: '2026-02', cost: 200, low: 120, high: 900 },
+        ],
+        series: [{ key: 'cost', label: 'Cost' }],
+        band: { low: 'low', high: 'high' },
+      }),
+    );
+    // Read from the chart's own spoken range, which is built from the same
+    // values the axis is: if the band is in one it is in the other.
+    const range = /Range ([\d.km]+) to ([\d.km]+)\./.exec(markup);
+    assert.ok(range, `the chart published no range: ${/\<desc\>([^<]*)/.exec(markup)?.[1]}`);
+    assert.equal((range as RegExpExecArray)[2], '900', 'the band\u2019s high edge is outside the plotted range');
+  });
+});

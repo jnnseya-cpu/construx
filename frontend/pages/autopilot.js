@@ -337,7 +337,7 @@ function dispositionPanel(ai) {
         // where, which is the half somebody can act on.
         (ai.correctedFields ?? []).length > 0
           ? html`<div style="margin-top:12px">
-              <h4 style="margin:0 0 6px">What people correct in these answers</h4>
+              <h3 style="margin:0 0 6px">What people correct in these answers</h3>
               <div class="split-list">
                 ${(ai.correctedFields ?? []).slice(0, 8).map(
                   (entry) => html`<div class="row">

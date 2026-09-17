@@ -47,7 +47,7 @@ function card(entry) {
         ${entry.dueBy ? html`<span class="muted small">due ${entry.dueBy}</span>` : ''}
         ${entry.valueMinor ? html`<span class="muted small">${money(entry.valueMinor)}</span>` : ''}
       </div>
-      <h4>${entry.headline}</h4>
+      <h3>${entry.headline}</h3>
       <p class="small">${entry.detail}</p>
       ${entry.source
         ? html`<p class="muted small">Read from ${entry.source.refType} ${entry.source.refId}</p>`

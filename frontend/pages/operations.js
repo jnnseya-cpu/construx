@@ -293,7 +293,7 @@ export async function operations(root) {
                   empty: 'Nothing has needed repairing.',
                 }),
               )}
-              <h4>What it refuses to do</h4>
+              <h3>What it refuses to do</h3>
               <p class="metric-sub">
                 Published rather than assumed. A self-repairing platform that did not state its limits would
                 be indistinguishable from one that had none.
@@ -401,7 +401,7 @@ export async function operations(root) {
                 : ''}
               ${agents.map(
                 (division) => html`
-                  <h4>${division.division}</h4>
+                  <h3>${division.division}</h3>
                   ${raw(
                     table({
                       headers: ['Agent', 'What it is for', 'Highest rung'],

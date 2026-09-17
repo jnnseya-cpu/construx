@@ -22226,3 +22226,99 @@ until the obligations are baselined, and the defect ageing histogram needs more
 than one dated defect. Both render their own empty state carrying the engine's
 sentence. They were verified as empty states only — not with data — and that is
 stated here rather than counted as done.
+
+## Sections 3.3, 7 and 9: forecasts, responsive behaviour, and a real accessibility audit
+
+### A forecast never looks like a measurement
+
+Section 3.3's rule, and the most consequential one in the standard: a prediction
+that reads as a fact is how a forecast ends up in a board pack as a number.
+
+`lineChart` takes `forecastFrom` — the point at which values stop being
+measurements — and splits the series into two paths. The measured half stays
+solid and blue; the predicted half is purple and dotted, its markers change
+colour with it, and the two **join at the data date** rather than leaving a gap,
+because the forecast starts from the last thing actually measured.
+
+`band` draws the confidence interval behind the line. A forecast line with no
+band reads as a prediction somebody is sure about, which is the one thing a
+forecast never is — the width of the band is the whole message, and a reader
+given only the central line will quote it.
+
+The distinction reaches the data panel as a **Basis** column reading Measured or
+Forecast per row, and the spoken summary says where measurement stops. A reader
+using the table is using it *because* they cannot see the colour.
+
+**On the commercial screen it is real.** The forward-cashflow engine already
+marks each period `SETTLED`, `CERTIFIED` or `PROJECTED`, so the data date is a
+commercial fact rather than a rendering choice. The band is derived from the
+engine's own figures — the spread of the cycles it averaged, widening with
+distance because an average says less the further it is carried — and where
+fewer than two cycles have been measured **no band is drawn at all**. A
+confidence band with nothing behind it is worse than none, because it looks like
+rigour.
+
+### The accessibility audit, run rather than asserted
+
+A real audit in Chromium across Command Centre and Programme: touch-target
+geometry, accessible names, image alts, heading order, table headers, and forty
+tab stops checked for a visible focus state.
+
+Clean on arrival: **0 controls without an accessible name, 0 images without alt,
+0 tables without a header row, and 0 of 40 tab stops with an invisible focus
+ring.**
+
+Two real findings, both fixed:
+
+- **Heading levels skipped h2 → h4** in `positionReport` and on four screens.
+  Levelled to h3. A screen reader's heading list is a navigation tool and a
+  skipped level breaks it.
+- **Touch targets under 44px.** Applied through `@media (pointer: coarse)`
+  rather than everywhere, because WCAG 2.2's own minimum is 24×24 and forcing 44
+  on a desktop pointer would inflate a control-room interface whose point is
+  density. `pointer: coarse` asks what the person is pointing *with*, which is
+  the actual question — a tablet with a trackpad keeps the dense layout, a
+  touchscreen laptop gets the larger targets.
+
+  The block had to move to the end of the stylesheet: it was being overridden by
+  later rules of equal specificity, so the targets measured 40–42px on touch
+  while the rule looked correct in the source.
+
+### Responsive, tested at four viewports
+
+Desktop 1500, tablet 834, phone 390, and 750 — which is 1500 at 200% zoom.
+Measured: does the page scroll sideways, do the charts render, and what is under
+44px.
+
+**No horizontal page scroll at any of the four**, which is section 7's rule, and
+charts render at every one.
+
+One real defect: **the lifecycle rail pushed the page sideways at 200% zoom** —
+1031px inside a 750px viewport. Seven stage names at `white-space: nowrap` in a
+flex row cannot shrink past their content. It now scrolls inside itself, which
+is what the standard asks for: controlled scrolling inside a wide component,
+never the page. `min-width: 0` is the half that does it — a flex item defaults
+to `min-width: auto` and refuses to be narrower than its content, so `overflow-x`
+on it alone changes nothing.
+
+After the fixes, tablet and phone measure **0 targets under 44px** on every
+screen tested.
+
+### Payment Cycle: the statutory windows as windows
+
+A payment cycle is four dates and three deadlines between them, and the
+Construction Act does not care whether anybody noticed a date passing. A table
+of ISO strings is how a payment notice deadline gets missed — the reader holds
+seven dates and computes the gaps in their head, once per cycle.
+
+Three bars per cycle, not one: the assessment window, the pay-less window and
+the run to the final date are three obligations with three different
+consequences, and one bar from application to payment would read as one
+deadline. Bars behind the data date are drawn as **past**, never as missed —
+whether a notice actually went out is a record, not a date.
+
+Drawing it found a defect: at week granularity over twelve months the Gantt's
+date axis was fifty-two labels in a band 22px apart, and the calendar became an
+unreadable smear exactly where somebody reads dates off it. Every gridline is
+kept — they are the calendar the bars are measured against — and only the text
+is thinned, to whatever interval gives a label its width.

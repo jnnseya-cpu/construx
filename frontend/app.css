@@ -738,9 +738,21 @@ td.mono { font-size: 11px; color: var(--text-3); }
  * bright filled blocks said nothing about direction, which is the only thing
  * a lifecycle rail is for.
  */
-.rail { display: flex; gap: 2px; }
+/* The lifecycle rail.
+ *
+ * `white-space: nowrap` on seven stage names is what a rail is — a stage split
+ * over two lines stops reading as one step of a sequence. But a nowrap flex row
+ * cannot shrink past its content, so at 200% zoom the rail pushed the whole
+ * page sideways: measured at 1031px inside a 750px viewport.
+ *
+ * So the rail scrolls inside itself rather than taking the page with it, which
+ * is what the standard asks for — controlled scrolling inside a wide component,
+ * never horizontal scrolling of the page. `min-width: 0` is the half that
+ * actually does it: a flex item defaults to `min-width: auto` and refuses to be
+ * narrower than its content, so `overflow-x` on it alone changes nothing. */
+.rail { display: flex; gap: 2px; overflow-x: auto; min-width: 0; scrollbar-width: thin; }
 .rail div {
-  flex: 1; padding: 10px 6px 9px; font-size: 8.5px; font-weight: 700; letter-spacing: .8px;
+  flex: 1 0 auto; padding: 10px 6px 9px; font-size: 8.5px; font-weight: 700; letter-spacing: .8px;
   text-transform: uppercase; text-align: center; white-space: nowrap;
   background: var(--slate); border-top: 2px solid rgba(255,255,255,.07); color: var(--text-3);
   transition: color .15s ease, background .15s ease;
@@ -1473,6 +1485,20 @@ input:focus, select:focus, textarea:focus {
   stroke-dasharray: 5 4;
   opacity: 0.8;
 }
+/* A forecast, and how sure anybody is of it.
+ *
+ * The band is the message. A central prediction line with nothing round it is
+ * quoted as a number by everyone who sees it, and the standard requires the
+ * interval for exactly that reason. Low opacity because it sits behind the
+ * line it belongs to and must not compete with it.
+ *
+ * `.chart-predicted` carries the purple and the dotted stroke from the tone
+ * table; the class exists so the rule can also lift its weight — a dotted line
+ * at the same width as a solid one reads as thinner, and the forecast half of a
+ * series should not look like the quieter half. */
+.chart-band { opacity: 0.17; }
+.chart-predicted { stroke-width: 2.1; }
+
 .chart-ref line {
   stroke-width: 1.25;
   stroke-dasharray: 4 4;
@@ -1706,3 +1732,44 @@ input:focus, select:focus, textarea:focus {
 /* The company switcher in the header, for a person in more than one company of a group. */
 .company-switch { display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; }
 .company-switch select { max-width: 220px; }
+
+/* ------------------------------------------------- targets on a touch device
+ *
+ * The standard sets a 44x44 minimum on touch. A desktop pointer does not need
+ * it — WCAG 2.2's own minimum is 24x24, and forcing 44 everywhere would inflate
+ * a control-room interface whose whole point is density — so the floor is
+ * applied where the finger is.
+ *
+ * `pointer: coarse` rather than a width breakpoint: it asks what the person is
+ * pointing with, which is the actual question. A tablet with a keyboard and a
+ * trackpad keeps the dense layout; a phone and a touchscreen laptop both get
+ * the larger targets, at whatever width they happen to be.
+ *
+ * Padding rather than height, so a target grows without the text moving inside
+ * it and without a row of them changing the layout around them.
+ */
+@media (pointer: coarse) {
+  .nav-item,
+  .btn,
+  .btn.sm,
+  .chip,
+  .chart-tool,
+  .row-actions button,
+  select,
+  input[type="text"],
+  input[type="search"],
+  input[type="number"],
+  input[type="date"],
+  input[type="datetime-local"] {
+    min-height: 44px;
+  }
+  .chart-tool { padding: 12px 14px; }
+  /* The avatar chip is square by design and 37px wide at phone size, which is
+     under the floor on the one axis nobody notices. Widened rather than
+     restyled: it is still a circle, in a box a thumb can hit. */
+  .user-chip { min-width: 44px; }
+  .btn.sm { padding-block: 11px; }
+  .chip { padding-block: 12px; }
+  /* The tools stay visible on touch: there is no hover to reveal them with. */
+  .chart-tools { opacity: 1; }
+}

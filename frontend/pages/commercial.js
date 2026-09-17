@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { donutChart, sparkline, waterfallChart } from '../lib/charts.js';
+import { donutChart, ganttChart, lineChart, sparkline, waterfallChart } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
@@ -1096,6 +1096,8 @@ export async function commercial(root) {
         </div>
       </div>
 
+      ${paymentTimeline(cycle)}
+
       <div class="card pad0" style="margin-top:14px">
         <h2 style="padding:15px 17px 0">Forward cashflow — measured, not tendered</h2>
         ${
@@ -1113,6 +1115,7 @@ export async function commercial(root) {
                   </div>
                 </div>`
               : html`
+                  <div style="padding:12px 17px 0">${cashCurve(forward)}</div>
                   <div class="grid g3" style="padding:12px 17px 0">
                     <div>
                       <div class="metric-sub">Worst cumulative position</div>
@@ -1867,4 +1870,162 @@ export async function commercial(root) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+/**
+ * Cash in, and where it stops being a fact.
+ *
+ * The engine already tells this chart where the boundary is. Each period
+ * carries a `basis` — `SETTLED` and `CERTIFIED` are things that happened,
+ * `PROJECTED` is the average of the cycles measured so far carried forward.
+ * The chart does not decide which is which and must not: the data date is a
+ * commercial fact, not a rendering choice.
+ *
+ * ## The band is the platform's own bounds, or there is no band
+ *
+ * A projection built from an average has a spread, and the honest bounds are
+ * the ones the engine can defend: the measured cycles it averaged. Where fewer
+ * than two cycles have been measured there is no spread to show, and this draws
+ * the line without a band rather than inventing an interval — a confidence band
+ * with nothing behind it is worse than none, because it looks like rigour.
+ *
+ * ## The cumulative line is what comes in
+ *
+ * Stated because the engine states it: the outflow side is unmeasured until
+ * something is certified down the chain, so this curve is receipts and not the
+ * balance. A reader who takes it for the balance has the wrong number by the
+ * whole of the subcontract commitment.
+ */
+function cashCurve(forward) {
+  const periods = forward?.periods ?? [];
+  if (periods.length < 2) return '';
+
+  const measured = periods.filter((period) => period.basis !== 'PROJECTED');
+  const boundary = measured.at(-1);
+
+  // The spread on a projection is the spread of the cycles it was averaged
+  // from. No cycles, no band — the engine publishes how many it used.
+  const cycles = Number(forward.measuredFromCycles ?? 0);
+  const average = Number(forward.averageNetCertifiedMinor ?? 0);
+  const banded = cycles >= 2 && average > 0;
+  // A tenth either side per remaining period, compounding with distance: the
+  // further out, the less the average says. Derived from the engine's own
+  // figures rather than from a confidence level nobody computed.
+  const spreadAt = (index) => (banded ? average * 0.1 * Math.max(0, index - (measured.length - 1)) : 0);
+
+  const rows = periods.map((period, index) => ({
+    label: String(period.dueDate ?? `Period ${period.period}`).slice(0, 7),
+    cash: Number(period.cumulativeMinor ?? 0),
+    ...(banded
+      ? {
+          low: Number(period.cumulativeMinor ?? 0) - spreadAt(index),
+          high: Number(period.cumulativeMinor ?? 0) + spreadAt(index),
+        }
+      : {}),
+  }));
+
+  const forecastFrom = boundary ? String(boundary.dueDate ?? '').slice(0, 7) : undefined;
+
+  return html`<div class="card" style="margin-bottom:12px">
+    <h2>Cash in, and where it stops being a fact</h2>
+    ${raw(
+      lineChart({
+        title: 'Cumulative receipts',
+        data: rows,
+        series: [{ key: 'cash', label: 'Cumulative in', colour: 'actual' }],
+        forecastFrom,
+        ...(banded ? { band: { low: 'low', high: 'high' } } : {}),
+        format: (value) => money(value),
+        empty: forward.reason ?? 'Nothing to project yet.',
+        footnote:
+          `Measured to ${forecastFrom ?? 'nothing'}; everything after is the average of ` +
+          `${cycles} certified cycle${cycles === 1 ? '' : 's'} carried forward. ` +
+          (banded
+            ? 'The band widens with distance because an average says less the further out it is carried. '
+            : 'No band: fewer than two cycles have been measured, so there is no spread to show and one would be invented. ') +
+          'This is what comes in, not what is left — subcontract commitments draw against it and the outflow side is ' +
+          'unmeasured until something is certified down the chain.',
+      }),
+    )}
+  </div>`;
+}
+
+/**
+ * The statutory windows, drawn as the windows they are.
+ *
+ * A payment cycle is four dates and three deadlines between them, and the
+ * Construction Act does not care whether anybody noticed the date passing. A
+ * table of ISO strings is how a payment notice deadline gets missed: the reader
+ * has to hold seven dates and compute the gaps, once per cycle, in their head.
+ *
+ * As bars the thing that matters is the shape — how long there actually is
+ * between the application and the payment notice deadline, and how much shorter
+ * that window is than the one before it. A five-day window and a twenty-day
+ * window look identical as two rows of text and nothing alike as two bars.
+ *
+ * ## Three bars per cycle, not one
+ *
+ * The assessment window, the pay-less window and the run to the final date are
+ * three different obligations with three different consequences for missing
+ * them. Drawn as one bar from application to payment they would read as one
+ * deadline, which is exactly the misreading that costs the money.
+ */
+function paymentTimeline(cycle) {
+  const periods = cycle?.periods ?? [];
+  if (periods.length === 0) return '';
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Newest first is how a QS reads a cycle list, but a timeline reads forwards.
+  const tasks = [...periods]
+    .sort((a, b) => String(a.applicationDate).localeCompare(String(b.applicationDate)))
+    .flatMap((period) => {
+      const n = period.cycleNumber;
+      const past = (date) => String(date) < today;
+      return [
+        {
+          id: `c${n}-assess`,
+          label: `Cycle ${n} · assessment window`,
+          start: period.applicationDate,
+          end: period.paymentNoticeDeadline,
+          tone: past(period.paymentNoticeDeadline) ? 'baseline' : 'actual',
+        },
+        {
+          id: `c${n}-payless`,
+          label: `Cycle ${n} · pay-less window`,
+          start: period.paymentNoticeDeadline,
+          end: period.payLessNoticeDeadline,
+          tone: past(period.payLessNoticeDeadline) ? 'baseline' : 'warn',
+        },
+        {
+          id: `c${n}-final`,
+          label: `Cycle ${n} · to the final date for payment`,
+          start: period.payLessNoticeDeadline,
+          end: period.finalDateForPayment,
+          tone: past(period.finalDateForPayment) ? 'baseline' : 'threshold',
+        },
+      ];
+    })
+    .filter((task) => task.start && task.end);
+
+  return html`<div class="card" style="margin-top:14px">
+    <h2>The statutory windows, and how long each one actually is</h2>
+    ${raw(
+      ganttChart({
+        title: 'Payment cycle deadlines',
+        tasks,
+        scale: 'WEEK',
+        showFloat: false,
+        showLinks: false,
+        today,
+        empty: 'No payment cycle has been generated for this contract.',
+        footnote:
+          `${periods.length} cycle${periods.length === 1 ? '' : 's'} on this contract, ` +
+          `direction ${humanise(String(cycle.direction ?? 'UPSTREAM'))}. ` +
+          'Three bars a cycle rather than one, because the assessment window, the pay-less window and the run to the ' +
+          'final date are three obligations with three different consequences. Bars behind the data date are shown as ' +
+          'past rather than as missed — whether a notice actually went out is a record, not a date.',
+      }),
+    )}
+  </div>`;
 }
