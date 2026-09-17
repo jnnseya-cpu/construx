@@ -22,7 +22,7 @@ import { blockedReason, can, draw, state } from '../app.js';
  * show a bank holiday, a seven-day cure or an activity that started before its
  * predecessor finished.
  */
-function datedPanel(view) {
+function datedPanel(view, links = []) {
   if (view?.error) {
     return html`<div class="card" style="margin-bottom:14px">
       <h2>The programme in dates</h2>
@@ -108,7 +108,18 @@ function datedPanel(view) {
                   longestPath: activity.longestPath,
                   critical: activity.critical,
                   percentComplete: activity.percentComplete,
+                  // The half the chart never received. The engine has computed
+                  // these on every run; the picture simply threw them away, so
+                  // a planner could see when work is scheduled and nothing
+                  // about how much it can move or what moves with it.
+                  lateFinish: activity.lateFinish,
+                  totalFloat: activity.totalFloat,
+                  wbs: activity.wbs ?? activity.wbsPath ?? activity.workPackageName,
                 })),
+                // Only the links whose both ends are on the chart. `ganttChart`
+                // skips the rest rather than drawing them off the edge, and
+                // passing the whole network lets it decide.
+                links,
                 dataDate: view.lastRun?.options?.dataDate,
               })}
               ${
@@ -660,7 +671,18 @@ export async function programme(root) {
           : ''
       }
 
-      ${datedPanel(dated)}
+      ${datedPanel(
+        dated,
+        // The logic network, passed in rather than reached for: this panel is a
+        // pure render of what it is given, and the chart skips any link whose
+        // ends are not on it.
+        (bundle.Dependency ?? []).map((dependency) => ({
+          predecessorId: dependency.predecessorId,
+          successorId: dependency.successorId,
+          type: dependency.type,
+          lag: dependency.lag,
+        })),
+      )}
 
       ${resourcePanel(resourcing)}
 

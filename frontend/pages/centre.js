@@ -1,5 +1,6 @@
 import { api } from '../lib/api.js';
 import { badge, html, positionReport, raw, render } from '../lib/ui.js';
+import { barChart, pieChart } from '../lib/charts.js';
 import { state } from '../app.js';
 
 /**
@@ -98,6 +99,8 @@ export async function centre(root) {
           </div>`
         : ''}
 
+      ${centreCharts(cards, functions, available, refused)}
+
       <section class="grid cols-4">
         ${REGIONS.map((region) => {
           const inRegion = cards.filter((entry) => entry.region === region.id);
@@ -153,4 +156,114 @@ export async function centre(root) {
       })}
     `,
   );
+}
+
+/**
+ * The command centre, as shape before it is read as a list.
+ *
+ * Four regions of cards is the right structure and the wrong first impression:
+ * a person opening this screen wants to know *how much* is urgent and *where*
+ * it is coming from before they start reading headlines one at a time. Both
+ * questions are answerable from the cards the report already returned — this
+ * counts them and draws nothing it was not given.
+ *
+ * The refusals are charted too, deliberately. A function this reader cannot
+ * reach is not an empty space on the screen; it is a named gap, and showing how
+ * much of the centre is withheld is the difference between "there is nothing
+ * happening" and "you are not cleared to see it".
+ */
+function centreCharts(cards, functions, available, refused) {
+  if (cards.length === 0 && refused.length === 0) return '';
+
+  const REGION_LABEL = {
+    HAPPENING: 'What is happening',
+    CHANGED: 'What changed',
+    AT_RISK: 'What is at risk',
+    NEXT: 'What to do next',
+  };
+
+  const bySeverity = ['URGENT', 'ATTENTION', 'INFO'].map((severity) => ({
+    label: severity.charAt(0) + severity.slice(1).toLowerCase(),
+    value: cards.filter((card) => card.severity === severity).length,
+    tone: severity === 'URGENT' ? 'bad' : severity === 'ATTENTION' ? 'warn' : '',
+  }));
+
+  const byRegion = Object.entries(REGION_LABEL).map(([id, label]) => ({
+    label,
+    value: cards.filter((card) => card.region === id).length,
+  }));
+
+  const byFunction = available
+    .map((entry) => ({ label: entry.label, value: (entry.cards ?? []).length }))
+    .filter((entry) => entry.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  // Money is only on some cards, and a total of the ones that carry it would
+  // read as the project's exposure. Charted per card instead, largest first,
+  // so the figure stays attached to the thing it belongs to.
+  const valued = cards
+    .filter((card) => Number(card.valueMinor) > 0)
+    .sort((a, b) => Number(b.valueMinor) - Number(a.valueMinor))
+    .slice(0, 8)
+    .map((card) => ({ label: card.headline, value: Number(card.valueMinor) }));
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How much needs you, and how badly</h2>
+        ${raw(
+          pieChart({
+            title: 'By severity',
+            data: bySeverity.filter((entry) => entry.value > 0),
+            format: (value) => `${value} item${value === 1 ? '' : 's'}`,
+            centreLabel: String(cards.length),
+            empty: 'Nothing is raised against this project from the functions you can reach.',
+            footnote: `${cards.length} item${cards.length === 1 ? '' : 's'} across ${available.length} function${available.length === 1 ? '' : 's'}` +
+              `${refused.length > 0 ? `, with ${refused.length} function${refused.length === 1 ? '' : 's'} withheld from your role` : ''}.`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where it is coming from</h2>
+        ${raw(
+          barChart({
+            title: 'By function',
+            horizontal: true,
+            data: byFunction,
+            format: (value) => `${value} item${value === 1 ? '' : 's'}`,
+            empty: 'No function you can reach has raised anything.',
+            footnote: 'Each function reads the ledger through the ordinary domain path; nothing here is a separate report.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Across the four questions</h2>
+        ${raw(
+          barChart({
+            title: 'By region',
+            data: byRegion,
+            format: (value) => `${value} item${value === 1 ? '' : 's'}`,
+            empty: 'Nothing has been raised in any region.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What it is worth</h2>
+        ${raw(
+          barChart({
+            title: 'By value',
+            horizontal: true,
+            data: valued,
+            format: (value) =>
+              new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(value / 100),
+            empty: 'No item raised against this project carries a value.',
+            footnote: 'Per item, not totalled — a sum of these would read as the project’s exposure, which it is not.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

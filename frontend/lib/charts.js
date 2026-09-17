@@ -51,6 +51,8 @@ import { esc, html, raw } from './ui.js';
  * @typedef {{x: Scalar, y: Scalar, z?: Scalar, label?: string, tone?: string}} Point
  * @typedef {{label: string, values: number[], tone?: string}} Group
  * @typedef {{label: string, value: number, tone?: string, total?: boolean}} Step
+ * @typedef {{id?: string|number, label?: string, name?: string, start: string, end?: string, finish?: string, baselineStart?: string, baselineFinish?: string, baselineEnd?: string, lateFinish?: string, totalFloat?: number, wbs?: string, milestone?: boolean, critical?: boolean, longestPath?: boolean, percentComplete?: number, tone?: string}} GanttTask
+ * @typedef {{predecessorId?: string|number, successorId?: string|number, from?: string|number, to?: string|number, type?: string, lag?: number, critical?: boolean}} GanttLink
  * @typedef {{label?: string, name?: string, start: string, end?: string, finish?: string,
  *   baselineStart?: string, baselineFinish?: string, baselineEnd?: string,
  *   percentComplete?: number, milestone?: boolean, critical?: boolean, longestPath?: boolean,
@@ -1557,13 +1559,53 @@ function squarify(values, area, total) {
  * that draws inferred links is a Gantt that argues with the programme.
  */
 /** @param {{tasks?: Task[], title?: string, desc?: string, today?: string, dataDate?: string, empty?: string, footnote?: string}} options */
+/**
+ * A programme, drawn the way a planner reads one.
+ *
+ * The critical-path engine has always computed early dates, late dates, total
+ * float, free float and the dependency network. This chart drew the early dates
+ * and threw the rest away, which made it a picture of *when* work is scheduled
+ * with nothing about *why* — and why is the whole job. A bar with no float
+ * behind it and no logic into it cannot answer "what happens if this slips",
+ * which is the only question anybody opens a programme to ask.
+ *
+ * What is drawn, and what each thing is for:
+ *
+ * **The float bar.** A hollow extension from the early finish to the late
+ * finish. Its length is the total float — how long this activity can slip
+ * before it moves the end date. An activity with no visible float bar is on the
+ * critical path, and that is the reading a planner wants at a glance rather
+ * than from a column of numbers.
+ *
+ * **Logic links.** An arrow from predecessor to successor, routed by the
+ * relationship the record holds: finish-to-start leaves the right edge and
+ * enters the left, start-to-start joins the two left edges, finish-to-finish
+ * the two right. Lag is drawn as the gap it is. Links are what turn a chart of
+ * bars into a network.
+ *
+ * **WBS grouping.** Activities under their parent, with a summary bar spanning
+ * the group's earliest start to its latest finish. A flat list of two hundred
+ * activities is a spreadsheet with rounded corners.
+ *
+ * **Negative float** is drawn in the refusal colour and called out, because an
+ * activity with less than zero float means the logic already cannot be met and
+ * that is a fact about the programme rather than a risk in it.
+ *
+ * Everything else the chart already did — baseline hairline, data date,
+ * per-cent complete, milestones — is kept, because it worked.
+ */
+/** @param {{tasks?: GanttTask[], links?: GanttLink[], title?: string, desc?: string, today?: string, dataDate?: string, showFloat?: boolean, showLinks?: boolean, empty?: string, footnote?: string}} options */
 export function ganttChart({
   tasks = [],
+  links = [],
   title = 'Programme',
   desc,
   today,
   /** The line between what happened and what is forecast. Alias of `today`. */
   dataDate,
+  /** Draw the float bar and the logic links. Off for a simple timeline. */
+  showFloat = true,
+  showLinks = true,
   empty = 'No dated activities to plot',
   footnote,
 }) {
@@ -1579,20 +1621,62 @@ export function ganttChart({
       to: Date.parse(task.end),
       baseFrom: task.baselineStart ? Date.parse(task.baselineStart) : NaN,
       baseTo: task.baselineFinish ?? task.baselineEnd ? Date.parse(task.baselineFinish ?? task.baselineEnd) : NaN,
+      // The late finish is what the float bar runs to. Where the caller gives a
+      // float in days instead, it is converted here so both shapes of record
+      // draw the same picture.
+      lateTo: task.lateFinish
+        ? Date.parse(task.lateFinish)
+        : finite(task.totalFloat)
+          ? Date.parse(task.end) + Number(task.totalFloat) * 86_400_000
+          : NaN,
     }))
     .filter((task) => Number.isFinite(task.from) && Number.isFinite(task.to) && task.to >= task.from);
   if (bars.length === 0) return emptyChart(empty);
 
-  // Baselines are inside the extent. A task that slipped has a baseline earlier
-  // than every current date, and leaving it out of the scale draws the
-  // comparison off the left edge — losing exactly the bar the reader opened the
-  // chart for.
-  const dates = bars.flatMap((bar) => [bar.from, bar.to, bar.baseFrom, bar.baseTo].filter(Number.isFinite));
+  // --- WBS ------------------------------------------------------------------
+  //
+  // Rows are the activities plus a summary row per group. Built here rather
+  // than asked of the caller, so a page that has a `wbs` on its records gets
+  // the grouping without assembling it, and a page that does not gets a flat
+  // chart with no empty headings.
+  const grouped = bars.some((bar) => bar.wbs);
+  const rows = [];
+  if (grouped) {
+    const order = [];
+    const byGroup = new Map();
+    for (const bar of bars) {
+      const key = bar.wbs ?? 'Unassigned';
+      if (!byGroup.has(key)) {
+        byGroup.set(key, []);
+        order.push(key);
+      }
+      byGroup.get(key).push(bar);
+    }
+    for (const key of order) {
+      const members = byGroup.get(key);
+      rows.push({
+        kind: 'group',
+        label: key,
+        from: Math.min(...members.map((member) => member.from)),
+        to: Math.max(...members.map((member) => member.to)),
+        count: members.length,
+      });
+      for (const member of members) rows.push({ kind: 'task', ...member });
+    }
+  } else {
+    for (const bar of bars) rows.push({ kind: 'task', ...bar });
+  }
+
+  // Baselines and float are inside the extent. A task that slipped has a
+  // baseline earlier than every current date, and leaving it out of the scale
+  // draws the comparison off the left edge — losing exactly the bar the reader
+  // opened the chart for.
+  const dates = bars.flatMap((bar) => [bar.from, bar.to, bar.baseFrom, bar.baseTo, showFloat ? bar.lateTo : NaN].filter(Number.isFinite));
   const min = Math.min(...dates);
   const max = Math.max(...dates);
   const rowHeight = 30;
   const left = 210;
-  const box = { w: 760, h: Math.max(120, bars.length * rowHeight + 56) };
+  const box = { w: 760, h: Math.max(120, rows.length * rowHeight + 56) };
   const right = box.w - 20;
   const x = scale(min, max, left, right);
   const nowAt = today ?? dataDate ? Date.parse(today ?? dataDate) : Date.now();
@@ -1609,14 +1693,33 @@ export function ganttChart({
   }
 
   const dayMs = 86_400_000;
+  const geometry = new Map();
+  rows.forEach((row, index) => {
+    if (row.kind === 'task' && row.id !== undefined) {
+      geometry.set(String(row.id), { y: 36 + index * rowHeight, from: x(row.from), to: x(row.to) });
+    }
+  });
+
+  const criticalCount = bars.filter((bar) => bar.critical || bar.longestPath).length;
+  const negativeFloat = bars.filter((bar) => finite(bar.totalFloat) && Number(bar.totalFloat) < 0).length;
+
   return frame({
     title,
     box,
     footnote,
+    legend: showFloat
+      ? [
+          { label: `${criticalCount} critical`, tone: 'bad' },
+          { label: 'float to late finish', tone: 'neutral' },
+          ...(negativeFloat > 0 ? [{ label: `${negativeFloat} negative float`, tone: 'bad' }] : []),
+        ]
+      : undefined,
     desc:
       desc ??
       `${bars.length} activities from ${new Date(min).toISOString().slice(0, 10)} to ${new Date(max).toISOString().slice(0, 10)}, ` +
-        `a span of ${Math.round((max - min) / dayMs)} days.`,
+        `a span of ${Math.round((max - min) / dayMs)} days. ${criticalCount} on the critical path` +
+        `${showLinks && links.length > 0 ? `, ${links.length} logic links drawn` : ''}` +
+        `${negativeFloat > 0 ? `, ${negativeFloat} carrying negative float` : ''}.`,
     body: html`${months.map(
       (month) => html`<g class="chart-grid">
         <line x1="${raw(r2(x(month.getTime())))}" y1="30" x2="${raw(r2(x(month.getTime())))}" y2="${raw(box.h - 20)}" />
@@ -1627,11 +1730,30 @@ export function ganttChart({
     )}
     ${Number.isFinite(nowAt) && nowAt >= min && nowAt <= max
       ? html`<line class="chart-today" x1="${raw(r2(x(nowAt)))}" y1="30" x2="${raw(r2(x(nowAt)))}" y2="${raw(box.h - 20)}">
-          <title>Today</title>
+          <title>Data date</title>
         </line>`
       : ''}
-    ${bars.map((bar, index) => {
+    ${rows.map((row, index) => {
       const y = 36 + index * rowHeight;
+
+      // --- A WBS summary row ---------------------------------------------
+      if (row.kind === 'group') {
+        const from = x(row.from);
+        const to = x(row.to);
+        return html`<g>
+          <text class="chart-cat chart-wbs" x="${raw(left - 12)}" y="${raw(y + 15)}" text-anchor="end">
+            <title>${row.label} · ${row.count} activities</title>${fitLabel(row.label, left - 22)}
+          </text>
+          <path
+            class="chart-summary"
+            d="${raw(`M ${r2(from)} ${r2(y + 9)} L ${r2(to)} ${r2(y + 9)} L ${r2(to)} ${r2(y + 17)} L ${r2(to - 5)} ${r2(y + 11)} L ${r2(from + 5)} ${r2(y + 11)} L ${r2(from)} ${r2(y + 17)} Z`)}"
+          >
+            <title>${row.label}: ${row.count} activities, ${raw(String(new Date(row.from).toISOString().slice(0, 10)))} to ${raw(String(new Date(row.to).toISOString().slice(0, 10)))}</title>
+          </path>
+        </g>`;
+      }
+
+      const bar = row;
       const from = x(bar.from);
       const to = x(bar.to);
       const width = Math.max(3, to - from);
@@ -1646,11 +1768,38 @@ export function ganttChart({
           ? { from: x(bar.baseFrom), to: x(bar.baseTo) }
           : undefined;
       const slipDays = baseline ? Math.round((bar.to - bar.baseTo) / 86_400_000) : 0;
+      const floatDays = finite(bar.totalFloat)
+        ? Number(bar.totalFloat)
+        : Number.isFinite(bar.lateTo)
+          ? Math.round((bar.lateTo - bar.to) / dayMs)
+          : undefined;
+      // Negative float runs *backwards* from the early finish: the late finish
+      // is before it, and drawing it forwards would say the opposite of what it
+      // means.
+      const floatBar =
+        showFloat && Number.isFinite(bar.lateTo) && floatDays !== undefined && floatDays !== 0
+          ? { from: x(Math.min(bar.to, bar.lateTo)), to: x(Math.max(bar.to, bar.lateTo)), negative: floatDays < 0 }
+          : undefined;
 
       return html`<g>
         <text class="chart-cat" x="${raw(left - 12)}" y="${raw(y + 15)}" text-anchor="end">
-          <title>${bar.label}</title>${fitLabel(bar.label, left - 22)}
+          <title>${bar.label}${floatDays === undefined ? '' : ` · ${floatDays} days total float`}</title>${fitLabel(grouped ? `  ${bar.label}` : bar.label, left - 22)}
         </text>
+        ${
+          // The float bar first, so the activity bar sits on top of it.
+          floatBar
+            ? html`<rect
+                class="chart-float${raw(floatBar.negative ? ' is-negative' : '')}"
+                x="${raw(r2(floatBar.from))}"
+                y="${raw(y + 8)}"
+                width="${raw(r2(Math.max(2, floatBar.to - floatBar.from)))}"
+                height="10"
+                rx="2"
+              >
+                <title>${bar.label}: ${raw(String(Math.abs(floatDays)))} days ${raw(floatDays < 0 ? 'negative float — the logic already cannot be met' : 'total float before the end date moves')}</title>
+              </rect>`
+            : ''
+        }
         ${
           // The baseline as a hairline under the bar rather than a second solid
           // bar: the current dates are what somebody acts on, and two bars of
@@ -1680,7 +1829,7 @@ export function ganttChart({
           : html`<rect class="chart-gantt" x="${raw(r2(from))}" y="${raw(y + 5)}" width="${raw(r2(width))}" height="16" rx="3" fill="${raw(colour)}" fill-opacity="0.34">
                 <title>${bar.label}: ${bar.start.slice(0, 10)} to ${bar.end.slice(0, 10)}${
                   done === undefined ? '' : ` · ${done}% complete`
-                }</title>
+                }${floatDays === undefined ? '' : ` · ${floatDays} days float`}</title>
               </rect>
               ${done === undefined
                 ? ''
@@ -1696,7 +1845,39 @@ export function ganttChart({
                     <title>${bar.label}: ${raw(done)}% complete</title>
                   </rect>`}`}
       </g>`;
-    })}`,
+    })}
+    ${
+      // --- Logic links ----------------------------------------------------
+      //
+      // Drawn last so they sit above the bars. Each is routed by its own
+      // relationship type: a finish-to-start leaves the predecessor's right
+      // edge and enters the successor's left, a start-to-start joins the two
+      // left edges, a finish-to-finish the two right. A link whose either end
+      // is not on the chart is skipped rather than drawn to the edge.
+      showLinks
+        ? links
+            .map((link) => {
+              const a = geometry.get(String(link.predecessorId ?? link.from));
+              const b = geometry.get(String(link.successorId ?? link.to));
+              if (!a || !b) return '';
+              const type = String(link.type ?? 'FS').toUpperCase();
+              const startX = type === 'SS' || type === 'SF' ? a.from : a.to;
+              const endX = type === 'SS' || type === 'FS' ? b.from : b.to;
+              const y1 = a.y + 13;
+              const y2 = b.y + 13;
+              const midX = type === 'FS' ? Math.max(startX + 6, endX - 8) : startX + 6;
+              const lag = finite(link.lag) ? Number(link.lag) : 0;
+              return html`<g class="chart-link${raw(link.critical ? ' is-critical' : '')}">
+                <path
+                  d="${raw(`M ${r2(startX)} ${r2(y1)} L ${r2(midX)} ${r2(y1)} L ${r2(midX)} ${r2(y2)} L ${r2(endX)} ${r2(y2)}`)}"
+                  fill="none"
+                />
+                <path d="${raw(`M ${r2(endX)} ${r2(y2)} l -4 -3 l 0 6 Z`)}" />
+                <title>${raw(type)}${lag === 0 ? '' : raw(` ${lag > 0 ? '+' : ''}${lag}d`)}</title>
+              </g>`;
+            })
+        : ''
+    }`,
   });
 }
 

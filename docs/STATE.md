@@ -21589,3 +21589,69 @@ The Command Centre gains a RIBA ribbon under the lifecycle rail, each stage
 carrying its goal and the reason it is in the state it is in.
 
 Twelve tests in `standards.test.ts`.
+
+## The screens were tables, and the engines were not
+
+Reported bluntly and correctly: Enterprise & Portfolio, the Project Command
+Centre and the Command Centre were ugly and boring, dashboards and graphs had
+been asked for repeatedly, and a P6-grade Gantt had been asked for and not
+delivered.
+
+The measurement, before the work: **`enterprise.js` was 1,284 lines and called
+zero charts. `centre.js` was 156 lines and called zero charts.** The chart
+library has carried nineteen chart types the whole time. The screens were
+tables over engines that had far more to say.
+
+### The Gantt was drawing a third of what the engine computed
+
+`calculateCPM` returns early start, early finish, **late start, late finish,
+total float, free float**, the critical path and the dependency network. The
+programme page passed nine fields to the chart and dropped the rest, so the
+picture showed *when* work was scheduled and nothing about *why* — and why is
+the job. A bar with no float behind it and no logic into it cannot answer "what
+happens if this slips", which is the only question anybody opens a programme to
+ask.
+
+`ganttChart` now draws:
+
+- **The float bar** — a hollow dashed extension from early finish to late
+  finish, its length the total float. An activity with no float bar is on the
+  critical path, which is the reading a planner wants at a glance rather than
+  from a column of numbers. Negative float runs *backwards* and is drawn in the
+  refusal colour, because the late finish being before the early finish means
+  the logic already cannot be met.
+- **Logic links** — an arrow per dependency, routed by its own relationship:
+  finish-to-start leaves the right edge and enters the left, start-to-start
+  joins the two left edges, finish-to-finish the two right. A link with either
+  end off the chart is skipped rather than drawn to the edge.
+- **WBS grouping** — activities under their parent with a summary bar spanning
+  the group. Built from `wbsPath` where the records carry one, so a page without
+  it gets a flat chart rather than empty headings.
+
+Verified against the seeded programme: eight activities, eight logic links
+drawn, the one activity with 50 days of float showing it, seven critical
+activities showing none.
+
+### Enterprise & Portfolio, and the Command Centre
+
+Six charts on the estate — contract value by project (horizontal, because a
+project name is a sentence), the estate by phase, completion confidence as P50
+against P80 against what the contract allows, the largest priced exposures,
+commercial coverage as a gauge, and what changed in the last seven days. Four on
+the Command Centre — severity, originating function, the four regions, and what
+each item is worth.
+
+Two deliberate choices in there. **Confidence is grouped bars, not a line**: two
+projects are not a continuous axis and a line between them implies a trend
+between jobs that have nothing to do with each other. **Item values are charted
+per item and never totalled**: a sum of them would read as the project's
+exposure, which it is not.
+
+Nothing on either screen computes. Every chart is a projection of a payload the
+API already published, so the picture and the table beneath it cannot disagree.
+
+### Still not done
+
+A resource histogram under the Gantt, and a zoom control for day/week/month.
+The Gantt is fixed-width and pages at sixty activities. Those are named here
+rather than implied to exist.

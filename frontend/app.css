@@ -1236,6 +1236,60 @@ input:focus, select:focus, textarea:focus {
   filter: brightness(1.18);
 }
 
+/* Gantt: float, logic and WBS.
+
+   The float bar is hollow on purpose. A solid second bar beside the activity
+   reads as more work; an outline reads as room, which is what float is. The
+   critical path is the absence of one. */
+.chart-float {
+  fill: none;
+  stroke: var(--line-strong, rgba(255, 255, 255, 0.24));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.chart-float.is-negative {
+  stroke: var(--critical, rgb(254, 93, 93));
+  stroke-dasharray: none;
+  fill: rgba(254, 93, 93, 0.12);
+}
+
+/* A WBS summary spans its children and is deliberately quieter than they are:
+   it is a heading, and a heading that shouts competes with the work under it. */
+.chart-summary {
+  fill: var(--text-3, rgb(138, 150, 169));
+  fill-opacity: 0.5;
+}
+.chart-wbs {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Logic links sit above the bars and below the reader's attention. They are
+   structure, not data: you follow one when you are asking a question, and the
+   rest of the time they should disappear. */
+.chart-link path {
+  stroke: var(--text-3, rgb(138, 150, 169));
+  stroke-width: 1;
+  opacity: 0.42;
+}
+.chart-link path:last-of-type {
+  fill: var(--text-3, rgb(138, 150, 169));
+  stroke: none;
+  opacity: 0.6;
+}
+.chart-link:hover path {
+  opacity: 1;
+  stroke: var(--orange, rgb(255, 106, 26));
+}
+.chart-link:hover path:last-of-type {
+  fill: var(--orange, rgb(255, 106, 26));
+  opacity: 1;
+}
+.chart-link.is-critical path {
+  stroke: var(--critical, rgb(254, 93, 93));
+  opacity: 0.7;
+}
+
 .chart-line {
   stroke-width: 2;
   stroke-linejoin: round;

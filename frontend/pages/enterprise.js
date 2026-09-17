@@ -1,5 +1,6 @@
 import { api, session } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
+import { barChart, lineChart, pieChart, gauge } from '../lib/charts.js';
 import { blockedReason, can, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
@@ -369,6 +370,8 @@ export async function enterprise(root) {
           </div>
         </div>
       </div>
+
+      ${estateCharts({ estate, financial, delivery, forecast, portfolios, projects, risks, changes, currency })}
 
       ${
         risks.length > 0
@@ -1281,4 +1284,158 @@ export async function enterprise(root) {
     await draw();
   });
   }
+}
+
+/**
+ * The estate, drawn.
+ *
+ * Every figure on this screen was already here and every one of them was a
+ * number in a table. A director reading four projects can hold a table in their
+ * head; the same table at forty projects is a spreadsheet nobody opens, and the
+ * questions this screen exists to answer — where is the money, which job is
+ * behind, what is the estate exposed to — are all shape questions.
+ *
+ * Nothing here computes: each chart is a projection of a payload the API
+ * already publishes, so the picture and the table under it cannot disagree.
+ * Where a figure is missing the chart says which record is absent rather than
+ * drawing a zero, for the same reason the commercial overview does.
+ */
+function estateCharts({ estate, financial, delivery, forecast, portfolios, projects, risks, changes, currency }) {
+  const live = (projects ?? []).filter((project) => project && project.contractValueMinor !== undefined);
+
+  // Contract value by project, biggest first — the estate's shape in one bar
+  // chart, and the answer to "where is our money".
+  const byValue = [...live]
+    .sort((a, b) => (b.contractValueMinor ?? 0) - (a.contractValueMinor ?? 0))
+    .slice(0, 10)
+    .map((project) => ({ label: project.name ?? project.projectName ?? '—', value: project.contractValueMinor ?? 0 }));
+
+  // Forecast confidence: P50 against P80 against what the contract allows.
+  // Three bars per project is the only honest way to show it — a single
+  // "confidence %" hides which of the three moved.
+  const confidence = (forecast?.projects ?? []).map((project) => ({
+    label: project.name,
+    p50: project.p50Days,
+    p80: project.p80Days,
+    contract: project.contractualDurationDays,
+  }));
+
+  const phases = Object.entries(estate.byPhase ?? {}).map(([phase, count]) => ({
+    label: humanise(phase),
+    value: count,
+  }));
+
+  const exposure = (risks ?? [])
+    .slice(0, 8)
+    .map((risk) => ({ label: `${risk.title}`, value: risk.exposureMinor ?? 0, tone: risk.severity === 'HIGH' ? 'bad' : risk.severity === 'MEDIUM' ? 'warn' : '' }));
+
+  const activity = (changes?.groups ?? [])
+    .map((group) => ({ label: humanise(group.group), value: group.count }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 8);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Contract value by project</h2>
+        ${raw(
+          barChart({
+            title: 'Contract value by project',
+            // Horizontal: a project name is a sentence, and a vertical bar
+            // chart turns every one of them into a rotated label nobody reads.
+            horizontal: true,
+            data: byValue,
+            format: (value) => money(value, currency),
+            empty: 'No project on the estate carries a contract value yet.',
+            footnote: `${live.length} project${live.length === 1 ? '' : 's'} on the estate, largest ten shown.`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the estate is</h2>
+        ${raw(
+          pieChart({
+            title: 'Where the estate is',
+            data: phases,
+            format: (value) => `${value} project${value === 1 ? '' : 's'}`,
+            centreLabel: String(estate.projects ?? 0),
+            empty: 'No project has a lifecycle phase.',
+            footnote: 'Every project by the phase its gate has let it reach.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Completion confidence</h2>
+        ${raw(
+          barChart({
+            title: 'Completion confidence, P50 against P80',
+            // Grouped bars rather than a line: projects are not a continuous
+            // axis, and a line drawn across them implies a trend between two
+            // jobs that have nothing to do with each other.
+            data: confidence,
+            series: [
+              { key: 'p50', label: 'P50 days' },
+              { key: 'p80', label: 'P80 days' },
+              { key: 'contract', label: 'Contract allows' },
+            ],
+            format: (value) => `${Math.round(value)}d`,
+            empty:
+              (forecast?.notSimulated ?? []).length > 0
+                ? `Not simulated: ${forecast.notSimulated.map((entry) => entry.reason).join('; ')}`
+                : 'No project has been simulated.',
+            footnote:
+              forecast?.coverage
+                ? `${forecast.coverage.simulated} of ${forecast.coverage.of} projects simulated over ${forecast.iterations} iterations. ` +
+                  `${forecast.lateAtP80} late at P80.`
+                : undefined,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Largest exposures</h2>
+        ${raw(
+          barChart({
+            title: 'Largest exposures across the estate',
+            horizontal: true,
+            data: exposure,
+            format: (value) => money(value, currency),
+            empty: 'No risk on the estate carries a priced exposure.',
+            footnote: 'Expected cost — probability against impact, as the risk engine scores it.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Commercial coverage</h2>
+        ${raw(
+          gauge({
+            title: 'Commercial coverage',
+            value: financial.coverage.of === 0 ? 0 : Math.round((financial.coverage.withCvr / financial.coverage.of) * 100),
+            max: 100,
+            format: (value) => `${value}%`,
+            footnote:
+              `${financial.coverage.withCvr} of ${financial.coverage.of} projects have a published CVR. ` +
+              'The forecast figures on this screen describe those and no others.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What changed — last seven days</h2>
+        ${raw(
+          barChart({
+            title: 'What changed, last seven days',
+            data: activity,
+            format: (value) => `${value} events`,
+            empty: 'Nothing was recorded on the estate in the window.',
+            footnote: changes ? `${changes.total} events between ${String(changes.from).slice(0, 10)} and ${String(changes.to).slice(0, 10)}.` : undefined,
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }
