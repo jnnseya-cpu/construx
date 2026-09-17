@@ -1,5 +1,6 @@
 import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEnrolmentGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
+import { wireCharts } from './lib/charttools.js';
 import { wireDrill } from './lib/drill.js';
 import { maybeShowActivation } from './lib/activation.js';
 import { armInstallPrompt } from './lib/install.js';
@@ -622,6 +623,10 @@ document.addEventListener('click', (event) => {
 // application: each screen re-renders its own root on every draw, so a listener
 // bound per tile would be re-attached on each one.
 wireDrill(() => state.session?.projectId);
+// One delegated listener for every chart the console will ever draw: view the
+// data, export it, expand it, link to it. Installed here rather than per page,
+// because a page that has to remember is a page that forgets.
+wireCharts();
 
 // --- session ----------------------------------------------------------------
 

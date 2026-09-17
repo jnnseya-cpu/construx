@@ -22057,3 +22057,86 @@ eleven.
 - **Sections 10 and 11**: the acceptance criteria and the definition of done are
   not met. No visual has been through the standard's eleven-point completion
   list.
+
+## Section 3.2 and 4: the interactions and the misuse controls
+
+### Every chart carries its own data, its export, its expansion and its link
+
+Two of the standard's acceptance criteria — "every chart has an accessible
+tabular alternative" and "exported results reconcile exactly with on-screen
+totals" — are one mechanism, and it lives in `frame()` so no chart can be added
+without it.
+
+Each chart publishes its dataset. `frame` renders it as a real `<table>` behind
+a **View data** control; that table is what a screen reader reads; and
+`charttools.js` builds the CSV **by reading the rendered table out of the DOM**.
+
+That last point is the whole design. An export built from the source data and a
+chart built from the same source data still drift — a filter applied in one, a
+rounding in the other — and the day they disagree is the day somebody takes the
+wrong number into a meeting. Exporting the table the reader is looking at makes
+disagreement impossible rather than unlikely.
+
+Four controls on every visual: View data, CSV, Expand (full screen), Link (a
+deep link carrying the page's own query, so a link preserves the reader's
+filters). One delegated listener on the document, installed once in `app.js` —
+a page that had to remember to wire them is a page that forgets.
+
+`backend/tests/chartdata.test.ts` draws one of every chart type in the kit and
+fails any that renders marks and publishes no table, any whose rows do not match
+its header width, and any missing one of the four controls. Two behaviours are
+pinned specifically: a gap in a line reads **"not measured"** in the table rather
+than 0 — the whole point of breaking the line is that a missing week is not a
+zero, and a table that printed 0 would undo it for exactly the reader using the
+table because they cannot see the chart — and a Gantt's float and critical flag
+reach the table, which a naive tabulation loses.
+
+### Section 4's prohibitions are enforced in the component
+
+A style guide that lists prohibited misuses and leaves it to reviewers is
+violated by the third person to add a chart. The enforceable ones are enforced
+once, for every screen, and each refusal names the remedy — a chart that simply
+disappears teaches nobody anything.
+
+- **A pie never draws more than six segments.** Past six the slices are too
+  narrow to compare and the legend is doing the chart's work. The five largest
+  keep their slices and the rest are **gathered into one named "N smaller"** —
+  pooled in the picture, never hidden: the data panel lists every original part
+  with its own share. Six or fewer keep the caller's order, because severity is
+  an order and re-sorting by size to satisfy a cap that is not being hit would
+  throw that away on every pie in the platform.
+- **A radar refuses more than eight axes** and says to use a bar chart. Past
+  eight spokes the polygon reads as a circle with dents in it.
+- **A bar refuses more than eight stacked bands** and says to group them or draw
+  them side by side. Grouped series are not capped — they share a baseline,
+  which is the whole difference.
+- Negative pie values and non-zero-based bar axes were already refused; they are
+  asserted here because section 4 names them.
+
+### Section 3.1: target, actual, variance and status on a decision card
+
+`kpiCard` now carries the five things the standard asks a decision card for. The
+addition that matters is the variance against target and whether it is
+acceptable — and `better` with it, because half the numbers on this platform are
+good when they rise and half are good when they fall. A cost card and a progress
+card showing the same +8% mean opposite things, and one that coloured both green
+would be worse than one with no colour at all.
+
+The status band is **a word and a mark, not a colour**: a card whose only signal
+is a green number says nothing to a reader who cannot separate the greens, and
+nothing at all in a printed pack.
+
+On the Project Command Centre, forecast margin and delay exposure now carry
+their targets — the margin tendered, and nought days. The other two tiles in
+that ribbon do not, because contract value and Golden Thread event count have no
+target that is not invented, and inventing one to fill the slot is the thing
+rule 9 exists to prevent.
+
+### Still not built from section 3.2
+
+**Cross-filtering.** Selecting a segment and having every visual on the page
+follow needs a page-level data model to filter against, and the console renders
+from a payload the API already shaped. Built as a DOM trick it would produce a
+filter that looks applied and is not, which is worse than not having one.
+
+Compare mode, saved views and PNG/PDF export are also absent.

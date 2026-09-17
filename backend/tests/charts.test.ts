@@ -1285,3 +1285,100 @@ describe('a chart mixing toned and untoned marks keeps them apart', () => {
     assert.deepEqual(swatches, fills(markup), 'the legend is painted differently from the slices it labels');
   });
 });
+
+/**
+ * The misuse controls the standard sets out, enforced in the kit.
+ *
+ * Section 4 lists a prohibited misuse against each chart type. A style guide
+ * that lists them and leaves it to reviewers is a style guide that is violated
+ * by the third person to add a chart, so the ones that can be enforced are
+ * enforced here — in the component, once, for every screen.
+ *
+ * Each refusal names the remedy. A chart that simply disappears teaches nobody
+ * anything and gets worked around with a different chart type that has the same
+ * problem.
+ */
+describe('a chart refuses the misuses the standard prohibits', () => {
+  it('never draws a pie with more than six segments', () => {
+    const data = Array.from({ length: 11 }, (_, index) => ({ label: `Cost code ${index + 1}`, value: 20 - index }));
+    const markup = svg(pieChart({ title: 'By cost code', data }));
+    assert.equal([...markup.matchAll(/class="chart-slice"/g)].length, 6, 'the six-segment cap was not applied');
+    // The remainder is gathered and named, not dropped.
+    assert.match(markup, /6 smaller/);
+  });
+
+  it('keeps every gathered part in the data panel, with its own share', () => {
+    // The picture may pool them. The accessible alternative may not — an
+    // alternative that hides what the chart hid is not an alternative.
+    const data = Array.from({ length: 11 }, (_, index) => ({ label: `Cost code ${index + 1}`, value: 20 - index }));
+    const markup = svg(pieChart({ title: 'By cost code', data }));
+    for (let index = 1; index <= 11; index += 1) {
+      assert.match(markup, new RegExp(`Cost code ${index}<`), `cost code ${index} is not in the data panel`);
+    }
+  });
+
+  it('leaves six or fewer in the order the caller gave them', () => {
+    // Severity is an order. Re-sorting by size to satisfy a cap that is not
+    // being hit would throw that away on every pie in the platform.
+    const markup = svg(
+      pieChart({
+        title: 'By severity',
+        data: [
+          { label: 'Urgent', value: 3 },
+          { label: 'Attention', value: 6 },
+          { label: 'Info', value: 12 },
+        ],
+      }),
+    );
+    const order = [...markup.matchAll(/<text x="16" y="9">([^<]+)<\/text>/g)].map((found) => found[1]);
+    assert.deepEqual(order, ['Urgent', 'Attention', 'Info']);
+  });
+
+  it('refuses a pie of negative values rather than drawing a gap', () => {
+    // Parts of a whole that is not one. The commonest chart mistake there is.
+    const markup = svg(pieChart({ title: 'Movement', data: [{ label: 'Up', value: 40 }, { label: 'Down', value: -25 }], empty: 'Nothing' }));
+    assert.equal([...markup.matchAll(/class="chart-slice"/g)].length, 1, 'a negative slice was drawn');
+  });
+
+  it('refuses a radar past eight axes and says what to draw instead', () => {
+    const axes = Array.from({ length: 9 }, (_, index) => `Measure ${index + 1}`);
+    const markup = svg(radarChart({ title: 'Profile', axes, series: [{ label: 'A', values: axes.map(() => 3) }] }));
+    assert.ok(!markup.includes('<svg'), 'a nine-axis radar was drawn');
+    assert.match(markup, /too many for a profile/);
+    assert.match(markup, /bar chart/, 'the refusal does not name the remedy');
+  });
+
+  it('draws a radar at exactly eight, which is the limit rather than past it', () => {
+    const axes = Array.from({ length: 8 }, (_, index) => `Measure ${index + 1}`);
+    const markup = svg(radarChart({ title: 'Profile', axes, series: [{ label: 'A', values: axes.map(() => 3) }] }));
+    assert.ok(markup.includes('<svg'), 'eight axes were refused, but eight is allowed');
+  });
+
+  it('refuses more than eight stacked bands and says what to draw instead', () => {
+    const series = Array.from({ length: 9 }, (_, index) => ({ key: `s${index}`, label: `Series ${index}` }));
+    const row: { label: string } & Record<string, unknown> = { label: 'Q1' };
+    for (const s of series) row[s.key] = 5;
+    const markup = svg(barChart({ title: 'Composition', stacked: true, data: [row], series }));
+    assert.ok(!markup.includes('<svg'), 'nine stacked bands were drawn');
+    assert.match(markup, /more than a bar can carry/);
+    assert.match(markup, /side by side/, 'the refusal does not name the remedy');
+  });
+
+  it('still groups nine series side by side, because only stacking is capped', () => {
+    // The prohibition is about stacking. Nine grouped bars are readable — they
+    // share a baseline, which is the whole difference.
+    const series = Array.from({ length: 9 }, (_, index) => ({ key: `s${index}`, label: `Series ${index}` }));
+    const row: { label: string } & Record<string, unknown> = { label: 'Q1' };
+    for (const s of series) row[s.key] = 5;
+    const markup = svg(barChart({ title: 'Comparison', data: [row], series }));
+    assert.ok(markup.includes('<svg'), 'nine grouped series were refused');
+  });
+
+  it('starts a bar chart at zero, which is the truncation the standard prohibits', () => {
+    // Already true, asserted here because section 4 names it as a prohibited
+    // misuse and this is where the prohibitions are collected.
+    const markup = svg(barChart({ title: 'Value', data: [{ label: 'A', value: 4100 }, { label: 'B', value: 4200 }] }));
+    const ticks = [...markup.matchAll(/class="chart-grid">\s*<line[^>]*>\s*<text[^>]*>([^<]+)</g)].map((found) => found[1]);
+    assert.ok(ticks.includes('0'), `the axis does not include zero: ${ticks.join(', ')}`);
+  });
+});

@@ -348,8 +348,57 @@ function emptyChart(empty, detail) {
  * reader hears instead of the shapes. Both are required by the signature rather
  * than optional, because an optional accessible name is one nobody writes.
  */
-function frame({ title, desc, body, box = BOX, legend, footnote, className = '' }) {
-  return html`<figure class="chart ${raw(className)}">
+/**
+ * A stable identifier for a chart, from its own title.
+ *
+ * Used for the deep link and for the `aria-controls` pairing. Derived rather
+ * than passed, because a caller that had to invent an id would forget, and a
+ * chart with no id is a chart nobody can link to.
+ */
+function chartId(title) {
+  return `chart-${String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48)}`;
+}
+
+/**
+ * The frame every chart is drawn in.
+ *
+ * ## Why the table is not optional
+ *
+ * The Visual Intelligence Standard requires every chart to carry an accessible
+ * tabular alternative, and requires an export to reconcile exactly with what is
+ * on screen. Both are one decision: the chart publishes its own dataset as a
+ * table, the table is what a screen reader reads, and the CSV is generated from
+ * that table rather than from the data the chart was built from.
+ *
+ * That last point is the whole trick. An export built from the source data and
+ * a chart built from the same source data still drift — a filter applied in one
+ * place, a rounding applied in the other — and the day they disagree is the day
+ * somebody takes the wrong number into a meeting. Exporting *the table the
+ * reader is looking at* makes disagreement impossible rather than unlikely.
+ *
+ * A chart that passes no `table` still renders. It does not get a data panel,
+ * and `backend/tests/chartdata.test.ts` fails, which is the intended pressure.
+ */
+function frame({ title, desc, body, box = BOX, legend, footnote, className = '', table }) {
+  const id = chartId(title);
+  const rows = table?.rows ?? [];
+  const columns = table?.columns ?? [];
+
+  return html`<figure class="chart ${raw(className)}" id="${raw(id)}" data-chart="${title}">
+    <div class="chart-tools">
+      ${rows.length > 0
+        ? html`<button type="button" class="chart-tool" data-chart-data="${raw(id)}" aria-expanded="false" aria-controls="${raw(id)}-data">
+              View data
+            </button>
+            <button type="button" class="chart-tool" data-chart-csv="${raw(id)}">CSV</button>`
+        : ''}
+      <button type="button" class="chart-tool" data-chart-full="${raw(id)}" title="Full screen">Expand</button>
+      <button type="button" class="chart-tool" data-chart-link="${raw(id)}" title="Copy a link to this chart">Link</button>
+    </div>
     <svg
       viewBox="0 0 ${raw(box.w)} ${raw(box.h)}"
       preserveAspectRatio="xMidYMid meet"
@@ -363,6 +412,27 @@ function frame({ title, desc, body, box = BOX, legend, footnote, className = '' 
     </svg>
     ${legend ? html`<figcaption class="chart-legend">${legend}</figcaption>` : ''}
     ${footnote ? html`<p class="chart-foot">${footnote}</p>` : ''}
+    ${rows.length > 0
+      ? html`<div class="chart-data" id="${raw(id)}-data" hidden>
+          <table>
+            <caption>${title}${desc ? html` — ${desc}` : ''}</caption>
+            <thead>
+              <tr>${columns.map((column) => html`<th scope="col">${column}</th>`)}</tr>
+            </thead>
+            <tbody>
+              ${rows.map(
+                (row) => html`<tr>
+                  ${row.map((cell, index) =>
+                    index === 0
+                      ? html`<th scope="row">${cell === null || cell === undefined ? '' : cell}</th>`
+                      : html`<td>${cell === null || cell === undefined ? '' : cell}</td>`,
+                  )}
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`
+      : ''}
   </figure>`;
 }
 
@@ -444,6 +514,17 @@ export function barChart({
   const keys = series ?? [{ key: 'value', label: title }];
   const valueOf = (row, key) => num(row[key]);
 
+  // The standard's stacking ceiling. Eight bands in one bar cannot be told
+  // apart by colour — the palette itself only separates five — and a reader
+  // comparing the fourth band across two bars is comparing two floating
+  // rectangles with no common edge. Refused with the remedy rather than drawn.
+  if (stacked && keys.length > 8) {
+    return emptyChart(
+      `${keys.length} stacked bands is more than a bar can carry`,
+      'Group the smaller series together, or draw them as separate bars side by side.',
+    );
+  }
+
   if (horizontal) return horizontalBars({ rows, keys, title, desc, format, footnote });
 
   const totals = rows.map((row) => (stacked ? keys.reduce((sum, k) => sum + valueOf(row, k.key), 0) : Math.max(...keys.map((k) => valueOf(row, k.key)))));
@@ -493,6 +574,10 @@ export function barChart({
       />
       ${bars} ${categoryAxis(area, rows.map((row) => row.label), band)}`,
     legend: keys.length > 1 ? legend(keys.map((key, index) => ({ label: key.label, colour: key.colour ?? seriesColour(index) }))) : undefined,
+    table: {
+      columns: ['Category', ...keys.map((key) => key.label)],
+      rows: rows.map((row) => [row.label, ...keys.map((key) => format(num(row[key.key])))]),
+    },
   });
 }
 
@@ -528,6 +613,10 @@ function horizontalBars({ rows, keys, title, desc, format, footnote }) {
   return frame({
     title,
     desc: desc ?? `${rows.length} rows ranked by value.`,
+    table: {
+      columns: ['Category', ...keys.map((key) => key.label)],
+      rows: rows.map((row) => [row.label, ...keys.map((key) => format(num(row[key.key])))]),
+    },
     box,
     footnote,
     body: html`${axis.ticks.map(
@@ -667,6 +756,14 @@ export function lineChart({
       `${rows.length} point${rows.length === 1 ? '' : 's'} from ${rows[0].label} to ${rows[rows.length - 1].label}. ` +
         `Range ${format(Math.min(...values))} to ${format(Math.max(...values))}.`,
     footnote,
+    table: {
+      columns: ['Point', ...series.map((s) => s.label), ...(reference ?? []).map((line) => line.label)],
+      rows: rows.map((row) => [
+        row.label,
+        ...series.map((s) => (finite(row[s.key]) ? format(Number(row[s.key])) : 'not measured')),
+        ...(reference ?? []).map((line) => format(num(line.value))),
+      ]),
+    },
     body: html`${valueAxis(areaBox, axis.ticks, y, format)}
       ${(reference ?? []).map(
         (line) => html`<g class="chart-ref">
@@ -710,10 +807,42 @@ export function pieChart({
   centreLabel,
   footnote,
 }) {
-  const slices = data.filter((slice) => slice && finite(slice.value) && Number(slice.value) > 0);
-  if (slices.length === 0) return emptyChart(empty);
+  const parts = data.filter((slice) => slice && finite(slice.value) && Number(slice.value) > 0);
+  if (parts.length === 0) return emptyChart(empty);
 
-  const total = slices.reduce((sum, slice) => sum + Number(slice.value), 0);
+  /*
+   * Six segments, and the rest gathered.
+   *
+   * The standard caps a pie at six, and it is right: past that the slices are
+   * too narrow to compare against one another and the legend is doing all the
+   * work a chart was supposed to do. Refusing to draw would be worse — the
+   * caller has real composition to show — so the five largest keep their own
+   * slices and everything else becomes one.
+   *
+   * Gathered, not dropped. The remainder carries its own value and the count of
+   * what is in it, and the data panel below the chart lists every original part
+   * with its own share. Nothing is hidden; it is only pooled in the picture.
+   */
+  const MAX_SLICES = 6;
+  // Ranked only when there is gathering to do. Caller order usually carries
+  // meaning — Urgent, Attention, Info is a severity order, and re-sorting it by
+  // size would throw that away on every pie in the platform to fix the few that
+  // have too many parts.
+  const over = parts.length > MAX_SLICES;
+  const ranked = over ? [...parts].sort((a, b) => Number(b.value) - Number(a.value)) : parts;
+  const gathered = over ? ranked.slice(MAX_SLICES - 1) : [];
+  const slices = over
+    ? [
+        ...ranked.slice(0, MAX_SLICES - 1),
+        {
+          label: `${gathered.length} smaller`,
+          value: gathered.reduce((sum, slice) => sum + Number(slice.value), 0),
+          tone: 'neutral',
+        },
+      ]
+    : ranked;
+
+  const total = parts.reduce((sum, slice) => sum + Number(slice.value), 0);
   const box = { w: 420, h: 300 };
   const cx = 150;
   const cy = 150;
@@ -750,6 +879,16 @@ export function pieChart({
     title,
     box,
     desc: desc ?? `${slices.length} parts of ${format(total)}. Largest ${slices.reduce((a, b) => (Number(a.value) > Number(b.value) ? a : b)).label}.`,
+    table: {
+      // Every original part, including the ones the picture pooled — the table
+      // is the accessible alternative, and an alternative that also hides them
+      // is not one.
+      columns: ['Part', 'Value', 'Share'],
+      rows: [
+        ...ranked.map((slice) => [slice.label, format(slice.value), `${r2((Number(slice.value) / total) * 100)}%`]),
+        ['Total', format(total), '100%'],
+      ],
+    },
     footnote,
     body: html`${arcs}
       ${donut
@@ -878,6 +1017,10 @@ export function histogram({
   return frame({
     title,
     footnote,
+    table: {
+      columns: ['Range', 'Count'],
+      rows: buckets.map((bucket) => [label(bucket), String(bucket.n)]),
+    },
     desc:
       desc ??
       (preBinned
@@ -993,6 +1136,10 @@ export function scatterPlot({
   return frame({
     title,
     footnote,
+    table: {
+      columns: [xLabel, yLabel, 'Item'],
+      rows: data.map((point) => [formatX(point.x), formatY(point.y), point.label ?? '']),
+    },
     desc:
       desc ??
       `${data.length} paired measurements of ${yLabel} against ${xLabel}` +
@@ -1095,6 +1242,10 @@ export function bubbleChart({
   return frame({
     title,
     footnote,
+    table: {
+      columns: [xLabel, yLabel, zLabel, 'Item'],
+      rows: data.map((point) => [formatX(point.x), formatY(point.y), formatZ(point.z), point.label ?? '']),
+    },
     desc: desc ?? `${data.length} items placed by ${xLabel} and ${yLabel}, sized by ${zLabel}. Bubble area is proportional to ${zLabel}.`,
     body: html`${valueAxis(area, yAxis.ticks, y, formatY)}
       ${xAxis.ticks.map(
@@ -1154,6 +1305,17 @@ export function boxPlot({
   return frame({
     title,
     footnote,
+    table: {
+      columns: ['Group', 'Low', 'Lower quartile', 'Median', 'Upper quartile', 'High'],
+      rows: boxes.map((box) => [
+        box.label,
+        format(box.stats.low),
+        format(box.stats.q1),
+        format(box.stats.median),
+        format(box.stats.q3),
+        format(box.stats.high),
+      ]),
+    },
     desc:
       desc ??
       `${boxes.length} group${boxes.length === 1 ? '' : 's'}. Box is the middle half, line is the median, points beyond the whiskers are outliers.`,
@@ -1286,6 +1448,14 @@ export function gauge({
     title,
     box,
     footnote,
+    table: {
+      columns: ['Measure', 'Value'],
+      rows: [
+        ['Value', format(Number(value))],
+        ['Scale', `${format(min)} to ${format(max)}`],
+        ...(target === undefined ? [] : [['Target', format(Number(target))]]),
+      ],
+    },
     desc:
       desc ??
       `${format(value)} of a possible ${format(max)}` + (target === undefined ? '.' : `, against a target of ${format(target)}.`),
@@ -1320,12 +1490,60 @@ export function gauge({
  * inside it is the only drawn part.
  */
 /** @param {{label: string, value: Scalar, sub?: string, delta?: Scalar, deltaLabel?: string, tone?: string, spark?: Scalar[], target?: number, format?: Formatter}} options */
-export function kpiCard({ label, value, sub, delta, deltaLabel, tone = '', spark, target, format = tickLabel }) {
+export function kpiCard({
+  label,
+  value,
+  sub,
+  delta,
+  deltaLabel,
+  tone = '',
+  spark,
+  target,
+  /** The measured number behind `value`, where `value` is already formatted. */
+  actual,
+  /** Which direction is good. 'up' by default; 'down' for cost, delay, defects. */
+  better = 'up',
+  status,
+  format = tickLabel,
+}) {
   const direction = finite(delta) ? (Number(delta) > 0 ? 'up' : Number(delta) < 0 ? 'down' : 'flat') : undefined;
+
+  /*
+   * Target, actual, variance and status, which is what the standard asks a
+   * decision card to carry. Three of them were already here in pieces; what was
+   * missing is the one that makes the other three a decision — the variance
+   * against the target, and whether that variance is acceptable.
+   *
+   * `better` exists because half the numbers on this platform are good when
+   * they rise and half are good when they fall. A cost card and a progress card
+   * with the same +8% mean opposite things, and a card that coloured both green
+   * would be worse than one with no colour at all.
+   */
+  const measured = finite(actual) ? Number(actual) : undefined;
+  const goal = finite(target) ? Number(target) : undefined;
+  const variance = measured !== undefined && goal !== undefined ? measured - goal : undefined;
+  const good = variance === undefined ? undefined : better === 'down' ? variance <= 0 : variance >= 0;
+
+  // Named, not just coloured. The standard prohibits carrying meaning in colour
+  // alone, and a reader who cannot separate the greens still reads the word.
+  const band = status ?? (good === undefined ? undefined : good ? 'On target' : 'Off target');
+  const bandTone = good === undefined ? 'neutral' : good ? 'ok' : 'warn';
+
   return html`<div class="card kpi">
     <h3>${label}</h3>
     <div class="metric ${raw(tone)}">${value}</div>
     ${sub ? html`<div class="metric-sub">${sub}</div>` : ''}
+    ${band
+      ? html`<div class="kpi-band ${raw(bandTone)}">
+          <span aria-hidden="true">${raw(bandTone === 'ok' ? '●' : bandTone === 'warn' ? '▲' : '○')}</span>
+          ${band}${goal === undefined ? '' : html` · target ${format(goal)}`}
+        </div>`
+      : ''}
+    ${variance === undefined
+      ? ''
+      : html`<div class="kpi-delta ${raw(good ? 'up' : 'down')}">
+          ${raw(variance > 0 ? '+' : variance < 0 ? '−' : '')}${format(Math.abs(variance))} against target
+        </div>`}
     ${direction
       ? html`<div class="kpi-delta ${raw(direction)}">
           <span aria-hidden="true">${raw(direction === 'up' ? '▲' : direction === 'down' ? '▼' : '■')}</span>
@@ -1436,6 +1654,16 @@ export function heatmap({
     title,
     box,
     footnote,
+    table: {
+      columns: ['Row', ...columns],
+      rows: rows.map((row, rowIndex) => [
+        row,
+        ...columns.map((_, columnIndex) => {
+          const value = values[rowIndex]?.[columnIndex];
+          return finite(value) ? format(Number(value)) : 'not recorded';
+        }),
+      ]),
+    },
     desc:
       desc ??
       `${rows.length} rows by ${columns.length} columns. Brightest cell is ${format(max)}; an empty cell is nothing rather than zero.`,
@@ -1509,6 +1737,19 @@ export function funnelChart({
     title,
     box,
     footnote,
+    table: {
+      columns: ['Stage', 'Value', 'Of the top', 'From the stage above'],
+      rows: steps.map((stage, index) => {
+        const value = Number(stage.value);
+        const previous = index === 0 ? undefined : Number(steps[index - 1].value);
+        return [
+          stage.label,
+          format(value),
+          `${r2((value / top) * 100)}%`,
+          previous && previous > 0 ? `${r2((value / previous) * 100)}%` : '—',
+        ];
+      }),
+    },
     desc:
       desc ??
       `${steps.length} stages from ${format(top)} to ${format(steps[steps.length - 1].value)}. ` +
@@ -1588,6 +1829,14 @@ export function waterfallChart({
   return frame({
     title,
     footnote,
+    table: {
+      columns: ['Step', 'Movement', 'Running total'],
+      rows: bars.map((bar, index) => [
+        entries[index].label,
+        entries[index].total ? '—' : format(Number(entries[index].value)),
+        format(bar.to),
+      ]),
+    },
     desc: desc ?? `${bars.length} steps arriving at ${format(bars[bars.length - 1].to)}.`,
     body: html`${valueAxis(area, axis.ticks, y, format)}
       <line class="chart-axis" x1="${raw(r2(area.x))}" y1="${raw(r2(y(0)))}" x2="${raw(r2(area.x + area.w))}" y2="${raw(r2(y(0)))}" />
@@ -1658,6 +1907,13 @@ export function treemap({
     title,
     box,
     footnote,
+    table: {
+      columns: ['Item', 'Value', 'Share'],
+      rows: [
+        ...sorted.map((node) => [node.label, format(node.value), `${r2((Number(node.value) / total) * 100)}%`]),
+        ['Total', format(total), '100%'],
+      ],
+    },
     desc: desc ?? `${nodes.length} items totalling ${format(total)}. Largest is ${sorted[0].label} at ${format(sorted[0].value)}.`,
     body: rects.map((rect, index) => {
       const node = sorted[index];
@@ -1934,6 +2190,16 @@ export function ganttChart({
           ...(negativeFloat > 0 ? [{ label: `${negativeFloat} negative float`, tone: 'bad' }] : []),
         ]
       : undefined,
+    table: {
+      columns: ['Activity', 'Start', 'Finish', 'Total float', 'Critical'],
+      rows: bars.map((bar) => [
+        bar.label,
+        bar.start,
+        bar.finish,
+        bar.totalFloat === undefined || bar.totalFloat === null ? '—' : `${bar.totalFloat}d`,
+        bar.critical ? 'yes' : 'no',
+      ]),
+    },
     desc:
       desc ??
       `${bars.length} activities from ${new Date(min).toISOString().slice(0, 10)} to ${new Date(max).toISOString().slice(0, 10)}, ` +
@@ -2120,6 +2386,16 @@ export function ganttChart({
 export function radarChart({ axes = [], series = [], max, title = 'Profile', desc, format = tickLabel, empty = 'Nothing to profile yet', footnote }) {
   const rows = series.filter((entry) => entry && Array.isArray(entry.values) && entry.values.length === axes.length);
   if (axes.length < 3 || rows.length === 0) return emptyChart(empty);
+  // The standard's ceiling, and a real one: past eight spokes the polygon stops
+  // reading as a shape and starts reading as a circle with dents in it, which
+  // is the point at which a bar chart says more. Refused rather than drawn
+  // badly, and the caller is told what to do instead.
+  if (axes.length > 8) {
+    return emptyChart(
+      `${axes.length} measures is too many for a profile`,
+      'Past eight axes a radar reads as a circle rather than a shape. Show these as a bar chart, or group them.',
+    );
+  }
 
   const ceiling = finite(max)
     ? Number(max)
@@ -2143,6 +2419,10 @@ export function radarChart({ axes = [], series = [], max, title = 'Profile', des
     box,
     footnote,
     legend: rows.length > 1 ? rows.map((row, index) => ({ label: row.label, tone: row.tone, colour: paint(row.tone, index) })) : undefined,
+    table: {
+      columns: ['Profile', ...axes],
+      rows: rows.map((row) => [row.label, ...row.values.map((value) => format(value))]),
+    },
     desc:
       desc ??
       `${rows.length} profile${rows.length === 1 ? '' : 's'} across ${axes.length} measures, each scaled to ${format(ceiling)}.`,
@@ -2237,6 +2517,18 @@ export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickL
     desc:
       desc ??
       `${format(total)} flowing from ${sources.length} source${sources.length === 1 ? '' : 's'} to ${targets.length} destination${targets.length === 1 ? '' : 's'} across ${rows.length} flows.`,
+    table: {
+      columns: ['From', 'To', 'Value', 'Share'],
+      rows: [
+        ...rows.map((row) => [
+          row.from,
+          row.to,
+          format(row.value),
+          `${Math.round((Number(row.value) / total) * 100)}%`,
+        ]),
+        ['Total', '', format(total), '100%'],
+      ],
+    },
     body: html`${rows.map((row, index) => {
       const a = left.get(row.from);
       const b = right.get(row.to);
@@ -2338,6 +2630,14 @@ export function flowChart({ steps = [], title = 'Process', desc, empty = 'No pro
     title,
     box,
     footnote,
+    table: {
+      columns: ['Step', 'Stage', 'Leads to'],
+      rows: nodes.map((node) => [
+        node.label,
+        String((depth.get(node.id) ?? 0) + 1),
+        (node.next ?? []).filter((id) => byId.has(id)).map((id) => byId.get(id).label).join(', ') || 'ends here',
+      ]),
+    },
     desc: desc ?? `${nodes.length} steps over ${rows.length} stage${rows.length === 1 ? '' : 's'}.`,
     body: html`${nodes.flatMap((node) =>
       (node.next ?? [])

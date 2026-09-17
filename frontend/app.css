@@ -933,6 +933,86 @@ input:focus, select:focus, textarea:focus {
 
 /* charts — inline SVG, no library */
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+/* --------------------------------------------- the tools every chart carries
+ * The standard asks for a tabular alternative, an export that reconciles, a
+ * full-screen view and a link, on every visual. They live in the frame rather
+ * than on the page, so a chart cannot be added without them.
+ *
+ * Quiet until the chart is hovered or something inside it takes focus — a row
+ * of four buttons over every panel would be louder than the data. `:focus-within`
+ * is the half that matters: a keyboard user never hovers, and a control that
+ * appears only on hover is a control they cannot reach.
+ */
+.chart { position: relative; }
+.chart-tools {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 2;
+}
+.chart:hover .chart-tools,
+.chart:focus-within .chart-tools { opacity: 1; }
+.chart-tool {
+  font: 500 10.5px/1 var(--sans);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  background: var(--grey);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.chart-tool:hover { color: var(--text); border-color: var(--brand-blue); }
+.chart-tool:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
+.chart-tool[aria-expanded="true"] { color: var(--text); border-color: var(--brand-blue); }
+
+.chart-data { margin-top: 12px; max-height: 320px; overflow: auto; }
+.chart-data table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.chart-data caption {
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-3);
+  padding-bottom: 8px;
+}
+.chart-data th,
+.chart-data td {
+  text-align: left;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.chart-data td { font-family: var(--mono); color: var(--text-2); }
+.chart-data thead th {
+  position: sticky;
+  top: 0;
+  background: var(--carbon);
+  color: var(--text-3);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.chart-data tbody th { font-weight: 500; color: var(--text); }
+
+/* Full screen. The browser paints the backdrop black by default, which is a
+   different black from ours and shows as a seam round the chart. */
+.chart:fullscreen {
+  background: var(--carbon);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.chart:fullscreen .chart-tools { opacity: 1; }
+.chart:fullscreen .chart-svg { max-height: 78vh; }
+
+/* Where a deep link just landed. Two seconds, then it stops shouting. */
+.chart.is-linked { outline: 2px solid var(--brand-blue); outline-offset: 6px; border-radius: var(--r-sm); }
 /*
  * A card holding a chart sizes to that chart rather than stretching to match a
  * taller neighbour. A four-bar horizontal chart beside a donut was drawing its
@@ -1561,6 +1641,25 @@ input:focus, select:focus, textarea:focus {
 .kpi-delta.up { color: var(--success); }
 .kpi-delta.down { color: var(--critical); }
 .kpi-delta.flat { color: var(--text-3); }
+
+/* The status band on a decision card.
+ *
+ * A word and a mark, not a colour. The standard prohibits carrying meaning in
+ * colour alone and it is right: a card whose only signal is a green number is a
+ * card that says nothing to a reader who cannot separate the greens, and
+ * nothing at all in a printed pack. */
+.kpi-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+}
+.kpi-band.ok { color: var(--success); }
+.kpi-band.warn { color: var(--warning); }
+.kpi-band.neutral { color: var(--text-3); }
 
 /* A row of charts that reflows rather than scrolling sideways.
  *

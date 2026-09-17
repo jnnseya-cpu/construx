@@ -75,6 +75,10 @@ export function html(strings, ...values) {
 
 export function render(target, content) {
   target.innerHTML = resolve(content);
+  // Announce it. The chart tools need to know when a screen has been drawn so a
+  // deep link can find the chart it names, and a page that had to remember to
+  // announce itself is a page somebody forgets to change.
+  document.dispatchEvent(new CustomEvent('construx:rendered', { detail: { target } }));
 }
 
 /**

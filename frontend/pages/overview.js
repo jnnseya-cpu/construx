@@ -237,6 +237,18 @@ export async function overview(root) {
                   : 'no CVR published'
             }
           </div>
+          ${
+            // Target, actual and variance, which is what makes the number a
+            // decision rather than a reading. The target here is a real one —
+            // the margin tendered — not a figure invented to fill the slot.
+            cvr
+              ? html`<div class="kpi-band ${raw(cvr.marginErosionPercent > 0 ? 'warn' : 'ok')}">
+                  <span aria-hidden="true">${raw(cvr.marginErosionPercent > 0 ? '▲' : '●')}</span>
+                  ${cvr.marginErosionPercent > 0 ? 'Below tender' : 'At or above tender'} · target
+                  ${pct(cvr.forecastMarginPercent + cvr.marginErosionPercent, 2)}
+                </div>`
+              : ''
+          }
         </div>
         <div ${raw(drillable('Delay exposure', delaySources))}>
           <h2>Delay exposure</h2>
@@ -244,6 +256,17 @@ export async function overview(root) {
             ${delay ? days(delay.expectedDelayDays) : '—'}
           </div>
           <div class="metric-sub">${delay ? `P80 ${days(delay.p80DelayDays)} · ${delay.severity}` : 'not forecast'}</div>
+          ${
+            // The target for delay is nought. Stated rather than implied,
+            // because "48 days" with no target beside it reads as a fact when
+            // it is a variance.
+            delay
+              ? html`<div class="kpi-band ${raw(delay.expectedDelayDays > 0 ? 'warn' : 'ok')}">
+                  <span aria-hidden="true">${raw(delay.expectedDelayDays > 0 ? '▲' : '●')}</span>
+                  ${delay.expectedDelayDays > 0 ? 'Behind' : 'On programme'} · target 0d
+                </div>`
+              : ''
+          }
         </div>
         <div ${raw(drillable('Golden Thread', threadSources))}>
           <h2>Golden Thread</h2>
