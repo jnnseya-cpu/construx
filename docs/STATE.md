@@ -21755,3 +21755,91 @@ computes, so a picture and the table beneath it cannot disagree.
   Logs, AI Engine, Communications, Support, Bookings, Predictive Intel, Platform
   Operations. They are next, and they are named here rather than implied to be
   done.
+
+## Every remaining console screen
+
+The account layer and the last of the tenant screens. What each chart is for,
+where the data could not be read, and one defect found on the way.
+
+### The screens
+
+**Billing & invoices** — this month against last as a line, and a waterfall of
+received against raised-and-unsettled. The waterfall is deliberate: raised is
+not revenue and is never counted as it, so it is drawn as the movement it would
+be. Where the platform publishes no run rate — it refuses to project one without
+a basis — the footnote says so rather than the chart implying a trend.
+
+**Audit logs** — governance events by type, events verified per chain, refusals
+by reason, and request duration as a histogram. The chain bars exist because
+"intact" over four events and "intact" over fifty thousand are not the same
+assurance and read identically as a badge. The histogram is the only place
+latency lives: a median is exactly the statistic that hides a long tail.
+
+**AI engine** — the routing matrix as a grid of engine against model kind, which
+answers "which engines stop when this provider does" in one read. Evaluation
+cases by kind, because each case names a property it protects rather than a
+feature it tests.
+
+**Communications** — events by category against channel. A row with one lit
+column is a category that reaches people by exactly one rail, and when that rail
+is down nobody in it is told anything while the outbox looks healthy. Where the
+delivery feed is refused — a platform operator asking for a tenancy's own
+outbound mail is refused, correctly — no delivery chart is drawn at all, rather
+than one reading nothing was sent.
+
+**Support**, **Bookings**, **Predictive intel**, **Platform operations**,
+**System control**, **Group**, **Permissions**, **Field module workspace**.
+
+### Permissions is the one worth opening
+
+The permission matrix is a grid by construction and had only ever been rendered
+as prose and letters. As a heatmap of every grantable role against all
+twenty-five capability areas, three things become visible that the list could
+not show: which role is nearest to what you are missing, which columns nobody in
+the tenancy holds at all (a different account layer, not a senior role), and
+where authority concentrates.
+
+### A defect the screenshot found
+
+At twenty-five columns the heatmap put its cells at eighteen pixels and drew the
+headings horizontally, and they smeared into an unreadable band. Horizontal
+headings that do not fit do not degrade — the grid stops being readable at all,
+which is worse than the table it replaced.
+
+`heatmap` now rotates the whole header to the diagonal the moment any one
+heading is too wide for its column, and grows the top gutter with the longest
+label rather than holding a fixed 46px. Fewer columns keep upright headings, so
+nothing else changed.
+
+The `desc` was also wrong, and had been: it said the *darkest* cell carried the
+maximum where the scale runs dark-to-bright. Both the description and the
+screens' own footnotes now say bright.
+
+### Where the data could not be read, and what was done about it
+
+- **Site Services** has no charts. The screen sits behind a module the CONSTRUX
+  subscription does not include and the demonstration tenancy does not hold, so
+  every endpoint answers `MODULE_NOT_GRANTED`. Charts have not been written
+  against a payload nobody could see render.
+- **The operator's second factor** had to be enrolled to read the admin
+  endpoints at all, which is the platform refusing correctly. Support, Bookings
+  and Predictive intel then drew their empty states rather than charts, because
+  the demonstration estate has no tickets, no bookings and no forecast signals.
+  That is the honest picture and it is what those screens will show until there
+  are.
+
+### Found, not fixed
+
+The console navigation carries two entries with the id `communications`: one
+under `PLATFORM_ADMINISTRATION` and one under `ENTERPRISE_STRUCTURE`. Both reach
+the same page, which checks platform administration — so a tenant owner opening
+Communications is told "Platform administration is not visible to customer
+accounts". It predates this work and is recorded rather than changed, because an
+unrelated routing fix inside a visual pass is how regressions get in.
+
+### Chart coverage now
+
+Every console page carries charts except `account`, `blueprint`, `commands`,
+`company`, `copilot`, `developer`, `influencers`, `reports`, `settings` and
+`siteservices`, plus the four that are not console screens at all (`index`,
+`login`, `onboarding`, `signup`). Named rather than implied.

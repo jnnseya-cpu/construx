@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, heatmap, pieChart } from '../lib/charts.js';
 import { blockedReason, can } from '../app.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
@@ -120,6 +121,8 @@ export async function communications(root) {
           <div class="metric-sub">${catalogue.channels.map((c) => CHANNEL_LABEL[c.channel]).join(' · ')}</div>
         </div>
       </div>
+
+      ${communicationCharts(catalogue, feed, feedRefused)}
 
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card">
@@ -260,4 +263,122 @@ export async function communications(root) {
     button.disabled = false;
     button.textContent = 'Send test to me';
   });
+}
+
+/**
+ * The catalogue is closed, which makes it drawable.
+ *
+ * A fixed set of events, each with a category, a severity and the channels it
+ * fans out to. The grid of category against channel answers the question the
+ * event list cannot: which parts of the platform reach a person only by email,
+ * which is the failure mode when email is the rail that is down.
+ *
+ * **A denial is not a zero.** Where the delivery feed is refused — a platform
+ * operator asking for a tenancy's own outbound mail is refused, correctly — no
+ * delivery chart is drawn at all, rather than one reading nothing was sent.
+ */
+function communicationCharts(catalogue, feed, feedRefused) {
+  const events = catalogue?.events ?? [];
+  if (events.length === 0) return '';
+
+  const categories = [...new Set(events.map((event) => String(event.category ?? 'OTHER')))];
+  const channels = (catalogue.channels ?? []).map((entry) => String(entry.channel));
+  const values = categories.map((category) =>
+    channels.map((channel) => events.filter((event) => String(event.category) === category && (event.channels ?? []).includes(channel)).length),
+  );
+
+  const severityTone = { CRITICAL: 'bad', WARNING: 'warn', INFO: undefined };
+  const bySeverity = [...new Set(events.map((event) => String(event.severity ?? 'INFO')))]
+    .map((severity) => ({
+      label: humanise(severity),
+      value: events.filter((event) => String(event.severity ?? 'INFO') === severity).length,
+      tone: severityTone[severity],
+    }))
+    .filter((slice) => slice.value > 0);
+
+  const byCategory = categories
+    .map((category) => ({
+      label: humanise(category),
+      mandatory: events.filter((event) => String(event.category) === category && event.mandatory).length,
+      optional: events.filter((event) => String(event.category) === category && !event.mandatory).length,
+    }))
+    .sort((a, b) => b.mandatory + b.optional - (a.mandatory + a.optional));
+
+  const deliveries = feedRefused
+    ? []
+    : Object.entries(
+        (feed?.deliveries ?? []).reduce((counts, delivery) => {
+          const key = humanise(String(delivery.status ?? delivery.state ?? 'Unknown'));
+          counts[key] = (counts[key] ?? 0) + 1;
+          return counts;
+        }, {}),
+      ).map(([label, value]) => ({ label, value, tone: /fail/i.test(label) ? 'bad' : /suppress/i.test(label) ? 'warn' : 'ok' }));
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Which parts of the platform can only reach a person one way</h2>
+      ${raw(
+        heatmap({
+          title: 'Events by category and channel',
+          rows: categories.map((category) => humanise(category)),
+          columns: channels.map((channel) => CHANNEL_LABEL[channel] ?? humanise(channel)),
+          values,
+          format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+          empty: 'The catalogue publishes no channels.',
+          footnote:
+            'A row with one dark column is a category that reaches people by exactly one rail. When that rail is the one ' +
+            'that is down, nobody in that category is told anything and the outbox looks healthy.',
+        }),
+      )}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What the catalogue is made of</h2>
+        ${raw(
+          barChart({
+            title: 'Events by category',
+            horizontal: true,
+            stacked: true,
+            data: byCategory,
+            series: [
+              { key: 'mandatory', label: 'Mandatory', colour: 'warn' },
+              { key: 'optional', label: 'Preference applies' },
+            ],
+            format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+            empty: 'The catalogue is empty.',
+            footnote:
+              'A mandatory notice is sent regardless of a recipient’s preferences, because it is a notice the platform ' +
+              'owes rather than one it offers.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>${feedRefused ? 'How urgent the catalogue is' : 'What happened to what was sent'}</h2>
+        ${raw(
+          feedRefused
+            ? pieChart({
+                title: 'Events by severity',
+                data: bySeverity,
+                centreLabel: String(events.length),
+                format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+                empty: 'The catalogue is empty.',
+                footnote:
+                  'The delivery log is the tenancy’s own outbound mail and a platform operator is refused it. That is ' +
+                  'a refusal, not an empty log, so no delivery chart is drawn here at all.',
+              })
+            : pieChart({
+                title: 'Deliveries by outcome',
+                data: deliveries,
+                centreLabel: String((feed?.deliveries ?? []).length),
+                format: (value) => `${value} message${value === 1 ? '' : 's'}`,
+                empty: 'Nothing has been sent from this tenancy yet.',
+                footnote:
+                  'A suppressed message was not attempted, because the recipient’s preference or a bounce record said ' +
+                  'not to. It is neither a success nor a failure and is counted as neither.',
+              }),
+        )}
+      </div>
+    </div>
+  `;
 }

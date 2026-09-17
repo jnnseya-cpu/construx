@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, histogram, pieChart, treemap } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time } from '../lib/ui.js';
 
@@ -83,6 +84,9 @@ export async function auditlogs(root) {
           <div class="metric-sub">${logs.error ? 'the log could not be read' : `p95 ${logs.metrics?.p95DurationMs ?? '—'}ms at the gateway`}</div>
         </div>
       </section>
+
+      ${auditCharts(governance, security, logs)}
+
 
       ${discrepantChains.length > 0
         ? html`<div class="notice warn" style="margin-bottom:14px">
@@ -240,4 +244,111 @@ export async function auditlogs(root) {
           </div>`}
     `,
   );
+}
+
+/**
+ * Three records, three different questions.
+ *
+ * **Governance** is what the platform did to itself — accounts, tenancies,
+ * subscriptions, seats. The type mix is the interesting part: fourteen user
+ * creations and one tenancy is a platform being populated; the reverse would be
+ * one being resold.
+ *
+ * **The chains** are the proof. A chain's event count matters as much as its
+ * verdict, because "intact" over four events and "intact" over fifty thousand
+ * are not the same assurance and read identically as a badge.
+ *
+ * **The request log** is the only place latency lives. A median is published
+ * nowhere; the distribution is here, and a long tail is the thing a median
+ * hides by construction.
+ */
+function auditCharts(governance, security, logs) {
+  const byType = Object.entries(governance?.error ? {} : governance?.byType ?? {})
+    .map(([type, count]) => ({ label: humanise(type), value: Number(count) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const chains = (governance?.error ? [] : governance?.chains ?? []).map((chain) => ({
+    label: String(chain.tenant ?? chain.projectId),
+    value: Number(chain.verified ?? 0),
+    tone: Number(chain.failures ?? 0) > 0 || Number(chain.discrepancies ?? 0) > 0 ? 'bad' : 'ok',
+  }));
+
+  const refusals = Object.entries(security?.error ? {} : security?.summary?.byReason ?? {})
+    .map(([reason, count]) => ({ label: humanise(reason), value: Number(count) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  const durations = (logs?.error ? [] : logs?.logs ?? [])
+    .map((entry) => Number(entry.durationMs))
+    .filter((value) => Number.isFinite(value));
+
+  if (byType.length === 0 && chains.length === 0 && refusals.length === 0 && durations.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What the platform has done to itself</h2>
+        ${raw(
+          treemap({
+            title: 'Governance events by type',
+            items: byType,
+            format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+            empty: 'No governance event has been recorded.',
+            footnote:
+              'The governance chain carries account, tenancy, subscription and seat decisions only. No customer delivery ' +
+              'record appears here — the operator layer cannot read one.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How much record each chain is proving</h2>
+        ${raw(
+          barChart({
+            title: 'Events verified per chain',
+            horizontal: true,
+            data: chains,
+            format: (value) => `${value} event${value === 1 ? '' : 's'}`,
+            empty: 'No chain has been verified.',
+            footnote:
+              'Intact over four events and intact over fifty thousand are not the same assurance, and a badge shows them ' +
+              'identically. A bar marked bad carries a failure or a discrepancy.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Why the gateway said no</h2>
+        ${raw(
+          pieChart({
+            title: 'Refusals by reason',
+            data: refusals,
+            centreLabel: String(security?.error ? 0 : security?.summary?.total ?? 0),
+            format: (value) => `${value} refusal${value === 1 ? '' : 's'}`,
+            empty: 'The gateway has refused nothing since it started.',
+            footnote:
+              'The ten commonest reasons. A refusal is the platform working; a reason nobody expected to see is the ' +
+              'finding.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How long requests are actually taking</h2>
+        ${raw(
+          histogram({
+            title: 'Request duration',
+            values: durations,
+            format: (value) => `${Math.round(value)}ms`,
+            empty: 'No request has been logged since this process started.',
+            footnote:
+              'The distribution, not a median. A median is exactly the statistic that hides a long tail, and a tail is ' +
+              'what a person notices.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

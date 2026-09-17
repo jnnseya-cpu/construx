@@ -1,5 +1,6 @@
 import { api } from '../lib/api.js';
-import { badge, html, positionReport, raw, render, table, time } from '../lib/ui.js';
+import { barChart, gauge, pieChart, treemap } from '../lib/charts.js';
+import { badge, html, humanise, positionReport, raw, render, table, time } from '../lib/ui.js';
 import { command, commandBar } from '../lib/command.js';
 import { draw, isOperator } from '../app.js';
 import { refusal } from '../lib/estate.js';
@@ -155,6 +156,8 @@ export async function operations(root) {
           )}
         </div>
       </div>
+
+      ${operationsCharts(assurance, watch, agents, backups, egress, chainSweep, repair)}
 
       ${diverged.length > 0
         ? html`<div class="notice err">
@@ -450,4 +453,110 @@ export async function operations(root) {
     if (!(await command(spec))) return;
     await draw();
   });
+}
+
+/**
+ * Is the record sound, and is anything leaving this container.
+ *
+ * Both questions already have panels, and both panels are lists. What a list
+ * cannot show is distribution: assurance verifies on a rotating slice, so a
+ * chain proved yesterday and one proved six weeks ago both read as "verified",
+ * and the interesting one is always the oldest.
+ *
+ * The fleet treemap is here rather than only on Autopilot because this is the
+ * operator's view of it. Autopilot asks "what is waiting for me"; this asks
+ * "how much of this platform is being watched at all".
+ */
+function operationsCharts(assurance, watch, agents, backups, egress, chainSweep, repair) {
+  const chains = assurance?.error ? [] : assurance.projects ?? [];
+  const proved = chains.filter((project) => project.lastVerifiedAt).length;
+
+  // Oldest proof first. The slice rotates, so the question is never "did it
+  // verify" but "how long since this one last did".
+  const staleness = chains
+    .filter((project) => project.lastVerifiedAt)
+    .map((project) => ({
+      label: String(project.projectId).slice(0, 26),
+      value: Math.max(0, Math.round((Date.now() - Date.parse(String(project.lastVerifiedAt))) / 86_400_000)),
+      tone: project.intact === false ? 'bad' : undefined,
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  const divisions = (agents ?? [])
+    .map((division) => ({ label: humanise(String(division.label ?? division.division)), value: (division.agents ?? []).length }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const rules = watch?.error ? [] : [...(watch.firing ?? []), ...(watch.clear ?? [])];
+  const health = [
+    { label: 'Firing', value: (watch?.firing ?? []).length, tone: 'bad' },
+    { label: 'Clear', value: (watch?.clear ?? []).length, tone: 'ok' },
+  ].filter((slice) => slice.value > 0);
+
+  if (chains.length === 0 && divisions.length === 0 && rules.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How long since each chain was last proved</h2>
+        ${raw(
+          barChart({
+            title: 'Days since last verification',
+            horizontal: true,
+            data: staleness,
+            format: (value) => (value === 0 ? 'today' : `${value} day${value === 1 ? '' : 's'} ago`),
+            empty: 'No chain has been verified yet.',
+            footnote:
+              `Assurance verifies on a rotating slice; a full circuit takes ${assurance?.passesForFullSweep ?? '—'} pass${(assurance?.passesForFullSweep ?? 0) === 1 ? '' : 'es'}. ` +
+              '"Verified continuously" means nothing without knowing how long a circuit takes, which is what the longest ' +
+              'bar here is.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How much of the record is proved at all</h2>
+        ${raw(
+          gauge({
+            title: 'Chains verified at least once',
+            value: chains.length === 0 ? undefined : (proved / chains.length) * 100,
+            max: 100,
+            format: (value) => `${Math.round(value)}%`,
+            desc: `${proved} of ${chains.length} chains · ${(assurance?.diverged ?? []).length} diverged`,
+          }),
+        )}
+        ${raw(
+          pieChart({
+            title: 'Watch rules',
+            data: health,
+            centreLabel: String(rules.length),
+            format: (value) => `${value} rule${value === 1 ? '' : 's'}`,
+            empty: 'No rule is published, which would mean the platform is watching itself in silence.',
+            footnote:
+              `${watch?.error ? 'The watch could not be read.' : `${watch.operators ?? 0} operator${(watch.operators ?? 0) === 1 ? '' : 's'} would be told.`} ` +
+              `Telemetry ${egress?.error ? 'could not be read' : egress.configured || egress.enabled ? 'is leaving this container' : 'stays in this process'}.`,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      divisions.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>How much of the platform is being watched</h2>
+            ${raw(
+              treemap({
+                title: 'Agents by division',
+                items: divisions,
+                format: (value) => `${value} agent${value === 1 ? '' : 's'}`,
+                empty: 'No agent is registered.',
+                footnote:
+                  'Size is headcount, not coverage. Every one of these is capped by a mandate, and a mandate above ' +
+                  'PROPOSE needs an envelope an enterprise administrator granted on the record.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

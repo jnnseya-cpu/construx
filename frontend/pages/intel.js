@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
+import { barChart, pieChart, treemap } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
-import { badge, html, money, raw, render, table, time } from '../lib/ui.js';
+import { badge, html, humanise, money, raw, render, table, time } from '../lib/ui.js';
 
 /**
  * Predictive intel.
@@ -69,6 +70,9 @@ export async function intel(root) {
         </div>
       </section>
 
+      ${intelCharts(position)}
+
+
       ${signals.length === 0
         ? html`<div class="empty">
             <b>Nothing lands inside the horizon.</b>No tenancy runs out of credit, comes up for renewal, ends a trial,
@@ -119,4 +123,97 @@ export async function intel(root) {
       </div>
     `,
   );
+}
+
+/**
+ * The forecast, and the boundary around it.
+ *
+ * Every signal here is arithmetic over a record that already exists — a renewal
+ * date, a seat count, a quiet period. None of it is a model, and the platform
+ * publishes what it will not forecast alongside what it does.
+ *
+ * That boundary is why there is no trend line on this screen. A churn
+ * probability drawn as a curve would be the most persuasive thing on the page
+ * and the only invented one.
+ */
+function intelCharts(position) {
+  if (position?.error) return '';
+
+  const counts = position.counts ?? {};
+  const severity = [
+    { label: 'Critical', value: Number(counts.critical ?? 0), tone: 'bad' },
+    { label: 'Warning', value: Number(counts.warning ?? 0), tone: 'warn' },
+    { label: 'Watch', value: Number(counts.watch ?? 0) },
+  ].filter((slice) => slice.value > 0);
+
+  const byKind = Object.entries(
+    (position.signals ?? []).reduce((tally, signal) => {
+      const key = humanise(String(signal.kind ?? signal.type ?? 'Signal'));
+      tally[key] = (tally[key] ?? 0) + 1;
+      return tally;
+    }, {}),
+  )
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  const exposure = (position.signals ?? [])
+    .filter((signal) => Number(signal.exposureMinor ?? signal.amountMinor ?? 0) > 0)
+    .map((signal) => ({
+      label: String(signal.tenant ?? signal.subject ?? signal.title ?? 'Tenancy').slice(0, 44),
+      value: Number(signal.exposureMinor ?? signal.amountMinor ?? 0),
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How hard the estate is pressing</h2>
+        ${raw(
+          pieChart({
+            title: 'Signals by severity',
+            data: severity,
+            centreLabel: String((position.signals ?? []).length),
+            format: (value) => `${value} signal${value === 1 ? '' : 's'}`,
+            empty: `Nothing is signalling across the next ${position.windowDays ?? 45} days.`,
+            footnote:
+              'Severity is a threshold on a record, never a probability. There is no churn score here and there will not ' +
+              'be one: a percentage over an estate this size would be invented.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What kind of thing the estate is signalling</h2>
+        ${raw(
+          barChart({
+            title: 'Signals by kind',
+            horizontal: true,
+            data: byKind,
+            format: (value) => `${value} signal${value === 1 ? '' : 's'}`,
+            empty: 'No signal has been raised.',
+            footnote: `${position.quietTenancies ?? 0} tenanc${(position.quietTenancies ?? 0) === 1 ? 'y has' : 'ies have'} been quiet for more than ${position.quietThresholdDays ?? 21} days.`,
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      exposure.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Where the renewal exposure sits</h2>
+            ${raw(
+              treemap({
+                title: 'Exposure by tenancy',
+                items: exposure,
+                format: (value) => money(value),
+                empty: 'No renewal carries an exposure.',
+                footnote:
+                  'Exposure is contracted revenue with a renewal inside the window, not revenue expected to be lost. ' +
+                  'What converts is not modelled anywhere on this screen.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
 }

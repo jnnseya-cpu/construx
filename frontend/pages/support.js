@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, funnelChart, gauge, pieChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
@@ -93,6 +94,8 @@ export async function support(root) {
             </div>
           </section>`
         : ''}
+
+      ${supportCharts(position)}
 
       ${(position.breaching ?? []).length > 0
         ? html`<div class="notice bad" style="margin-bottom:14px">
@@ -261,4 +264,113 @@ export async function support(root) {
       if (ok) await support(root);
     });
   }
+}
+
+/**
+ * The queue, and whether it is moving.
+ *
+ * Five tiles and a table. What they do not answer is the one thing a queue is
+ * judged on — whether requests are leaving it as fast as they arrive — and the
+ * funnel is where that shows: raised, answered, resolved, with the drop between
+ * two stages being the backlog rather than a number somebody has to compute.
+ *
+ * The response target gauge is a measured median against a published target,
+ * and where nothing has been answered it is drawn as unmeasured rather than as
+ * zero hours, which would read as instant.
+ */
+function supportCharts(position) {
+  if (position?.error) return '';
+
+  const byCategory = (position.byCategory ?? [])
+    .map((entry) => ({ label: humanise(String(entry.category ?? entry.label ?? 'Other')), value: Number(entry.count ?? entry.value ?? 0) }))
+    .filter((row) => row.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  const total = Number(position.open ?? 0) + Number(position.resolved ?? 0);
+  const flow = [
+    { label: 'Raised', value: total },
+    { label: 'Picked up', value: Math.max(0, total - Number(position.unassigned ?? 0)) },
+    { label: 'Resolved', value: Number(position.resolved ?? 0) },
+  ].filter((stage) => stage.value > 0);
+
+  const waiting = [
+    { label: 'Awaiting us', value: Number(position.awaitingPlatform ?? 0), tone: 'warn' },
+    { label: 'Awaiting the customer', value: Number(position.awaitingCustomer ?? 0) },
+    { label: 'Nobody has picked it up', value: Number(position.unassigned ?? 0), tone: 'bad' },
+  ].filter((slice) => slice.value > 0);
+
+  // The normal target, because a single gauge cannot carry three. Urgent and
+  // low are named in the footnote rather than averaged into one figure.
+  const target = Number(position.responseTargets?.NORMAL ?? 24);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Is the queue moving</h2>
+        ${raw(
+          funnelChart({
+            title: 'Requests raised, picked up, resolved',
+            stages: flow,
+            format: (value) => `${value} request${value === 1 ? '' : 's'}`,
+            empty: position.summary ?? 'Nothing has been raised.',
+            footnote:
+              'The drop between two stages is the backlog. A wide gap at "picked up" is a staffing problem; a wide gap ' +
+              'at "resolved" is usually one request nobody can close.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Who the queue is waiting on</h2>
+        ${raw(
+          pieChart({
+            title: 'Open requests by who holds them',
+            data: waiting,
+            centreLabel: String(position.open ?? 0),
+            format: (value) => `${value} request${value === 1 ? '' : 's'}`,
+            empty: 'Nothing is open.',
+            footnote:
+              `${position.overdue ?? 0} past target. ` +
+              'A request awaiting the customer is not a request that has stalled — it is counted apart for exactly ' +
+              'that reason.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How quickly a first answer arrives</h2>
+        ${raw(
+          gauge({
+            title: 'Median first response',
+            value: position.medianFirstResponseHours === null || position.medianFirstResponseHours === undefined
+              ? undefined
+              : Number(position.medianFirstResponseHours),
+            max: Math.max(target * 2, Number(position.medianFirstResponseHours ?? 0) * 1.2, 1),
+            target,
+            format: (value) => `${Math.round(value)}h`,
+            desc:
+              position.medianFirstResponseHours === null || position.medianFirstResponseHours === undefined
+                ? 'Nothing has been answered yet, so there is no median. Not zero hours.'
+                : `Target ${target}h for a normal request · urgent ${position.responseTargets?.URGENT ?? '—'}h · low ${position.responseTargets?.LOW ?? '—'}h`,
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What people are asking about</h2>
+        ${raw(
+          barChart({
+            title: 'Requests by category',
+            horizontal: true,
+            data: byCategory,
+            format: (value) => `${value} request${value === 1 ? '' : 's'}`,
+            empty: 'Nothing has been raised in any category.',
+            footnote:
+              'A category is chosen by whoever raised the request. A rise in "the platform did something incorrect" is a ' +
+              'defect signal; a rise in "how do I do this" is a documentation one.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

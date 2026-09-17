@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
+import { barChart, lineChart, pieChart, waterfallChart } from '../lib/charts.js';
 import { head, refusal } from '../lib/estate.js';
-import { badge, date, html, money, raw, render, table, time } from '../lib/ui.js';
+import { badge, date, html, humanise, money, raw, render, table, time } from '../lib/ui.js';
 
 /**
  * Billing and invoices.
@@ -125,6 +126,8 @@ export async function invoices(root) {
           </section>`
         : ''}
 
+      ${invoiceCharts(overview, payments, estate)}
+
       ${cardBroken || mobileBroken
         ? html`<div class="notice bad" style="margin-bottom:14px">
             <div>
@@ -217,4 +220,131 @@ export async function invoices(root) {
       </div>
     `,
   );
+}
+
+/**
+ * The money, and the rails carrying it.
+ *
+ * Four tiles give today, month to date, lifetime and unsettled. They are four
+ * true numbers that cannot be read against each other: "month to date against
+ * last month" is a comparison the tile makes in words and the reader has to do
+ * in their head.
+ *
+ * **Nothing here is a projection.** The month-to-date bar is what has been
+ * received so far this month, not a run rate extrapolated to month end. The
+ * platform publishes a run rate and its basis separately, and where the basis
+ * is absent the run rate is `null` rather than a number — so it is stated
+ * below the chart in the platform's own words rather than drawn as a trend.
+ */
+function invoiceCharts(overview, payments, estate) {
+  if (!overview) return '';
+
+  const revenue = overview.revenue ?? {};
+  const periods = [
+    { label: 'Previous month', value: Number(revenue.previousMonthMinor ?? 0) },
+    { label: 'Month to date', value: Number(revenue.monthToDateMinor ?? 0) },
+    { label: 'Today', value: Number(revenue.todayMinor ?? 0) },
+  ];
+
+  const byMethod = (revenue.byMethod ?? [])
+    .map((entry) => ({ label: humanise(String(entry.method ?? entry.label ?? 'Other')), value: Number(entry.amountMinor ?? entry.value ?? 0) }))
+    .filter((slice) => slice.value > 0);
+
+  const byTier = (overview.tenancies?.byTier ?? [])
+    .map((entry) => ({ label: humanise(String(entry.tier ?? entry.label ?? 'Other')), value: Number(entry.count ?? entry.value ?? 0) }))
+    .filter((slice) => slice.value > 0);
+
+  // Received, then what is raised and not settled, then what that would make
+  // the position. A waterfall rather than two bars: the unsettled figure is
+  // only meaningful as a movement on the received one.
+  const position = [
+    { label: 'Received, lifetime', value: Number(revenue.lifetimeMinor ?? 0) },
+    { label: 'Raised, unsettled', value: Number(overview.awaitingPayment?.amountMinor ?? 0), tone: 'warn' },
+    { label: 'If all settled', value: 0, total: true },
+  ];
+
+  const webhooks = [
+    { label: 'Card accepted', value: Number(payments?.cardPayments?.webhook?.accepted ?? 0), tone: 'ok' },
+    { label: 'Card rejected', value: Number(payments?.cardPayments?.webhook?.rejected ?? 0), tone: 'bad' },
+    { label: 'Mobile money accepted', value: Number(payments?.mobileMoney?.webhook?.accepted ?? 0), tone: 'ok' },
+    { label: 'Mobile money rejected', value: Number(payments?.mobileMoney?.webhook?.rejected ?? 0), tone: 'bad' },
+  ].filter((row) => row.value > 0);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>This month against last</h2>
+        ${raw(
+          lineChart({
+            title: 'Revenue received',
+            data: periods,
+            markers: true,
+            format: (value) => money(value),
+            empty: 'Nothing has been received yet.',
+            footnote:
+              (revenue.runRateMinor === null || revenue.runRateMinor === undefined
+                ? 'No run rate is published: the platform will not project one without a basis for it. '
+                : `Run rate ${money(revenue.runRateMinor)} on ${humanise(String(revenue.runRateBasis ?? 'unknown'))}. `) +
+              'Month to date is what has arrived, not what the month is expected to close at.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What is in and what is owed</h2>
+        ${raw(
+          waterfallChart({
+            title: 'Position if everything raised settled',
+            steps: position,
+            format: (value) => money(value),
+            empty: 'Nothing has been received or raised.',
+            footnote:
+              `${overview.awaitingPayment?.count ?? 0} top-up${(overview.awaitingPayment?.count ?? 0) === 1 ? '' : 's'} awaiting payment. ` +
+              'Raised is not revenue and is never counted as it — it is shown as the movement it would be.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How people are paying</h2>
+        ${raw(
+          pieChart({
+            title: 'Receipts by method',
+            data: byMethod,
+            centreLabel: String(revenue.receipts ?? 0),
+            format: (value) => money(value),
+            empty: 'No payment has been settled through any rail yet.',
+            footnote:
+              'A rail with no share and a keyed configuration is a rail nobody has used. A rail with no share and no key ' +
+              'is one that would refuse anything sent to it — the panels below say which.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>${byTier.length > 0 ? 'What the estate is on' : 'What the rails have been sent'}</h2>
+        ${raw(
+          byTier.length > 0
+            ? barChart({
+                title: 'Tenancies by tier',
+                horizontal: true,
+                data: byTier,
+                format: (value) => `${value} tenanc${value === 1 ? 'y' : 'ies'}`,
+                empty: 'No tenancy is on a tier.',
+                footnote: `${overview.tenancies?.active ?? 0} active · ${overview.tenancies?.awaitingPayment ?? 0} awaiting first payment · ${overview.tenancies?.onTrial ?? 0} on trial.`,
+              })
+            : barChart({
+                title: 'Webhook deliveries by rail',
+                horizontal: true,
+                data: webhooks,
+                format: (value) => `${value} delivery${value === 1 ? '' : 'ies'}`,
+                empty: 'No webhook has reached this deployment.',
+                footnote:
+                  'A rail rejecting everything it is sent is usually not keyed rather than broken. The diagnosis on each ' +
+                  'panel below says which, and what to set.',
+              }),
+        )}
+      </div>
+    </div>
+  `;
 }

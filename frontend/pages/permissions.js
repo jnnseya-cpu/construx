@@ -7,6 +7,7 @@ import {
   rolesThatCanRead,
   tenantGrantableRoles,
 } from '../app.js';
+import { barChart, heatmap, pieChart } from '../lib/charts.js';
 import { badge, html, humanise, raw, render, table } from '../lib/ui.js';
 
 /**
@@ -235,6 +236,8 @@ export async function permissions(root) {
         </div>
       </section>
 
+      ${permissionCharts(matrix, allAreas, roles, held, readable, closed, closedToEveryone, gates)}
+
       <div class="notice" style="margin-bottom:14px">
         <div>
           <b>A permission is only half of a refusal.</b><br />
@@ -273,4 +276,104 @@ export async function permissions(root) {
       </div>
     `,
   );
+}
+
+/**
+ * The permission matrix, as a matrix.
+ *
+ * It is a grid by construction — roles down one side, capability areas across
+ * the other — and it has only ever been rendered as prose and a list of letters.
+ * Drawn, three things are visible that the list cannot show:
+ *
+ * - **which role is nearest to what you are missing.** A bright cell in a column
+ *   where yours is empty is the colleague to ask, and it is one glance rather
+ *   than a walk through twenty-five areas.
+ * - **which areas nobody in this tenancy holds.** An entirely dark column is
+ *   not a senior role you have not thought of; it is a different account layer,
+ *   and no promotion opens it.
+ * - **where authority concentrates.** A role holding every letter across most
+ *   of the grid is the one worth a second factor.
+ *
+ * Every figure is the matrix the API published. This screen restates nothing
+ * and computes no rule of its own — which is the whole reason it can be
+ * trusted as an answer to "why was I refused".
+ */
+function permissionCharts(matrix, allAreas, roles, held, readable, closed, closedToEveryone, gates) {
+  const grantable = tenantGrantableRoles();
+  if (grantable.length === 0 || allAreas.length === 0) return '';
+
+  // Areas across, roles down. The cell is how many of the seven permission
+  // codes that role holds there, which is the closest thing to "how much
+  // authority" the matrix carries.
+  const rows = grantable.map((role) => humanise(role));
+  const values = grantable.map((role) => allAreas.map((area) => (matrix[role]?.[area] ?? []).length));
+
+  const standing = [
+    { label: 'Open to you', value: readable.length, tone: 'ok' },
+    { label: 'A colleague holds it', value: closed.length - closedToEveryone.length, tone: 'warn' },
+    { label: 'Nobody here can open it', value: closedToEveryone.length, tone: 'bad' },
+  ].filter((slice) => slice.value > 0);
+
+  // How much of the grid each role carries, so concentration is visible.
+  const reach = grantable
+    .map((role) => ({
+      label: humanise(role),
+      value: allAreas.filter((area) => (matrix[role]?.[area] ?? []).length > 0).length,
+      tone: roles.includes(role) ? 'ok' : undefined,
+    }))
+    .sort((a, b) => b.value - a.value);
+
+  const gated = allAreas.filter((area) => gates?.[area]).length;
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Who holds what, across the whole platform</h2>
+      ${raw(
+        heatmap({
+          title: 'Permission codes held, by role and capability area',
+          rows,
+          columns: allAreas.map((area) => humanise(area)),
+          values,
+          format: (value) => (value === 0 ? 'nothing' : `${value} of 7 codes`),
+          empty: 'The permission matrix has not loaded.',
+          footnote:
+            'A bright cell in a column where your own row is empty is the colleague to ask. An entirely dark column is a ' +
+            'different account layer — no role this organisation can grant opens it.',
+        }),
+      )}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Where you stand</h2>
+        ${raw(
+          pieChart({
+            title: 'Capability areas by what they are to you',
+            data: standing,
+            centreLabel: String(allAreas.length),
+            format: (value) => `${value} area${value === 1 ? '' : 's'}`,
+            empty: 'No capability area is published.',
+            footnote:
+              `${gated} area${gated === 1 ? '' : 's'} also depend on the project’s phase. Holding the permission and being ` +
+              'in the wrong phase is a refusal too, and it is the half people do not expect.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How far each role reaches</h2>
+        ${raw(
+          barChart({
+            title: 'Capability areas a role touches at all',
+            horizontal: true,
+            data: reach,
+            format: (value) => `${value} of ${allAreas.length} areas`,
+            empty: 'No role is grantable in this organisation.',
+            footnote:
+              'Yours is marked. Reach is breadth, not depth — a role touching every area with one letter each holds far ' +
+              'less than the grid above makes it look.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

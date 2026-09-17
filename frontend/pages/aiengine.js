@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, heatmap, pieChart } from '../lib/charts.js';
 import { head, providerName, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
@@ -82,6 +83,9 @@ export async function aiengine(root) {
           </div>
         </div>
       </section>
+
+      ${aiCharts(plane, evaluation, agents)}
+
 
       ${healthy.length === 0
         ? html`<div class="notice warn" style="margin-bottom:14px">
@@ -253,4 +257,104 @@ export async function aiengine(root) {
       button.textContent = 'Run the harness';
     }
   });
+}
+
+/**
+ * What the AI layer is allowed to do, and what has been proved about it.
+ *
+ * The routing matrix is the centre of this screen and was a nested list. Drawn
+ * as a grid of engine against capability, the question an operator has — which
+ * engines depend on a provider that is currently unhealthy — is one read rather
+ * than a scroll.
+ *
+ * The evaluation cases are the other half. They are not a test count: each case
+ * names the property it protects, and the mix by kind says what the platform
+ * has actually bothered to prove. Accounting cases outnumbering boundary cases
+ * would be a platform that can bill correctly and cannot say what it refused.
+ */
+function aiCharts(plane, evaluation, agents) {
+  const providers = (plane?.error ? [] : plane?.available ?? []).map((provider) => ({
+    label: `${humanise(String(provider.provider))} · ${humanise(String(provider.role))}`,
+    value: 1,
+    tone: provider.healthy ? 'ok' : 'bad',
+  }));
+
+  const cases = Object.entries(
+    (evaluation?.error ? [] : evaluation?.cases ?? []).reduce((counts, entry) => {
+      const kind = humanise(String(entry.kind ?? 'OTHER'));
+      counts[kind] = (counts[kind] ?? 0) + 1;
+      return counts;
+    }, {}),
+  )
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  // Engines down the side, the two capability kinds across. The cell is how
+  // many named capabilities that engine draws from that kind of model.
+  const matrix = plane?.error ? {} : plane?.routingMatrix ?? {};
+  const engines = Object.keys(matrix);
+  const columns = ['Perception', 'Reasoning'];
+  const values = engines.map((engine) => [
+    (matrix[engine]?.perception ?? []).length,
+    (matrix[engine]?.reasoning ?? []).length,
+  ]);
+
+  if (providers.length === 0 && cases.length === 0 && engines.length === 0) return '';
+
+  return html`
+    <div class="card" style="margin-bottom:14px">
+      <h2>Which engines depend on which kind of model</h2>
+      ${raw(
+        heatmap({
+          title: 'Named capabilities by engine and model kind',
+          rows: engines.map((engine) => humanise(engine)),
+          columns,
+          values,
+          format: (value) => `${value} capabilit${value === 1 ? 'y' : 'ies'}`,
+          empty: 'No routing matrix is published.',
+          footnote:
+            `Reasoning runs on ${plane?.reasoning?.provider ? humanise(String(plane.reasoning.provider)) : 'no provider'}` +
+            `${plane?.reasoning && plane.reasoning.healthy === false ? ', which is unhealthy' : ''}; perception on ` +
+            `${plane?.perception?.provider ? humanise(String(plane.perception.provider)) : 'no provider'}` +
+            `${plane?.perception && plane.perception.healthy === false ? ', which is unhealthy' : ''}. ` +
+            'A dark row is an engine that stops when that provider does.',
+        }),
+      )}
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What the platform has proved about its own AI</h2>
+        ${raw(
+          pieChart({
+            title: 'Evaluation cases by kind',
+            data: cases,
+            centreLabel: String((evaluation?.error ? [] : evaluation?.cases ?? []).length),
+            format: (value) => `${value} case${value === 1 ? '' : 's'}`,
+            empty: 'No evaluation case is published.',
+            footnote:
+              'Each case names the property it protects, not a feature it tests. The mix is what the platform has ' +
+              'bothered to prove — accounting cases far outnumbering boundary cases would be a platform that bills ' +
+              'correctly and cannot say what it refused.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Which providers are answering</h2>
+        ${raw(
+          barChart({
+            title: 'Providers by role and health',
+            horizontal: true,
+            data: providers,
+            format: () => 'available',
+            empty: 'No provider is configured, so nothing is called and nothing is charged.',
+            footnote:
+              `Mode ${humanise(String(plane?.mode ?? 'unknown'))}. ` +
+              'The orchestrator routes to a healthy provider and falls back; on an empty wallet it refuses to call one ' +
+              'at all, so no charge can exist without a ledger write.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

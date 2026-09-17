@@ -1256,20 +1256,48 @@ export function heatmap({
   const max = Math.max(...flat);
   const cell = Math.min(46, Math.max(18, Math.floor(560 / columns.length)));
   const left = 150;
-  const top = 46;
-  const box = { w: left + columns.length * cell + 20, h: top + rows.length * cell + 22 };
   const base = paint(tone);
+
+  // Column headings, upright or on the diagonal.
+  //
+  // A permission matrix is twenty-five capability areas wide, which puts the
+  // cell at eighteen pixels and the headings at eight characters of overlap
+  // each. Horizontal headings that do not fit do not degrade — they smear into
+  // one another and the grid stops being readable at all, which is worse than
+  // the table it replaced.
+  //
+  // So the whole header rotates the moment any one heading is too wide for its
+  // column, and the top gutter grows with the longest label rather than staying
+  // at a fixed 46: a diagonal heading is as tall as it is long.
+  const fits = (label) => String(label).length * 5.8 <= cell - 4;
+  const slanted = columns.some((column) => !fits(column));
+  const longest = Math.max(...columns.map((column) => String(column).length));
+  // Trimmed to what the slant can carry, so a long area name cannot run off the
+  // top of the box. 22 characters at 45 degrees is about 90px of rise.
+  const headings = columns.map((column) => (slanted ? fitLabel(column, 128, 10) : column));
+  const top = slanted ? Math.min(150, 34 + Math.min(longest, 22) * 4.4) : 46;
+  const box = { w: left + columns.length * cell + (slanted ? 90 : 20), h: top + rows.length * cell + 22 };
 
   return frame({
     title,
     box,
     footnote,
-    desc: desc ?? `${rows.length} rows by ${columns.length} columns. Darkest cell is ${format(max)}.`,
-    body: html`${columns.map(
-      (column, index) => html`<text class="chart-cat" x="${raw(r2(left + index * cell + cell / 2))}" y="${raw(top - 10)}" text-anchor="middle">
-        ${column}
-      </text>`,
-    )}
+    desc:
+      desc ??
+      `${rows.length} rows by ${columns.length} columns. Brightest cell is ${format(max)}; an empty cell is nothing rather than zero.`,
+    body: html`${headings.map((column, index) => {
+      const x = r2(left + index * cell + cell / 2);
+      const y = top - 8;
+      return slanted
+        ? html`<text
+            class="chart-cat"
+            x="${raw(x)}"
+            y="${raw(r2(y))}"
+            text-anchor="start"
+            transform="rotate(-45 ${raw(x)} ${raw(r2(y))})"
+          >${column}</text>`
+        : html`<text class="chart-cat" x="${raw(x)}" y="${raw(y)}" text-anchor="middle">${column}</text>`;
+    })}
     ${rows.map(
       (row, rowIndex) => html`<g>
         <text class="chart-cat" x="${raw(left - 10)}" y="${raw(r2(top + rowIndex * cell + cell / 2 + 4))}" text-anchor="end">${row}</text>

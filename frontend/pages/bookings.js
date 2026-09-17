@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { barChart, ganttChart, pieChart } from '../lib/charts.js';
 import { command } from '../lib/command.js';
 import { head, refusal } from '../lib/estate.js';
 import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
@@ -77,6 +78,9 @@ export async function bookings(root) {
           <div class="metric-sub">still marked booked — nobody has closed them off</div>
         </div>
       </section>
+
+      ${bookingCharts(position)}
+
 
       ${!position.canConfirm
         ? html`<div class="notice bad" style="margin-bottom:14px">
@@ -163,4 +167,86 @@ export async function bookings(root) {
       }
     });
   }
+}
+
+/**
+ * The diary, as a diary.
+ *
+ * Four counts and three tables. What none of them shows is the shape of the
+ * week — two walkthroughs on the same afternoon and nothing for nine days is
+ * invisible as a count and obvious as a timeline, and it is the only thing a
+ * person running these actually needs to see before confirming another.
+ */
+function bookingCharts(position) {
+  if (position?.error) return '';
+
+  const upcoming = (position.upcoming ?? []).map((booking, index) => ({
+    id: `booking-${index}`,
+    label: booking.company ?? booking.name ?? booking.email ?? 'Walkthrough',
+    start: String(booking.startsAt ?? booking.at ?? ''),
+    end: String(booking.endsAt ?? booking.startsAt ?? booking.at ?? ''),
+    tone: booking.confirmed ? 'ok' : 'warn',
+  })).filter((task) => task.start !== '');
+
+  const standing = [
+    { label: 'Upcoming', value: Number(position.counts?.upcoming ?? 0), tone: 'ok' },
+    { label: 'Held', value: Math.max(0, Number(position.counts?.total ?? 0) - Number(position.counts?.upcoming ?? 0) - Number(position.counts?.cancelled ?? 0)) },
+    { label: 'Cancelled', value: Number(position.counts?.cancelled ?? 0), tone: 'bad' },
+  ].filter((slice) => slice.value > 0);
+
+  const bySource = Object.entries(
+    [...(position.upcoming ?? []), ...(position.past ?? [])].reduce((counts, booking) => {
+      const key = humanise(String(booking.source ?? booking.referrer ?? 'Direct'));
+      counts[key] = (counts[key] ?? 0) + 1;
+      return counts;
+    }, {}),
+  )
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What the diary actually looks like</h2>
+        ${raw(
+          ganttChart({
+            title: 'Walkthroughs ahead',
+            tasks: upcoming,
+            scale: 'DAY',
+            showFloat: false,
+            showLinks: false,
+            empty: 'Nobody has booked a walkthrough. The instant demonstration accounts are the route most people take.',
+            footnote:
+              `${position.counts?.thisWeek ?? 0} this week. ` +
+              'Two on one afternoon and nine clear days is invisible as a count and is the thing worth knowing before ' +
+              'confirming another.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the bookings stand</h2>
+        ${raw(
+          pieChart({
+            title: 'Bookings by standing',
+            data: standing,
+            centreLabel: String(position.counts?.total ?? 0),
+            format: (value) => `${value} booking${value === 1 ? '' : 's'}`,
+            empty: 'Nothing has been booked.',
+            footnote: position.canConfirm
+              ? 'Confirmations are sent as they are made.'
+              : 'No confirmation is reaching anybody: the booking records correctly and the email cannot be sent.',
+          }),
+        )}
+        ${raw(
+          barChart({
+            title: 'Bookings by route in',
+            horizontal: true,
+            data: bySource,
+            format: (value) => `${value} booking${value === 1 ? '' : 's'}`,
+            empty: 'No booking carries a route.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }
