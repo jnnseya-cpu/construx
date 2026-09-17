@@ -70,27 +70,72 @@ import { esc, html, raw } from './ui.js';
 /**
  * The categorical series colours.
  *
- * Eight, because a categorical chart with more than eight series is a table
- * somebody drew. They are spaced around the wheel far enough to survive both
- * the common colour-vision deficiencies and a greyscale print, and they sit in
- * the same cool-with-a-warm-signal family as the interface itself rather than
- * being a stock palette pasted in.
+ * The Enterprise Visual Intelligence Standard's palette, in the order it
+ * assigns meaning: CONSTRUX Blue is primary data, Cyan is secondary data, and
+ * the rest follow. A single-series chart is therefore blue — the platform's
+ * data colour — rather than Signal Orange, which the standard reserves for
+ * chrome and signal.
  *
- * The first is Signal Orange, so a single-series chart is in the platform's own
- * colour without the caller choosing anything.
+ * Eight, because a categorical chart with more than eight series is a table
+ * somebody drew. Four of the eight are lifted from their published hex so they
+ * clear WCAG AA on `--raised`, the lightest surface a chart is painted on;
+ * `app.css` carries the measurements and the unlifted `-spec` values.
+ *
+ * ## The order is a measurement, not a preference
+ *
+ * `backend/tests/palette.test.ts` simulates protanopia, deuteranopia and
+ * tritanopia and measures every pair in CIE Lab. The result is the reason this
+ * list is in this order, and it is worth stating plainly because the comment
+ * that used to sit here claimed something nobody had computed:
+ *
+ * **Eight categorical hues cannot all survive colour-vision deficiency.** Of
+ * the 56 orderings' worth of five-colour subsets containing Blue, exactly two
+ * hold together, and the longest mutually separable run this palette admits is
+ * **five**. Past five, hue is not a channel a reader can rely on. That is a
+ * property of human vision and of any eight-colour palette, not of this one.
+ *
+ * So the first five are the separable set — worst pair ΔE 13.1 across all three
+ * deficiencies — and the test locks that. The three past it are, as it happens,
+ * exactly the three the standard reserves for a fixed meaning: Green is on
+ * target, Purple is AI and forecast, Orange is the platform's own signal. A
+ * chart reaching a sixth series is reaching into a reserved colour, and the
+ * order says so.
+ *
+ * Beyond the fifth series the separation has to come from somewhere other than
+ * hue, which is why every mark in this kit carries its label and its value in a
+ * `<title>`, and why bars, slices and nodes print their own.
  */
 export const SERIES = [
-  'rgb(255, 106, 26)',
-  'rgb(93, 154, 245)',
-  'rgb(46, 184, 116)',
-  'rgb(190, 130, 246)',
-  'rgb(240, 166, 42)',
-  'rgb(64, 200, 208)',
-  'rgb(244, 114, 182)',
-  'rgb(148, 163, 184)',
+  // The separable five. Order fixed by measurement — do not reorder without
+  // re-running the palette test, which will tell you what it cost.
+  'rgb(82, 147, 255)',   // CONSTRUX Blue  — primary data
+  'rgb(22, 199, 217)',   // Cyan           — secondary data, digital intelligence
+  'rgb(242, 169, 0)',    // Amber          — third category
+  'rgb(228, 114, 119)',  // Red            — fourth category
+  'rgb(135, 150, 166)',  // Slate          — fifth category, neutral context
+  // Past here hue stops carrying the distinction on its own, and each of these
+  // already means something specific elsewhere in the interface.
+  'rgb(24, 171, 88)',    // Green          — on target, accepted, complete
+  'rgb(150, 130, 255)',  // Purple         — AI, forecast, machine-generated
+  'rgb(255, 106, 26)',   // Signal Orange  — the platform's own accent
 ];
 
-/** The platform's semantic five, so a chart agrees with the badge beside it. */
+/**
+ * How many series deep the palette stays separable to a colour-blind reader.
+ *
+ * Published rather than kept in the test, so a caller composing a chart can ask
+ * — and so the number is one fact in one place when somebody changes the list.
+ */
+export const SERIES_SEPARABLE = 5;
+
+/**
+ * Tones a caller names instead of a colour.
+ *
+ * The first five keep a chart agreeing with the badge beside it. The last five
+ * are the standard's plan-against-reality set: baseline, actual, forecast,
+ * target and threshold have one colour each across the whole platform, so a
+ * dotted purple line means a forecast on every screen that draws one.
+ */
 export const TONES = {
   ok: 'var(--success)',
   warn: 'var(--warning)',
@@ -98,7 +143,41 @@ export const TONES = {
   info: 'var(--info)',
   accent: 'var(--orange)',
   neutral: 'var(--text-3)',
+
+  actual: 'var(--viz-actual)',
+  baseline: 'var(--viz-baseline)',
+  forecast: 'var(--viz-forecast)',
+  target: 'var(--viz-target)',
+  threshold: 'var(--viz-threshold)',
+
+  blue: 'var(--brand-blue)',
+  cyan: 'var(--brand-cyan)',
+  green: 'var(--brand-green)',
+  amber: 'var(--brand-amber)',
+  red: 'var(--brand-red)',
+  purple: 'var(--brand-purple)',
+  slate: 'var(--brand-slate)',
 };
+
+/**
+ * The stroke pattern each plan-against-reality tone carries.
+ *
+ * Colour alone is not an encoding the standard accepts, and it is right: a
+ * reader who cannot separate blue from purple still has to be able to tell a
+ * forecast from a measurement. Baseline is dashed, forecast is dotted, actual
+ * is solid, and a threshold is a long dash — so the four are distinguishable
+ * in greyscale, in print and to a colour-blind reader.
+ */
+export const DASHES = {
+  baseline: '6 4',
+  forecast: '2 4',
+  threshold: '10 5',
+  actual: undefined,
+  target: undefined,
+};
+
+/** The dash array a tone carries, or undefined for a solid stroke. */
+export const toneDash = (tone) => DASHES[tone];
 
 /** A series colour by index, wrapping rather than running out. */
 export const seriesColour = (index) => SERIES[index % SERIES.length];
@@ -107,6 +186,41 @@ export const seriesColour = (index) => SERIES[index % SERIES.length];
 function paint(value, index = 0) {
   if (value === undefined || value === null || value === '') return seriesColour(index);
   return TONES[value] ?? String(value);
+}
+
+/**
+ * One colour per mark, where some marks name a tone and others do not.
+ *
+ * The case this exists for, found on the Command Centre severity donut: three
+ * slices, two of them toned `bad` and `warn`, and the third left untoned so it
+ * fell through to a series colour. The third series colour is Amber, `warn`
+ * resolves to Amber, and "Attention" and "Info" came out the same colour in the
+ * same chart with a legend insisting they were different things.
+ *
+ * Colour is a state channel in this platform. An untoned mark must therefore
+ * never be handed a colour that a toned mark in the same chart is already using
+ * to mean something — so the untoned ones take the next series colour that is
+ * not already spoken for, rather than the one their index happens to land on.
+ *
+ * It changes nothing for a chart where every mark is toned, or where none is.
+ */
+function assignColours(rows) {
+  const taken = new Set(
+    rows
+      .filter((row) => row && row.tone !== undefined && row.tone !== null && row.tone !== '')
+      .map((row) => paint(row.tone)),
+  );
+  let next = 0;
+  return rows.map((row, index) => {
+    const tone = row?.tone;
+    if (tone !== undefined && tone !== null && tone !== '') return paint(tone, index);
+    while (next < SERIES.length && taken.has(SERIES[next])) next += 1;
+    // Past the end, fall back to the plain index: eight toned marks in one
+    // chart is a chart whose colours have stopped being a channel anyway.
+    const colour = next < SERIES.length ? SERIES[next] : seriesColour(index);
+    next += 1;
+    return colour;
+  });
 }
 
 // --- Geometry ---------------------------------------------------------------
@@ -527,8 +641,14 @@ export function lineChart({
           .join(' ')
       : '';
 
+    // A series named for one of the plan-against-reality states carries that
+    // state's stroke pattern as well as its colour. Colour alone is not an
+    // encoding: a reader who cannot separate blue from purple still has to be
+    // able to tell a forecast from a measurement.
+    const dash = toneDash(s.colour ?? s.tone);
+
     return html`${filled && fill ? html`<path d="${raw(fill)}" fill="${raw(colour)}" opacity="0.16" />` : ''}
-      <path class="chart-line" d="${raw(line)}" stroke="${raw(colour)}" fill="none" />
+      <path class="chart-line" d="${raw(line)}" stroke="${raw(colour)}" fill="none"${raw(dash ? ` stroke-dasharray="${dash}"` : '')} />
       ${markers
         ? rows.map((row, index) =>
             finite(row[s.key])
@@ -555,7 +675,7 @@ export function lineChart({
             y1="${raw(r2(y(line.value)))}"
             x2="${raw(r2(areaBox.x + areaBox.w))}"
             y2="${raw(r2(y(line.value)))}"
-            stroke="${raw(paint(line.tone ?? 'warn'))}"
+            stroke="${raw(paint(line.tone ?? 'warn'))}"${raw(toneDash(line.tone) ? ` stroke-dasharray="${toneDash(line.tone)}"` : '')}
           />
           <text x="${raw(r2(areaBox.x + areaBox.w))}" y="${raw(r2(y(line.value) - 6))}" text-anchor="end" fill="${raw(paint(line.tone ?? 'warn'))}">
             ${line.label}
@@ -600,6 +720,10 @@ export function pieChart({
   const outer = 116;
   const inner = donut ? 68 : 0;
 
+  // Resolved once for the whole chart, so a slice and its legend swatch cannot
+  // disagree and an untoned slice cannot land on a toned slice's colour.
+  const colours = assignColours(slices);
+
   let angle = -Math.PI / 2;
   const arcs = slices.map((slice, index) => {
     const share = Number(slice.value) / total;
@@ -617,7 +741,7 @@ export function pieChart({
           (inner ? ` A ${inner} ${inner} 0 ${large} 0 ${p(inner, angle)}` : '') +
           ' Z';
     angle = end;
-    return html`<path class="chart-slice" d="${raw(path)}" fill="${raw(paint(slice.tone, index))}" fill-rule="evenodd">
+    return html`<path class="chart-slice" d="${raw(path)}" fill="${raw(colours[index])}" fill-rule="evenodd">
       <title>${slice.label}: ${format(slice.value)} (${raw(r2(share * 100))}%)</title>
     </path>`;
   });
@@ -634,7 +758,7 @@ export function pieChart({
         : ''}
       ${slices.map(
         (slice, index) => html`<g class="chart-key-svg" transform="translate(288, ${raw(38 + index * 22)})">
-          <rect width="10" height="10" rx="2" fill="${raw(paint(slice.tone, index))}" />
+          <rect width="10" height="10" rx="2" fill="${raw(colours[index])}" />
           <text x="16" y="9">${slice.label}</text>
         </g>`,
       )}`,
@@ -1153,7 +1277,10 @@ export function gauge({
 
   // The tone follows the target where there is one, so the colour is a
   // measurement rather than a mood.
-  const resolved = tone ?? (target === undefined ? 'accent' : Number(value) >= Number(target) ? 'ok' : 'warn');
+  // Blue, not Signal Orange: the standard makes CONSTRUX Blue the data colour
+  // and reserves orange for chrome and signal. Where a target exists the dial
+  // answers to it instead, because then the colour is a measurement.
+  const resolved = tone ?? (target === undefined ? 'actual' : Number(value) >= Number(target) ? 'target' : 'warn');
 
   return frame({
     title,
@@ -1376,6 +1503,7 @@ export function funnelChart({
   const left = 14;
   const width = 470;
   const rowHeight = 54;
+  const stageColours = assignColours(steps);
 
   return frame({
     title,
@@ -1400,7 +1528,7 @@ export function funnelChart({
           width="${raw(r2(barWidth))}"
           height="${raw(rowHeight - 14)}"
           rx="3"
-          fill="${raw(paint(stage.tone, index))}"
+          fill="${raw(stageColours[index])}"
         >
           <title>${stage.label}: ${format(value)} · ${raw(r2(share * 100))}% of the top${
             fromPrevious === undefined ? '' : `, ${r2(fromPrevious)}% of the stage above`
@@ -1524,6 +1652,7 @@ export function treemap({
   const total = nodes.reduce((sum, node) => sum + Number(node.value), 0);
   const sorted = nodes.slice().sort((a, b) => Number(b.value) - Number(a.value));
   const rects = squarify(sorted.map((node) => Number(node.value)), { x: 0, y: 0, w: box.w, h: box.h }, total);
+  const tileColours = assignColours(sorted);
 
   return frame({
     title,
@@ -1543,7 +1672,7 @@ export function treemap({
           width="${raw(r2(Math.max(0, rect.w - 2)))}"
           height="${raw(r2(Math.max(0, rect.h - 2)))}"
           rx="3"
-          fill="${raw(paint(node.tone, index))}"
+          fill="${raw(tileColours[index])}"
           fill-opacity="0.82"
         >
           <title>${node.label}: ${format(node.value)} · ${raw(r2(share * 100))}%</title>

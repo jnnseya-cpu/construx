@@ -21931,3 +21931,129 @@ chart beside a donut drew its bars and then a field of empty card twice their
 height, which reads as a rendering fault rather than as spacing. `.grid > .card`
 holding a chart now sizes to its content. Scoped with `:has(figure.chart)` so
 the metric tiles and register cards keep the equal heights that suit them.
+
+## The Enterprise Visual Intelligence Standard: the colour system
+
+The standard is a cross-platform acceptance gate covering three environments,
+every module, four device classes, interaction, AI, governance, performance and
+accessibility. This section records the first part built — the colour system —
+and says plainly what it does and does not cover.
+
+### The palette is the standard's, and four of its colours were lifted
+
+Deep Navy, CONSTRUX Blue, Cyan, Green, Amber, Red, Purple and Slate are in
+`app.css` as tokens. Two are printed at the published values because they are
+*structure* rather than marks: Deep Navy is a ground, and measured as ink on
+this interface it runs 1.03:1, which is a category error rather than a contrast
+failure.
+
+The rest are marks, and the standard also requires WCAG AA in dark mode. Measured
+on `--raised`, the lightest surface a chart is ever painted on:
+
+| Published | Measured | Verdict |
+|---|---|---|
+| Blue `#146CFF` | 3.00:1 | at the floor for a mark, fails as a label |
+| Red `#D9363E` | **2.95:1** | **under the 3:1 a graphical object needs** |
+| Purple `#7B61FF` | 3.24:1 | passes as a mark, fails as a label |
+| Slate `#66788A` | 3.00:1 | at the floor |
+| Cyan, Amber, Green | 6.63 / 6.79 / 4.55 | clear |
+
+Each of the four was lifted in lightness with hue and saturation held, until it
+clears 4.5:1 on `--raised` — so every series colour now works as a mark *and* as
+text on every surface. The hue is the standard's; the lightness is what dark
+mode costs. `--blue-spec` and the rest keep the exact published values for
+anywhere the colour is reproduced rather than read.
+
+### Eight categorical hues cannot all survive colour-vision deficiency
+
+This is the finding worth carrying forward, because the standard asks for it and
+the old comment in `charts.js` claimed it without anyone having computed it.
+
+`backend/tests/palette.test.ts` simulates protanopia, deuteranopia and
+tritanopia — Brettel–Viénot–Mollon, applied in linear light — and measures every
+pair in CIE Lab. Over this palette, six pairs collapse: blue against purple at
+ΔE 3.5 under protanopia, purple against slate at 3.2 under tritanopia, green
+against red at 8.0 under deuteranopia, and three more.
+
+Of every five-colour subset containing CONSTRUX Blue, **exactly two hold
+together**, and no six-colour subset does. **Five is the maximum this palette
+admits**, and that is a property of human vision rather than of these eight hues.
+
+So `SERIES` is ordered by that measurement: Blue, Cyan, Amber, Red, Slate first —
+worst pair ΔE 13.1 across all three deficiencies — then Green, Purple, Orange.
+`SERIES_SEPARABLE` publishes the number, and the test fails if anyone moves a
+sixth colour up the list and presents it as safe.
+
+The three that fall outside the separable set are, as it happens, exactly the
+three the standard reserves for a fixed meaning: Green is on target, Purple is
+AI and forecast, Orange is the platform's own signal. A chart reaching a sixth
+series is reaching into a reserved colour, and the order says so.
+
+### An unresolved tension, stated rather than papered over
+
+Using Amber and Red as the third and fourth *categorical* colours conflicts with
+the standard's own rule that colour communicates state. On the estate-by-phase
+donut, "Construction" is amber and "Concept" is red, and neither is a warning.
+
+There is no way out of it inside an eight-colour palette: the non-status colours
+are Blue, Cyan, Slate, Purple and Orange, of which Purple is reserved for AI and
+Purple/Slate collapse under tritanopia — which leaves four, and a four-colour
+categorical palette is not enough for this platform. **This needs a product
+decision**: either extend the palette with two or three non-status hues, or
+accept status hues in categorical use and rely on the label. Nothing has been
+decided; the charts label every mark, which is what makes the current state
+readable rather than correct.
+
+### Plan against reality, drawn so the difference survives the colour
+
+The standard requires baseline, actual, forecast and target to be visually
+distinct and consistent, and refuses colour as the only carrier. So each of the
+five states carries a stroke pattern as well as a hue, platform-wide:
+
+- **actual** — CONSTRUX Blue, solid
+- **baseline** — Slate, dashed `6 4`
+- **forecast** — Purple, dotted `2 4`
+- **target** — Green, solid
+- **threshold** — Red, long-dashed `10 5`
+
+A caller names the state rather than a colour, so a forecast is the same purple
+dotted line on the programme screen and the commercial one. Tests read the
+patterns out of the SVG rather than trusting the table is wired to anything.
+
+### Two colours became one, in a chart with a legend saying otherwise
+
+Found by looking at the Command Centre after the palette went in. The severity
+donut has three slices: Urgent toned `bad`, Attention toned `warn`, and Info
+left untoned — so it fell through to its index's series colour. The third series
+colour is Amber. `warn` resolves to Amber. Attention and Info were drawn in
+exactly the same colour, under a legend insisting they were different things.
+
+Fixed in the kit rather than on the page, because the fault is general: an
+untoned mark must never be handed a colour a toned mark in the same chart is
+already using to mean something. `assignColours` gives untoned marks the next
+series colour nothing has claimed, and pie, funnel and treemap use it. A chart
+where every mark is toned, or none is, is unchanged.
+
+### What the standard covers that this does not
+
+Named so it is not mistaken for compliance. The colour system is one section of
+eleven.
+
+- **Section 2**: the three environments have command centres, but the standard's
+  full mandatory visual zones per environment are not all built.
+- **Section 3.2**: cross-filtering, compare mode, saved views, presentation
+  mode, export to PNG/PDF/CSV, deep links preserving filters, and a "view data"
+  accessible table per chart — **none of these exist**. Charts have tooltips and
+  the page has filters; they do not cross-filter.
+- **Section 3.3**: AI marks no predicted values distinctly and draws no
+  confidence bands. There is no forecast a chart currently plots as a forecast.
+- **Section 7**: no responsive testing has been done against tablet, Android or
+  iOS, and no offline field mode exists.
+- **Section 8**: no governed semantic metric layer with owner and refresh
+  cadence; no measured render-time target; no small-number suppression.
+- **Section 9**: WCAG 2.2 AA is met for contrast, measured. Keyboard navigation,
+  screen-reader labels, 44px touch targets and 200% zoom have **not** been
+  audited.
+- **Sections 10 and 11**: the acceptance criteria and the definition of done are
+  not met. No visual has been through the standard's eleven-point completion
+  list.

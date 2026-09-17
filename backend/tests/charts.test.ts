@@ -414,7 +414,18 @@ describe('gauge', () => {
     const under = svg(gauge({ value: 72, target: 80, title: 'PPC' }));
     const over = svg(gauge({ value: 88, target: 80, title: 'PPC' }));
     assert.match(under, /var\(--warning\)/);
-    assert.match(over, /var\(--success\)/);
+    // `--viz-target` rather than `--success`: the same green, and the more
+    // precise name. The standard reserves one colour for "on target", and a
+    // dial that has reached its target is saying exactly that.
+    assert.match(over, /var\(--viz-target\)/);
+  });
+
+  it('is the data colour, not the platform accent, when there is no target', () => {
+    // Signal Orange is chrome. A dial with nothing to answer to is a
+    // measurement, and the standard makes CONSTRUX Blue the colour of one.
+    const markup = svg(gauge({ value: 41, title: 'Coverage' }));
+    assert.match(markup, /var\(--viz-actual\)/);
+    assert.ok(!markup.includes('var(--orange)'), 'the dial is still painted in the platform accent');
   });
 
   it('marks the target as a tick, so value and target read as two facts', () => {
@@ -1100,5 +1111,177 @@ describe('flow', () => {
   it('refuses a step with no label, which would draw an empty box', () => {
     const markup = svg(flowChart({ steps: [{ id: 'x', label: '' }], empty: 'No process' }));
     assert.match(markup, /No process/);
+  });
+});
+
+/**
+ * Plan against reality, drawn so the difference survives the colour.
+ *
+ * The Visual Intelligence Standard requires baseline, actual, forecast and
+ * target to be visually distinct and consistent everywhere they appear
+ * together, and it explicitly refuses colour as the only carrier. So the tone
+ * sets the stroke pattern as well as the hue, and these tests read the pattern
+ * out of the SVG rather than trusting that the table in `charts.js` is wired to
+ * anything.
+ */
+describe('the four states are distinct without relying on hue', () => {
+  const weeks = [
+    { label: 'W1', plan: 10, real: 9, ahead: 11 },
+    { label: 'W2', plan: 20, real: 17, ahead: 22 },
+    { label: 'W3', plan: 30, real: 26, ahead: 34 },
+  ];
+
+  it('dashes a baseline, dots a forecast and leaves the measured line solid', () => {
+    const markup = svg(
+      lineChart({
+        data: weeks,
+        title: 'Progress',
+        series: [
+          { key: 'plan', label: 'Baseline', colour: 'baseline' },
+          { key: 'real', label: 'Actual', colour: 'actual' },
+          { key: 'ahead', label: 'Forecast', colour: 'forecast' },
+        ],
+      }),
+    );
+    const lines = [...markup.matchAll(/<path class="chart-line"[^>]*>/g)].map((found) => found[0] as string);
+    assert.equal(lines.length, 3);
+    assert.match(lines[0] as string, /stroke-dasharray="6 4"/, 'the baseline is not dashed');
+    assert.ok(!(lines[1] as string).includes('stroke-dasharray'), 'the measured line should be the solid one');
+    assert.match(lines[2] as string, /stroke-dasharray="2 4"/, 'the forecast is not dotted');
+  });
+
+  it('gives each of the three its own pattern, so greyscale still separates them', () => {
+    const markup = svg(
+      lineChart({
+        data: weeks,
+        title: 'Progress',
+        series: [
+          { key: 'plan', label: 'Baseline', colour: 'baseline' },
+          { key: 'ahead', label: 'Forecast', colour: 'forecast' },
+        ],
+      }),
+    );
+    const patterns = [...markup.matchAll(/stroke-dasharray="([^"]+)"/g)].map((found) => found[1]);
+    assert.equal(new Set(patterns).size, patterns.length, 'two states drew the same dash pattern');
+  });
+
+  it('long-dashes a threshold and marks a target apart from it', () => {
+    const markup = svg(
+      lineChart({
+        data: weeks,
+        title: 'Cost performance',
+        series: [{ key: 'real', label: 'CPI', colour: 'actual' }],
+        reference: [
+          { value: 28, label: 'target', tone: 'target' },
+          { value: 32, label: 'limit', tone: 'threshold' },
+        ],
+      }),
+    );
+    const refs = [...markup.matchAll(/<line\s+x1="[^"]*"\s+y1="[^"]*"\s+x2="[^"]*"\s+y2="[^"]*"\s+stroke="([^"]*)"([^>]*)>/g)];
+    assert.equal(refs.length, 2, 'both reference lines should be drawn');
+    // A target is the line you are trying to reach: solid, and green.
+    assert.match(refs[0]![1] as string, /viz-target/);
+    assert.ok(!(refs[0]![2] as string).includes('stroke-dasharray'));
+    // A threshold is the line you must not cross: long-dashed, and red.
+    assert.match(refs[1]![1] as string, /viz-threshold/);
+    assert.match(refs[1]![2] as string, /stroke-dasharray="10 5"/);
+  });
+
+  it('resolves each state to the one colour the whole platform uses for it', () => {
+    // The point of naming a tone rather than passing a hex: a forecast is the
+    // same purple on the programme screen and the commercial one.
+    const markup = svg(
+      lineChart({
+        data: weeks,
+        title: 'Progress',
+        series: [
+          { key: 'plan', label: 'Baseline', colour: 'baseline' },
+          { key: 'real', label: 'Actual', colour: 'actual' },
+          { key: 'ahead', label: 'Forecast', colour: 'forecast' },
+        ],
+      }),
+    );
+    assert.match(markup, /stroke="var\(--viz-baseline\)"/);
+    assert.match(markup, /stroke="var\(--viz-actual\)"/);
+    assert.match(markup, /stroke="var\(--viz-forecast\)"/);
+  });
+});
+
+/**
+ * Colour is a state channel, so two marks in one chart must not share one.
+ *
+ * The Command Centre severity donut is the case. Three slices — Urgent toned
+ * `bad`, Attention toned `warn`, Info left untoned — and the untoned one fell
+ * through to its index's series colour. The third series colour is Amber,
+ * `warn` resolves to Amber, and the chart drew "Attention" and "Info" in
+ * exactly the same colour under a legend insisting they were different things.
+ *
+ * Nothing threw and nothing failed; the picture was simply wrong. So an untoned
+ * mark now takes the next series colour that no toned mark in the same chart
+ * has already claimed.
+ */
+describe('a chart mixing toned and untoned marks keeps them apart', () => {
+  const fills = (markup: string): string[] =>
+    [...markup.matchAll(/class="chart-slice"[^>]*fill="([^"]+)"/g)].map((found) => String(found[1]));
+
+  it('never gives an untoned slice a colour a toned slice is already using', () => {
+    const markup = svg(
+      pieChart({
+        title: 'By severity',
+        data: [
+          { label: 'Urgent', value: 3, tone: 'bad' },
+          { label: 'Attention', value: 6, tone: 'warn' },
+          { label: 'Info', value: 12, tone: '' },
+        ],
+      }),
+    );
+    const drawn = fills(markup);
+    assert.equal(drawn.length, 3);
+    assert.equal(new Set(drawn).size, 3, `two slices share a colour: ${drawn.join(', ')}`);
+    // The toned two keep exactly the colours their tone names.
+    assert.equal(drawn[0], 'var(--critical)');
+    assert.equal(drawn[1], 'var(--warning)');
+  });
+
+  it('leaves a chart where every mark is toned exactly as the caller asked', () => {
+    const markup = svg(
+      pieChart({
+        title: 'By standing',
+        data: [
+          { label: 'Open', value: 2, tone: 'ok' },
+          { label: 'Late', value: 1, tone: 'bad' },
+        ],
+      }),
+    );
+    assert.deepEqual(fills(markup), ['var(--success)', 'var(--critical)']);
+  });
+
+  it('leaves a chart where no mark is toned on the series colours, in order', () => {
+    const markup = svg(
+      pieChart({
+        title: 'By package',
+        data: [
+          { label: 'Civils', value: 3 },
+          { label: 'MEP', value: 2 },
+          { label: 'Fit-out', value: 1 },
+        ],
+      }),
+    );
+    assert.deepEqual(fills(markup), SERIES.slice(0, 3));
+  });
+
+  it('applies the same rule to the legend swatch, so the key cannot disagree with the chart', () => {
+    const markup = svg(
+      pieChart({
+        title: 'By severity',
+        data: [
+          { label: 'Urgent', value: 3, tone: 'bad' },
+          { label: 'Attention', value: 6, tone: 'warn' },
+          { label: 'Info', value: 12, tone: '' },
+        ],
+      }),
+    );
+    const swatches = [...markup.matchAll(/<rect width="10" height="10" rx="2" fill="([^"]+)"/g)].map((found) => String(found[1]));
+    assert.deepEqual(swatches, fills(markup), 'the legend is painted differently from the slices it labels');
   });
 });

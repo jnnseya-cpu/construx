@@ -102,10 +102,64 @@
      the 13% red tint its own badge paints, the previous value measured 4.39:1
      against the 4.5:1 small text needs. It now clears on every surface it is
      set on, worst case 4.50:1 on `--raised`. */
-  --success: rgb(46, 184, 116);
-  --warning: rgb(240, 166, 42);
-  --critical: rgb(254, 93, 93);
-  --info: rgb(93, 154, 245);
+  /* Re-pointed at the Visual Intelligence Standard's own values, so a badge,
+     a notice and the chart beside them are the same green. `--critical` keeps
+     its lift for the reason the note above gives — measured on the 13% red
+     tint its badge paints, the published #D9363E comes to 2.95:1 — and the
+     lifted value clears 4.5:1 on every surface it is set on. */
+  --success: var(--brand-green);
+  --warning: var(--brand-amber);
+  --critical: var(--brand-red);
+  --info: var(--brand-blue);
+
+  /* ------------------------------------------- Enterprise Visual Intelligence
+     The palette the Visual Intelligence Standard names, as data ink.
+
+     Two of these are printed at the values the standard gives, because they
+     are *structure* rather than marks: Deep Navy is navigation and authority,
+     and it is a ground — measured as ink on this interface it runs 1.03:1,
+     which is not a contrast failure but a category error.
+
+     The rest are marks, and four of them were lifted. The standard also
+     requires WCAG AA in dark mode, and measured on `--raised` — the lightest
+     surface a chart is ever painted on — #146CFF came to 3.00:1, #D9363E to
+     2.95:1 (under the 3:1 floor for a graphical object), #7B61FF to 3.24:1 and
+     #66788A to 3.00:1. None of the four cleared 4.5:1, so none could carry a
+     label either.
+
+     Each was lifted in lightness with hue and saturation held, until it clears
+     4.5:1 on `--raised` — so every one of them works as a mark *and* as text on
+     every surface in the interface. The hue is the standard's; the lightness is
+     what dark mode costs. Worst case across the set is 4.50:1.
+
+     `-spec` variants keep the exact published values for anywhere the brand
+     colour is reproduced rather than read: print, export, a swatch. */
+  --navy: #0b1f33;
+  --brand-blue: rgb(82, 147, 255);    /* #146CFF lifted · 4.53 on raised */
+  --brand-cyan: rgb(22, 199, 217);    /* #16C7D9 as published · 6.63 */
+  --brand-green: rgb(24, 171, 88);    /* #18A957 as published · 4.55 */
+  --brand-amber: rgb(242, 169, 0);    /* #F2A900 as published · 6.79 */
+  --brand-red: rgb(228, 114, 119);    /* #D9363E lifted · 4.53 */
+  --brand-purple: rgb(150, 130, 255); /* #7B61FF lifted · 4.50 */
+  --brand-slate: rgb(135, 150, 166);  /* #66788A lifted · 4.51 */
+
+  --blue-spec: #146cff;
+  --cyan-spec: #16c7d9;
+  --green-spec: #18a957;
+  --amber-spec: #f2a900;
+  --red-spec: #d9363e;
+  --purple-spec: #7b61ff;
+  --slate-spec: #66788a;
+
+  /* The four states the standard requires to be visually distinct wherever a
+     plan and a reality are drawn together. Colour is only half of each: the
+     stroke pattern carries the same meaning for a reader who cannot separate
+     the hues, which is why `.chart-baseline` and friends set both. */
+  --viz-actual: var(--brand-blue);
+  --viz-baseline: var(--brand-slate);
+  --viz-forecast: var(--brand-purple);
+  --viz-target: var(--brand-green);
+  --viz-threshold: var(--brand-red);
 
   --line: rgba(255, 255, 255, 0.065);
   --line-strong: rgba(255, 255, 255, 0.115);
