@@ -307,6 +307,34 @@ describe('pie and donut', () => {
     // too, because the collapsed path's `M` is the inner radius, not the outer.
     const arc = /([\d.-]+ [\d.-]+) A 116 116 0 \d 1 ([\d.-]+ [\d.-]+)/.exec(path);
     assert.ok(arc, `no outer arc in: ${path}`);
+
+    /*
+     * And the ring must be concentric, which the arc alone does not prove.
+     *
+     * The earlier implementation traced each edge as one nearly-complete arc
+     * between two points 0.01 apart. Two circles pass through such a pair — one
+     * centred above them, one below — and the flags picked opposite ones for
+     * the outer edge and the inner, so a whole-pie donut rendered as two
+     * overlapping circles with the hole 68px north of the disc. Every assertion
+     * above passed on it: there was an arc, it landed somewhere else, the path
+     * was not collapsed. It was simply not a ring.
+     *
+     * Each edge is now two explicit half-circles, whose vertical extremes are
+     * the only thing worth asserting: both edges must be centred on the same
+     * point.
+     */
+    const ys = [...path.matchAll(/A (\d+) \d+ 0 0 1 [\d.]+ ([\d.]+)/g)].map((found) => ({
+      radius: Number(found[1]),
+      y: Number(found[2]),
+    }));
+    const centres = new Map<number, number[]>();
+    for (const point of ys) centres.set(point.radius, [...(centres.get(point.radius) ?? []), point.y]);
+    const middles = [...centres.entries()].map(([radius, points]) => (Math.max(...points) + Math.min(...points)) / 2);
+    assert.ok(middles.length >= 2, `expected an outer and an inner edge, found ${middles.length}`);
+    assert.ok(
+      Math.max(...middles) - Math.min(...middles) < 0.5,
+      `the ring is not concentric: edges centred at ${middles.join(' and ')}`,
+    );
     assert.notEqual(arc[2]!, arc[1]!, 'the outer arc returned to its own start, enclosing no area');
     assert.match(path, /A 68 68/, 'the full-circle case did not cut the donut hole');
   });

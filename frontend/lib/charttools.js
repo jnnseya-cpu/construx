@@ -1,3 +1,4 @@
+import { clearFilter, toggleFilter } from './crossfilter.js';
 import { toast } from './ui.js';
 
 /**
@@ -21,13 +22,18 @@ import { toast } from './ui.js';
  * the wrong number into a meeting. Reading the rendered table makes them the
  * same number by construction.
  *
- * ## What is deliberately not here
+ * ## Cross-filtering goes through the page, not the DOM
  *
- * Cross-filtering. A chart selection updating every other visual on the page
- * needs a page-level data model to filter, and the console renders from a
- * payload the API already shaped. Building it as a DOM trick would produce a
- * filter that looks applied and is not, which is worse than not having one.
- * It is recorded in `docs/STATE.md` as not built.
+ * A mark that names a dimension is a filter control, and clicking one does two
+ * things: it writes the filter to the address bar and it asks the console to
+ * redraw. Nothing in this file hides a row or dims a slice.
+ *
+ * That is deliberate. Hiding rows is quick and looks right, and it is a lie —
+ * the KPI totals do not move, the captions still describe the unfiltered set,
+ * and the CSV exports everything. Going through `draw()` means the page narrows
+ * its own payload and every figure on the screen is recomputed from the same
+ * array, so the tiles, the tables, the data panels and the exports agree with
+ * the charts by construction. See `crossfilter.js`.
  */
 
 /** Everything a CSV field can contain, quoted the one way every reader accepts. */
@@ -95,6 +101,34 @@ export function wireCharts() {
   wired = true;
 
   document.addEventListener('click', async (event) => {
+    // --- cross-filter -------------------------------------------------------
+    //
+    // A mark that names a dimension is a filter control. Handled before the
+    // tool buttons because a mark is inside the figure the tools sit on, and
+    // handled here rather than per page for the same reason everything else in
+    // this file is: the console re-renders whole screens, so a per-chart
+    // listener would need re-attaching on every one of them.
+    const mark = event.target.closest?.('[data-filter-dimension]');
+    if (mark) {
+      toggleFilter(
+        mark.getAttribute('data-filter-dimension'),
+        mark.getAttribute('data-filter-key'),
+        mark.getAttribute('data-filter-label'),
+      );
+      // The page redraws itself from its own payload with the filter applied.
+      // Nothing here touches the DOM: a filter that dimmed marks without moving
+      // the totals would be a filter that looks applied and is not.
+      document.dispatchEvent(new CustomEvent('construx:refilter'));
+      return;
+    }
+
+    const clear = event.target.closest?.('[data-clear-filter]');
+    if (clear) {
+      clearFilter();
+      document.dispatchEvent(new CustomEvent('construx:refilter'));
+      return;
+    }
+
     const button = event.target.closest?.('.chart-tool');
     if (!button) return;
 

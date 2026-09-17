@@ -22390,3 +22390,69 @@ once and reuses the token; the figures above have no outliers.
 
 Recorded because it is the second time this session that verifying a suspicious
 number stopped a defect being reported that did not exist.
+
+## Section 3.2: cross-filtering, built above the render rather than on the DOM
+
+Recorded here because an earlier entry said this would not be built, and gave a
+reason that turned out to be an argument for building it differently rather than
+for not building it.
+
+### Why not the obvious way
+
+Hide rows and dim slices when something is selected. It is quick, it looks
+right, and it is a lie: the KPI totals do not move, the chart captions still
+describe the unfiltered set, and the CSV exports everything. A filter that looks
+applied and is not is worse than no filter, because the reader trusts it.
+
+### The filter lives in the address bar
+
+Three of section 3.2's requirements turn out to be one mechanism. Put the filter
+in a query parameter and a **deep link carries it**, the **back button** undoes
+it, a reload keeps it, and the chart tools' Link button needs no special case —
+it already copies `location.search`. Held in a module variable it would have
+given the same thing on screen and none of the other three.
+
+Clicking a mark writes the filter and asks the console to redraw. `draw()` runs
+the page again, the page narrows **its own payload**, and everything is rebuilt
+from the narrowed array — tiles, charts, captions, data panels and therefore the
+exports. They agree because there is one array and they all read it, not because
+somebody remembered to filter each of them.
+
+A page takes part by calling `narrow()` on its data. That is the whole contract,
+and a page that does not is simply *not* cross-filtered rather than
+half-filtered — which is the state this design exists to avoid.
+
+Measured on the Command Centre, filtering to Urgent: severity 22 → 4 items,
+by-function 22 → 4 across 7 rows → 2, by-region 22 → 4, by-value £81.6M → £21M
+across 4 rows → 1. The chip in the context header says the screen is filtered,
+because a filtered screen that does not say so is how somebody reports a number
+that was true of a tenth of the project.
+
+Unselected marks are dimmed rather than hidden: the reader needs to see what
+they excluded, or the chart stops being a picture of the whole and becomes a
+picture of the selection with nothing saying so.
+
+### A whole-pie donut was two overlapping circles
+
+Found by looking at the filtered screen, where one severity is 100%.
+
+Each edge of the ring was traced as a single *nearly* complete arc between two
+points 0.01 apart. Two circles pass through such a pair — one centred above
+them, one below — and the large-arc and sweep flags chose opposite ones for the
+outer edge and the inner, so the hole rendered 68px north of the disc.
+
+Every existing assertion passed on it: there was an arc, it landed somewhere
+other than where it started, the path was not collapsed. It simply was not a
+ring. Each edge is now two explicit 180° arcs, whose centres are the midpoints
+of their own endpoints by construction, and the test asserts the two edges are
+concentric.
+
+### And the invariant test's own parser
+
+Adding a JSDoc note inside `pieChart`'s destructuring pattern broke
+`chartcalls.test.ts`, which reported "donutChart forwards to pieChart, which is
+not an exported chart". True only because pieChart's options could no longer be
+read: the note contained the word "page's", and the scanner treated that
+apostrophe as the start of a string literal and ran to the next one hundreds of
+lines away. It skips comments before quotes now — a comment's prose is not code
+and must not be read as any.

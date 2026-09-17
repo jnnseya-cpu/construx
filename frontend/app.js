@@ -627,6 +627,14 @@ wireDrill(() => state.session?.projectId);
 // data, export it, expand it, link to it. Installed here rather than per page,
 // because a page that has to remember is a page that forgets.
 wireCharts();
+// A cross-filter click changes the address bar; the page then redraws from its
+// own payload with the filter applied. Going through `draw()` rather than
+// mutating the DOM is what makes the tiles, the tables and the exports agree
+// with the charts — they are all built from the same narrowed array.
+document.addEventListener('construx:refilter', () => void draw());
+// And the back button, so lifting a filter by going back works like everything
+// else in the address bar.
+window.addEventListener('popstate', () => void draw());
 
 // --- session ----------------------------------------------------------------
 

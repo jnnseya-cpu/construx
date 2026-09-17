@@ -1,4 +1,5 @@
 import { metricNote } from '../../shared/metrics.js';
+import { filterable } from './crossfilter.js';
 import { esc, html, raw } from './ui.js';
 
 /**
@@ -934,6 +935,15 @@ export function areaChart(options) {
 /** @param {{data?: Row[], title?: string, desc?: string, donut?: boolean, format?: Formatter, empty?: string, centreLabel?: string, footnote?: string}} options */
 export function pieChart({
   data = [],
+  /**
+   * The dimension these slices are values of — `severity`, `phase`, `status`.
+   *
+   * Naming it makes every slice clickable and turns this chart into the page's
+   * cross-filter control. A chart with no dimension is not clickable, which is
+   * the right default: a filter on a dimension the page does not read would
+   * narrow nothing and say it had.
+   */
+  dimension,
   title = 'Composition',
   desc,
   donut = true,
@@ -998,17 +1008,32 @@ export function pieChart({
     const end = angle + sweep;
     const large = sweep > Math.PI ? 1 : 0;
     const p = (radius, at) => `${r2(cx + radius * Math.cos(at))} ${r2(cy + radius * Math.sin(at))}`;
-    // A single slice at 100% cannot be drawn as an arc — start and end are the
-    // same point, and the path collapses to nothing. Drawn as two half-circles.
+    /*
+     * A single slice at 100% cannot be drawn as one arc: start and end are the
+     * same point and the path collapses to nothing.
+     *
+     * Nor can it be drawn as one *nearly* complete arc, which is what this did
+     * before and why a whole-pie donut rendered as two overlapping circles
+     * rather than a ring. Given two endpoints 0.01 apart and a radius, there
+     * are two circles through them — one centred above the pair and one below —
+     * and the large-arc and sweep flags chose opposite ones for the outer edge
+     * and the inner, so the hole ended up centred 68px above the disc.
+     *
+     * Two explicit half-circles have no such ambiguity: each 180° arc's centre
+     * is the midpoint of its own endpoints, which is the middle of the chart by
+     * construction. Both rings are wound the same way; `fill-rule="evenodd"`
+     * cuts the hole regardless of direction.
+     */
+    const ring = (r) =>
+      `M ${r2(cx)} ${r2(cy - r)} A ${r} ${r} 0 0 1 ${r2(cx)} ${r2(cy + r)} A ${r} ${r} 0 0 1 ${r2(cx)} ${r2(cy - r)} Z`;
     const path =
       share >= 0.9999
-        ? `M ${r2(cx)} ${r2(cy - outer)} A ${outer} ${outer} 0 1 1 ${r2(cx - 0.01)} ${r2(cy - outer)} Z` +
-          (inner ? ` M ${r2(cx)} ${r2(cy - inner)} A ${inner} ${inner} 0 1 0 ${r2(cx - 0.01)} ${r2(cy - inner)} Z` : '')
+        ? ring(outer) + (inner ? ` ${ring(inner)}` : '')
         : `M ${p(inner, angle)} L ${p(outer, angle)} A ${outer} ${outer} 0 ${large} 1 ${p(outer, end)} L ${p(inner, end)}` +
           (inner ? ` A ${inner} ${inner} 0 ${large} 0 ${p(inner, angle)}` : '') +
           ' Z';
     angle = end;
-    return html`<path class="chart-slice" d="${raw(path)}" fill="${raw(colours[index])}" fill-rule="evenodd">
+    return html`<path class="chart-slice" d="${raw(path)}" fill="${raw(colours[index])}" fill-rule="evenodd"${raw(filterable(dimension, slice.filterKey ?? slice.label, slice.label))}>
       <title>${slice.label}: ${format(slice.value)} (${raw(r2(share * 100))}%)</title>
     </path>`;
   });

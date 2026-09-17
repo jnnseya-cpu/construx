@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { activeFilter, filterChip, narrow } from '../lib/crossfilter.js';
 import { badge, html, positionReport, raw, render } from '../lib/ui.js';
 import { barChart, pieChart } from '../lib/charts.js';
 import { state } from '../app.js';
@@ -75,7 +76,29 @@ export async function centre(root) {
   const functions = report.functions ?? [];
   const available = functions.filter((entry) => entry.available);
   const refused = functions.filter((entry) => !entry.available);
-  const cards = available.flatMap((entry) => entry.cards.map((c) => ({ ...c, from: entry.label })));
+  const everything = available.flatMap((entry) => entry.cards.map((c) => ({ ...c, from: entry.label })));
+
+  /*
+   * The cross-filter, applied before anything is built.
+   *
+   * Every figure below — the four charts, the counts in their captions, the
+   * cards in the four regions, the data panels and therefore the exports — is
+   * computed from `cards`. Narrowing here rather than hiding rows afterwards is
+   * what makes them all agree: there is one array and everything reads it.
+   *
+   * `available` is narrowed too, so the by-function chart counts the same
+   * cards the rest of the screen is showing rather than the unfiltered set.
+   */
+  const filter = activeFilter();
+  // One predicate, applied to the flat list and to each function's own list, so
+  // the by-function chart counts the same cards the rest of the screen shows.
+  // Comparing object identity across the two shapes does not work — the flat
+  // list spreads each card to add `from` — and a chart counting the unfiltered
+  // set beside three that are filtered is the exact half-applied filter this
+  // design exists to prevent.
+  const keep = (list) => narrow(narrow(list, 'severity', (card) => card.severity), 'region', (card) => card.region);
+  const cards = keep(everything);
+  const shown = available.map((entry) => ({ ...entry, cards: keep(entry.cards ?? []) }));
 
   render(
     root,
@@ -91,6 +114,8 @@ export async function centre(root) {
         </div>
       </div>
 
+      ${filterChip()}
+
       ${report.error ? html`<div class="notice bad">${report.error}</div>` : ''}
 
       ${report.headline
@@ -99,7 +124,7 @@ export async function centre(root) {
           </div>`
         : ''}
 
-      ${centreCharts(cards, functions, available, refused)}
+      ${centreCharts(cards, functions, shown, refused)}
 
       <section class="grid cols-4">
         ${REGIONS.map((region) => {
@@ -182,10 +207,13 @@ function centreCharts(cards, functions, available, refused) {
     NEXT: 'What to do next',
   };
 
+  // `filterKey` is the value the record carries; `label` is what a reader is
+  // shown. Both, because a chip reading "URGENT" is shouting an enum at somebody.
   const bySeverity = ['URGENT', 'ATTENTION', 'INFO'].map((severity) => ({
     label: severity.charAt(0) + severity.slice(1).toLowerCase(),
+    filterKey: severity,
     value: cards.filter((card) => card.severity === severity).length,
-    tone: severity === 'URGENT' ? 'bad' : severity === 'ATTENTION' ? 'warn' : '',
+    tone: TONE[severity],
   }));
 
   const byRegion = Object.entries(REGION_LABEL).map(([id, label]) => ({
@@ -214,6 +242,10 @@ function centreCharts(cards, functions, available, refused) {
         ${raw(
           pieChart({
             title: 'By severity',
+            // Clicking a slice filters the whole screen to that severity: the
+            // other three charts, the card regions and the exports all narrow,
+            // because they are all built from the same array this one is.
+            dimension: 'severity',
             data: bySeverity.filter((entry) => entry.value > 0),
             format: (value) => `${value} item${value === 1 ? '' : 's'}`,
             centreLabel: String(cards.length),

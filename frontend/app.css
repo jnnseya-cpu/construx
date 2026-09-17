@@ -983,6 +983,53 @@ input:focus, select:focus, textarea:focus {
 .chart-tool:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
 .chart-tool[aria-expanded="true"] { color: var(--text); border-color: var(--brand-blue); }
 
+/* ------------------------------------------------------------ cross-filtering
+ * A mark that filters is a control, so it looks like one on hover and says so
+ * when it is the one in force. The unselected marks are dimmed rather than
+ * hidden: the reader needs to see what they have excluded, or the chart stops
+ * being a picture of the whole and becomes a picture of the selection with no
+ * indication that is what it is. */
+[data-filter-dimension] { cursor: pointer; }
+[data-filter-dimension]:hover { filter: brightness(1.18); }
+[data-filter-dimension]:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
+.chart:has([data-filter-selected]) [data-filter-dimension]:not([data-filter-selected]) { opacity: 0.32; }
+[data-filter-selected] { stroke: var(--text); stroke-width: 1.5; }
+
+/* The chip that says the screen is filtered.
+ *
+ * Loud on purpose: it is the only thing on the page that explains why every
+ * figure moved, and a filtered screen that does not say so is how somebody
+ * reports a number that was true of a tenth of the project. */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--brand-blue);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-blue) 12%, transparent);
+  font-size: 12px;
+}
+.filter-chip-what {
+  color: var(--text-3);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.filter-chip-value { color: var(--text); font-weight: 600; }
+.filter-chip-clear {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--grey);
+  color: var(--text-2);
+  font: 500 11px var(--sans);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.filter-chip-clear:hover { color: var(--text); border-color: var(--brand-blue); }
+.filter-chip-clear:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
+
 .chart-data { margin-top: 12px; max-height: 320px; overflow: auto; }
 .chart-data table { width: 100%; border-collapse: collapse; font-size: 12px; }
 /* The governed definition, under the caption of the data panel.

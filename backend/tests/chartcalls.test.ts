@@ -56,6 +56,30 @@ function closingBracket(source: string, open: number): number {
       index += 1;
       continue;
     }
+    /*
+     * Comments are skipped before quotes, because a comment's prose is not code
+     * and must not be read as any.
+     *
+     * This cost an afternoon. A JSDoc note inside a destructuring pattern
+     * contained the word "page's", the scanner treated that apostrophe as the
+     * start of a string literal, and it ran to the next apostrophe hundreds of
+     * lines away — past the closing brace it was looking for. The failure
+     * surfaced as "donutChart forwards to pieChart, which is not an exported
+     * chart", which is true only because pieChart's options could no longer be
+     * read at all.
+     */
+    if (character === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2);
+      if (end === -1) return -1;
+      index = end + 1;
+      continue;
+    }
+    if (character === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index);
+      if (end === -1) return -1;
+      index = end;
+      continue;
+    }
     if (character === "'" || character === '"' || character === '`') {
       const quote = character;
       index += 1;
@@ -84,6 +108,17 @@ function topLevelParts(body: string): string[] {
     if (character === '\\') {
       current += character + (body[index + 1] ?? '');
       index += 1;
+      continue;
+    }
+    // Comments before quotes, for the reason `closingBracket` gives.
+    if (character === '/' && body[index + 1] === '*') {
+      const end = body.indexOf('*/', index + 2);
+      index = end === -1 ? body.length : end + 1;
+      continue;
+    }
+    if (character === '/' && body[index + 1] === '/') {
+      const end = body.indexOf('\n', index);
+      index = end === -1 ? body.length : end;
       continue;
     }
     if (character === "'" || character === '"' || character === '`') {
