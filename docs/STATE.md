@@ -22140,3 +22140,89 @@ from a payload the API already shaped. Built as a DOM trick it would produce a
 filter that looks applied and is not, which is worse than not having one.
 
 Compare mode, saved views and PNG/PDF export are also absent.
+
+## Section 6: the module visual sets
+
+The standard names a mandatory visual set per module. This records the three
+built so far, what each chart is for, and which named visuals still have no
+data behind them.
+
+### Planning and Delivery — the S-curve and the constraint heatmap
+
+**Two curves, not one.** A single planned curve invites the question a planner
+cannot answer from it: is being behind that line a problem? The early and late
+dates the CPM engine already publishes bound the answer — between them is float,
+below the late curve is a date the contract does not have. Both are drawn and
+the band is named.
+
+**Earned-to-date is a line, not a third curve.** A curve needs progress history —
+what was complete at the end of each past month — and the platform records
+`percentComplete` as it stands, not as it stood. A line through one measurement
+and the origin would be interpolation, and interpolation is invention. It is a
+reference mark until progress snapshots exist.
+
+**The constraint heatmap** is work package against month in activity-days. The
+month a package lights up is the month its constraints have to have been cleared
+by. Two bright rows in one column is the resourcing conflict the Gantt hides by
+putting them on different lines.
+
+### Risk, Safety and Compliance — the matrix, the coverage shape, the two numbers
+
+**The 5×5 is a grid, so it is drawn as one.** A register sorted by expected cost
+puts a likely small problem next to an unlikely disaster because probability
+times impact happens to be similar, and those are not the same thing to manage.
+Impact is banded against the largest case on this project's own register rather
+than an invented currency threshold.
+
+**Control coverage is a shape.** "72% of risks are mitigated" hides which
+categories are uncovered. A radar across categories shows a dent, and a dent is
+actionable in a way a percentage never is. Under three categories it falls back
+to bars, because two axes are not a shape.
+
+**Leading and lagging are drawn apart and never summed.** An observation is
+something somebody noticed before it hurt anyone; an incident is something that
+did. A "safety events" bar that added them would report an improving site as a
+deteriorating one.
+
+### Handover and O&M — ageing, severity, readiness, the inherited estate
+
+**Ageing, not a count.** "Four defects outstanding" is the number a handover
+meeting is given and the least useful one in the room: four raised this week is
+a snagging list, four raised in March is an argument about whether the works were
+ever complete. A count cannot tell you which you are in.
+
+Severity and status are kept as two charts, because a closed major and an open
+minor are both "one defect". The asset treemap is what the operator is
+inheriting, footnoted with how much of that asset data is actually complete —
+an asset with incomplete data is one no maintenance regime can be built from.
+
+### The palette reached the rest of the kit
+
+Heatmap, histogram and sparkline defaulted to Signal Orange, which the standard
+reserves for chrome. All three now default to CONSTRUX Blue, so the risk matrix,
+the constraint heatmap and every sparkline read as measurements rather than as
+accents.
+
+### Modules still on the standard's list with nothing built
+
+Named rather than implied. Each is section 6's own wording:
+
+- **Tender and Commercial** — has a donut, a sparkline and a waterfall. Missing
+  the funnel, the margin trend and the scope treemap.
+- **Resource and Cost** — has the resource histogram. Missing the resource area
+  charts, cost stacked columns, EVM lines and the productivity scatter.
+- **BIM and Digital Twin** — has bars, a gauge and a pie. Missing the clash
+  trend, the system treemap and the model-linked heatmap.
+- **Contracts and Claims** — has the change funnel, the cause-impact Sankey and
+  status bars. Missing the notice timeline and the ageing histogram.
+- **Payment Cycle, Drawing Control, Variation Control, Live CVR, Procurement,
+  Field Capture** — none of their named sets are built beyond what the screens
+  already carried.
+
+### Where a named visual has no data behind it
+
+The handover readiness radar draws from `readiness.sections`, which is empty
+until the obligations are baselined, and the defect ageing histogram needs more
+than one dated defect. Both render their own empty state carrying the engine's
+sentence. They were verified as empty states only — not with data — and that is
+stated here rather than counted as done.

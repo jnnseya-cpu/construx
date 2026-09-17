@@ -2,7 +2,7 @@ import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
 import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, resolveHtml, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
-import { gauge } from '../lib/charts.js';
+import { barChart, gauge, histogram, pieChart, radarChart, treemap } from '../lib/charts.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -336,6 +336,8 @@ export async function handover(root) {
           ${can('HANDOVER_OM', 'X') ? html`<button class="btn ghost" id="maintenance">Forecast maintenance</button>` : ''}
         </div>
       </div>
+
+      ${handoverCharts(b, assetRegister, readiness)}
 
       ${stageWorkspace(acceptance, gate)}
 
@@ -912,4 +914,154 @@ export async function handover(root) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+/**
+ * What is still open at handover, and how long it has been open.
+ *
+ * ## Ageing, not a count
+ *
+ * "Four defects outstanding" is the number a handover meeting is given and the
+ * least useful one in the room. Four raised this week is a snagging list; four
+ * raised in March is a dispute about whether the works were ever complete. The
+ * histogram is the difference, and it is the only place it shows.
+ *
+ * ## Severity apart from status
+ *
+ * A closed major defect and an open minor one are both "one defect". Kept as
+ * two questions — how bad, and whether it is still open — because a single
+ * chart of "defects" answers neither.
+ *
+ * ## What is deliberately not drawn
+ *
+ * The readiness radar is drawn from `readiness.sections`, which is empty until
+ * the obligations are baselined. It renders its own empty state rather than a
+ * shape over nothing, and the sentence it shows is the engine's.
+ */
+function handoverCharts(bundle, assetRegister, readiness) {
+  const defects = bundle.Defect ?? [];
+  const assets = bundle.AssetRegisterItem ?? [];
+
+  const now = Date.now();
+  const ages = defects
+    .filter((defect) => defect.reportedAt)
+    .map((defect) => Math.max(0, Math.round((now - Date.parse(defect.reportedAt)) / 86_400_000)));
+
+  const bySeverity = [...new Set(defects.map((defect) => String(defect.severity ?? 'UNSPECIFIED')))].map((severity) => ({
+    label: humanise(severity),
+    value: defects.filter((defect) => String(defect.severity ?? 'UNSPECIFIED') === severity).length,
+    tone: severity === 'MAJOR' || severity === 'CRITICAL' ? 'bad' : severity === 'MINOR' ? 'warn' : '',
+  }));
+
+  const byStatus = [...new Set(defects.map((defect) => String(defect.status ?? 'OPEN')))].map((status) => ({
+    label: humanise(status),
+    value: defects.filter((defect) => String(defect.status ?? 'OPEN') === status).length,
+    tone: /closed|accepted/i.test(status) ? 'ok' : 'warn',
+  }));
+
+  // Assets by the system they belong to, sized by count — where the estate the
+  // operator is inheriting actually sits.
+  const bySystem = [...new Set(assets.map((asset) => humanise(String(asset.systemId ?? asset.system ?? 'Unassigned'))))]
+    .map((system) => ({
+      label: system,
+      value: assets.filter((asset) => humanise(String(asset.systemId ?? asset.system ?? 'Unassigned')) === system).length,
+    }))
+    .filter((row) => row.value > 0);
+
+  const sections = readiness?.error ? [] : readiness?.sections ?? [];
+
+  if (defects.length === 0 && assets.length === 0 && sections.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How long the open defects have been open</h2>
+        ${raw(
+          histogram({
+            title: 'Defect ageing',
+            values: ages,
+            format: (value) => `${Math.round(value)}d old`,
+            empty: 'No defect carries a date it was reported.',
+            footnote:
+              'Four raised this week is a snagging list. Four raised in March is an argument about whether the works ' +
+              'were ever complete. A count cannot tell you which of those you are in.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How bad, and whether it is still open</h2>
+        ${raw(
+          pieChart({
+            title: 'Defects by severity',
+            data: bySeverity,
+            centreLabel: String(defects.length),
+            format: (value) => `${value} defect${value === 1 ? '' : 's'}`,
+            empty: 'No defect has been raised.',
+            footnote: 'Severity and status are two questions. A closed major and an open minor are both "one defect".',
+          }),
+        )}
+        ${raw(
+          barChart({
+            title: 'Defects by status',
+            horizontal: true,
+            data: byStatus,
+            format: (value) => `${value} defect${value === 1 ? '' : 's'}`,
+            empty: 'No defect has been raised.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Is the handover pack actually complete</h2>
+        ${raw(
+          sections.length >= 3
+            ? radarChart({
+                title: 'Readiness by section',
+                axes: sections.map((section) => humanise(String(section.label ?? section.id ?? 'Section'))),
+                max: 100,
+                series: [
+                  {
+                    label: 'Accepted',
+                    values: sections.map((section) =>
+                      Number(section.weightTotal ?? 0) === 0
+                        ? 0
+                        : (Number(section.weightAccepted ?? 0) / Number(section.weightTotal)) * 100,
+                    ),
+                    tone: 'actual',
+                  },
+                ],
+                format: (value) => `${Math.round(value)}%`,
+                empty: readiness?.summary ?? 'Nothing has been baselined, so there is no requirement set to measure against.',
+                footnote:
+                  'By weight, not by count — a commissioning certificate and a spare parts list are both one item and ' +
+                  'are not both worth the same at handover. A dent is a section nobody has evidenced.',
+              })
+            : gauge({
+                title: 'Requirements accepted',
+                value: (readiness?.weightTotal ?? 0) > 0 ? Number(readiness.percent ?? 0) : undefined,
+                max: 100,
+                target: 100,
+                format: (value) => `${Math.round(value)}%`,
+                desc: readiness?.summary ?? 'Nothing has been baselined.',
+              }),
+        )}
+      </div>
+      <div class="card">
+        <h2>What the operator is inheriting</h2>
+        ${raw(
+          treemap({
+            title: 'Assets by system',
+            items: bySystem,
+            format: (value) => `${value} asset${value === 1 ? '' : 's'}`,
+            empty: 'No asset is on the register.',
+            footnote:
+              `${assetRegister?.error ? 'The register could not be read.' : `${assetRegister?.assets ?? 0} assets, ${assetRegister?.completePercent ?? 0}% of their data complete.`} ` +
+              'An asset with incomplete data is one the maintenance regime cannot be built from, whatever the count says.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

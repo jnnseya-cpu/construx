@@ -567,7 +567,7 @@ describe('heatmap', () => {
     const markup = svg(
       heatmap({ rows: ['Mon', 'Tue'], columns: ['AM', 'PM'], values: [[1, 8], [4, 0]], title: 'Activity' }),
     );
-    const fills = new Set([...markup.matchAll(/fill="(var\(--[a-z]+\)|rgb\([^)]+\))"/g)].map((found) => found[1]));
+    const fills = new Set([...markup.matchAll(/fill="(var\(--[a-z0-9-]+\)|rgb\([^)]+\))"/g)].map((found) => found[1]));
     assert.equal(fills.size, 1, `a heatmap should use one hue, used ${[...fills].join(', ')}`);
     const opacities = attrs(markup, 'fill-opacity');
     assert.ok(Math.max(...opacities) > Math.min(...opacities), 'every cell got the same opacity');

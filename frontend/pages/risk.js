@@ -3,7 +3,7 @@ import { command, commandBar, confirmCost } from '../lib/command.js';
 import { OBSERVATION_TYPE, RISK_CATEGORY } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
-import { barChart } from '../lib/charts.js';
+import { barChart, heatmap, lineChart, radarChart } from '../lib/charts.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -93,6 +93,8 @@ export async function risk(root) {
           <div class="metric-sub">work must not start before acknowledgement</div>
         </div>
       </div>
+
+      ${riskCharts(b, contingency)}
 
       ${
         contingency
@@ -365,4 +367,133 @@ export async function risk(root) {
     if (await command(spec)) await draw();
   });
 
+}
+
+/**
+ * The risk matrix, control coverage, and the two kinds of safety number.
+ *
+ * ## The matrix is a matrix
+ *
+ * A risk register sorted by expected cost is the right list and the wrong
+ * picture: it puts a likely small problem next to an unlikely disaster because
+ * probability times impact happens to be similar, and those are not the same
+ * thing to manage. The 5x5 is the industry's answer and it is a grid, so it is
+ * drawn as one.
+ *
+ * ## Control coverage is a shape, not a percentage
+ *
+ * "72% of risks are mitigated" hides the thing worth knowing: *which categories*
+ * are uncovered. A radar across categories shows a dent, and a dent is
+ * actionable in a way a percentage never is.
+ *
+ * ## Leading and lagging are drawn apart on purpose
+ *
+ * An observation is something somebody noticed before it hurt anyone; an
+ * incident is something that did. Summing them into a "safety events" bar is
+ * the commonest way a safety dashboard misleads — a rise in observations is
+ * good news and a rise in incidents is not, and a chart that adds them reports
+ * an improving site as a deteriorating one.
+ */
+function riskCharts(bundle, contingency) {
+  const risks = bundle.RiskRegisterItem ?? [];
+  const observations = bundle.SafetyObservation ?? [];
+  const incidents = bundle.Incident ?? [];
+
+  // Five bands each way, which is what a register is scored against.
+  const PROBABILITY = ['Rare', 'Unlikely', 'Possible', 'Likely', 'Almost certain'];
+  const IMPACT = ['Insignificant', 'Minor', 'Moderate', 'Major', 'Severe'];
+  const bandOf = (share) => Math.min(4, Math.max(0, Math.floor(Number(share) * 5)));
+  // Impact banded against the largest pessimistic case on this register, so the
+  // scale is the project's own rather than an invented currency threshold.
+  const worst = Math.max(1, ...risks.map((risk) => Number(risk.costImpact?.pessimistic ?? 0)));
+
+  const matrix = PROBABILITY.map((_, probabilityBand) =>
+    IMPACT.map(
+      (__, impactBand) =>
+        risks.filter(
+          (risk) =>
+            bandOf(risk.probability ?? 0) === probabilityBand &&
+            bandOf(Number(risk.costImpact?.pessimistic ?? 0) / worst) === impactBand,
+        ).length,
+    ),
+  );
+
+  // Control coverage: the share of each category's risks carrying a mitigation.
+  const categories = [...new Set(risks.map((risk) => humanise(String(risk.category ?? 'OTHER'))))];
+  const covered = categories.map((category) => {
+    const inCategory = risks.filter((risk) => humanise(String(risk.category ?? 'OTHER')) === category);
+    const withControl = inCategory.filter((risk) => (risk.mitigations ?? []).length > 0).length;
+    return inCategory.length === 0 ? 0 : (withControl / inCategory.length) * 100;
+  });
+
+  const safety = [
+    { label: 'Observations raised', value: observations.length, tone: 'ok' },
+    { label: 'Incidents recorded', value: incidents.length, tone: incidents.length > 0 ? 'bad' : 'neutral' },
+  ];
+
+  if (risks.length === 0 && observations.length === 0 && incidents.length === 0) return '';
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>How likely against how bad</h2>
+        ${raw(
+          heatmap({
+            title: 'The register, banded',
+            rows: PROBABILITY,
+            columns: IMPACT,
+            values: matrix,
+            format: (value) => (value === 0 ? 'nothing here' : `${value} risk${value === 1 ? '' : 's'}`),
+            empty: 'No risk on the register carries both a probability and a cost impact.',
+            footnote:
+              `Impact is banded against the largest case on this register (${money(worst)}), so the scale is this ` +
+              'project’s rather than an invented threshold. The top-right corner is the one that needs a name against ' +
+              'it today; a register sorted by expected cost puts it next to a likely small problem.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Which categories are actually controlled</h2>
+        ${raw(
+          categories.length >= 3
+            ? radarChart({
+                title: 'Risks carrying a mitigation, by category',
+                axes: categories,
+                max: 100,
+                series: [{ label: 'Covered', values: covered, tone: 'actual' }],
+                format: (value) => `${Math.round(value)}%`,
+                empty: 'No risk carries a category.',
+                footnote:
+                  'A dent is a category where risks are registered and nothing is being done about them. A single ' +
+                  'percentage across the register would hide exactly that.',
+              })
+            : barChart({
+                title: 'Risks carrying a mitigation, by category',
+                horizontal: true,
+                data: categories.map((category, index) => ({ label: category, value: covered[index] })),
+                format: (value) => `${Math.round(value)}%`,
+                empty: 'No risk carries a category.',
+                footnote: 'Fewer than three categories is not a shape, so it is drawn as bars.',
+              }),
+        )}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h2>What was noticed, and what happened</h2>
+      ${raw(
+        barChart({
+          title: 'Leading against lagging',
+          horizontal: true,
+          data: safety,
+          format: (value) => `${value} record${value === 1 ? '' : 's'}`,
+          empty: 'Nothing has been observed and nothing has happened.',
+          footnote:
+            'Drawn apart, never summed. An observation is something somebody noticed before it hurt anyone and an ' +
+            'incident is something that did — so a rise in the first is good news, a rise in the second is not, and a ' +
+            'chart that added them would report an improving site as a deteriorating one.',
+        }),
+      )}
+    </div>
+  `;
 }

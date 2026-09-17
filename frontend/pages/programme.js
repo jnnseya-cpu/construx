@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
-import { ganttChart, histogram } from '../lib/charts.js';
+import { areaChart, ganttChart, heatmap, histogram, lineChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -716,6 +716,8 @@ export async function programme(root) {
           lag: dependency.lag,
         })),
       )}
+
+      ${curvePanel(dated)}
 
       ${resourcePanel(resourcing)}
 
@@ -1651,4 +1653,121 @@ export async function programme(root) {
 
 function moneyOf(minor) {
   return `£${(Number(minor ?? 0) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+/**
+ * The S-curve, and where the programme is loaded.
+ *
+ * ## Two curves, not one
+ *
+ * A single planned curve invites the question a planner cannot answer from it:
+ * is being behind that line a problem? The early and late dates the CPM engine
+ * already publishes bound the answer. Between them is float; below the late
+ * curve is a date the contract does not have.
+ *
+ * So both are drawn, the band between them is shaded, and the reader is told
+ * what the band is. This is the standard's plan-against-reality rule applied to
+ * the shape a construction programme is actually judged by.
+ *
+ * ## What is deliberately a point rather than a line
+ *
+ * Earned-to-date is one number, drawn as a reference line rather than a third
+ * curve. A curve needs progress history — what was complete at the end of each
+ * past month — and this platform records `percentComplete` as it stands now,
+ * not as it stood. Drawing a line through one measurement and the origin would
+ * be interpolation, and interpolation is invention: a reader cannot tell an
+ * invented segment from a measured one once it is drawn.
+ *
+ * When progress snapshots exist this becomes the third series and the comment
+ * goes. Until then the honest picture is a planned envelope and a mark.
+ */
+function curvePanel(view) {
+  const activities = (view?.activities ?? []).filter((activity) => activity.earlyFinish && activity.lateFinish);
+  if (activities.length === 0) return '';
+
+  const totalDuration = activities.reduce((sum, activity) => sum + Number(activity.duration ?? 0), 0);
+  if (totalDuration === 0) return '';
+
+  // Month ends across the whole programme, early start to late finish.
+  const dates = activities.flatMap((activity) => [activity.earlyStart, activity.lateFinish]).filter(Boolean).sort();
+  const first = new Date(`${String(dates[0]).slice(0, 7)}-01T00:00:00Z`);
+  const last = new Date(`${String(dates[dates.length - 1]).slice(0, 7)}-01T00:00:00Z`);
+  const months = [];
+  for (let at = new Date(first); at <= last && months.length < 72; at.setUTCMonth(at.getUTCMonth() + 1)) {
+    months.push(at.toISOString().slice(0, 7));
+  }
+  if (months.length < 2) return '';
+
+  // Cumulative share of the programme's duration complete by each month end,
+  // on the early dates and on the late ones.
+  const cumulative = (key) =>
+    months.map((month) => {
+      const done = activities
+        .filter((activity) => String(activity[key]).slice(0, 7) <= month)
+        .reduce((sum, activity) => sum + Number(activity.duration ?? 0), 0);
+      return (done / totalDuration) * 100;
+    });
+
+  const early = cumulative('earlyFinish');
+  const late = cumulative('lateFinish');
+  const curve = months.map((month, index) => ({ label: month, early: early[index], late: late[index] }));
+
+  // Earned to date: duration-weighted percent complete across every activity.
+  const earned =
+    activities.reduce((sum, activity) => sum + Number(activity.duration ?? 0) * (Number(activity.percentComplete ?? 0) / 100), 0) /
+    totalDuration;
+
+  // Where the work sits: WBS against month, in activity-days. The month a
+  // package is loaded into is the month its constraints have to be cleared by.
+  const packages = [...new Set(activities.map((activity) => String(activity.wbsPath ?? 'Unassigned')))];
+  const load = packages.map((wbs) =>
+    months.map((month) =>
+      activities
+        .filter((activity) => String(activity.wbsPath ?? 'Unassigned') === wbs)
+        .filter((activity) => String(activity.earlyStart).slice(0, 7) <= month && String(activity.earlyFinish).slice(0, 7) >= month)
+        .reduce((sum, activity) => sum + Number(activity.duration ?? 0), 0),
+    ),
+  );
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>The S-curve, and the float in it</h2>
+        ${raw(
+          areaChart({
+            title: 'Cumulative programme complete',
+            data: curve,
+            series: [
+              { key: 'early', label: 'On the early dates', colour: 'actual' },
+              { key: 'late', label: 'On the late dates', colour: 'baseline' },
+            ],
+            format: (value) => `${Math.round(value)}%`,
+            reference: [{ value: earned * 100, label: `earned to date ${Math.round(earned * 100)}%`, tone: 'target' }],
+            empty: 'No activity carries both an early and a late date.',
+            footnote:
+              'The gap between the two curves is float. Below the late curve is a date the contract does not have. ' +
+              'Earned-to-date is a line rather than a third curve because this platform records progress as it stands, ' +
+              'not as it stood — a curve through one measurement would be invented.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the programme is loaded</h2>
+        ${raw(
+          heatmap({
+            title: 'Activity-days by work package and month',
+            rows: packages,
+            columns: months,
+            values: load,
+            format: (value) => (value === 0 ? 'nothing planned' : `${value} activity-days`),
+            empty: 'No activity carries a work package.',
+            footnote:
+              'The month a package lights up is the month its constraints have to have been cleared by, not the month ' +
+              'to start clearing them. Two bright rows in one column is the resourcing conflict the Gantt above hides ' +
+              'by putting them on different lines.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }

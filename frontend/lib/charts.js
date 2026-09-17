@@ -927,7 +927,7 @@ export function histogram({
   bins,
   empty = 'Not enough measurements to show a distribution',
   emptyDetail,
-  tone = 'accent',
+  tone = 'actual',
   limit,
   limitLabel = '',
   markLabel = '',
@@ -1561,7 +1561,7 @@ export function kpiCard({
  * row, and those are three places that must not each grow their own version.
  */
 /** @param {{values?: Scalar[], tone?: string, width?: number, height?: number, target?: number, format?: Formatter}} options */
-export function sparkline({ values = [], tone = 'accent', width = 180, height = 34, target, format = tickLabel }) {
+export function sparkline({ values = [], tone = 'actual', width = 180, height = 34, target, format = tickLabel }) {
   const points = values.filter(finite).map(Number);
   if (points.length < 2) return '';
   const min = Math.min(...points, ...(finite(target) ? [Number(target)] : []));
@@ -1603,7 +1603,9 @@ export function heatmap({
   desc,
   format = tickLabel,
   empty = 'No activity recorded yet',
-  tone = 'accent',
+  // The data colour, not the platform accent. A heatmap is a "how much" scale,
+  // and the standard makes CONSTRUX Blue the colour of a measurement.
+  tone = 'actual',
   footnote,
 }) {
   if (rows.length === 0 || columns.length === 0) return emptyChart(empty);
