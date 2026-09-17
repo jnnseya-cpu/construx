@@ -879,6 +879,14 @@ input:focus, select:focus, textarea:focus {
 
 /* charts — inline SVG, no library */
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+/*
+ * A card holding a chart sizes to that chart rather than stretching to match a
+ * taller neighbour. A four-bar horizontal chart beside a donut was drawing its
+ * bars and then a field of empty card twice their height, which reads as a
+ * rendering fault. Scoped to cards that actually hold a chart, so the metric
+ * tiles and the register cards keep the equal heights that suit them.
+ */
+.grid > .card:has(figure.chart) { align-self: start; }
 .chart-grid { stroke: var(--line); stroke-width: 1; }
 .chart-axis { fill: var(--text-3); font-size: 9.5px; font-family: var(--mono); }
 .chart-key { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-2); }

@@ -21907,3 +21907,27 @@ Every console page carries charts. The four that do not are `index`, `login`,
 `onboarding` and `signup`, which are the unauthenticated flow rather than
 console screens; `influencers` delegates wholly to `partners`, which carries
 them.
+
+## Two layout defects the command-centre screenshots showed
+
+Found by looking at the screens rather than by a test, which is where layout
+defects always come from.
+
+**The gauge drew over the text beneath it.** Its 240-degree sweep ends thirty
+degrees below the horizontal, so the lowest point of the path was already four
+pixels past the box, and a 14px round cap put the last ink eleven past it.
+`.chart svg` sets `overflow: visible` deliberately — labels sit outside the plot
+— so instead of being clipped the arc was drawn across the card's footnote. The
+box is 234 tall now.
+
+**And it was drawn two and a half times too large.** The frame scales its
+viewBox to the card, so a 320px-wide gauge in an 850px column was magnified
+2.7x and the dial filled two thirds of a screen. The arc keeps its radius and is
+centred in a 560-wide box instead, which puts the scale near 1.5x and the gauge
+at the size of the charts beside it. Same fault as the heatmap's, same fix.
+
+**A chart card stretched to match a taller neighbour.** A four-bar horizontal
+chart beside a donut drew its bars and then a field of empty card twice their
+height, which reads as a rendering fault rather than as spacing. `.grid > .card`
+holding a chart now sizes to its content. Scoped with `:has(figure.chart)` so
+the metric tiles and register cards keep the equal heights that suit them.

@@ -1127,8 +1127,20 @@ export function gauge({
 }) {
   if (!finite(value)) return emptyChart(empty);
 
-  const box = { w: 320, h: 208 };
-  const cx = 160;
+  // Sized so the dial is not blown up, and tall enough for the arc's own ink.
+  //
+  // Width first: the frame scales its viewBox to the card, so a 320px box in an
+  // 850px column was magnified 2.7x and the dial filled two thirds of a screen.
+  // The arc keeps its radius and is centred in a wider box instead, which puts
+  // the scale near 1.5x and the gauge at the size of the charts beside it.
+  //
+  // The 240-degree sweep ends 30 degrees below the horizontal, so the lowest
+  // point of the path is `cy + radius * sin(30°)` = 212 — already past the box
+  // — and a 14px round cap puts the last ink at 219, with the target tick at
+  // 217. `.chart svg` sets `overflow: visible` on purpose, so instead of being
+  // clipped the arc was drawn over the footnote beneath the card.
+  const box = { w: 560, h: 234 };
+  const cx = 280;
   const cy = 158;
   const radius = 108;
   const sweep = (Math.PI * 4) / 3; // 240°
