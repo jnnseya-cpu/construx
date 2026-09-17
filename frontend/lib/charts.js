@@ -1606,6 +1606,16 @@ export function ganttChart({
   /** Draw the float bar and the logic links. Off for a simple timeline. */
   showFloat = true,
   showLinks = true,
+  /**
+   * Time granularity: 'MONTH' (default), 'WEEK' or 'DAY'.
+   *
+   * It changes the gridline the calendar is drawn on *and* the width of the
+   * chart, because those are the same decision. Asking for days on a
+   * two-year programme and keeping the same 760px box would draw seven
+   * hundred gridlines into a grey block — so the box widens with the
+   * granularity and the container scrolls it.
+   */
+  scale: timeScale = 'MONTH',
   empty = 'No dated activities to plot',
   footnote,
 }) {
@@ -1676,21 +1686,41 @@ export function ganttChart({
   const max = Math.max(...dates);
   const rowHeight = 30;
   const left = 210;
-  const box = { w: 760, h: Math.max(120, rows.length * rowHeight + 56) };
+  const spanDays = Math.max(1, Math.round((max - min) / 86_400_000));
+  // Pixels per day at each granularity, and the chart is as wide as the
+  // programme needs rather than as wide as the panel happens to be.
+  const perDay = timeScale === 'DAY' ? 14 : timeScale === 'WEEK' ? 3.2 : 0;
+  const width = perDay > 0 ? Math.max(760, Math.round(left + 40 + spanDays * perDay)) : 760;
+  const box = { w: width, h: Math.max(120, rows.length * rowHeight + 56) };
   const right = box.w - 20;
   const x = scale(min, max, left, right);
   const nowAt = today ?? dataDate ? Date.parse(today ?? dataDate) : Date.now();
 
-  // Month gridlines, because a Gantt with no calendar behind it is a set of
-  // floating rectangles.
+  // Calendar gridlines, because a Gantt with no calendar behind it is a set of
+  // floating rectangles. The step follows the requested granularity, and the
+  // cap is per-scale: 48 months, 120 weeks or 180 days is the point past which
+  // another line stops being a calendar and starts being hatching.
   const months = [];
   const cursor = new Date(min);
-  cursor.setUTCDate(1);
-  cursor.setUTCHours(0, 0, 0, 0);
-  while (cursor.getTime() <= max && months.length < 48) {
-    if (cursor.getTime() >= min) months.push(new Date(cursor));
-    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  if (timeScale === 'MONTH') {
+    cursor.setUTCDate(1);
+  } else if (timeScale === 'WEEK') {
+    // Back to the Monday, so a week gridline is a week somebody recognises.
+    cursor.setUTCDate(cursor.getUTCDate() - ((cursor.getUTCDay() + 6) % 7));
   }
+  cursor.setUTCHours(0, 0, 0, 0);
+  const cap = timeScale === 'DAY' ? 180 : timeScale === 'WEEK' ? 120 : 48;
+  while (cursor.getTime() <= max && months.length < cap) {
+    if (cursor.getTime() >= min) months.push(new Date(cursor));
+    if (timeScale === 'MONTH') cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    else cursor.setUTCDate(cursor.getUTCDate() + (timeScale === 'WEEK' ? 7 : 1));
+  }
+  const gridLabel = (date) =>
+    timeScale === 'MONTH'
+      ? date.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })
+      : timeScale === 'WEEK'
+        ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+        : String(date.getUTCDate());
 
   const dayMs = 86_400_000;
   const geometry = new Map();
@@ -1724,7 +1754,7 @@ export function ganttChart({
       (month) => html`<g class="chart-grid">
         <line x1="${raw(r2(x(month.getTime())))}" y1="30" x2="${raw(r2(x(month.getTime())))}" y2="${raw(box.h - 20)}" />
         <text x="${raw(r2(x(month.getTime())))}" y="22" text-anchor="middle">
-          ${raw(month.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }))}
+          ${raw(gridLabel(month))}
         </text>
       </g>`,
     )}
@@ -1878,6 +1908,278 @@ export function ganttChart({
             })
         : ''
     }`,
+  });
+}
+
+
+/**
+ * A radar chart: several measures for one or more subjects, on radial axes.
+ *
+ * The chart for a *profile* rather than a ranking. A bar chart of six scores
+ * answers "which is highest"; a radar answers "what shape is this", which is
+ * the question behind a supplier scorecard, a bid assessment or a maturity
+ * review — and the shape is what a reader remembers when two of them are drawn
+ * on the same axes.
+ *
+ * Every axis is scaled to the same maximum on purpose. Per-axis scaling makes
+ * every profile look balanced, which is flattering and false: a supplier scoring
+ * 9 on price and 2 on safety should look lopsided, because it is.
+ *
+ * @param {{axes?: string[], series?: {label: string, values: number[], tone?: string}[], max?: number, title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options
+ */
+export function radarChart({ axes = [], series = [], max, title = 'Profile', desc, format = tickLabel, empty = 'Nothing to profile yet', footnote }) {
+  const rows = series.filter((entry) => entry && Array.isArray(entry.values) && entry.values.length === axes.length);
+  if (axes.length < 3 || rows.length === 0) return emptyChart(empty);
+
+  const ceiling = finite(max)
+    ? Number(max)
+    : Math.max(1, ...rows.flatMap((row) => row.values.filter(finite).map(Number)));
+  const box = { w: 520, h: 420 };
+  const cx = box.w / 2;
+  const cy = box.h / 2 + 6;
+  const radius = Math.min(box.w, box.h) / 2 - 62;
+  const step = (Math.PI * 2) / axes.length;
+  // Start at twelve o'clock: a profile read from the top is the convention, and
+  // starting at three puts the first axis where a reader looks last.
+  const angle = (index) => index * step - Math.PI / 2;
+  const at = (index, value) => {
+    const r = (Math.max(0, Math.min(ceiling, num(value))) / ceiling) * radius;
+    return { x: cx + Math.cos(angle(index)) * r, y: cy + Math.sin(angle(index)) * r };
+  };
+  const rings = [0.25, 0.5, 0.75, 1];
+
+  return frame({
+    title,
+    box,
+    footnote,
+    legend: rows.length > 1 ? rows.map((row, index) => ({ label: row.label, tone: row.tone, colour: paint(row.tone, index) })) : undefined,
+    desc:
+      desc ??
+      `${rows.length} profile${rows.length === 1 ? '' : 's'} across ${axes.length} measures, each scaled to ${format(ceiling)}.`,
+    body: html`${rings.map(
+      (ring) => html`<polygon
+        class="chart-grid chart-radar-ring"
+        points="${raw(axes.map((_, index) => { const p = at(index, ceiling * ring); return `${r2(p.x)},${r2(p.y)}`; }).join(' '))}"
+        fill="none"
+      />`,
+    )}
+    ${axes.map((axis, index) => {
+      const outer = at(index, ceiling);
+      const label = at(index, ceiling * 1.18);
+      return html`<g>
+        <line class="chart-grid" x1="${raw(r2(cx))}" y1="${raw(r2(cy))}" x2="${raw(r2(outer.x))}" y2="${raw(r2(outer.y))}" />
+        <text
+          class="chart-cat"
+          x="${raw(r2(label.x))}"
+          y="${raw(r2(label.y))}"
+          text-anchor="${raw(Math.abs(label.x - cx) < 6 ? 'middle' : label.x > cx ? 'start' : 'end')}"
+          dominant-baseline="middle"
+        >${axis}</text>
+      </g>`;
+    })}
+    ${rows.map((row, index) => {
+      const colour = paint(row.tone, index);
+      const points = row.values.map((value, axisIndex) => { const p = at(axisIndex, value); return `${r2(p.x)},${r2(p.y)}`; }).join(' ');
+      return html`<g class="chart-radar">
+        <polygon points="${raw(points)}" fill="${raw(colour)}" fill-opacity="0.18" stroke="${raw(colour)}" stroke-width="1.6">
+          <title>${row.label}: ${raw(row.values.map((value, axisIndex) => `${axes[axisIndex]} ${format(value)}`).join(', '))}</title>
+        </polygon>
+        ${row.values.map((value, axisIndex) => {
+          const p = at(axisIndex, value);
+          return html`<circle class="chart-dot" cx="${raw(r2(p.x))}" cy="${raw(r2(p.y))}" r="3" fill="${raw(colour)}">
+            <title>${row.label} · ${axes[axisIndex]}: ${format(value)}</title>
+          </circle>`;
+        })}
+      </g>`;
+    })}`,
+  });
+}
+
+/**
+ * A Sankey diagram: quantity flowing from one set of things to another.
+ *
+ * The chart for "where did it go". A bar chart of spend by category and a bar
+ * chart of spend by supplier are two true pictures that cannot be read
+ * together; a Sankey is the one picture that holds both and the link between
+ * them, which is the whole question when money moves through stages.
+ *
+ * Two columns only, deliberately. A multi-level Sankey needs a layout solver to
+ * avoid crossings, and a diagram whose ribbons cross arbitrarily is harder to
+ * read than the table it replaced.
+ *
+ * @param {{flows?: {from: string, to: string, value: number, tone?: string}[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options
+ */
+export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickLabel, empty = 'No flow to trace yet', footnote }) {
+  const rows = flows.filter((flow) => flow && flow.from && flow.to && finite(flow.value) && Number(flow.value) > 0);
+  if (rows.length === 0) return emptyChart(empty);
+
+  const sources = [...new Set(rows.map((row) => row.from))];
+  const targets = [...new Set(rows.map((row) => row.to))];
+  const total = rows.reduce((sum, row) => sum + Number(row.value), 0);
+
+  const box = { w: 760, h: Math.max(220, Math.max(sources.length, targets.length) * 46 + 60) };
+  const gap = 10;
+  const nodeWidth = 12;
+  const leftX = 150;
+  const rightX = box.w - 150 - nodeWidth;
+  const usable = box.h - 44 - gap * (Math.max(sources.length, targets.length) - 1);
+
+  const sizeOf = (name, side) =>
+    rows.filter((row) => (side === 'from' ? row.from : row.to) === name).reduce((sum, row) => sum + Number(row.value), 0);
+
+  const place = (names, side) => {
+    const map = new Map();
+    let y = 30;
+    for (const name of names) {
+      const height = Math.max(4, (sizeOf(name, side) / total) * usable);
+      map.set(name, { y, height, used: 0 });
+      y += height + gap;
+    }
+    return map;
+  };
+  const left = place(sources, 'from');
+  const right = place(targets, 'to');
+
+  return frame({
+    title,
+    box,
+    footnote,
+    desc:
+      desc ??
+      `${format(total)} flowing from ${sources.length} source${sources.length === 1 ? '' : 's'} to ${targets.length} destination${targets.length === 1 ? '' : 's'} across ${rows.length} flows.`,
+    body: html`${rows.map((row, index) => {
+      const a = left.get(row.from);
+      const b = right.get(row.to);
+      const height = Math.max(1.5, (Number(row.value) / total) * usable);
+      const y1 = a.y + a.used;
+      const y2 = b.y + b.used;
+      a.used += height;
+      b.used += height;
+      const midX = (leftX + nodeWidth + rightX) / 2;
+      const colour = paint(row.tone, index);
+      // A filled ribbon rather than a stroked curve: the thickness *is* the
+      // quantity, and a stroke of varying width is not a shape a reader can
+      // compare against its neighbour.
+      const d =
+        `M ${r2(leftX + nodeWidth)} ${r2(y1)} ` +
+        `C ${r2(midX)} ${r2(y1)}, ${r2(midX)} ${r2(y2)}, ${r2(rightX)} ${r2(y2)} ` +
+        `L ${r2(rightX)} ${r2(y2 + height)} ` +
+        `C ${r2(midX)} ${r2(y2 + height)}, ${r2(midX)} ${r2(y1 + height)}, ${r2(leftX + nodeWidth)} ${r2(y1 + height)} Z`;
+      return html`<path class="chart-sankey" d="${raw(d)}" fill="${raw(colour)}" fill-opacity="0.26">
+        <title>${row.from} → ${row.to}: ${format(row.value)} (${raw(String(Math.round((Number(row.value) / total) * 100)))}%)</title>
+      </path>`;
+    })}
+    ${[...left.entries()].map(([name, node], index) => html`<g>
+      <rect class="chart-node" x="${raw(r2(leftX))}" y="${raw(r2(node.y))}" width="${raw(nodeWidth)}" height="${raw(r2(node.height))}" rx="2" fill="${raw(paint(undefined, index))}" />
+      <text class="chart-cat" x="${raw(leftX - 10)}" y="${raw(r2(node.y + node.height / 2))}" text-anchor="end" dominant-baseline="middle">
+        <title>${name}: ${format(sizeOf(name, 'from'))}</title>${fitLabel(name, leftX - 18)}
+      </text>
+    </g>`)}
+    ${[...right.entries()].map(([name, node], index) => html`<g>
+      <rect class="chart-node" x="${raw(r2(rightX))}" y="${raw(r2(node.y))}" width="${raw(nodeWidth)}" height="${raw(r2(node.height))}" rx="2" fill="${raw(paint(undefined, index + 3))}" />
+      <text class="chart-cat" x="${raw(rightX + nodeWidth + 10)}" y="${raw(r2(node.y + node.height / 2))}" text-anchor="start" dominant-baseline="middle">
+        <title>${name}: ${format(sizeOf(name, 'to'))}</title>${fitLabel(name, box.w - rightX - nodeWidth - 18)}
+      </text>
+    </g>`)}`,
+  });
+}
+
+/**
+ * A flowchart: steps in a process, and what each one can lead to.
+ *
+ * Laid out in rows by *depth* — how many steps from the start — rather than by
+ * declaration order, so the picture shows the shape of the process rather than
+ * the order somebody happened to type it. A step that several others lead to
+ * sits below all of them, which is what makes a convergence visible.
+ *
+ * Decision nodes are drawn as diamonds and terminal nodes as stadiums, because
+ * a reader scanning for "where does this stop" should not have to read every
+ * label to find out.
+ *
+ * @param {{steps?: {id: string, label: string, kind?: 'START'|'STEP'|'DECISION'|'END', tone?: string, next?: string[]}[], title?: string, desc?: string, empty?: string, footnote?: string}} options
+ */
+export function flowChart({ steps = [], title = 'Process', desc, empty = 'No process to draw yet', footnote }) {
+  const nodes = steps.filter((step) => step && step.id && step.label);
+  if (nodes.length === 0) return emptyChart(empty);
+
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  // Depth by breadth-first walk from every node nothing points at. A cycle
+  // cannot deepen a node twice, so a process that loops back still lays out.
+  const targeted = new Set(nodes.flatMap((node) => (node.next ?? []).filter((id) => byId.has(id))));
+  const roots = nodes.filter((node) => !targeted.has(node.id));
+  const depth = new Map();
+  let frontier = (roots.length > 0 ? roots : [nodes[0]]).map((node) => node.id);
+  let level = 0;
+  const seen = new Set(frontier);
+  while (frontier.length > 0 && level < 24) {
+    for (const id of frontier) depth.set(id, level);
+    const next = [];
+    for (const id of frontier) {
+      for (const child of byId.get(id)?.next ?? []) {
+        if (byId.has(child) && !seen.has(child)) { seen.add(child); next.push(child); }
+      }
+    }
+    frontier = next;
+    level += 1;
+  }
+  for (const node of nodes) if (!depth.has(node.id)) depth.set(node.id, level);
+
+  const rows = [];
+  for (const node of nodes) {
+    const d = depth.get(node.id) ?? 0;
+    (rows[d] ??= []).push(node);
+  }
+
+  const boxW = 150;
+  const boxH = 44;
+  const gapY = 40;
+  const box = { w: 760, h: Math.max(160, rows.length * (boxH + gapY) + 40) };
+  const centres = new Map();
+  rows.forEach((row, rowIndex) => {
+    const width = row.length * boxW + (row.length - 1) * 26;
+    let x = (box.w - width) / 2;
+    for (const node of row) {
+      centres.set(node.id, { x: x + boxW / 2, y: 28 + rowIndex * (boxH + gapY) + boxH / 2 });
+      x += boxW + 26;
+    }
+  });
+
+  return frame({
+    title,
+    box,
+    footnote,
+    desc: desc ?? `${nodes.length} steps over ${rows.length} stage${rows.length === 1 ? '' : 's'}.`,
+    body: html`${nodes.flatMap((node) =>
+      (node.next ?? [])
+        .filter((id) => byId.has(id) && centres.has(id))
+        .map((id) => {
+          const a = centres.get(node.id);
+          const b = centres.get(id);
+          const y1 = a.y + boxH / 2;
+          const y2 = b.y - boxH / 2;
+          return html`<g class="chart-flow-link">
+            <path d="${raw(`M ${r2(a.x)} ${r2(y1)} C ${r2(a.x)} ${r2((y1 + y2) / 2)}, ${r2(b.x)} ${r2((y1 + y2) / 2)}, ${r2(b.x)} ${r2(y2)}`)}" fill="none" />
+            <path d="${raw(`M ${r2(b.x)} ${r2(y2)} l -4 -5 l 8 0 Z`)}" />
+          </g>`;
+        }),
+    )}
+    ${nodes.map((node, index) => {
+      const at = centres.get(node.id);
+      const kind = node.kind ?? 'STEP';
+      const colour = paint(node.tone, index);
+      const x = at.x - boxW / 2;
+      const y = at.y - boxH / 2;
+      const shape =
+        kind === 'DECISION'
+          ? html`<path class="chart-flow-node" d="${raw(`M ${r2(at.x)} ${r2(y)} L ${r2(x + boxW)} ${r2(at.y)} L ${r2(at.x)} ${r2(y + boxH)} L ${r2(x)} ${r2(at.y)} Z`)}" fill="${raw(colour)}" fill-opacity="0.2" stroke="${raw(colour)}" />`
+          : html`<rect class="chart-flow-node" x="${raw(r2(x))}" y="${raw(r2(y))}" width="${raw(boxW)}" height="${raw(boxH)}" rx="${raw(kind === 'START' || kind === 'END' ? boxH / 2 : 5)}" fill="${raw(colour)}" fill-opacity="0.2" stroke="${raw(colour)}" />`;
+      return html`<g>
+        ${shape}
+        <text class="chart-flow-label" x="${raw(r2(at.x))}" y="${raw(r2(at.y))}" text-anchor="middle" dominant-baseline="middle">
+          <title>${node.label}${raw(kind === 'DECISION' ? ' · decision' : kind === 'END' ? ' · ends here' : '')}</title>${fitLabel(node.label, boxW - 16)}
+        </text>
+      </g>`;
+    })}`,
   });
 }
 

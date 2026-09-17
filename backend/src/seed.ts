@@ -32,6 +32,7 @@ import * as claimsEngine from './engines/claims.ts';
 import * as cost from './engines/cost.ts';
 import * as handover from './engines/handover.ts';
 import * as planning from './engines/planning.ts';
+import * as resources from './domain/resources.ts';
 import * as quality from './engines/quality.ts';
 import * as safety from './engines/safety.ts';
 import { scoreRisk } from './engines/maths/risk.ts';
@@ -3452,6 +3453,33 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     { predecessorId: taskIds[5] as string, successorId: taskIds[6] as string, type: 'FS', lag: 0 },
     { predecessorId: taskIds[6] as string, successorId: taskIds[7] as string, type: 'FS', lag: 0 },
   ]);
+
+  // Resources, so the demand histogram has something to draw and the levelling
+  // engine has something to level. Without them the critical path assumes there
+  // is enough of everything — which is exactly the assumption that lets two
+  // pours needing the same gang sit side by side on a chart that looks fine.
+  //
+  // The numbers are chosen so the programme is genuinely short of one of them:
+  // the concrete gang is committed to the base slabs and the clarifier walls at
+  // the same time, which is the overlap `linkTasks` creates with the SS+20 on
+  // A500. A resource position where everything fits demonstrates nothing.
+  resources.defineResource(plannerCtx, { id: 'GANG_CONCRETE', name: 'Concrete gang', type: 'LABOUR', unit: 'gang', availablePerDay: 2, dayRateMinor: 180_000 });
+  resources.defineResource(plannerCtx, { id: 'EXC_360', name: '360 excavator', type: 'PLANT', unit: 'machine', availablePerDay: 3, dayRateMinor: 62_000 });
+  resources.defineResource(plannerCtx, { id: 'CRANE_50T', name: '50t crawler crane', type: 'PLANT', unit: 'machine', availablePerDay: 1, dayRateMinor: 145_000 });
+  resources.defineResource(plannerCtx, { id: 'PIPEFITTERS', name: 'Pipefitting gang', type: 'SUBCONTRACT', unit: 'gang', availablePerDay: 2, dayRateMinor: 210_000 });
+
+  for (const [index, assignment] of [
+    { resourceId: 'EXC_360', unitsPerDay: 2 },       // A100 site establishment
+    { resourceId: 'EXC_360', unitsPerDay: 3 },       // A200 bulk excavation
+    { resourceId: 'GANG_CONCRETE', unitsPerDay: 2 }, // A300 base slabs
+    { resourceId: 'GANG_CONCRETE', unitsPerDay: 2 }, // A400 clarifier walls — overlaps A500
+    { resourceId: 'GANG_CONCRETE', unitsPerDay: 1 }, // A500 filter gallery — the overlap
+    { resourceId: 'PIPEFITTERS', unitsPerDay: 2 },   // A600 process pipework
+    { resourceId: 'CRANE_50T', unitsPerDay: 1 },     // A700 watertightness testing
+    { resourceId: 'EXC_360', unitsPerDay: 1 },       // A800 reinstatement
+  ].entries()) {
+    resources.assignResource(plannerCtx, { taskId: taskIds[index] as string, ...assignment });
+  }
 
   const programme = planning.recalculateProgramme(plannerCtx, { contractualDurationDays: 400 });
   planning.approveBaseline(plannerCtx, {

@@ -22,6 +22,18 @@ import { blockedReason, can, draw, state } from '../app.js';
  * show a bank holiday, a seven-day cure or an activity that started before its
  * predecessor finished.
  */
+/**
+ * How the Gantt is drawn: the time granularity and whether every activity is
+ * shown.
+ *
+ * Module-scoped rather than passed down, because it is a property of how this
+ * person is *looking* at the programme, not of the programme. Changing it
+ * re-renders through `draw()` like every other state change on the console, so
+ * there is one render path and no second one that could drift.
+ */
+let ganttScale = 'MONTH';
+let ganttAll = false;
+
 function datedPanel(view, links = []) {
   if (view?.error) {
     return html`<div class="card" style="margin-bottom:14px">
@@ -95,9 +107,23 @@ function datedPanel(view, links = []) {
             }
 
             <div style="padding:13px 17px 0">
+              <div class="actions" style="margin-bottom:9px;gap:6px">
+                <span class="metric-sub" style="margin-right:4px">Timescale</span>
+                ${['MONTH', 'WEEK', 'DAY'].map(
+                  (option) => html`<button
+                    class="btn ${raw(ganttScale === option ? '' : 'quiet')} sm"
+                    data-gantt-scale="${option}"
+                  >${option.charAt(0)}${raw(option.slice(1).toLowerCase())}</button>`,
+                )}
+              </div>
+              <!-- The chart is as wide as the programme needs at this
+                   granularity; the container scrolls it rather than squeezing
+                   six hundred gridlines into a panel. -->
+              <div class="gantt-scroll">
               ${ganttChart({
                 title: 'Programme against baseline',
-                tasks: activities.slice(0, 60).map((activity) => ({
+                scale: ganttScale,
+                tasks: (ganttAll ? activities : activities.slice(0, 60)).map((activity) => ({
                   id: activity.id,
                   name: `${activity.activityCode} ${activity.name}`,
                   start: activity.earlyStart,
@@ -122,13 +148,20 @@ function datedPanel(view, links = []) {
                 links,
                 dataDate: view.lastRun?.options?.dataDate,
               })}
+              </div>
               ${
-                activities.length > 60
+                activities.length > 60 && !ganttAll
                   ? html`<p style="font-size:12px;color:var(--text-3);margin:6px 0 0">
-                      Showing the first 60 of ${activities.length} activities. A chart with six hundred bars is a grey
+                      Showing the first 60 of ${activities.length} activities — a chart with six hundred bars is a grey
                       block, not a programme.
+                      <button class="btn quiet sm" data-gantt="all" style="margin-left:6px">Show all ${activities.length}</button>
                     </p>`
-                  : ''
+                  : activities.length > 60
+                    ? html`<p style="font-size:12px;color:var(--text-3);margin:6px 0 0">
+                        All ${activities.length} activities.
+                        <button class="btn quiet sm" data-gantt="some" style="margin-left:6px">Back to the first 60</button>
+                      </p>`
+                    : ''
               }
             </div>
 
@@ -1582,6 +1615,23 @@ export async function programme(root) {
       ],
     },
   };
+
+  // The Gantt's own view controls. One handler for the panel rather than one
+  // per button, and both re-render through `draw()` so there is a single render
+  // path for every state change on this screen.
+  root.addEventListener('click', (event) => {
+    const scale = event.target.closest('[data-gantt-scale]');
+    if (scale) {
+      ganttScale = scale.dataset.ganttScale;
+      void draw();
+      return;
+    }
+    const span = event.target.closest('[data-gantt]');
+    if (span) {
+      ganttAll = span.dataset.gantt === 'all';
+      void draw();
+    }
+  });
 
   void insightPanel(root.querySelector('#programme-insight'), {
     projectId,

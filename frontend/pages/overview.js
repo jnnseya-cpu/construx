@@ -1,7 +1,7 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { badge, date, days, drillable, html, humanise, metric, money, pct, raw, render, statusTone, table, time, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
-import { lineChart, pieChart } from '../lib/charts.js';
+import { barChart, boxPlot, lineChart, pieChart, scatterPlot, radarChart } from '../lib/charts.js';
 import { can, draw, state } from '../app.js';
 import { sectorLabel } from '../lib/enums.js';
 
@@ -322,6 +322,8 @@ export async function overview(root) {
 
       ${commercialBand(commercial)}
 
+      ${projectCharts(bundle, commercial)}
+
       <div class="grid g2">
         <div class="card">
           <h2>Open risk register</h2>
@@ -524,4 +526,138 @@ function ribaRibbon(riba) {
       : html`<div class="metric-sub" style="margin-top:6px">
           No design maturity has been assessed, so the record cannot say which design stage has been reached.
         </div>`}`;
+}
+
+/**
+ * The project, drawn from the records the screen already fetched.
+ *
+ * Nothing new is requested: `entityBundle` above already pulls the CVR, the
+ * earned-value snapshots, the risk register, the variations, the clashes and
+ * the defects, and every one of them was being rendered as a row in a list or
+ * not at all. These are the same records as shapes.
+ *
+ * The risk scatter is the one worth explaining. A register sorted by expected
+ * cost answers "what is worst" and hides *why* — a near-certain small problem
+ * and an unlikely catastrophe can carry the same expected value and need
+ * completely different responses. Probability against impact separates them,
+ * which is the whole reason a risk matrix is a matrix.
+ */
+function projectCharts(bundle, commercial) {
+  const evm = bundle.EarnedValueSnapshot ?? [];
+  const risks = (bundle.RiskRegisterItem ?? []).filter((risk) => risk.status === 'OPEN');
+  const variations = bundle.Variation ?? [];
+  const defects = bundle.Defect ?? [];
+  const clashes = bundle.Clash ?? [];
+  if (evm.length === 0 && risks.length === 0 && variations.length === 0) return '';
+
+  const cur = commercial?.header?.currency ?? 'GBP';
+
+  // Performance indices over the snapshots taken. 1.0 is the line where the
+  // project is doing what it said it would, and it is drawn because a CPI of
+  // 0.94 means nothing to a reader who does not know where par is.
+  const performance = evm.map((snapshot) => ({
+    label: snapshot.period ?? String(snapshot.takenAt ?? '').slice(0, 7),
+    cpi: snapshot.costPerformanceIndex,
+    spi: snapshot.schedulePerformanceIndex,
+  }));
+
+  // Probability against impact. The dot is the risk; its size is what the
+  // register expects it to cost.
+  const matrix = risks
+    .filter((risk) => risk.costImpact)
+    .map((risk) => ({
+      x: Math.round((risk.probability ?? 0) * 100),
+      y: (risk.costImpact.mostLikely ?? 0) / 100,
+      label: risk.title,
+      tone: risk.severity === 'HIGH' ? 'bad' : risk.severity === 'MEDIUM' ? 'warn' : '',
+    }));
+
+  // The three-point estimate each risk carries, as a spread. A single expected
+  // cost is one number standing in for a range somebody actually assessed, and
+  // the range is what a contingency argument turns on.
+  const spreads = risks
+    .filter((risk) => risk.costImpact)
+    .slice(0, 6)
+    // `boxPlot` takes the measurements and works out the quartiles itself, so
+    // the three points are handed over as three values rather than pre-chewed
+    // into a five-number summary this file would have had to invent.
+    .map((risk) => ({
+      label: risk.title,
+      values: [
+        (risk.costImpact.optimistic ?? 0) / 100,
+        (risk.costImpact.mostLikely ?? 0) / 100,
+        (risk.costImpact.pessimistic ?? 0) / 100,
+      ],
+      tone: risk.severity === 'HIGH' ? 'bad' : risk.severity === 'MEDIUM' ? 'warn' : '',
+    }));
+
+  const byStatus = [...new Set(variations.map((variation) => variation.status))].map((status) => ({
+    label: humanise(String(status)),
+    value: variations.filter((variation) => variation.status === status).length,
+  }));
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Cost and schedule performance</h2>
+        ${raw(
+          lineChart({
+            title: 'CPI and SPI',
+            data: performance,
+            series: [
+              { key: 'cpi', label: 'Cost performance' },
+              { key: 'spi', label: 'Schedule performance' },
+            ],
+            format: (value) => Number(value).toFixed(2),
+            reference: [{ value: 1, label: 'on plan', tone: 'ok' }],
+            empty: 'No earned-value snapshot has been taken on this project.',
+            footnote: 'Below 1.00 is spending faster, or earning slower, than the plan said.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Risk: how likely against how much</h2>
+        ${raw(
+          scatterPlot({
+            title: 'Probability against impact',
+            points: matrix,
+            xLabel: 'Probability (%)',
+            yLabel: 'Most likely cost',
+            formatX: (value) => `${value}%`,
+            formatY: (value) => money(value * 100, cur),
+            empty: 'No open risk carries a three-point cost estimate.',
+            footnote: 'Sorting a register by expected cost hides the difference between a likely small problem and an unlikely disaster.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What each risk could cost</h2>
+        ${raw(
+          boxPlot({
+            title: 'Optimistic, most likely, pessimistic',
+            groups: spreads,
+            format: (value) => money(value * 100, cur),
+            empty: 'No open risk carries a three-point estimate.',
+            footnote: 'The range each risk was assessed at, not the single expected figure derived from it.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the change is</h2>
+        ${raw(
+          pieChart({
+            title: 'Variations by status',
+            data: byStatus,
+            format: (value) => `${value} variation${value === 1 ? '' : 's'}`,
+            centreLabel: String(variations.length),
+            empty: 'No variation has been raised on this project.',
+            footnote: `${defects.length} defect${defects.length === 1 ? '' : 's'} and ${clashes.length} clash${clashes.length === 1 ? '' : 'es'} also on the record.`,
+          }),
+        )}
+      </div>
+    </div>
+  `;
 }
