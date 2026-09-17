@@ -1933,6 +1933,7 @@ function cashCurve(forward) {
         title: 'Cumulative receipts',
         data: rows,
         series: [{ key: 'cash', label: 'Cumulative in', colour: 'actual' }],
+        metric: 'CUMULATIVE_RECEIPTS',
         forecastFrom,
         ...(banded ? { band: { low: 'low', high: 'high' } } : {}),
         format: (value) => money(value),

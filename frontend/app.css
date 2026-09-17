@@ -985,6 +985,19 @@ input:focus, select:focus, textarea:focus {
 
 .chart-data { margin-top: 12px; max-height: 320px; overflow: auto; }
 .chart-data table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* The governed definition, under the caption of the data panel.
+ *
+ * Its own line because it is a different kind of sentence from the chart's
+ * description: the description says what this picture shows, the definition
+ * says what the metric means everywhere in the platform. */
+.chart-metric {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.5;
+  max-width: 78ch;
+}
 .chart-data caption {
   text-align: left;
   font-size: 11px;

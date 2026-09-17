@@ -458,6 +458,7 @@ function riskCharts(bundle, contingency) {
           categories.length >= 3
             ? radarChart({
                 title: 'Risks carrying a mitigation, by category',
+                metric: 'CONTROL_COVERAGE_PERCENT',
                 axes: categories,
                 max: 100,
                 series: [{ label: 'Covered', values: covered, tone: 'actual' }],

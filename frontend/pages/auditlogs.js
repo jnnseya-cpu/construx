@@ -307,6 +307,7 @@ function auditCharts(governance, security, logs) {
         ${raw(
           barChart({
             title: 'Events verified per chain',
+            metric: 'CHAIN_EVENTS_VERIFIED',
             horizontal: true,
             data: chains,
             format: (value) => `${value} event${value === 1 ? '' : 's'}`,

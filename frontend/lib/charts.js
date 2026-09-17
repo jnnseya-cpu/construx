@@ -1,3 +1,4 @@
+import { metricNote } from '../../shared/metrics.js';
 import { esc, html, raw } from './ui.js';
 
 /**
@@ -383,8 +384,23 @@ function chartId(title) {
  * A chart that passes no `table` still renders. It does not get a data panel,
  * and `backend/tests/chartdata.test.ts` fails, which is the intended pressure.
  */
-function frame({ title, desc, body, box = BOX, legend, footnote, className = '', table }) {
+function frame({ title, desc, body, box = BOX, legend, footnote, className = '', table, metric }) {
   const id = chartId(title);
+  /*
+   * The governed definition, where the chart names one.
+   *
+   * Section 8 requires every chart to use a governed semantic metric carrying a
+   * name, definition, formula, unit, owner and cadence. Naming the metric here
+   * rather than restating it in a footnote is the point: two screens drawing
+   * "margin" against two different denominators is how a meeting spends twenty
+   * minutes discovering that the two people looking at them mean different
+   * numbers.
+   *
+   * It goes into the spoken description as well as the data panel, because the
+   * reader most likely to be misled by an undefined metric is the one who
+   * cannot see which axis it sits on.
+   */
+  const governed = metric ? metricNote(metric) : '';
   const rows = table?.rows ?? [];
   const columns = table?.columns ?? [];
 
@@ -407,7 +423,7 @@ function frame({ title, desc, body, box = BOX, legend, footnote, className = '',
       class="chart-svg"
     >
       <title>${title}</title>
-      <desc>${desc}</desc>
+      <desc>${desc}${governed ? html` ${governed}` : ''}</desc>
       ${body}
     </svg>
     ${legend ? html`<figcaption class="chart-legend">${legend}</figcaption>` : ''}
@@ -415,7 +431,9 @@ function frame({ title, desc, body, box = BOX, legend, footnote, className = '',
     ${rows.length > 0
       ? html`<div class="chart-data" id="${raw(id)}-data" hidden>
           <table>
-            <caption>${title}${desc ? html` — ${desc}` : ''}</caption>
+            <caption>
+              ${title}${desc ? html` — ${desc}` : ''}${governed ? html`<span class="chart-metric">${governed}</span>` : ''}
+            </caption>
             <thead>
               <tr>${columns.map((column) => html`<th scope="col">${column}</th>`)}</tr>
             </thead>
@@ -506,6 +524,9 @@ export function barChart({
   format = tickLabel,
   empty = 'Nothing to compare yet',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const rows = data.filter((row) => row && row.label !== undefined);
   if (rows.length === 0) return emptyChart(empty);
@@ -525,7 +546,7 @@ export function barChart({
     );
   }
 
-  if (horizontal) return horizontalBars({ rows, keys, title, desc, format, footnote });
+  if (horizontal) return horizontalBars({ rows, keys, title, desc, format, footnote, metric });
 
   const totals = rows.map((row) => (stacked ? keys.reduce((sum, k) => sum + valueOf(row, k.key), 0) : Math.max(...keys.map((k) => valueOf(row, k.key)))));
   const lows = rows.map((row) => (stacked ? 0 : Math.min(...keys.map((k) => valueOf(row, k.key)))));
@@ -561,6 +582,7 @@ export function barChart({
   });
 
   return frame({
+    metric,
     title,
     desc: desc ?? `${rows.length} categor${rows.length === 1 ? 'y' : 'ies'}, ${keys.length} series. Highest ${format(Math.max(...totals))}.`,
     footnote,
@@ -602,7 +624,7 @@ function fitLabel(label, gutterPx, fontPx = 10.5) {
   return text.length <= budget ? text : `${text.slice(0, budget - 1).trimEnd()}…`;
 }
 
-function horizontalBars({ rows, keys, title, desc, format, footnote }) {
+function horizontalBars({ rows, keys, title, desc, format, footnote, metric }) {
   const box = { w: 720, h: Math.max(120, 34 * rows.length + 40) };
   const pad = { top: 12, right: 60, bottom: 26, left: 168 };
   const area = plot(box, pad);
@@ -611,6 +633,7 @@ function horizontalBars({ rows, keys, title, desc, format, footnote }) {
   const band = area.h / rows.length;
 
   return frame({
+    metric,
     title,
     desc: desc ?? `${rows.length} rows ranked by value.`,
     table: {
@@ -696,6 +719,9 @@ export function lineChart({
    * is shaded behind the line and named in the caption.
    */
   band,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const rows = data.filter((row) => row && row.label !== undefined);
   if (rows.length === 0) return emptyChart(empty);
@@ -844,6 +870,7 @@ export function lineChart({
   });
 
   return frame({
+    metric,
     title,
     desc:
       desc ??
@@ -914,6 +941,9 @@ export function pieChart({
   empty = 'Nothing to break down yet',
   centreLabel,
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const parts = data.filter((slice) => slice && finite(slice.value) && Number(slice.value) > 0);
   if (parts.length === 0) return emptyChart(empty);
@@ -984,6 +1014,7 @@ export function pieChart({
   });
 
   return frame({
+    metric,
     title,
     box,
     desc: desc ?? `${slices.length} parts of ${format(total)}. Largest ${slices.reduce((a, b) => (Number(a.value) > Number(b.value) ? a : b)).label}.`,
@@ -1041,6 +1072,9 @@ export function histogram({
   markLabel = '',
   markPast = 'above',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   // Two ways in, one picture out.
   //
@@ -1123,6 +1157,7 @@ export function histogram({
   const label = (bucket) => (preBinned ? String(bucket.from) : format(bucket.from));
 
   return frame({
+    metric,
     title,
     footnote,
     table: {
@@ -1227,6 +1262,9 @@ export function scatterPlot({
   empty = 'Not enough paired measurements to plot',
   tone = 'info',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const data = points.filter((point) => point && finite(point.x) && finite(point.y));
   if (data.length < 2) return emptyChart(empty);
@@ -1242,6 +1280,7 @@ export function scatterPlot({
   const line = fit ? leastSquares(xs, ys) : undefined;
 
   return frame({
+    metric,
     title,
     footnote,
     table: {
@@ -1332,6 +1371,9 @@ export function bubbleChart({
   formatZ = tickLabel,
   empty = 'Not enough measurements to plot',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const data = points.filter((p) => p && finite(p.x) && finite(p.y) && finite(p.z) && Number(p.z) >= 0);
   if (data.length === 0) return emptyChart(empty);
@@ -1348,6 +1390,7 @@ export function bubbleChart({
   const radius = (z) => (maxZ <= 0 ? 8 : 5 + Math.sqrt(Number(z) / maxZ) * 26);
 
   return frame({
+    metric,
     title,
     footnote,
     table: {
@@ -1397,6 +1440,9 @@ export function boxPlot({
   format = tickLabel,
   empty = 'Not enough measurements to show a spread',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const boxes = groups
     .map((group) => ({ label: group.label, stats: quartiles((group.values ?? []).filter(finite).map(Number)), tone: group.tone }))
@@ -1411,6 +1457,7 @@ export function boxPlot({
   const width = Math.min(64, band * 0.5);
 
   return frame({
+    metric,
     title,
     footnote,
     table: {
@@ -1518,6 +1565,9 @@ export function gauge({
   label,
   empty = 'Not measured yet',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   if (!finite(value)) return emptyChart(empty);
 
@@ -1553,6 +1603,7 @@ export function gauge({
   const resolved = tone ?? (target === undefined ? 'actual' : Number(value) >= Number(target) ? 'target' : 'warn');
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -1715,6 +1766,9 @@ export function heatmap({
   // and the standard makes CONSTRUX Blue the colour of a measurement.
   tone = 'actual',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   if (rows.length === 0 || columns.length === 0) return emptyChart(empty);
 
@@ -1761,6 +1815,7 @@ export function heatmap({
   const left = 150 + (box.w - natural) / 2;
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -1830,6 +1885,9 @@ export function funnelChart({
   format = tickLabel,
   empty = 'Nothing has entered the funnel yet',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const steps = stages.filter((stage) => stage && finite(stage.value));
   if (steps.length === 0) return emptyChart(empty);
@@ -1844,6 +1902,7 @@ export function funnelChart({
   const stageColours = assignColours(steps);
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -1910,6 +1969,9 @@ export function waterfallChart({
   format = tickLabel,
   empty = 'Nothing to build up yet',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const entries = steps.filter((step) => step && finite(step.value));
   if (entries.length === 0) return emptyChart(empty);
@@ -1937,6 +1999,7 @@ export function waterfallChart({
   const width = Math.min(56, band * 0.62);
 
   return frame({
+    metric,
     title,
     footnote,
     table: {
@@ -2003,6 +2066,9 @@ export function treemap({
   format = tickLabel,
   empty = 'Nothing to size yet',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   const nodes = items.filter((item) => item && finite(item.value) && Number(item.value) > 0);
   if (nodes.length === 0) return emptyChart(empty);
@@ -2014,6 +2080,7 @@ export function treemap({
   const tileColours = assignColours(sorted);
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -2174,6 +2241,9 @@ export function ganttChart({
   scale: timeScale = 'MONTH',
   empty = 'No dated activities to plot',
   footnote,
+
+  /** The governed metric this chart draws, from `shared/metrics.js`. */
+  metric,
 }) {
   // `finish` alongside `end`, and `name` alongside `label`, because a
   // programme record calls them that and translating at every call site is how
@@ -2307,6 +2377,7 @@ export function ganttChart({
   const negativeFloat = bars.filter((bar) => finite(bar.totalFloat) && Number(bar.totalFloat) < 0).length;
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -2510,7 +2581,7 @@ export function ganttChart({
  *
  * @param {{axes?: string[], series?: {label: string, values: number[], tone?: string}[], max?: number, title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options
  */
-export function radarChart({ axes = [], series = [], max, title = 'Profile', desc, format = tickLabel, empty = 'Nothing to profile yet', footnote }) {
+export function radarChart({ axes = [], series = [], max, title = 'Profile', desc, format = tickLabel, empty = 'Nothing to profile yet', footnote, metric }) {
   const rows = series.filter((entry) => entry && Array.isArray(entry.values) && entry.values.length === axes.length);
   if (axes.length < 3 || rows.length === 0) return emptyChart(empty);
   // The standard's ceiling, and a real one: past eight spokes the polygon stops
@@ -2542,6 +2613,7 @@ export function radarChart({ axes = [], series = [], max, title = 'Profile', des
   const rings = [0.25, 0.5, 0.75, 1];
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -2606,7 +2678,7 @@ export function radarChart({ axes = [], series = [], max, title = 'Profile', des
  *
  * @param {{flows?: {from: string, to: string, value: number, tone?: string}[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options
  */
-export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickLabel, empty = 'No flow to trace yet', footnote }) {
+export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickLabel, empty = 'No flow to trace yet', footnote, metric }) {
   const rows = flows.filter((flow) => flow && flow.from && flow.to && finite(flow.value) && Number(flow.value) > 0);
   if (rows.length === 0) return emptyChart(empty);
 
@@ -2638,6 +2710,7 @@ export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickL
   const right = place(targets, 'to');
 
   return frame({
+    metric,
     title,
     box,
     footnote,
@@ -2707,7 +2780,7 @@ export function sankeyDiagram({ flows = [], title = 'Flow', desc, format = tickL
  *
  * @param {{steps?: {id: string, label: string, kind?: 'START'|'STEP'|'DECISION'|'END', tone?: string, next?: string[]}[], title?: string, desc?: string, empty?: string, footnote?: string}} options
  */
-export function flowChart({ steps = [], title = 'Process', desc, empty = 'No process to draw yet', footnote }) {
+export function flowChart({ steps = [], title = 'Process', desc, empty = 'No process to draw yet', footnote, metric }) {
   const nodes = steps.filter((step) => step && step.id && step.label);
   if (nodes.length === 0) return emptyChart(empty);
 
@@ -2754,6 +2827,7 @@ export function flowChart({ steps = [], title = 'Process', desc, empty = 'No pro
   });
 
   return frame({
+    metric,
     title,
     box,
     footnote,

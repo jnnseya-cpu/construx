@@ -22322,3 +22322,71 @@ date axis was fifty-two labels in a band 22px apart, and the calendar became an
 unreadable smear exactly where somebody reads dates off it. Every gridline is
 kept — they are the calendar the bars are measured against — and only the text
 is thinned, to whatever interval gives a label its width.
+
+## Section 8: the governed metric layer, and the render target measured
+
+### What each number on a chart actually means
+
+`shared/metrics.js` is a closed catalogue carrying, for every metric a chart
+draws: label, definition, formula, unit, owner, cadence and source. Served as
+the same bytes the backend imports, like `vocabulary.js` — the console holds the
+definition rather than a copy of it.
+
+The failure it prevents is specific. Two screens draw "margin", one against the
+tender and one against the current forecast, both label the axis "Margin %", and
+the meeting spends twenty minutes discovering the two people looking at them are
+discussing different numbers. `FORECAST_MARGIN_PERCENT` and
+`MARGIN_EROSION_POINTS` are now two entries that cannot be confused.
+
+A chart names its metric and `frame()` puts the definition in **both** the data
+panel and the SVG `<desc>`, because the reader most likely to be misled by an
+undefined metric is the one who cannot see which axis it sits on.
+
+`cadence` is deliberately not a refresh schedule — nothing here is cached or
+recomputed on a timer. It is how often the *record* moves, which is what a
+reader is actually asking when they ask how fresh a figure is.
+
+**What the catalogue never carries is a value.** That would be a second source
+of truth for every number in the platform; the engines compute values, under
+permission. `backend/tests/metrics.test.ts` asserts it, along with: every metric
+has all six fields, units and cadences come from the closed lists, the owner is
+a role the platform actually has, no two metrics share a label, and — the one
+that earns its place — **no chart names a metric the catalogue does not
+define**. That is the failure a catalogue really has: not being wrong, but
+quietly ceasing to be where definitions live because somebody passed a string
+that looked right.
+
+Threading `metric` through the kit was itself caught by `chartcalls.test.ts`,
+which failed every call site until all seventeen chart functions accepted and
+forwarded it.
+
+Trial and billed AI consumption are two metrics, and the test asserts the trial
+definition says it is never summed with billed — the standard's own acceptance
+criterion, held in the place the definition lives.
+
+### The render target, measured
+
+Section 8 sets "less than 2.5 seconds at the 75th percentile" for initial
+dashboard render. Measured in Chromium over ten runs per screen, timing from
+navigation to the first chart being on the page:
+
+| Screen | p50 | p75 | p95 |
+|---|---|---|---|
+| Command Centre | 403ms | **542ms** | 564ms |
+| Project Command Centre | 633ms | **645ms** | 683ms |
+| Enterprise & Portfolio | 497ms | **652ms** | 693ms |
+| Programme | 519ms | **693ms** | 716ms |
+| Commercial | 486ms | **672ms** | 696ms |
+
+Worst p75 is 693ms against a 2,500ms target.
+
+**A correction to the first measurement.** It reported a p95 of thirty seconds
+on three screens — one run in eight rendering no charts at all. Chased rather
+than dismissed, and it was the harness: signing in once per run trips the
+platform's own brute-force limiter after four attempts, the fourth token is
+never issued, and the console correctly 401s and logs out. The platform was
+working exactly as designed and the measurement was wrong. The harness signs in
+once and reuses the token; the figures above have no outliers.
+
+Recorded because it is the second time this session that verifying a suspicious
+number stopped a defect being reported that did not exist.

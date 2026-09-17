@@ -1341,6 +1341,7 @@ function estateCharts({ estate, financial, delivery, forecast, portfolios, proje
         ${raw(
           barChart({
             title: 'Contract value by project',
+            metric: 'CONTRACT_VALUE',
             // Horizontal: a project name is a sentence, and a vertical bar
             // chart turns every one of them into a rotated label nobody reads.
             horizontal: true,

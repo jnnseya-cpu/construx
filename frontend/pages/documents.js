@@ -1442,6 +1442,7 @@ function documentCharts(all, evidence) {
         ${raw(
           gauge({
             title: 'Evidence held in the store',
+            metric: 'EVIDENCE_COVERAGE_PERCENT',
             value: coverage && Number(coverage.total) > 0 ? (Number(coverage.held) / Number(coverage.total)) * 100 : undefined,
             max: 100,
             format: (value) => `${Math.round(value)}%`,

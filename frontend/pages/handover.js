@@ -979,6 +979,7 @@ function handoverCharts(bundle, assetRegister, readiness) {
         ${raw(
           histogram({
             title: 'Defect ageing',
+            metric: 'DEFECT_AGE_DAYS',
             values: ages,
             format: (value) => `${Math.round(value)}d old`,
             empty: 'No defect carries a date it was reported.',

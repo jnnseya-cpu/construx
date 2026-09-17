@@ -1736,6 +1736,7 @@ function curvePanel(view) {
         ${raw(
           areaChart({
             title: 'Cumulative programme complete',
+            metric: 'PROGRAMME_COMPLETE_PERCENT',
             data: curve,
             series: [
               { key: 'early', label: 'On the early dates', colour: 'actual' },
