@@ -6,6 +6,7 @@ import { DomainError, ForbiddenError , NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { ACUWallet, CapBreach } from '../billing/acu.ts';
 import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
+import { outputStandardSchema } from './outputstandard.ts';
 import { configuredEmbeddingAdapter } from './providers/embedding.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
 import { remotePerception, remoteReasoning, spareAdapters } from './providers/remote.ts';
@@ -387,6 +388,74 @@ export class AIOrchestrator {
    * network behind its back.
    */
   readonly #spares: AIProviderAdapter[];
+
+  /**
+   * Call every configured provider once, for real, and report what came back.
+   *
+   * ## Why a probe and not the health flag
+   *
+   * `healthy()` is a circuit breaker: a key is set and fewer than three calls
+   * in a row have failed. At boot nothing has failed, so it answers true — and
+   * the control plane duly reported `reasoning: OPENAI, healthy: true` on a
+   * deployment where every single reading came back "Not read". A key being
+   * present is not health, and an operator reading that line had no way to
+   * learn otherwise except by watching engine output fail.
+   *
+   * This asks the question directly, with the *real* output schema, because the
+   * two faults it exists to catch were both schema-and-response-shape faults
+   * that a ping would have sailed past: Gemini rejecting a JSON Schema union
+   * its proto cannot express, and OpenAI's text sitting in an output item
+   * nothing was reading.
+   *
+   * It costs one small call per provider, charged by the vendor like any other.
+   * That is the point — a probe that did not spend anything would not be
+   * exercising the path that spends.
+   *
+   * Nothing here returns key material, and the error is truncated: the caller
+   * is an operator looking for a diagnosis, and a provider's error body can
+   * echo request content back.
+   */
+  async probeProviders(): Promise<Array<{ provider: string; capability: string; ok: boolean; detail: string }>> {
+    const seen = new Set<string>();
+    const candidates = [this.#reasoning, this.#perception, ...this.#spares].filter((adapter) => {
+      if (!adapter || seen.has(adapter.name)) return false;
+      seen.add(adapter.name);
+      return true;
+    });
+
+    const results: Array<{ provider: string; capability: string; ok: boolean; detail: string }> = [];
+    for (const adapter of candidates) {
+      try {
+        const answer = await adapter.execute({
+          task: 'PROVIDER_PROBE',
+          payload: { instruction: 'Return the schema with a one-sentence summary confirming you received this.' },
+          responseSchema: outputStandardSchema(),
+        });
+        // `output` is what the adapter parsed the provider's text into. An
+        // empty object is the shape the OpenAI fault produced: a call that
+        // succeeded, was charged, and from which nothing was read.
+        const fields = Object.keys(answer.output ?? {});
+        results.push(
+          fields.length === 0
+            ? { provider: adapter.name, capability: adapter.capability, ok: false, detail: 'answered, and nothing was read from the response' }
+            : {
+                provider: adapter.name,
+                capability: adapter.capability,
+                ok: true,
+                detail: `${fields.length} fields read (${fields.slice(0, 4).join(', ')})`,
+              },
+        );
+      } catch (error) {
+        results.push({
+          provider: adapter.name,
+          capability: adapter.capability,
+          ok: false,
+          detail: String((error as Error).message ?? error).slice(0, 400),
+        });
+      }
+    }
+    return results;
+  }
 
   constructor(
     overrides: { reasoning?: AIProviderAdapter; perception?: AIProviderAdapter; embedding?: AIProviderAdapter } = {},

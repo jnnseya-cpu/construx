@@ -209,6 +209,15 @@ export async function aiengine(root) {
 
             <div class="actions" style="margin-top:14px">
               <button class="btn quiet sm" id="run-evaluation">Run the harness</button>
+              <!--
+                Asks each vendor directly, because the health flag cannot: it is
+                a circuit breaker — a key is set and fewer than three calls have
+                failed — so at boot it says yes, and a deployment where every
+                reading came back Not read was reading healthy true on this very
+                screen. No backticks in here: this comment sits inside a
+                template literal, and one would end the string.
+              -->
+              <button class="btn quiet sm" id="probe-providers">Call each provider now</button>
             </div>
           </div>`}
 
@@ -235,6 +244,26 @@ export async function aiengine(root) {
         : ''}
     `,
   );
+
+  document.getElementById('probe-providers')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Calling…';
+    try {
+      const result = await api.post('/v1/admin/ai/probe', {});
+      const failed = (result.providers ?? []).filter((entry) => !entry.ok);
+      toast(
+        failed.length === 0 ? 'Every provider answered' : `${failed.length} of ${result.providers.length} could not answer`,
+        (result.providers ?? []).map((entry) => `${entry.provider}: ${entry.ok ? 'ok' : entry.detail}`).join(' · ') ||
+          `AI_MODE is ${result.mode} — no provider is called.`,
+        failed.length === 0 ? 'ok' : 'err',
+      );
+    } catch (error) {
+      toast('Could not probe', error.message, 'err');
+    }
+    button.disabled = false;
+    button.textContent = 'Call each provider now';
+  });
 
   document.getElementById('run-evaluation')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

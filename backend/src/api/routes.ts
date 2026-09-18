@@ -6682,6 +6682,30 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/admin/ai/probe',
+    description: 'Call every configured AI provider once with the real output schema and report what came back (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (platform, ctx) => {
+      /*
+       * The question "is AI working" answered by asking, not by a flag.
+       *
+       * `healthy()` is a circuit breaker — a key is set, fewer than three calls
+       * have failed in a row — so at boot it answers true. A deployment where
+       * every reading came back "Not read" was being told
+       * `reasoning: OPENAI, healthy: true`, and the only way to learn otherwise
+       * was to watch engine output fail one screen at a time.
+       *
+       * This spends a little at each vendor, deliberately: a probe that cost
+       * nothing would not be exercising the path that costs, and both faults it
+       * exists to catch were in exactly that path — a schema one vendor's proto
+       * cannot express, and a response shape nothing was reading.
+       */
+      operatorOnly(ctx, 'probe the AI providers');
+      return { mode: config.ai.mode, providers: await platform.orchestrator.probeProviders() };
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/admin/ai/executions/:executionId/reconcile',
     description: 'Resolve an unreconciled AI execution with the provider’s evidence: charge what the call cost, or release the hold (platform operator only)',
     schema: {
