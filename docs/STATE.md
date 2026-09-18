@@ -24278,3 +24278,32 @@ prints `COMMERCIAL_L3` at somebody has told them nothing they can act on.
 
 Read from configuration and not measured, deliberately: clearance is a statement
 about a contract with a vendor, and the platform cannot discover it.
+
+### Fifteen commands drew, unlocked, and did nothing
+
+Measured rather than remembered: every command on every screen, clicked against
+all four demonstration projects. **143 distinct commands, 16 of which opened
+nothing on any project.** Two causes, and neither could fail a test, because in
+both the markup is correct and only the binding is wrong.
+
+**`commandBar()` returns bare buttons.** Whether they land inside an element
+classed `cmd-bar` is up to whichever page called it, and several wrap them in
+`.actions` instead — while every dispatcher listened on `.cmd-bar`. On those
+screens no listener was ever bound: seven commands on Concept, three on Pipeline
+& Bids, and more besides. Dispatch is now delegated from the view itself on all
+23 pages, which removes the coupling rather than adding a second class for
+somebody to remember. Safe on both counts: a handler returns on an id its page
+does not own, so two dispatchers share one view happily, and `#view` is a fresh
+element on every `draw()`, so listeners cannot stack.
+
+**`work.js` had the same fault twice over.** It bound `querySelector('.cmd-bar')`
+— singular, on a page that renders several — and it read **`data-cmd`** while
+`commandBar()` emits `data-command`. Either alone was fatal; together they took
+all four offline-pack commands. Nothing anywhere failed: the buttons drew, were
+not locked, carried real ids, and the two halves simply disagreed about an
+attribute's name.
+
+After the fix, **142 of 143 open**. The one that does not is *Export user
+report*, which downloads a spreadsheet rather than opening a form — a false
+positive in the sweep, confirmed by driving it: one `POST 200 /v1/team/report`
+and `user-report-2026-09-18.csv` on disk.

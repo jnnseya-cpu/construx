@@ -2057,7 +2057,23 @@ export async function pipeline(root) {
    * not own, which is the pattern the evidence doors on this page already used
    * with `querySelectorAll` — one bar can carry buttons for two dispatchers.
    */
-  for (const bar of root.querySelectorAll('.cmd-bar')) bar.addEventListener('click', async (event) => {
+  /*
+   * Delegated from the view, not from a `.cmd-bar` wrapper.
+   *
+   * `commandBar()` returns bare buttons. Whether they end up inside an element
+   * classed `cmd-bar` is up to whichever page called it, and several wrap them
+   * in `.actions` instead — so on those screens no listener was ever bound and
+   * every button drew, unlocked, carrying its `data-command`, and did nothing.
+   * That is seven commands on Concept, four on Field Modules and four more
+   * elsewhere, all of them invisible to the suite because the markup is right
+   * and only the binding is missing.
+   *
+   * Binding here removes the coupling rather than adding a second class to
+   * remember. It is safe on both counts: the handler returns on an id this
+   * page does not own, so two dispatchers can share one view, and `#view` is
+   * a fresh element on every `draw()`, so listeners cannot stack.
+   */
+  root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];
@@ -2122,8 +2138,24 @@ export async function pipeline(root) {
 
   // The evidence doors sit in their own panel rather than on the page command
   // bar, because they act on the registry rather than on the pipeline.
-  for (const bar of root.querySelectorAll('.cmd-bar')) {
-    bar.addEventListener('click', async (event) => {
+  /*
+   * Delegated from the view, not from a `.cmd-bar` wrapper.
+   *
+   * `commandBar()` returns bare buttons. Whether they end up inside an element
+   * classed `cmd-bar` is up to whichever page called it, and several wrap them
+   * in `.actions` instead — so on those screens no listener was ever bound and
+   * every button drew, unlocked, carrying its `data-command`, and did nothing.
+   * That is seven commands on Concept, four on Field Modules and four more
+   * elsewhere, all of them invisible to the suite because the markup is right
+   * and only the binding is missing.
+   *
+   * Binding here removes the coupling rather than adding a second class to
+   * remember. It is safe on both counts: the handler returns on an id this
+   * page does not own, so two dispatchers can share one view, and `#view` is
+   * a fresh element on every `draw()`, so listeners cannot stack.
+   */
+  {
+    root.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-command]');
       if (!button) return;
       const spec = EVIDENCE_COMMANDS[button.dataset.command];

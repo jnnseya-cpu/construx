@@ -471,9 +471,29 @@ export async function work(root) {
       }),
   };
 
-  root.querySelector('.cmd-bar')?.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-cmd]');
-    if (button && COMMANDS[button.dataset.cmd]) COMMANDS[button.dataset.cmd]();
+  /*
+   * Two faults in three lines, and each on its own was enough to kill all four
+   * pack commands on this screen.
+   *
+   * It bound `querySelector('.cmd-bar')` — the *first* such element, where this
+   * page renders several — and `commandBar()` returns bare buttons whose
+   * wrapper is whatever the caller chose, which here is `.actions`. So nothing
+   * was bound at all.
+   *
+   * And it read `data-cmd`. `commandBar()` emits `data-command`. Even bound,
+   * the lookup could never match: the button drew, was not locked, carried a
+   * real id, and did nothing. Nothing failed anywhere — the markup is right and
+   * only the two halves disagree about the attribute's name.
+   *
+   * Delegated from the view for the reason every other page now is: `#view` is
+   * rebuilt on each `draw()`, so listeners cannot stack, and an unknown id
+   * returns.
+   */
+  root.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-command]');
+    if (!button) return;
+    const run = COMMANDS[button.dataset.command];
+    if (run) void run();
   });
 
   root.querySelector('[data-pack-manifest]')?.addEventListener('change', (event) => {
