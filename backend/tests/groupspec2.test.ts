@@ -103,10 +103,14 @@ describe('AT-25 — a refund is an explicit reversing entry, and consumed fundin
     // £200 paid in by card, £50 of it already spent on AI.
     platform.creditFromPayment({ tenantId, amountMinor: 20_000, method: 'CARD', reference: 'pi_refund_1', recordedBy: 'stripe', source: 'PROVIDER' });
     const before = wallet().snapshot().availableMinor;
-    const hold = wallet().reserve({ aiRequestId: 'spend', estimatedRawCostMinor: 1_000 });
-    wallet().settle(hold.holdId, 1_000, 'OPENAI'); // 5,000 billed
+    // £50 of AI, named by what it bills; the raw cost is worked back from the
+    // rate so the arithmetic below does not silently change with the price.
+    const spendBilled = 5_000;
+    const spendRaw = spendBilled / config.billing.markupMultiplier;
+    const hold = wallet().reserve({ aiRequestId: 'spend', estimatedRawCostMinor: spendRaw });
+    wallet().settle(hold.holdId, spendRaw, 'OPENAI');
     const afterSpend = wallet().snapshot().availableMinor;
-    assert.equal(afterSpend, before - 5_000);
+    assert.equal(afterSpend, before - spendBilled);
 
     // Stripe refunds £60 of the £200: all of it is still available, so all of it goes back.
     const first = await webhook(refundEvent('evt_refund_1', 'pi_refund_1', 6_000));
@@ -132,8 +136,9 @@ describe('AT-25 — a refund is an explicit reversing entry, and consumed fundin
     // refunded (a running total: £60 already reversed, £140 new). Only what is
     // still available goes back; the rest is consumed funding — an exception.
     const available = wallet().snapshot().availableMinor;
-    const drain = wallet().reserve({ aiRequestId: 'drain', estimatedRawCostMinor: Math.floor((available - 3_000) / 5) });
-    wallet().settle(drain.holdId, Math.floor((available - 3_000) / 5), 'OPENAI');
+    const drainRaw = Math.floor((available - 3_000) / config.billing.markupMultiplier);
+    const drain = wallet().reserve({ aiRequestId: 'drain', estimatedRawCostMinor: drainRaw });
+    wallet().settle(drain.holdId, drainRaw, 'OPENAI');
     const left = wallet().snapshot().availableMinor;
     assert.ok(left > 0 && left <= 3_000, `expected a little left, got ${left}`);
     const big = await webhook(refundEvent('evt_refund_2', 'pi_refund_1', 20_000));
@@ -260,8 +265,9 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     const unresolved = orchestrator.unresolved();
     assert.equal(unresolved.length, 1);
     assert.equal(unresolved[0]!.status, 'UNRESOLVED');
-    assert.equal(aiWallet.snapshot().heldMinor, 500, 'the estimate at 5× stays held');
-    assert.equal(aiWallet.snapshot().availableMinor, 9_500);
+    const estimateHeld = 100 * config.billing.markupMultiplier;
+    assert.equal(aiWallet.snapshot().heldMinor, estimateHeld, 'the estimate stays held at the platform rate');
+    assert.equal(aiWallet.snapshot().availableMinor, 10_000 - estimateHeld);
     assert.equal(aiWallet.snapshot().unresolvedHolds, 1);
     assert.equal(aiWallet.unresolvedHolds()[0]!.reason.includes('may have completed'), true);
   });
@@ -270,17 +276,18 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     assert.throws(() => orchestrator.reconcile(executionId, { kind: 'CHARGE', actualRawCostMinor: 80 }, { note: '', by: 'ops' }), (error: { code?: string }) => error.code === 'EVIDENCE_REQUIRED');
     const charged = orchestrator.reconcile(executionId, { kind: 'CHARGE', actualRawCostMinor: 80 }, { note: 'Provider dashboard shows the completion at 12:01', by: 'ops' });
     assert.equal(charged.status, 'SUCCEEDED');
-    assert.equal(charged.acuConsumed, 400, '80 raw at 5×');
+    const chargedMinor = 80 * config.billing.markupMultiplier;
+    assert.equal(charged.acuConsumed, chargedMinor, '80 raw at the platform rate');
     assert.equal(aiWallet.snapshot().heldMinor, 0);
-    assert.equal(aiWallet.snapshot().availableMinor, 9_600);
+    assert.equal(aiWallet.snapshot().availableMinor, 10_000 - chargedMinor);
     assert.equal(orchestrator.unresolved().length, 0);
     // The stale worker: settling or reconciling again does nothing.
     assert.throws(() => orchestrator.reconcile(executionId, { kind: 'RELEASE' }, { note: 'again', by: 'ops' }), (error: { code?: string }) => error.code === 'AI_EXECUTION_NOT_UNRESOLVED');
     // A stale worker settling the same hold again: the wallet answers the same
     // settlement and moves nothing — commit once, replay-safe.
     const replay = aiWallet.settle(charged.unresolved!.holdId, 80, 'OPENAI');
-    assert.equal(replay.billedMinor, 400);
-    assert.equal(aiWallet.snapshot().availableMinor, 9_600, 'a replayed settlement charged again');
+    assert.equal(replay.billedMinor, chargedMinor);
+    assert.equal(aiWallet.snapshot().availableMinor, 10_000 - chargedMinor, 'a replayed settlement charged again');
   });
 
   it('releases when the provider shows nothing, and the operator’s doors answer', async () => {
@@ -291,7 +298,7 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     // above proved the parking; this proves the release gives everything back.
     const hold = funded.reserve({ aiRequestId: 'manual-park', estimatedRawCostMinor: 100 });
     funded.parkHold(hold.holdId, 'Provider did not answer');
-    assert.equal(funded.snapshot().availableMinor, before - 500);
+    assert.equal(funded.snapshot().availableMinor, before - 100 * config.billing.markupMultiplier);
     funded.reconcileHold(hold.holdId, { kind: 'RELEASE', note: 'Nothing on the provider account' });
     assert.equal(funded.snapshot().availableMinor, before, 'a released unknown outcome gives the reservation back in full');
     assert.throws(() => funded.reconcileHold(hold.holdId, { kind: 'RELEASE', note: 'again' }), (error: { code?: string }) => error.code === 'ACU_HOLD_NOT_UNRESOLVED');

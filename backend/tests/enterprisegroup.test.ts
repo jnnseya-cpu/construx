@@ -8,6 +8,7 @@ import { Platform, type PlatformUser } from '../src/platform.ts';
 import * as structure from '../src/domain/structure.ts';
 import { authOf } from '../src/seed.ts';
 import { ACUWallet } from '../src/billing/acu.ts';
+import { config } from '../src/config.ts';
 import { issueDocument } from '../src/group/issuance.ts';
 import { MODULES } from '../src/identity/modules.ts';
 
@@ -246,25 +247,50 @@ describe('§9 — the agreement, subscriptions, seats and invoice grouping (AT-2
 });
 
 describe('§10 — wallets, reservations and budgets (AT-20 to AT-23)', () => {
-  it('AT-20 / AT-21: 100 available, 70 and 40 reserved, 55 committed, replay changes nothing', () => {
+  it('AT-20 / AT-21: a big hold, a refused second, a smaller commit, and a replay that changes nothing', () => {
+    /*
+     * The acceptance test's shape, with the figures derived from the rate
+     * rather than written in.
+     *
+     * §10's AT-20 states it as "100 available, 70 and 40 reserved, 55
+     * committed", and those are *held* amounts — raw provider cost times the
+     * platform's multiplier. Writing them in as literals pins the multiplier
+     * here, in a wallet-arithmetic test, where nobody would look for it and
+     * where changing the business's rate breaks a test about reservations.
+     * The rate is pinned once, in `economics.test.ts`, which is the test whose
+     * subject it is.
+     */
+    const rate = config.billing.markupMultiplier;
     const wallet = new ACUWallet('arith');
     wallet.topUp(100);
-    // Held amounts carry the platform's multiplier; the raw figures are chosen so the held figures are 70 and 40.
-    const seventy = wallet.reserve({ aiRequestId: 'job-70', estimatedRawCostMinor: 14 });
-    assert.equal(seventy.heldMinor, 70);
-    assert.equal(wallet.availableMinor(), 30);
-    assert.throws(() => wallet.reserve({ aiRequestId: 'job-40', estimatedRawCostMinor: 8 }), (error: unknown) => (error as { code?: string }).code === 'ACU_EXHAUSTED');
-    assert.equal(wallet.heldMinor(), 70, 'exactly one reservation succeeded');
-    const settled = wallet.settle(seventy.holdId, 11, 'provider-a');
-    assert.equal(settled.billedMinor, 55);
-    assert.equal(wallet.availableMinor(), 45);
+
+    // Most of the balance, but not all of it.
+    const bigRaw = 14;
+    const big = wallet.reserve({ aiRequestId: 'job-big', estimatedRawCostMinor: bigRaw });
+    assert.equal(big.heldMinor, bigRaw * rate);
+    assert.equal(wallet.availableMinor(), 100 - bigRaw * rate);
+
+    // A second that no longer fits, refused rather than overdrawn.
+    assert.throws(
+      () => wallet.reserve({ aiRequestId: 'job-second', estimatedRawCostMinor: bigRaw }),
+      (error: unknown) => (error as { code?: string }).code === 'ACU_EXHAUSTED',
+    );
+    assert.equal(wallet.heldMinor(), bigRaw * rate, 'exactly one reservation succeeded');
+
+    // It came in under the estimate, so the difference goes back.
+    const actualRaw = 11;
+    const settled = wallet.settle(big.holdId, actualRaw, 'provider-a');
+    assert.equal(settled.billedMinor, actualRaw * rate);
+    assert.equal(wallet.availableMinor(), 100 - actualRaw * rate);
     assert.equal(wallet.heldMinor(), 0);
-    assert.equal(wallet.snapshot().lifetimeBilledMinor, 55);
-    const replayed = wallet.settle(seventy.holdId, 11, 'provider-a');
+    assert.equal(wallet.snapshot().lifetimeBilledMinor, actualRaw * rate);
+
+    // AT-21: the same settlement arriving twice is one settlement.
+    const replayed = wallet.settle(big.holdId, actualRaw, 'provider-a');
     assert.equal(replayed.id, settled.id, 'the same settlement, not a second one');
-    assert.equal(wallet.availableMinor(), 45);
-    assert.equal(wallet.snapshot().lifetimeBilledMinor, 55);
-    assert.equal(wallet.release(seventy.holdId), undefined, 'commit and release are mutually exclusive');
+    assert.equal(wallet.availableMinor(), 100 - actualRaw * rate);
+    assert.equal(wallet.snapshot().lifetimeBilledMinor, actualRaw * rate);
+    assert.equal(wallet.release(big.holdId), undefined, 'commit and release are mutually exclusive');
   });
 
   it('AT-23: an empty wallet is refused even though a sibling is funded', () => {

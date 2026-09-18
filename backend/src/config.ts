@@ -1118,44 +1118,44 @@ export const config = {
 
   billing: {
     /**
-     * Hard economic rule: 1 unit of provider cost is charged at 5.
+     * Hard economic rule: 1 unit of provider cost is charged at 4.
      *
-     * The company keeps £4 of every £5 it takes — 400% profit on what it paid
+     * The company keeps £3 of every £4 it takes — 300% profit on what it paid
      * the provider. Stated by the business as two halves of one rule: the
-     * price is five times provider cost, and every £1 the platform spends with
-     * a provider has to produce £5 of revenue.
+     * price is four times provider cost, and every £1 the platform spends with
+     * a provider has to produce £4 of revenue.
      *
      * Everything downstream derives from this number — the wallet's charge, the
      * quote a screen shows before spending, what an ACU bundle is worth, the
-     * invoice line — so this is the only place the rate is set. It was 4×.
+     * invoice line — so this is the only place the rate is set.
      */
-    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 5),
+    markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
     /**
      * The company's required profit on every AI transaction, as a percentage
      * of what the provider charged.
      *
-     * 400 means £1 of provider cost must produce £5 of revenue — the business
+     * 300 means £1 of provider cost must produce £4 of revenue — the business
      * rule as stated, expressed as the profit it requires rather than as a bare
      * multiplier so the rule reads as the rule. A number called
      * `minimumMultiplier` invites somebody to tune it without asking what
      * profit it leaves.
      *
-     * **The floor and the price now coincide at 5×, and that has a consequence
+     * **The floor and the price coincide at 4×, and that has a consequence
      * worth stating rather than discovering.** `settle` capped an execution
      * that overran its estimate at the amount reserved and disclosed, *unless*
      * honouring the cap would sell below this floor. With the floor at the
      * price, `floor === billed` on every settlement, so the cap is inert: an
-     * execution that costs more than its estimate is charged in full at 5× and
+     * execution that costs more than its estimate is charged in full at 4× and
      * the customer pays more than they were quoted.
      *
-     * That is the rule as instructed — every £1 of provider cost produces £5,
+     * That is the rule as instructed — every £1 of provider cost produces £4,
      * with no case in which it produces less — and the exposure it creates is
      * handled by disclosure rather than by a silent discount: an overrun is
      * named on the ledger entry, carried into the invoice line, and shows up in
      * the operator's realised-multiplier view. Nothing about it is inferred
      * from arithmetic after the fact.
      */
-    minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 400),
+    minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 300),
     /**
      * One ACU is one minor unit, so £1 buys 100 ACUs and $1 buys 100. Stated
      * as its own value rather than assumed, because a currency with a
@@ -1318,11 +1318,11 @@ export const config = {
      * The one-off trial grant, in minor units of AI credit.
      *
      * Sized as a first task, not a first project. It was 500 — £5.00 of credit
-     * at face value, £1.00 of provider cost at the 5× markup if every unit is
+     * at face value, £1.25 of provider cost at the 4× markup if every unit is
      * spent — which is a real invoice per signup with nothing paid against it,
      * and it scales with signups rather than with revenue. At 100 the grant
      * still covers a handful of standard runs (a MED-class run costs 10 raw,
-     * 50 billed) and the worst case per trial is £0.20 of provider cost.
+     * 40 billed) and the worst case per trial is £0.25 of provider cost.
      *
      * The aggregate exposure is bounded separately by
      * `trialMonthlyBudgetMinor` below; this figure only sizes one grant.

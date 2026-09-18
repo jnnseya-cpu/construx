@@ -433,15 +433,15 @@ describe('AC-006 / AC-007 — who pays for an external Controller’s AI', () =>
     assert.equal(platform.wallet(host.tenantId).snapshot().balanceMinor, hostBefore, 'the host wallet is untouched');
     assert.ok(funded.wallet.snapshot().balanceMinor < abcBefore, 'ABC paid');
     const usage = usageOf(platform, approved);
-    assert.equal(usage.consumedMinor, 200, '40 raw at the 5× multiplier');
-    assert.equal(usage.remainingMinor, 1_300);
+    assert.equal(usage.consumedMinor, 160, '40 raw at the 4× multiplier');
+    assert.equal(usage.remainingMinor, 1_340);
     assert.equal(funded.wallet.entries({ projectId: host.projectId, userId: jane.actorId }).filter((entry) => entry.type === 'DEBIT' && entry.sponsorshipId === approved.id).length, 1, 'the spend names the sponsorship and the host project');
   });
 
   it('refuses beyond the approved limit, and a host one-time authorisation takes precedence for its engine', async () => {
     const abcCtx = platform.context(authOf(platform, abc.admin), `${abc.tenantId}-governance`, { source: 'WEB' });
     // The limit is changed on the record: the remaining allowance is what the estimate is judged against.
-    const tightened = decideSponsorship(platform, abcCtx, { sponsorshipId: homeSponsorship, approve: true, maximumMinor: 201, reason: 'Tightened to what is left' });
+    const tightened = decideSponsorship(platform, abcCtx, { sponsorshipId: homeSponsorship, approve: true, maximumMinor: 161, reason: 'Tightened to what is left' });
     assert.equal(tightened.previousMaximumMinor, 1_500);
     assert.equal(usageOf(platform, tightened).remainingMinor, 1);
     const ctx = platform.context(jane, host.projectId, { source: 'WEB' });

@@ -261,12 +261,11 @@ export const PACKAGES: Record<PackageTier, PackageDefinition> = {
  * "£300 (6,000 ACUs)", which was the *provider work* that credit funds, price
  * divided by the markup. Both were called ACUs.
  *
- * So the bundle understated itself fivefold against the package it sits beside:
- * £300 credits 30,000 ACUs, not 6,000, and a customer comparing the two would
+ * So the bundle understated itself against the package it sits beside: £300
+ * credits 30,000 ACUs, not 7,500, and a customer comparing the two would
  * conclude a £300 bundle buys less than a third of a Core Project month when it
- * actually buys more. The figures only ever agreed by coincidence — the
- * allocation is 20% and the markup is 5×, so both worked out at price ÷ 5 — and
- * the coincidence hid the fact that they measure different things.
+ * actually buys more. The two figures measure different things — a credit and
+ * the provider work that credit funds — and calling both of them ACUs hid it.
  *
  * `usableAcus` is now the credit, on the same basis as every other ACU figure
  * the platform publishes. What that credit funds in provider work is a real and
@@ -284,10 +283,10 @@ export type BundleDefinition = {
    * ACUs the bundle credits to the wallet, **derived** from the price rather
    * than stated.
    *
-   * It was a hardcoded figure and it had gone stale: the three bundles
+     * It was a hardcoded figure and it had gone stale: the three bundles
    * advertised 10,000 / 40,000 / 110,000 ACUs, which are the numbers a 3×
-   * markup produces. The platform charges at 5×, so £300 buys 6,000 ACUs and
-   * the published figure overstated every bundle by a third.
+   * markup produces. The platform charges at 4×, so the published figure
+   * overstated every bundle.
    *
    * No money was misposted — a top-up credits the price and spend is billed at
    * the effective multiplier, so this figure only ever appeared on the pricing
@@ -307,14 +306,14 @@ export type BundleDefinition = {
 
 /**
  * The price of each bundle. What it buys is computed from the headline
- * multiplier — **5×, flat, for every bundle**.
+ * multiplier — **4×, flat, for every bundle**.
  *
  * Two earlier versions of this were wrong in opposite directions and both are
  * worth recording.
  *
  * The original hardcoded 10,000 / 40,000 / 110,000 ACUs. Those are the numbers
  * a 3× markup produces, and they had gone stale when the multiplier moved to
- * 4×, and again when it moved to 5×: the catalogue promised more than the billing engine would ever
+ * 4×: the catalogue promised more than the billing engine would ever
  * deliver. No money was misposted — a top-up credits the price and spend is
  * billed at the effective multiplier, so the figure only ever appeared on the
  * pricing page — but it was a promise to a customer that could not be kept.
@@ -322,9 +321,9 @@ export type BundleDefinition = {
  * The second version derived the yield from `VOLUME_BANDS`, which then stepped
  * down to 3.6 and 3.3 so a larger bundle stayed better value. That
  * reintroduced rates below the headline that the pricing decision exists to rule
- * out; the bands are now flat at 5× too.
+ * out; the bands are now flat at 4× too.
  *
- * The rate is 5×. A consequence follows and is stated rather than hidden: with
+ * The rate is 4×. A consequence follows and is stated rather than hidden: with
  * a flat multiplier every bundle yields exactly the same ACUs per pound, so a
  * bundle is a convenience — fewer transactions, one purchase order — and not a
  * discount. Nothing in the product should imply otherwise.

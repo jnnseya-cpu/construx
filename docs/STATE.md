@@ -71,8 +71,8 @@ application. Do not rebuild them.
 2. **£1 buys 100 ACUs.** One ACU is one minor unit. Stated as its own value
    rather than assumed, because a currency with a different exponent would
    otherwise silently change what an ACU is worth.
-3. **Provider cost is charged at 5×.** Revenue 5, cost 1 — every £1 the
-   platform spends with a provider produces £5.
+3. **Provider cost is charged at 4×.** Revenue 4, cost 1 — every £1 the
+   platform spends with a provider produces £4.
 4. **20% of every subscription payment is credited as AI allowance.** Credited
    when the period's charge *settles*, once per period — not at activation and
    not when an invoice is issued, because a month nobody has paid for is not a
@@ -82,14 +82,14 @@ application. Do not rebuild them.
    Rounded down, because a fraction of an ACU cannot be spent.
 
 The rule under all of them: **the company takes at least 100% profit on every
-AI transaction** — 400%, which is the price: £1 of provider cost produces £5.
+AI transaction** — 300%, which is the price: £1 of provider cost produces £4.
 `minimumProfitPercent` states it, and the multiplier floor is *derived* from it
-(`1 + pct/100 = 5×`) rather than configured beside it, so the rule and the
+(`1 + pct/100 = 4×`) rather than configured beside it, so the rule and the
 arithmetic cannot drift apart.
 
 **The floor is set at the price, by decision.** The rule is that £1 of provider
-cost produces £5 with no exceptions — no band, no bundle, no cap that could make
-it less — so `minimumProfitPercent` is 400 and `minimumMultiplier()` is 5.
+cost produces £4 with no exceptions — no band, no bundle, no cap that could make
+it less — so `minimumProfitPercent` is 300 and `minimumMultiplier()` is 4.
 
 The consequence was raised before it was made and is recorded here rather than
 left to be discovered. `settle` capped an execution that overran its estimate at
@@ -3219,7 +3219,7 @@ fixing — a promise to a customer the billing engine was never going to keep, a
 the customer would have found out when the bundle ran out a third early. The
 yield is now derived from the multiplier, floored at the profit rule, so the two
 cannot disagree again. (At the 4× rate that was £300 for 7,500 ACUs; the rate
-has since moved to 5× and the catalogue followed it without an edit, which is
+has since moved and the catalogue followed it without an edit, which is
 what deriving the yield bought — see the rate change recorded below.)
 
 A consequence follows and is stated rather than hidden: with a flat multiplier
@@ -9096,7 +9096,7 @@ rather than softening what is.
 The pricing card read "1 identity · 1 GB storage · 500 trial ACUs, once", and
 the objection was arithmetic: a million signups at that grant is a seven-figure
 vendor bill with no revenue against it. Both halves of that were true. A grant
-of 500 is £5.00 of credit at face value and £1.00 of provider cost at the 5×
+of 500 is £5.00 of credit at face value and £1.25 of provider cost at the 4×
 markup if every unit is spent — a real invoice per signup, with nothing paid
 against it. And nothing bounded the total: `TRIALS_PER_ORGANISATION` stops one
 company taking two grants and says nothing about how many companies may take
@@ -10768,7 +10768,7 @@ Re-opening these is what caused churn before.
    packages so existing contracts resolve.
 5. **Money is in minor units everywhere.** No floating point in the billing
    path. One ACU is one minor unit, so £1 buys 100 ACUs. Provider cost is
-   charged at 5x — every £1 of provider cost produces £5. **The company takes
+   charged at 4x — every £1 of provider cost produces £4. **The company takes
    at least 100% profit on every AI
    transaction** — the multiplier floor is derived from that rule, not
    configured beside it. 20% of every subscription payment is credited as AI
@@ -10782,8 +10782,8 @@ Re-opening these is what caused churn before.
    one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
    arithmetic from it, so the suite follows whichever number is set.
 
-   The **loss floor is the price**, at 400% required profit: no band, bundle or
-   cap may take a charge below 5×. The cost is the estimate cap — an overrun is
+   The **loss floor is the price**, at 300% required profit: no band, bundle or
+   cap may take a charge below 4×. The cost is the estimate cap — an overrun is
    charged for what it cost rather than capped at the disclosed hold — and that
    is handled by naming the overrun on the entry and the invoice line.
 6. **The interface never holds a rule the API does not publish.** Permission
@@ -14493,21 +14493,20 @@ that event" is not.
 Reachable at `POST /v1/projects/:projectId/agents/run` with an optional
 `trigger`, and `POST /v1/projects/:projectId/agents/run-changes`.
 
-### The AI rate is 5×
+### The AI rate is 4×
 
 Stated by the business as two halves of one rule: **provider cost is charged at
-five times, and every £1 the platform spends with a provider must produce £5.**
-It was 4×.
+four times, and every £1 the platform spends with a provider must produce £4.**
 
-One value moved — `ACU_MARKUP_MULTIPLIER` — and everything downstream followed
+It was briefly moved to 5× and has been set back to 4× by the business. One
+value moves — `ACU_MARKUP_MULTIPLIER` — and everything downstream follows
 without an edit, which is what deriving rather than hardcoding bought: the
 wallet's charge, the quote a screen shows before spending, the invoice line, and
-the ACU bundle catalogue (£300 now buys 6,000 ACUs, £1,000 buys 20,000, £2,500
-buys 50,000). The volume band table is flat at 5× for the same reason it was
-flat at 4×: there is no rate below the headline anywhere in the platform.
+the ACU bundle catalogue. The volume band table is flat at 4×: there is no rate
+below the headline anywhere in the platform.
 
-**The loss floor is the price too**, at 400% required profit: there is no case
-in which £1 of provider cost produces less than £5. That was queried before it
+**The loss floor is the price too**, at 300% required profit: there is no case
+in which £1 of provider cost produces less than £4. That was queried before it
 was set, because it costs the estimate cap — `settle` capped an overrun at the
 disclosed hold unless the cap would sell below the floor, and with floor equal
 to price the cap can never win. Confirmed as intended, so an execution that
@@ -14528,11 +14527,11 @@ rule forbids.
 
 A tier is now a claim about what class of thinking a run is; the price of that
 claim lives in `billing/acu.ts` with the rest of the money model and is
-`tierCost(tier)` — provider cost from configuration, multiplied by the same 5×
+`tierCost(tier)` — provider cost from configuration, multiplied by the same 4×
 markup as every other AI charge, so a tier cannot become a second pricing model.
 The runtime **overwrites** what an agent wrote rather than defaulting it, because
 an agent that could fill the field in would be quoting an approver a number of
-its own choosing. At the current rate: LOW 10, MED 50, HIGH 150, PREMIUM 450.
+its own choosing. At the current rate: LOW 8, MED 40, HIGH 120, PREMIUM 360.
 
 Each run now reports what the queue it just built would cost, broken down by
 tier, against the wallet's available balance. **Reported, not charged** —
@@ -14638,8 +14637,8 @@ conclude a £300 top-up buys less than a third of a Core Project month when it
 actually buys more.
 
 The two only ever looked consistent because the allocation is 20% and the markup
-is 5×, so both worked out at price ÷ 5 — the coincidence is what hid it, and it
-survived the 3×→4× correction and the 4×→5× move untouched because deriving the
+is 4×, so both worked out at price ÷ 4 — the coincidence is what hid it, and it
+survived the 3×→4× correction untouched because deriving the
 *wrong quantity* correctly still gives the wrong answer.
 
 `usableAcus` is now the credit, on the same basis as every other ACU figure the
@@ -23407,3 +23406,26 @@ was taken once per tenancy, so the second delivery to a recovering endpoint
 computed its health update against the old failure count and the ledger refused
 it as a no-op — aborting the drain on precisely the endpoint with a backlog
 behind it.
+
+### The AI rate is back to 4×, by instruction
+
+Set by the business: **users are charged four times provider cost.** It was
+moved to 5× in an earlier increment and has been set back.
+
+One value changes — `ACU_MARKUP_MULTIPLIER` — and the floor derived from
+`minimumProfitPercent` moves with it (300 → `1 + 300/100 = 4`). Everything
+downstream follows without an edit: the wallet's charge, the quote a screen
+shows before spending, the invoice line, the volume bands (flat at 4×), the ACU
+bundle catalogue and the agent tier prices (LOW 8, MED 40, HIGH 120,
+PREMIUM 360). That is what deriving rather than hardcoding bought, and it is why
+the change is four lines of configuration and prose rather than a search.
+
+**Seven tests pinned the rate where the rate is not the subject.** A wallet
+arithmetic test held literal figures of 70, 40 and 55; a threshold test used a
+raw cost chosen so that 5× would cross 50% and 80%; a refund test drained a
+wallet by dividing by five. Each was correct and each broke on a price change it
+had nothing to do with. They now derive from `config.billing.markupMultiplier`
+and name what they mean — "5,000 billed, which is half the limit" — so the rate
+is pinned once, in `economics.test.ts`, which is the test whose subject it is.
+No public page states the multiplier, so nothing customer-facing needed a word
+changed.

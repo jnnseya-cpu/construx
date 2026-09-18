@@ -95,34 +95,34 @@ describe('rule 2 — £1 buys 100 ACUs', () => {
   });
 });
 
-describe('rule 3 — provider cost is charged at 5x', () => {
-  it('charges five times the raw cost', () => {
+describe('rule 3 — provider cost is charged at 4x', () => {
+  it('charges four times the raw cost', () => {
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(10_000);
     const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 250 });
     const entry = wallet.settle(hold.holdId, 250, 'OPENAI');
 
     assert.equal(entry.rawCostMinor, 250);
-    assert.equal(entry.billedMinor, 1_250, '250 of provider cost must bill at 1,250');
-    assert.equal(entry.effectiveMultiplier, 5);
+    assert.equal(entry.billedMinor, 1_000, '250 of provider cost must bill at 1,000');
+    assert.equal(entry.effectiveMultiplier, 4);
   });
 
-  it('states the rate as 5 in configuration, so nothing infers it', () => {
-    // The rate the business states: five times provider cost. Pinned as a
+  it('states the rate as 4 in configuration, so nothing infers it', () => {
+    // The rate the business states: four times provider cost. Pinned as a
     // literal here on purpose — everything else in the platform derives from
     // `config.billing.markupMultiplier`, so this is the one assertion that
     // would fail if the number itself were changed without a decision.
-    assert.equal(config.billing.markupMultiplier, 5);
+    assert.equal(config.billing.markupMultiplier, 4);
   });
 
-  it('meets the rule that every £1 of provider cost produces £5', () => {
+  it('meets the rule that every £1 of provider cost produces £4', () => {
     // The business rule in its own terms. £1 spent with a provider must return
-    // £5, which is 400% profit on what was paid out.
+    // £4, which is 300% profit on what was paid out.
     const rawCost = 100;
     const billed = rawCost * config.billing.markupMultiplier;
 
-    assert.equal(billed, 500, '£1 of provider cost must produce £5');
-    assert.equal(profitPercent(rawCost, billed), 400);
+    assert.equal(billed, 400, '£1 of provider cost must produce £4');
+    assert.equal(profitPercent(rawCost, billed), 300);
     assert.ok(
       profitPercent(rawCost, billed) >= config.billing.minimumProfitPercent,
       'the price fell below the required profit',
@@ -130,16 +130,16 @@ describe('rule 3 — provider cost is charged at 5x', () => {
   });
 
   it('derives the floor from the profit rule rather than from a loose constant', () => {
-    // Required profit of 400% means charging five times: 1 + 400/100. Changing
+    // Required profit of 300% means charging four times: 1 + 300/100. Changing
     // the rule changes the floor by construction, so the two cannot drift apart.
-    assert.equal(config.billing.minimumProfitPercent, 400);
-    assert.equal(minimumMultiplier(), 5);
+    assert.equal(config.billing.minimumProfitPercent, 300);
+    assert.equal(minimumMultiplier(), 4);
     assert.equal(profitPercent(100, 100 * minimumMultiplier()), config.billing.minimumProfitPercent);
   });
 
-  it('sets the floor at the price, so there is no case that produces less than £5', () => {
+  it('sets the floor at the price, so there is no case that produces less than £4', () => {
     // The rule as instructed, and the whole of it: £1 of provider cost produces
-    // £5, with no discount, no band and no cap that could make it less.
+    // £4, with no discount, no band and no cap that could make it less.
     assert.equal(minimumMultiplier(), config.billing.markupMultiplier);
     for (const spend of [0, 200_000, 1_000_000, Number.MAX_SAFE_INTEGER]) {
       for (const incentive of [true, false]) {
@@ -178,9 +178,9 @@ describe('rule 3 — provider cost is charged at 5x', () => {
 
     const snapshot = wallet.snapshot();
     assert.equal(snapshot.lifetimeRawCostMinor, 200);
-    assert.equal(snapshot.lifetimeBilledMinor, 1_000);
-    assert.equal(snapshot.lifetimeProfitMinor, 800);
-    assert.equal(snapshot.lifetimeProfitPercent, 400);
+    assert.equal(snapshot.lifetimeBilledMinor, 800);
+    assert.equal(snapshot.lifetimeProfitMinor, 600);
+    assert.equal(snapshot.lifetimeProfitPercent, 300);
     assert.ok(snapshot.lifetimeProfitPercent >= config.billing.minimumProfitPercent);
   });
 
@@ -197,16 +197,16 @@ describe('rule 3 — provider cost is charged at 5x', () => {
     }
   });
 
-  it('charges 5x at every level of spend, and never less', () => {
+  it('charges 4x at every level of spend, and never less', () => {
     // This asserted the opposite — that a large consumer was discounted below
-    // the headline. The bands were flattened by decision: 5x is the price and
+    // the headline. The bands were flattened by decision: 4x is the price and
     // no rate below it exists anywhere in the platform.
     for (const spend of [0, 100_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
       for (const incentive of [true, false]) {
         assert.equal(
           effectiveMultiplier(spend, incentive),
-          5,
-          `spend ${spend} with incentive ${incentive} was not charged at 5x`,
+          4,
+          `spend ${spend} with incentive ${incentive} was not charged at 4x`,
         );
       }
     }
@@ -392,10 +392,10 @@ describe('every package credits 20% of its price as AI', () => {
     // on a free package is a free platform.
     assert.equal(PACKAGES.FREE_TRIAL.monthlyPriceMinor, 0);
     assert.equal(subscriptionAcuAllocationMinor(PACKAGES.FREE_TRIAL.monthlyPriceMinor), 0);
-    // Sized as a first task, not a first project. It was 500 — £1.00 of
-    // provider cost per signup at the 5× markup, with nothing paid against it
+    // Sized as a first task, not a first project. It was 500 — £1.25 of
+    // provider cost per signup at the 4× markup, with nothing paid against it
     // and no ceiling on how many signups. 100 covers a handful of standard
-    // runs for at most £0.20, and the monthly budget bounds the total.
+    // runs for at most £0.25, and the monthly budget bounds the total.
     assert.equal(config.billing.freeTrialGrantMinor, 100);
     assert.ok(config.billing.trialMonthlyBudgetMinor >= config.billing.freeTrialGrantMinor);
   });
@@ -438,11 +438,11 @@ describe('what the allowance actually buys', () => {
     assert.equal(plan, 95_000, '£950/month');
     assert.equal(allowanceMinor, 19_000, '£190 of AI allowance at 20%');
     assert.equal(acusFromMinor(allowanceMinor), 19_000, '19,000 ACUs');
-    assert.equal(providerSpend, 3_800, '£38 of provider cost');
+    assert.equal(providerSpend, 4_750, '£47.50 of provider cost');
 
     // The worst case for the platform is the customer spending the allowance
-    // to the last ACU: it takes £950 and pays a provider £38.
-    assert.equal(plan - providerSpend, 91_200, '£912 retained if the allowance is fully consumed');
+    // to the last ACU: it takes £950 and pays a provider £47.50.
+    assert.equal(plan - providerSpend, 90_250, '£902.50 retained if the allowance is fully consumed');
     assert.ok(
       profitPercent(providerSpend, plan) >= config.billing.minimumProfitPercent,
       'the plan itself fell below the required profit',

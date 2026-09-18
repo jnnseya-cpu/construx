@@ -108,11 +108,11 @@ export type ACUAlert = {
 };
 
 /**
- * Volume bands. **Every band is 5×.**
+ * Volume bands. **Every band is 4×.**
  *
  * These previously stepped 4.0 → 3.6 → 3.3, so a large consumer paid below the
  * headline rate. That was a deliberate volume incentive and it has been
- * removed by decision: the price is 5× and there is no rate below it anywhere
+ * removed by decision: the price is 4× and there is no rate below it anywhere
  * in the platform. A tenant spending a million a month is charged at exactly
  * the same multiplier as one spending ten pounds.
  *
@@ -139,16 +139,16 @@ export type WalletSignal =
   | { kind: 'LIMIT_REACHED'; breach: CapBreach; requestedMinor: number };
 
 export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
-  { upToRawMinor: 200_000, multiplier: 5.0 },
-  { upToRawMinor: 1_000_000, multiplier: 5.0 },
-  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 5.0 },
+  { upToRawMinor: 200_000, multiplier: 4.0 },
+  { upToRawMinor: 1_000_000, multiplier: 4.0 },
+  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 4.0 },
 ];
 
 /**
  * What a unit of provider cost is charged at, for this tenant, this month.
  *
  * Two rules, and the second is a guard rather than a policy: the headline rate
- * is 5x, the volume incentive may discount it, and nothing may take it below
+ * is 4x, the volume incentive may discount it, and nothing may take it below
  * `minimumMultiplier`. That floor is what makes "the platform never sells AI
  * at a loss" a property of the code rather than a property of whoever last
  * edited the bands — a band table is exactly the kind of constant somebody
@@ -158,7 +158,7 @@ export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> =
  * The lowest multiplier that still satisfies the company's profit rule.
  *
  * Profit is what is left after the provider is paid, so a required profit of
- * 100% of cost means charging twice: `1 + 100/100 = 2`. Derived rather than
+ * 300% of cost means charging four times: `1 + 300/100 = 4`. Derived rather than
  * configured as a bare number, so the rule and the arithmetic cannot drift
  * apart — changing the required profit changes the floor by construction.
  */

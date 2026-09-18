@@ -214,12 +214,12 @@ describe('ACU wallet', () => {
 
 describe('volume incentive', () => {
   it('holds the full multiplier at low monthly spend', () => {
-    assert.equal(effectiveMultiplier(100_000, true), 5.0);
+    assert.equal(effectiveMultiplier(100_000, true), 4.0);
   });
 
-  it('charges 5x at every level of spend, with no step down', () => {
+  it('charges 4x at every level of spend, with no step down', () => {
     // The bands stepped 4.0 → 3.6 → 3.3 and were flattened by decision: the
-    // price is 5x and there is no rate below it anywhere in the platform. A
+    // price is 4x and there is no rate below it anywhere in the platform. A
     // tenant spending a million a month pays the same multiplier as one
     // spending ten pounds.
     for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
@@ -401,15 +401,14 @@ describe('seat pricing', () => {
     // First: 10,000 / 40,000 / 110,000 ACUs were advertised — the figures a 3x
     // markup produces — while billing ran at 4x, so the catalogue promised a
     // third more than the engine would ever deliver. Deriving the figure fixed
-    // that, and the move to 5x then needed no edit at all.
+    // that, and every later change to the rate has needed no edit at all.
     //
     // Second: what was derived was the wrong quantity. `usableAcus` was
     // price ÷ markup, which is the *provider work* the credit funds, while a
     // package advertises its wallet credit — and both were called ACUs on the
-    // same site. A £300 bundle credits 30,000 ACUs and said 6,000, understating
-    // itself fivefold against the package beside it. The two only ever looked
-    // consistent because the allocation is 20% and the markup is 5×, so both
-    // happened to work out at price ÷ 5.
+    // same site. A £300 bundle credits 30,000 ACUs and said 7,500, understating
+    // itself fourfold against the package beside it. The two measure different
+    // things, and calling both of them ACUs hid it.
     const rate = config.billing.markupMultiplier;
     for (const bundle of Object.values(ACU_BUNDLES)) {
       assert.equal(bundle.multiplier, rate);
@@ -419,7 +418,7 @@ describe('seat pricing', () => {
       assert.equal(bundle.providerCostMinor, Math.floor(bundle.priceMinor / rate));
     }
     assert.equal(ACU_BUNDLES.STARTER.usableAcus, 30_000, '£300 credits 30,000 ACUs');
-    assert.equal(ACU_BUNDLES.STARTER.providerCostMinor, 6_000, 'which funds £60 of provider work at 5x');
+    assert.equal(ACU_BUNDLES.STARTER.providerCostMinor, 7_500, 'which funds £75 of provider work at 4x');
   });
 
   it('keeps AI out of the package, whatever the package', () => {

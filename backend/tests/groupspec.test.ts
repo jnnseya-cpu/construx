@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { config } from '../src/config.ts';
 import type { Server } from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
@@ -105,12 +106,21 @@ describe('§9.3 — the company and the group are told as AI spend approaches it
     assert.equal(wallet.snapshot().availableMinor, Math.round(PACKAGES.CORE_PROJECT.monthlyPriceMinor * 0.2), 'the allowance of the paid month, and nothing else');
     platform.setAcuCapsFor(holdingId, admin.id, { monthlyMinor: 10_000 }, 'A hard limit for the test');
 
-    // 1,000 raw at 5× is 5,000 billed — half the limit.
-    const first = wallet.reserve({ aiRequestId: 'run-1', estimatedRawCostMinor: 1_000 });
-    wallet.settle(first.holdId, 1_000, 'OPENAI');
-    // 600 raw is 3,000 billed — 8,000 of 10,000.
-    const second = wallet.reserve({ aiRequestId: 'run-2', estimatedRawCostMinor: 600 });
-    wallet.settle(second.holdId, 600, 'OPENAI');
+    /*
+     * The two spends are named by what they *bill*, and the raw cost is worked
+     * back from the rate. The thresholds are 50% and 80% of the limit, so the
+     * figures that matter are 5,000 and 8,000 — a raw figure written in here
+     * silently stops crossing them the moment the business changes its rate,
+     * and the test then fails somewhere far from the thing that changed.
+     */
+    const raw = (billedMinor: number): number => billedMinor / config.billing.markupMultiplier;
+
+    // Half the limit: 5,000 billed of 10,000.
+    const first = wallet.reserve({ aiRequestId: 'run-1', estimatedRawCostMinor: raw(5_000) });
+    wallet.settle(first.holdId, raw(5_000), 'OPENAI');
+    // A further 3,000 billed — 8,000 of 10,000.
+    const second = wallet.reserve({ aiRequestId: 'run-2', estimatedRawCostMinor: raw(3_000) });
+    wallet.settle(second.holdId, raw(3_000), 'OPENAI');
     await settle();
 
     const raised = platform.ledger.events().filter((event) => event.tenantId === holdingId && event.eventType === 'ACU_ALERT_RAISED');
@@ -124,7 +134,8 @@ describe('§9.3 — the company and the group are told as AI spend approaches it
 
   it('stops AI at the limit, says so once, and leaves everything else alone', async () => {
     const wallet = platform.wallet(holdingId);
-    // 1,000 raw would be 5,000 billed: 13,000 against a limit of 10,000.
+    // 8,000 is already consumed, and another 1,000 raw bills well past the
+    // 10,000 limit at any rate the platform charges.
     assert.throws(() => wallet.reserve({ aiRequestId: 'run-3', estimatedRawCostMinor: 1_000 }), (error: { code?: string }) => error.code === 'ACU_EXHAUSTED');
     assert.throws(() => wallet.reserve({ aiRequestId: 'run-4', estimatedRawCostMinor: 1_000 }), (error: { code?: string }) => error.code === 'ACU_EXHAUSTED');
     await settle();
