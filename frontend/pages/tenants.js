@@ -273,7 +273,16 @@ export async function tenants(root) {
                 tenant.grantedFree
                   ? tenant.grantedFreeUntil
                     ? badge(`free until ${String(tenant.grantedFreeUntil).slice(0, 10)}`, 'ai')
-                    : badge('free of charge — no end date', 'warn')
+                    : // An open-ended grant is a commitment with no end, and
+                      // worth flagging — **on a customer**. The demonstration
+                      // tenancies are free by construction and forever by
+                      // design: nobody is billed for a demonstration, and
+                      // warning about it every time an operator opens the estate
+                      // is how a badge stops being read. They already carry the
+                      // "demonstration" badge that says which they are.
+                      tenant.demonstration
+                      ? badge('free of charge', 'ai')
+                      : badge('free of charge — no end date', 'warn')
                   : // A term that has run out: `grantedFree` is already expired
                     // against today, so this is "was free, until then", which is
                     // the pair that explains a charge reappearing.
@@ -286,6 +295,13 @@ export async function tenants(root) {
                 (attention.get(tenant.id) ?? []).map((flag) => badge(flag, flag === 'ready to delete' ? 'neutral' : 'bad'))
               }<div class="metric-sub">${tenant.jurisdiction} · ${
               tenant.isolatedTenancy ? 'dedicated tenancy' : 'shared tenancy'
+            } · ${
+              // Said on every row, both ways round. "In no group" is the state
+              // that costs somebody money quietly — no consolidated statement,
+              // no shared AI wallet, and no group exemption — and it was the
+              // one thing this screen never showed. A company whose parent's
+              // name sits in "Enterprise name" looks grouped and is not.
+              tenant.group ? `in ${tenant.group.displayName}` : 'in no group'
             }${tenant.referralCode ? ` · referred by ${tenant.referralCode}` : ''}</div>
               ${
                 // On the row itself, because a module is capability handed to
@@ -1036,7 +1052,26 @@ export async function tenants(root) {
         submitLabel: 'Onboard',
         fields: [
           { name: 'legalName', label: 'Legal name', hint: 'As it appears on the contract' },
-          { name: 'enterpriseName', label: 'Enterprise name', hint: 'The group this tenancy belongs to' },
+          {
+            name: 'enterpriseName',
+            label: 'Enterprise name',
+            // **This hint used to read "The group this tenancy belongs to".**
+            // It is not. `enterpriseName` names an Enterprise record scoped to
+            // this one tenancy; it sets no group membership, no cost centre and
+            // no shared wallet. An operator onboarded three companies typing
+            // their parent's name into this field, reasonably believing they
+            // had grouped them, and got three unrelated tenancies: no
+            // consolidated statement, no shared AI credit — so two of the three
+            // sat at a nil balance and could run no AI at all — and no
+            // group-level exemption, because that button is rendered per group
+            // and they were in none. The field did exactly what it says in the
+            // code and the opposite of what it said on the screen.
+            hint:
+              'The organisation name inside this one tenancy — its own letterhead, not a link to anything else. ' +
+              'It does NOT put this company in a group. For one licence, one statement and one shared AI wallet ' +
+              'across several companies, use "Create a group" and then "Bring a company in" on the group, or ' +
+              '"Onboard a group" to do both at once.',
+          },
           { name: 'adminName', label: 'First administrator', hint: 'The person who will run this tenancy — not a role' },
           {
             name: 'adminEmail',

@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import * as collection from '../src/billing/collection.ts';
 import { config } from '../src/config.ts';
-import { attachCompany, groupDirectory, groupOf, groupRolesFor } from '../src/group/directory.ts';
+import { attachCompany, groupDirectory, groupOf, groupOfTenant, groupRolesFor, groups } from '../src/group/directory.ts';
 import { addCompany, coverGroupCompanies, foundGroup } from '../src/group/onboarding.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
@@ -249,5 +249,62 @@ describe('founding a group opens the screen that manages it', () => {
     // to it is the screen the founder could not see.
     const group = read('frontend', 'pages', 'group.js');
     assert.match(group, /\/companies`/, 'the Group screen no longer carries the add-a-company door');
+  });
+});
+
+/**
+ * An enterprise name is not a group, and the console said it was.
+ *
+ * "Onboard a tenancy" labelled `enterpriseName` with the hint *"The group this
+ * tenancy belongs to"*. It is not: it names an Enterprise record scoped to the
+ * one tenancy, and sets no group membership, no cost centre and no shared
+ * wallet. An operator onboarded three companies typing their parent's name into
+ * it, believing they had grouped them, and got three unrelated tenancies — no
+ * consolidated statement, no shared AI credit, and no group-level exemption,
+ * because that door is rendered per group.
+ *
+ * Every consequence is silent, which is why this is pinned rather than left to
+ * the wording of a hint. If somebody later makes `enterpriseName` half-create a
+ * group, this fails; if somebody restores the hint, the assertion below on the
+ * estate payload is what makes the truth visible to whoever reads the screen.
+ */
+describe('an enterprise name is not group membership', () => {
+  it('leaves a tenancy in no group however its enterprise is named', () => {
+    const p = new Platform();
+    const shared = 'JNN GLOBAL LTD';
+    const made = ['JNN GLOBAL LTD', 'ETABLIX', 'JNseya Construction & Consultants'].map(
+      (legalName) =>
+        p.createTenant({
+          legalName,
+          jurisdiction: 'GB',
+          defaultCurrency: 'GBP',
+          tier: 'ENTERPRISE',
+          package: 'ENTERPRISE',
+          // The same enterprise name on all three, which is what an operator
+          // types when the hint tells them it is the group.
+          enterpriseName: shared,
+          deferOpeningCharge: true,
+        }).tenant,
+    );
+
+    for (const tenant of made) {
+      assert.equal(tenant.groupId, undefined, `${tenant.legalName} was put in a group by its enterprise name`);
+      assert.equal(groupOfTenant(p, tenant.id), undefined, `${tenant.legalName} resolved to a group it never joined`);
+    }
+    assert.equal(groups(p).length, 0, 'naming an enterprise created a group');
+  });
+
+  it('does not share a wallet between them, so a nil balance is a nil balance', () => {
+    // The consequence that bit hardest: two companies sat at £0 with no group
+    // to draw from, and an empty wallet means no AI at all.
+    const p = new Platform();
+    const parent = p.createTenant({ legalName: 'JNN GLOBAL LTD', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'ENTERPRISE', package: 'ENTERPRISE', enterpriseName: 'JNN GLOBAL LTD', deferOpeningCharge: true }).tenant;
+    const child = p.createTenant({ legalName: 'ETABLIX', jurisdiction: 'GB', defaultCurrency: 'GBP', tier: 'ENTERPRISE', package: 'ENTERPRISE', enterpriseName: 'JNN GLOBAL LTD', trialGrant: false, deferOpeningCharge: true }).tenant;
+    p.wallet(parent.id).topUp(10_000);
+
+    const spending = p.spendingWallet(child.id);
+    assert.equal(spending.sharedFrom, null, 'an enterprise name pooled two wallets that share nothing');
+    assert.equal(spending.wallet.tenantId, child.id);
+    assert.equal(spending.wallet.availableMinor(), 0, 'the child was funded by something it is not attached to');
   });
 });

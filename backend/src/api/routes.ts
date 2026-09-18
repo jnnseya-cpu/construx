@@ -2427,6 +2427,24 @@ export const ROUTES: Route[] = [
             tier: subscription.package,
             package: subscription.package,
             packageLabel: pkg.label,
+            /*
+             * Which group this company is in, or null for none.
+             *
+             * The estate never said. An operator onboarded three companies,
+             * typed the parent's name into "Enterprise name" — whose hint
+             * claimed to be the group — and had no way to see from this screen
+             * that none of them was grouped. The consequences are all silent:
+             * no consolidated statement, no shared AI wallet (so a member with
+             * a nil balance can run no AI at all), and no group-level
+             * exemption, because that door is rendered per group.
+             *
+             * Published as the membership rather than a boolean: "in a group"
+             * is not the question an operator has, "in which one" is.
+             */
+            group: (() => {
+              const group = groupOfTenant(platform, tenant.id);
+              return group ? { id: group.id, displayName: group.displayName } : null;
+            })(),
             // Given away by the operator: no monthly charge is raised for it.
             grantedFree: subscription.grantedFree === true,
             // The term, where one was set. Read from the stored record rather

@@ -24178,3 +24178,46 @@ explains a charge reappearing.
 
 Found by reading a real estate: three tenancies, all badged "free of charge",
 none of them showing whether any of it ended.
+
+### "Enterprise name" said it was the group, and was not
+
+Reported by an operator who had onboarded three companies — JNN GLOBAL LTD,
+ETABLIX and JNseya Construction & Consultants — and found none of the
+group-level doors: *"why this again … these companies was create under that"*.
+
+The **Onboard a tenancy** door carried this field:
+
+```js
+{ name: 'enterpriseName', label: 'Enterprise name', hint: 'The group this tenancy belongs to' },
+```
+
+It is not. `enterpriseName` names an `Enterprise` record scoped to the one
+tenancy and emits `ENTERPRISE_CREATED` against it. It sets no `groupId`, no cost
+centre and no shared wallet. Somebody typing the parent's name into it three
+times — which the hint told them to do — gets three unrelated tenancies.
+
+Every consequence is silent, and all of them had already been reported as
+separate faults:
+
+- no consolidated statement, so "the bill comes from JNN GLOBAL LTD" was an
+  intention rather than a modelled fact;
+- **no shared AI wallet.** `spendingWallet` pools only across a group, so
+  ETABLIX and JNseya sat at a nil balance against their own wallets — and an
+  empty wallet means no AI at all. Two of the three companies could run none,
+  and nothing said so;
+- no group-level exemption, because "Exempt from charges" is rendered per group
+  and they were in none. That is what produced the instruction to create a group
+  they believed they had already created.
+
+The hint now says what the field does and names the doors that do create a group
+("Create a group" then "Bring a company in", or "Onboard a group"). The estate
+row says which group a tenancy is in, **or that it is in none** — the state that
+costs money quietly, and the one thing that screen never showed. And
+`groupfound.test.ts` pins the semantics: three tenancies sharing an enterprise
+name are in no group, resolve to no group, create no group, and do not share a
+wallet.
+
+The open-ended-grant warning added alongside it is deliberately not raised on a
+demonstration tenancy. A demonstration is free by construction and forever by
+design; warning about it every time an operator opens the estate is how a badge
+stops being read.
