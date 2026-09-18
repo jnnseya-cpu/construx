@@ -603,9 +603,22 @@ export function navigate(page, params = []) {
 
 window.addEventListener('popstate', () => void draw());
 
-// The account page raises this when the person sets their picture or cover:
-// the header chip is drawn from `state.me`, which is read once per shell, so
-// it is read again and the shell redrawn.
+/**
+ * Something about who the signed-in person *is* has changed — read it again.
+ *
+ * `state.me` is fetched once when the shell loads and is what the header chip
+ * and, more importantly, `navigation()` are drawn from: the Group entry is shown
+ * only to somebody holding a group role, and that is read from here.
+ *
+ * The account page raises it when a picture or cover is set. Team & Access
+ * raises it after founding a group, and that is the case worth writing down: an
+ * administrator pressed "Found a group from this company", the group was
+ * created, they were granted `GROUP_ADMIN` — and the screen they were told would
+ * appear did not, because `state.me` still held the answer from before they
+ * pressed it. The toast said "Open Group to add the next"; there was no Group to
+ * open until the next sign-in. Reported as an enterprise administrator having no
+ * way to add a company at all, which is what it looked like.
+ */
 document.addEventListener('identity-changed', () => {
   void api.get('/v1/users/me').then((me) => {
     state.me = me;

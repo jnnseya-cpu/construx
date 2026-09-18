@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { Server } from 'node:http';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import * as collection from '../src/billing/collection.ts';
@@ -176,5 +179,75 @@ describe('through the gateway', () => {
       const body = (await again.clone().json().catch(() => ({}))) as { title?: string };
       throw Object.assign(new Error('refused'), { code: body.title ?? 'ALREADY_IN_GROUP' });
     }, 'ALREADY_IN_GROUP');
+  });
+});
+
+// ── The door the founder was promised ───────────────────────────────────────
+
+describe('founding a group opens the screen that manages it', () => {
+  /*
+   * ## What happened
+   *
+   * Reported as: an enterprise administrator has no way to add a company,
+   * whether their company stands alone or is part of a group.
+   *
+   * Everything needed already existed and was authorised correctly.
+   * `foundGroup` grants the founder `GROUP_ADMIN` (asserted above),
+   * `POST /v1/groups/:groupId/companies` is open to a group administrator, and
+   * the Group screen carries **Add a company** with the full form. The
+   * administrator simply never saw any of it.
+   *
+   * The sidebar shows Group only to somebody holding a group role, and it reads
+   * that from `state.me` — fetched once when the shell loaded, before this
+   * person became the group's administrator. Founding redrew the Team screen
+   * against that stale identity. The toast said "Open Group to add the next";
+   * there was no Group to open until the next sign-in, and there was no reason
+   * for anybody to guess that signing out would help.
+   *
+   * ## What this holds shut
+   *
+   * The grant, which is the platform's half, and the refresh, which is the
+   * console's. Either one alone leaves an administrator looking at a menu that
+   * does not contain the thing they were just told to open.
+   */
+  const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const read = (...parts: string[]): string => readFileSync(join(REPO, ...parts), 'utf8');
+
+  it('makes the founder the group administrator', () => {
+    // The platform's half, stated here as well as above because the console
+    // half below is meaningless without it.
+    const founder = platform.user(adminId);
+    const roles = groupRolesFor(platform, groupOf(platform, platform.tenant(tenantId).groupId!).id, founder.email);
+    assert.ok(roles.includes('GROUP_ADMIN'), 'the founder of a group is not its administrator');
+  });
+
+  it('re-reads who the founder is, so the Group screen appears without signing in again', () => {
+    const team = read('frontend', 'pages', 'team.js');
+    const shell = read('frontend', 'app.js');
+
+    const founding = team.slice(team.indexOf("command === 'found'"));
+    const handler = founding.slice(0, founding.indexOf('return;'));
+    assert.ok(handler.length > 0, 'the found-a-group handler has gone from Team & Access');
+    assert.match(
+      handler,
+      /identity-changed/,
+      'founding a group no longer re-reads the identity, so the Group screen stays hidden until the next sign-in',
+    );
+    assert.match(shell, /addEventListener\('identity-changed'/, 'the shell no longer listens for an identity change');
+    assert.match(shell, /state\.me = me/, 'the identity listener no longer replaces the identity it re-read');
+  });
+
+  it('shows Group only to somebody holding a group role, which is why the refresh matters', () => {
+    // If this stopped being true the bug would not exist — and the refresh
+    // above would look like dead code to whoever read it next.
+    const shell = read('frontend', 'app.js');
+    assert.match(shell, /groupOnly: true/, 'the Group entry is no longer restricted to group-role holders');
+  });
+
+  it('puts adding a company behind that screen and nowhere else', () => {
+    // The whole chain: a group administrator's route exists, and the only door
+    // to it is the screen the founder could not see.
+    const group = read('frontend', 'pages', 'group.js');
+    assert.match(group, /\/companies`/, 'the Group screen no longer carries the add-a-company door');
   });
 });

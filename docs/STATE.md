@@ -23832,3 +23832,90 @@ where `www.<domain>` resolves to the gateway; if that record does not exist, the
 name fails to resolve rather than failing to handshake, and no amount of
 configuration in this repository will answer it. That is the one part of this
 that is outside the code.
+
+---
+
+## An administrator who could do everything, and could see none of it
+
+Reported as: an enterprise administrator — whether their company stands alone or
+belongs to a group — has no way to add a tenant, add users, or invite internal or
+external people with the right roles.
+
+Driven before anything was changed, because the same report has more than one
+possible cause. Every capability existed and every one was authorised correctly.
+What was wrong was that an administrator could not get to them.
+
+### Founding a group hid the screen it had just created
+
+The sharpest of the three, and the whole of the tenant half of the report.
+
+`foundGroup` creates the group, attaches the company and grants the founder
+`GROUP_ADMIN` — all of it correct, and covered by tests. `POST
+/v1/groups/:groupId/companies` is open to a group administrator. The Group screen
+carries **Add a company** with its full form: name, cost centre code,
+jurisdiction, currency and two administrators.
+
+The administrator saw none of it. The sidebar shows Group only to somebody
+holding a group role and reads that from `state.me`, which the shell fetches once
+when it loads — before this person became the group's administrator. Founding
+redrew the Team screen against that stale identity, so the menu was the menu of a
+person with no group. The toast said *"Open Group to add the next"*. There was
+nothing called Group to open, and no reason for anybody to guess that signing out
+and in again would produce one.
+
+So the platform's answer to "can this administrator add a company" was yes, and
+the console's answer was a menu without the word Group in it. The console won,
+because it is the only one anybody can see.
+
+`identity-changed` — the event the account page already raises when somebody sets
+a picture, which re-reads `/v1/users/me` and redraws the shell — is now raised
+when a group is founded, which is a far larger change to who somebody is.
+Verified end to end in a browser: Group absent before, present immediately after,
+no reload, and **Add a company** live on it.
+
+### Adding one person meant a bulk paste, or another screen
+
+**Add a person** and **Invite somebody onto this project** existed, with a roles
+multiselect drawn from `tenantGrantableRoles()` — the platform's published list,
+which excludes the operator roles and refuses one by name rather than dropping it
+quietly. That is the "appropriate role and level of access" the report asked for,
+and it was already right.
+
+Both lived on Enterprise & Portfolio. The screen called **Team & Access** — the
+one anybody opens to add a colleague — offered "Import people": a textarea taking
+`email, name, ROLE, unit, manager` one per line. To add a single person you had
+to know the button was on another screen, or write a CSV line by hand.
+
+Both commands are now on Team & Access as well, exported from the screen that has
+always carried them rather than copied. Copying is what had already gone wrong
+twice in this codebase — the registered address kept a second address line no
+form could fill — and a second copy of a field list is a second thing to keep in
+step.
+
+### What was not wrong
+
+The permission matrix. `ENTERPRISE_ADMIN` holds `R C U A G` on
+`ENTERPRISE_STRUCTURE` and `R C U A` on `PROJECT_SETUP`, which is everything
+these acts need. Measured in the console, an enterprise administrator met **no
+locked control at all** on either screen. Nothing was refused; things were
+invisible, which is worse, because a refusal at least names what is missing.
+
+### What holds it shut
+
+`backend/tests/groupfound.test.ts` asserts both halves — that the founder is
+granted `GROUP_ADMIN`, and that founding re-reads the identity so the screen
+appears. Either alone leaves an administrator looking at a menu that does not
+contain the thing they were just told to open. It also pins the two facts that
+make the bug possible, so the refresh does not read as dead code to whoever sees
+it next: the Group entry is restricted to group-role holders, and the Group
+screen is the only door to adding a company.
+
+### Still true, and stated rather than left to be discovered
+
+A company that is **not** in a group cannot create another company. There is no
+"add a tenant" for a customer, and that is deliberate: a tenancy is a billable
+customer, and creating one is the operator's act or a public signup. The path for
+a customer is **Found a group from this company**, then **Add a company** on the
+Group screen, up to the group licence's five. That path now works from end to
+end; what does not exist is a sixth company, or a second unrelated tenancy from
+inside the first.

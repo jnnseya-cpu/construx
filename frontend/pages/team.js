@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { badge, date, html, humanise, metric, notice, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
+import { addPersonCommand, inviteCommand } from './enterprise.js';
 import { barChart, gauge, pieChart, treemap } from '../lib/charts.js';
 
 /**
@@ -126,6 +127,38 @@ export async function team(root) {
         </div>
         <div class="actions cmd-bar">
           ${raw(commandBar([
+            // First, because it is the reason most people open this screen.
+            //
+            // Adding one colleague was possible only from Enterprise &
+            // Portfolio, or by typing `email, name, ROLE, unit, manager` into
+            // the bulk textarea below — on the screen called Team & Access,
+            // which is where anybody looks. Reported as an administrator having
+            // no way to add users or invite anybody at all.
+            //
+            // `G` rather than `C`: adding somebody to the tenancy grants them
+            // authority, which is a governance act rather than the creation of
+            // a record. The same code the Enterprise screen gates it on.
+            {
+              id: 'person',
+              label: 'Add a person',
+              permitted: can('ENTERPRISE_STRUCTURE', 'G') && seats.remaining !== 0,
+              reason: seats.remaining === 0
+                ? 'Every seat is taken or invited. Buy a seat on ACU & Billing, or move package.'
+                : blockedReason('ENTERPRISE_STRUCTURE', 'G'),
+            },
+            {
+              id: 'invite',
+              label: 'Invite to a project',
+              tone: '',
+              // Anybody working on the project may bring somebody onto it —
+              // internal or external, with the roles they are to hold. The
+              // platform decides whether the caller is working on it or merely
+              // reading it, from the same matrix this screen reads.
+              permitted: can('PROJECT_SETUP', 'R') && Boolean(state.session.projectId),
+              reason: !state.session.projectId
+                ? 'An invitation is onto a project, and no project is open. Create one on Enterprise & Portfolio first.'
+                : blockedReason('PROJECT_SETUP', 'R'),
+            },
             { id: 'unit', label: 'Add unit', permitted: admin, reason: 'Only an enterprise admin may change the structure' },
             {
               id: 'import',
@@ -620,6 +653,26 @@ export async function team(root) {
       if (result) draw();
       return;
     }
+    if (button.dataset.command === 'person') {
+        // The definition lives on Enterprise & Portfolio, which has always
+        // carried it; this is a second door to the same form rather than a
+        // second form. See `addPersonCommand`.
+        if (await command(addPersonCommand())) {
+          toast('Added', 'They can sign in with that address — a one-time code is emailed each time.', 'ok');
+          await refresh();
+        }
+        return;
+      }
+    if (button.dataset.command === 'invite') {
+        // The supply-chain register is optional here: this screen does not hold
+        // one, and the supplier field is only for an external supplier's person.
+        const register = await api.read('/v1/supply-chain?all=true', 'PROCUREMENT_AWARD').catch(() => null);
+        if (await command(inviteCommand(register))) {
+          toast('Invitation sent', 'They are emailed a link and sign in with a one-time code.', 'ok');
+          await refresh();
+        }
+        return;
+      }
     if (button.dataset.command === 'found') {
         const result = await command({
           title: 'Found a group from this company',
@@ -634,6 +687,13 @@ export async function team(root) {
         });
         if (result) {
           toast(`${result.group.displayName} founded`, `${result.company.name} is its first company (cost centre ${result.company.code}); ${result.maxCompanies} companies may be held. Open Group to add the next.`, 'ok');
+          // The sidebar shows Group only to somebody holding a group role, and
+          // it reads that from `state.me` — which the shell fetched once, before
+          // this person became the group's administrator. `refresh()` redraws
+          // this screen against stale identity, so the screen the toast
+          // promises does not appear and the whole act looks as though it did
+          // nothing. This re-reads who they are, which is what actually changed.
+          document.dispatchEvent(new CustomEvent('identity-changed'));
           await refresh();
         }
         return;

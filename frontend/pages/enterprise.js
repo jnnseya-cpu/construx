@@ -801,75 +801,7 @@ export async function enterprise(root) {
         ...(f.organisation ? {} : { organisation: undefined }),
       }),
     },
-    invite: {
-      title: 'Invite somebody onto this project',
-      intent:
-        'A participant takes no seat. A Controller from another organisation brings their own licence, or is admitted as a ' +
-        'participant until you buy a Project Controller Pass or reduce the roles. Only one of our own Controllers takes one ' +
-        'of this package\u2019s seats, held from now rather than from when they accept. Nothing is charged to anybody by inviting.',
-      path: `/v1/projects/${state.session.projectId}/invitations`,
-      submitLabel: 'Send the invitation',
-      fields: [
-        { name: 'name', label: 'Name' },
-        { name: 'email', label: 'Work email' },
-        {
-          name: 'external',
-          label: 'Which organisation',
-          type: 'select',
-          options: [
-            { value: 'false', label: 'Ours — they work here' },
-            { value: 'true', label: 'External — another company, or a company of our group' },
-          ],
-        },
-        {
-          name: 'organisation',
-          label: 'Their organisation',
-          required: false,
-          hint: 'Required for an external invitee. "Who are they with" is the first question anybody asks.',
-        },
-        {
-          name: 'roles',
-          label: 'What they may do',
-          type: 'select',
-          multiple: true,
-          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
-          hint: 'Controller roles — approving money, baselines and contracts, administering people — need a licence. Participant roles do not.',
-        },
-        {
-          name: 'expiresAt',
-          label: 'Appointment ends',
-          type: 'datetime-local',
-          required: false,
-          hint: 'When their access to this project ends on its own. Left empty, it runs until revoked.',
-        },
-        {
-          name: 'because',
-          label: 'Why they are being added',
-          type: 'textarea',
-          rows: 3,
-          hint: 'A sentence somebody reviewing the project team in six months will understand.',
-        },
-        {
-          name: 'supplierId',
-          label: 'Their firm on the supply-chain register',
-          type: 'select',
-          required: false,
-          placeholder: 'Not a supplier’s person',
-          options: (register?.suppliers ?? []).map((firm) => ({ value: firm.id, label: firm.legalName })),
-          hint:
-            'For an external supplier only. Links the sign-in to the firm, which is what lets them open their own portal and nobody else’s.',
-        },
-      ],
-      // `external` arrives from a select as a string, and `Boolean('false')` is
-      // true — the classic way a safety flag inverts itself in transit.
-      transform: (f) => ({
-        ...f,
-        external: String(f.external) === 'true',
-        roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
-        ...(f.supplierId ? {} : { supplierId: undefined }),
-        ...(f.expiresAt ? { expiresAt: new Date(f.expiresAt).toISOString() } : { expiresAt: undefined }),
-      }),
-    },
+    invite: inviteCommand(register),
 
     portfolio: {
       title: 'Create a portfolio',
@@ -999,31 +931,7 @@ export async function enterprise(root) {
         ...(String(startingPhaseReason ?? '').trim() ? { startingPhaseReason: String(startingPhaseReason).trim() } : {}),
       }),
     },
-    person: {
-      title: 'Add a person',
-      intent:
-        'Creates an identity in this tenancy and takes a seat against the subscription. There is no password — ' +
-        'the email address is the credential, because sign-in is a one-time code sent to it.',
-      path: '/v1/users',
-      submitLabel: 'Add',
-      fields: [
-        { name: 'name', label: 'Name', hint: 'The person, not a role. This is who the record will name for everything they do.' },
-        {
-          name: 'email',
-          label: 'Email address',
-          hint: 'Where their sign-in code goes. An address nobody reads is an account nobody can use.',
-        },
-        {
-          name: 'roles',
-          label: 'Roles',
-          type: 'multiselect',
-          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
-          hint:
-            'What they may do. Offered from the list the platform publishes as grantable — the operator roles are ' +
-            'not on it, and asking for one is refused by name rather than quietly dropped.',
-        },
-      ],
-    },
+    person: addPersonCommand(),
   };
 
   // What an administrator may do to a person, from the row. Each one is a
@@ -1524,4 +1432,137 @@ function estateCharts({ estate, financial, delivery, forecast, portfolios, proje
       </div>
     </div>
   `;
+}
+
+/**
+ * Add somebody to this company, and invite somebody onto a project.
+ *
+ * ## Why these are exported
+ *
+ * Both were reachable from Enterprise & Portfolio and from nowhere else, while
+ * the screen actually called **Team & Access** — the one anybody looking to add
+ * a colleague opens — offered only "Import people": a textarea taking
+ * comma-separated lines. To add one person you had to either know the button
+ * was on a different screen, or type `email, name, ROLE, unit, manager` into a
+ * box. Reported as an enterprise administrator having no way to add users or
+ * invite anybody at all, which is a fair description of what that looks like.
+ *
+ * Exported rather than copied, for the reason the registered-details form
+ * already demonstrated: a second copy of a field list is a second thing to keep
+ * in step, and the field that goes missing is the one nobody notices.
+ *
+ * The roles list comes from `tenantGrantableRoles()`, which the platform
+ * publishes — the operator roles are not on it, and asking for one is refused
+ * by name rather than quietly dropped. That is the "appropriate role and level
+ * of access" part, and it is the platform's list rather than this file's.
+ */
+export function addPersonCommand() {
+  return {
+    title: 'Add a person',
+    intent:
+      'Creates an identity in this tenancy and takes a seat against the subscription. There is no password — ' +
+      'the email address is the credential, because sign-in is a one-time code sent to it.',
+    path: '/v1/users',
+    submitLabel: 'Add',
+    fields: [
+      { name: 'name', label: 'Name', hint: 'The person, not a role. This is who the record will name for everything they do.' },
+      {
+        name: 'email',
+        label: 'Email address',
+        hint: 'Where their sign-in code goes. An address nobody reads is an account nobody can use.',
+      },
+      {
+        name: 'roles',
+        label: 'Roles',
+        type: 'multiselect',
+        options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+        hint:
+          'What they may do. Offered from the list the platform publishes as grantable — the operator roles are ' +
+          'not on it, and asking for one is refused by name rather than quietly dropped.',
+      },
+    ],
+  };
+}
+
+/**
+ * Invite somebody onto a project — one of ours, or somebody from another
+ * company entirely, with the roles they are to hold.
+ *
+ * Takes the supply-chain register rather than reading it, so the same form can
+ * be opened from a screen that has one and from a screen that does not. Passing
+ * `null` simply leaves the supplier field with no options, which is what it is
+ * for a person who is not a supplier's.
+ *
+ * See `addPersonCommand` for why this is exported rather than copied.
+ */
+export function inviteCommand(register) {
+  return {
+      title: 'Invite somebody onto this project',
+      intent:
+        'A participant takes no seat. A Controller from another organisation brings their own licence, or is admitted as a ' +
+        'participant until you buy a Project Controller Pass or reduce the roles. Only one of our own Controllers takes one ' +
+        'of this package\u2019s seats, held from now rather than from when they accept. Nothing is charged to anybody by inviting.',
+      path: `/v1/projects/${state.session.projectId}/invitations`,
+      submitLabel: 'Send the invitation',
+      fields: [
+        { name: 'name', label: 'Name' },
+        { name: 'email', label: 'Work email' },
+        {
+          name: 'external',
+          label: 'Which organisation',
+          type: 'select',
+          options: [
+            { value: 'false', label: 'Ours — they work here' },
+            { value: 'true', label: 'External — another company, or a company of our group' },
+          ],
+        },
+        {
+          name: 'organisation',
+          label: 'Their organisation',
+          required: false,
+          hint: 'Required for an external invitee. "Who are they with" is the first question anybody asks.',
+        },
+        {
+          name: 'roles',
+          label: 'What they may do',
+          type: 'select',
+          multiple: true,
+          options: tenantGrantableRoles().map((role) => ({ value: role, label: humanise(role) })),
+          hint: 'Controller roles — approving money, baselines and contracts, administering people — need a licence. Participant roles do not.',
+        },
+        {
+          name: 'expiresAt',
+          label: 'Appointment ends',
+          type: 'datetime-local',
+          required: false,
+          hint: 'When their access to this project ends on its own. Left empty, it runs until revoked.',
+        },
+        {
+          name: 'because',
+          label: 'Why they are being added',
+          type: 'textarea',
+          rows: 3,
+          hint: 'A sentence somebody reviewing the project team in six months will understand.',
+        },
+        {
+          name: 'supplierId',
+          label: 'Their firm on the supply-chain register',
+          type: 'select',
+          required: false,
+          placeholder: 'Not a supplier’s person',
+          options: (register?.suppliers ?? []).map((firm) => ({ value: firm.id, label: firm.legalName })),
+          hint:
+            'For an external supplier only. Links the sign-in to the firm, which is what lets them open their own portal and nobody else’s.',
+        },
+      ],
+      // `external` arrives from a select as a string, and `Boolean('false')` is
+      // true — the classic way a safety flag inverts itself in transit.
+      transform: (f) => ({
+        ...f,
+        external: String(f.external) === 'true',
+        roles: Array.isArray(f.roles) ? f.roles : [f.roles].filter(Boolean),
+        ...(f.supplierId ? {} : { supplierId: undefined }),
+        ...(f.expiresAt ? { expiresAt: new Date(f.expiresAt).toISOString() } : { expiresAt: undefined }),
+      }),
+  };
 }
