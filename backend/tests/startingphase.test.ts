@@ -398,6 +398,84 @@ describe('a won tender converts the same project — it does not create a second
     assert.equal(risks.approvedAt, null, 'an open line was stamped as approved');
   });
 
+  it('returns the original receipt when the same attempt arrives twice (AC-03)', () => {
+    /*
+     * A double-click, a proxy retry, a response that never got back. The key
+     * says "this is the same attempt", and the honest answer is the receipt
+     * that attempt produced — not a 409 telling somebody their award failed
+     * when it did not, because that is the moment a person creates the
+     * duplicate project this whole identity model exists to prevent.
+     */
+    const { projectId, ctx } = bid('Retried once');
+    const key = 'idem-4471-a';
+
+    const first = structure.convertToDelivery(ctx, {
+      award: AWARD,
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded under LOI-4471; approved by the commercial director.',
+      idempotencyKey: key,
+    });
+    const events = platform.ledger.list(projectId, 'ProjectBaseline').length;
+
+    const replay = structure.convertToDelivery(ctx, {
+      award: AWARD,
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded under LOI-4471; approved by the commercial director.',
+      idempotencyKey: key,
+    });
+
+    assert.equal(replay.conversionId, first.conversionId, 'the replay minted a second conversion');
+    assert.equal(replay.tenderBaselineId, first.tenderBaselineId);
+    assert.equal(replay.awardBaselineId, first.awardBaselineId);
+    assert.equal(replay.committedAt, first.committedAt, 'the replay restamped the commit time');
+    assert.equal(replay.replayed, true, 'a replay is indistinguishable from a fresh commit');
+    assert.equal(first.replayed, undefined, 'the first commit claimed to be a replay');
+
+    // And nothing happened a second time.
+    assert.equal(platform.ledger.list(projectId, 'ProjectBaseline').length, events, 'the replay wrote another baseline');
+    assert.equal(platform.ledger.list(projectId, 'AwardReconciliation').length, 1, 'the replay opened a second reconciliation');
+  });
+
+  it('still refuses a different award on an already-converted project', () => {
+    // The key distinguishes two very different things. A *different* key is
+    // somebody awarding an already-awarded project, which is a supplemental
+    // agreement rather than a conversion.
+    const { ctx } = bid('Second award attempt');
+    structure.convertToDelivery(ctx, {
+      award: AWARD,
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded and converted.',
+      idempotencyKey: 'idem-first',
+    });
+    throwsCode(
+      () =>
+        structure.convertToDelivery(ctx, {
+          award: { ...AWARD, contractSumMinor: 999 },
+          deliveryEntry: 'DESIGN',
+          justification: 'A different award entirely.',
+          idempotencyKey: 'idem-second',
+        }),
+      'ALREADY_CONVERTED',
+    );
+  });
+
+  it('carries the receipt §11.4 asks for', () => {
+    const { ctx } = bid('Receipt shape');
+    const receipt = structure.convertToDelivery(ctx, {
+      award: AWARD,
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded; the receipt is what somebody produces a year later.',
+    });
+
+    assert.equal(receipt.previousState, 'PRE_AWARD');
+    assert.equal(receipt.currentState, 'LIVE_MOBILISING');
+    assert.equal(receipt.entryStage, 'TENDER');
+    assert.equal(receipt.phase, 'DESIGN');
+    assert.equal(receipt.unresolvedReconciliationItems, 10);
+    assert.ok(receipt.conversionId, 'no conversion id');
+    assert.ok(receipt.committedAt, 'no commit time');
+  });
+
   it('refuses a second award on one project', () => {
     const { ctx } = bid('Awarded once');
     structure.convertToDelivery(ctx, { award: AWARD, deliveryEntry: 'DESIGN', justification: 'Awarded under the framework.' });

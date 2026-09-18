@@ -23061,3 +23061,41 @@ product.
 
 Measured at 1500px and 390px: no horizontal overflow at either, and the
 sentences break where the `<br>` puts them rather than wherever the column ends.
+
+### AC-03: a retried conversion returns its original receipt
+
+A double-click, a proxy retry, a response that never got back. The conversion
+refused all three with `409 ALREADY_CONVERTED` — telling somebody their award
+had failed when it had not, which is the exact moment a person creates the
+duplicate project this whole identity model exists to prevent.
+
+`convertToDelivery` now takes an idempotency key from the `Idempotency-Key`
+header (§11.2 — it belongs to the transport, not the award: the same award sent
+twice is one commercial act and two HTTP requests, and taking it from the body
+would let a client change the award while claiming to retry). A retry carrying
+the key of an attempt that already succeeded gets that attempt's receipt back
+with `replayed: true`, and nothing is written. A **different** key on an awarded
+project still refuses — that is somebody awarding an already-awarded project,
+which is a supplemental agreement rather than a conversion.
+
+The receipt (§11.4) is stored on the project as well as returned, because a
+receipt existing only in one HTTP response is one nobody can produce when it
+matters. `unresolvedReconciliationItems` is taken at the moment of award rather
+than recomputed on read — a receipt whose figures move afterwards is not a
+receipt.
+
+Verified live over HTTP: same `conversionId` on the retry, ten reconciliation
+lines rather than twenty, one baseline pair rather than two.
+
+### The exposure page computed nothing until you submitted a form
+
+The strongest call to action on the landing page — "What one missed notice costs
+you" — led to five fields and a button, and no number at all until the visitor
+did the work. The entire persuasive payload sat behind an action most people
+were never going to take.
+
+The defaults already describe an ordinary contractor, so the arithmetic runs on
+them immediately and the visitor adjusts a figure they disagree with rather than
+filling a form from empty. Nothing is invented by doing this: every number still
+comes from the five inputs, and the inputs stay visible and editable above the
+answer.

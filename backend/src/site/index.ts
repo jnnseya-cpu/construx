@@ -7,6 +7,7 @@ import { landing } from './landing.ts';
 import { POST_PAGES } from './posts.ts';
 import { publishedPost } from './blog.ts';
 import { availability } from './booking.ts';
+import { exposurePosition, readExposureInput } from './exposure.ts';
 import { CLEAN_TENANCY, cleanWorkspaceSeats, seedCleanWorkspace } from '../cleanroom.ts';
 import { demonstrationEnabled, isProduction } from '../config.ts';
 import {
@@ -44,7 +45,22 @@ type Renderer = (platform: Platform, ctx: RequestContext) => string;
 const RENDERERS: Record<string, Renderer> = {
   '/about': () => about(),
   '/how-it-works': () => howItWorks(),
-  '/exposure': () => exposure(),
+  /*
+   * Computed on arrival, not on submit.
+   *
+   * This page used to render five fields and a button, and no number at all
+   * until the visitor filled the form in. They arrive from a link promising
+   * "what one missed notice costs you" and are met with homework — so the
+   * entire persuasive payload sat behind an action most people were never
+   * going to take.
+   *
+   * The defaults already describe an ordinary contractor, so the arithmetic can
+   * run on them immediately and the visitor adjusts a figure they disagree with
+   * rather than filling a form from empty. Nothing is invented by doing this:
+   * every number still comes from the five inputs, and the inputs are visible
+   * and editable above the answer.
+   */
+  '/exposure': () => exposure(exposurePosition(readExposureInput({}))),
   '/industries': () => industries(),
   '/blog': (platform) => blog(platform),
   // One concrete route per post rather than a `:slug` pattern. It keeps the

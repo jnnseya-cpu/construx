@@ -911,14 +911,18 @@ export function convertToDelivery(
     /** Why this is being converted now, and on whose authority. */
     justification: string;
     evidenceHash?: string;
+    /**
+     * The client's own key for this attempt (§11.2, FR-005).
+     *
+     * A retry carrying the key of an attempt that already succeeded gets that
+     * attempt's receipt back, unchanged, and nothing else happens. Without one
+     * a double-click, a proxy retry or a dropped response gets a 409 telling
+     * somebody their award failed when it did not — which is the moment a
+     * person creates the duplicate project this whole model exists to prevent.
+     */
+    idempotencyKey?: string;
   },
-): {
-  projectId: string;
-  entryStage: LifecyclePhase;
-  phase: LifecyclePhase;
-  reconciliationId: string;
-  tenderBaselineId: string;
-} {
+): ConversionReceipt {
   /*
    * `A` on PROJECT_SETUP — an approval, not a create.
    *
@@ -933,7 +937,25 @@ export function convertToDelivery(
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
   const from = project.state.phase as LifecyclePhase;
 
-  if (project.state.commercialStatus === 'AWARDED') {
+  /*
+   * A retry of a conversion that already succeeded.
+   *
+   * The key decides which of two very different things is happening. Same key:
+   * this is the same attempt arriving twice — a double-click, a proxy retry, a
+   * response that never got back — and the honest answer is the receipt that
+   * attempt produced, with no second write. Different key, or none: somebody is
+   * awarding an already-awarded project, and that is a supplemental agreement
+   * rather than a conversion.
+   *
+   * Returning 409 to the first case is how a person concludes their award
+   * failed when it did not, and then creates the duplicate project this whole
+   * identity model exists to prevent.
+   */
+  const previous = project.state.conversionReceipt as ConversionReceipt | undefined;
+  if (previous) {
+    if (input.idempotencyKey && previous.idempotencyKey === input.idempotencyKey) {
+      return { ...previous, replayed: true };
+    }
     throw new DomainError(
       'ALREADY_CONVERTED',
       `This project was converted to delivery on ${String(project.state.awardedAt ?? '').slice(0, 10)}. ` +
@@ -1048,6 +1070,30 @@ export function convertToDelivery(
     description: `Contract award: ${input.award.contractForm}, ${input.award.contractAwardDate}`,
   });
 
+  /*
+   * The receipt, built before the write so it is stored in the same event that
+   * awards the contract.
+   *
+   * §11.4 asks for the conversion id, both baseline ids and the count of
+   * reconciliation lines still open. The count is taken here rather than
+   * recomputed on read: it is the number at the moment of award, and a receipt
+   * whose figures move afterwards is not a receipt.
+   */
+  const receipt: ConversionReceipt = {
+    conversionId: ulid(),
+    projectId: ctx.projectId,
+    previousState: currentLifecycleState(project.state),
+    currentState: 'LIVE_MOBILISING',
+    entryStage: (project.state.startedAtPhase as LifecyclePhase | undefined) ?? 'TENDER',
+    phase: input.deliveryEntry,
+    tenderBaselineId,
+    awardBaselineId,
+    reconciliationId,
+    unresolvedReconciliationItems: RECONCILIATION_LINES.length,
+    committedAt: now,
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
+
   write(ctx, {
     eventType: 'TENDER_WON',
     entity: { refType: 'Project', refId: ctx.projectId },
@@ -1092,6 +1138,9 @@ export function convertToDelivery(
       tenderBaselineId,
       awardBaselineId,
       reconciliationId,
+      // Held on the project so a retry has something to answer with, and so
+      // somebody can produce the receipt a year later without a log search.
+      conversionReceipt: receipt,
       status: 'ACTIVE',
     },
     evidenceRefs: [awardEvidence],
@@ -1106,14 +1155,32 @@ export function convertToDelivery(
     gateEvaluation: [],
   });
 
-  return {
-    projectId: ctx.projectId,
-    entryStage: (project.state.startedAtPhase as LifecyclePhase | undefined) ?? 'TENDER',
-    phase: input.deliveryEntry,
-    reconciliationId,
-    tenderBaselineId,
-  };
+  return receipt;
 }
+
+/**
+ * What a committed conversion hands back (§11.4).
+ *
+ * Stored on the project as well as returned, because a receipt that exists only
+ * in one HTTP response is a receipt nobody can produce when it matters — and it
+ * is what makes a retry answerable rather than refusable.
+ */
+export type ConversionReceipt = {
+  conversionId: string;
+  projectId: string;
+  previousState: LifecycleState;
+  currentState: LifecycleState;
+  entryStage: LifecyclePhase;
+  phase: LifecyclePhase;
+  tenderBaselineId: string;
+  awardBaselineId: string;
+  reconciliationId: string;
+  unresolvedReconciliationItems: number;
+  committedAt: string;
+  idempotencyKey?: string;
+  /** True only on a replay, so a caller can tell a fresh commit from an echo. */
+  replayed?: boolean;
+};
 
 /**
  * Whether a project is still part of the estate. A deleted project keeps every

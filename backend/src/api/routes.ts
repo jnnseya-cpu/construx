@@ -9376,7 +9376,19 @@ export const ROUTES: Route[] = [
       },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => structure.convertToDelivery(projectContext(platform, ctx), body(ctx)),
+    handler: (platform, ctx) =>
+      structure.convertToDelivery(projectContext(platform, ctx), {
+        ...body<Parameters<typeof structure.convertToDelivery>[1]>(ctx),
+        /*
+         * §11.2: the key is a header, not a body field.
+         *
+         * It belongs to the transport rather than to the award — the same
+         * award submitted twice is one commercial act and two HTTP requests,
+         * and it is the request that needs identifying. Taking it from the body
+         * would also let a client change the award while claiming to retry.
+         */
+        ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
+      }),
   },
   {
     method: 'GET',
