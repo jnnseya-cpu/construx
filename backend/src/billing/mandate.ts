@@ -132,6 +132,36 @@ export function activationPosition(platform: Platform, tenantId: string): Activa
   } else if (monthlyPriceMinor <= 0) {
     required = false;
     reason = `${pkg.label} costs nothing a month; nothing is collected.`;
+  } else if (platform.isDemonstrationTenant(tenantId)) {
+    /*
+     * The demonstration, which nobody is ever billed for.
+     *
+     * Found when an anonymous visitor's first screen became a modal reading
+     * "Activate Meridian Infrastructure Group Ltd's subscription — £6,500.00
+     * a month — Choose how to pay", over a fictional company, with a payment
+     * reference for a transfer. A sandbox asking a stranger to pay is worse
+     * than clutter; it is a payment demand for something nobody owes, and it
+     * covered the whole console until it was dismissed.
+     *
+     * It was invisible before only because the console used to sign visitors in
+     * as a project manager, who holds read on `BILLING_ACU` and not update, so
+     * `maybeShowActivation` never asked. That is not a control — it is the
+     * modal being hidden from the one person who could not answer it — and it
+     * stopped being true the moment the owner became the landing identity.
+     *
+     * Fixed here rather than in the console, because whether a tenancy owes
+     * anything is a billing rule and the browser must hold no rule the API does
+     * not publish. Checking that claim turned up the other half of it:
+     * `raiseCharge` excluded the platform's own tenancy and not this one, so an
+     * armed collection run would have charged the demonstration and suspended
+     * it for not paying. Both say the same thing now, in the two places it is
+     * asked.
+     *
+     * Last of the four, so a cancelled, covered or free demonstration still
+     * reports the more specific reason it is not billed.
+     */
+    required = false;
+    reason = `${tenant.legalName} is the demonstration tenancy; nothing is ever collected from it.`;
   }
 
   return {

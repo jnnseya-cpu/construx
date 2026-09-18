@@ -213,6 +213,27 @@ export function raiseCharge(
   // not paying itself. The ledger record is what distinguishes a tenancy
   // somebody signed up for from the one the process was born with.
   if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
+  /*
+   * Nor is the demonstration.
+   *
+   * The guard above catches the platform's own tenancy because it has no
+   * `Subscription` entity. The demonstration has one — it is created through
+   * `createTenant` like any customer — so it fell straight through. With
+   * `SUBSCRIPTION_COLLECTION_ENABLED` armed it would be raised a charge it has
+   * no mandate to pay, fail collection, and be suspended seven days later for
+   * not paying: the public demonstration going dark, by exactly the mechanism
+   * the comment above describes for the platform itself.
+   *
+   * The renewal has never fired, because collection is off by default. The
+   * *opening* charge is not gated by that flag and had already been raised —
+   * it is what put "Activate Meridian Infrastructure Group Ltd's subscription,
+   * £6,500.00 a month" in front of an anonymous visitor, with a payment
+   * reference for a transfer, over a fictional company. Both paths are guarded.
+   *
+   * Decided from the identities in the tenancy, which is the one marker for
+   * this and cannot be set or cleared by any route.
+   */
+  if (platform.isDemonstrationTenant(tenantId)) return undefined;
 
   const charge: SubscriptionCharge = {
     id: ulid(),
@@ -274,6 +295,10 @@ export function raiseOpeningCharge(
   const amountMinor = subscriptionPriceMinor(platform, tenantId, PACKAGES[subscription.package].monthlyPriceMinor).amountMinor;
   if (amountMinor <= 0) return undefined;
   if (!platform.ledger.get({ refType: 'Subscription', refId: subscription.id })) return undefined;
+  // Nor is the demonstration, for the reason given on `raiseCharge`: this is
+  // the charge that was actually raised against it, and the one a visitor was
+  // asked to pay.
+  if (platform.isDemonstrationTenant(tenantId)) return undefined;
 
   const periodStart = subscription.startedAt;
   const existing = chargesFor(platform, tenantId).find((charge) => charge.periodStart === periodStart);

@@ -59,6 +59,53 @@ const SEVERITY_TONE = { URGENT: 'bad', ATTENTION: 'warn', INFO: 'info' };
  * @param subject     what this screen is about, for the empty state
  * @param onChange    called after any action that changed something
  */
+/**
+ * What produced the answer, said on the surface that shows it.
+ *
+ * ## The problem this exists for
+ *
+ * `AI_MODE` is `local` on any deployment with no provider key configured, and
+ * in that mode nothing calls a language model at all: the engines compute from
+ * ledger state and the copilot answers from the result. That is the honest and
+ * deliberate behaviour — settled decision, and the startup banner has always
+ * said "AI mode: local (deterministic engines, no provider spend)".
+ *
+ * It said it to whoever started the process. It never said it to the person
+ * reading the answer. A reader met a short, factual reply, assumed they were
+ * looking at a weak model, and concluded the AI was a toy — when in fact no
+ * model had been asked anything. A thin answer and an unasked question look
+ * identical if nobody says which one happened.
+ *
+ * ## What is said, and where it comes from
+ *
+ * `GET /v1/ai/control-plane` already publishes `mode`, so this holds no rule
+ * the API does not — it renders what the platform reports. Three modes, three
+ * different things worth knowing:
+ *
+ * - `local` — no provider is called. Every figure is arithmetic over the
+ *   record, which is why it is reproducible and free, and why it will not
+ *   write prose about something the record does not contain.
+ * - `staging` — a provider is called, against a deployment that is not the
+ *   customer's.
+ * - `production` — a provider is called, and the reasoning provider's health is
+ *   already published beside it.
+ *
+ * Only the first is surfaced. The other two are the ordinary case and a banner
+ * repeating "this is normal" on every AI screen is the noise this codebase
+ * spends its effort removing. Returns an empty string for them.
+ */
+export function aiModeNotice(plane) {
+  if (!plane || plane.mode !== 'local') return '';
+  return html`<div class="notice" style="margin-bottom:12px">
+    <div>
+      <b>No language model was asked.</b> This deployment runs <code>AI_MODE=local</code>: the engines compute
+      from the Golden Thread and no provider is called, so every figure below is arithmetic over the record
+      rather than prose about it. It is reproducible, it costs no ACUs, and it will not tell you anything the
+      record does not hold. Configure a provider to have the same engines reason over the same facts.
+    </div>
+  </div>`;
+}
+
 export async function insightPanel(host, { projectId, areas, subject, onChange }) {
   if (!host) return;
 
@@ -82,9 +129,16 @@ export async function insightPanel(host, { projectId, areas, subject, onChange }
   const proposals = payload.proposals ?? [];
   const elsewhere = (payload.ofTotal ?? proposals.length) - proposals.length;
 
+  // Asked here rather than by each of the thirteen screens that mount this
+  // panel: the claim is about the deployment, so it belongs with the component
+  // that makes it. A failure to read it is not a failure of the panel — the
+  // notice is simply absent, which is the same as the ordinary case.
+  const plane = await api.get('/v1/ai/control-plane').catch(() => null);
+
   host.innerHTML = resolveHtml(html`<div class="card pad0">
     <div style="padding:15px 17px 0">
       <h3>AI Insight &amp; Recommendation</h3>
+      ${aiModeNotice(plane)}
       <div class="metric-sub">
         What the agent fleet found in ${subject}, and what it wants done about it. Nothing here has happened —
         every recommendation waits for a person.

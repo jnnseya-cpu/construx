@@ -1,4 +1,5 @@
 import { api } from '../lib/api.js';
+import { aiModeNotice } from '../lib/insight.js';
 import { heatmap, pieChart } from '../lib/charts.js';
 import { badge, esc, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
@@ -65,6 +66,18 @@ export async function copilot(root) {
           <p>Grounded in this project's Golden Thread. It proposes commands rather than executing them, and every figure it quotes names the record it came from.</p>
         </div>
       </div>
+
+      <!--
+        Said before the first answer, not after it.
+
+        The copilot's replies are short and factual by construction, and on a
+        deployment with no provider configured they are short because nothing
+        was asked rather than because a model answered badly. A reader cannot
+        tell those apart from the answer alone, and the one who reported this
+        page as a prototype had reached the wrong conclusion for exactly that
+        reason.
+      -->
+      ${aiModeNotice(plane)}
 
       <div class="composer">
         <input type="text" id="question" placeholder="Ask about programme, cost, risk, safety, change, claims, design or handover…" autocomplete="off">

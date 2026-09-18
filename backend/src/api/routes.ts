@@ -950,6 +950,31 @@ const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, in
  */
 let consoleSession: Promise<{ projectId: string; email: string; enterpriseName: string; portfolioName: string }> | undefined;
 
+/**
+ * The project an anonymous visitor lands on, or `undefined` if it is not there.
+ *
+ * Found by name from the ledger rather than carried out of the seed, because
+ * both paths into the console session need it and only one of them ran the
+ * seed: a process that restarts against an existing journal adopts the tenancy
+ * and never sees a `SeedResult`.
+ *
+ * The name is passed in rather than read here: `DEMO_TENANCY` arrives through
+ * the dynamic import below, which is dynamic so that starting a deployment with
+ * no demonstration never loads the seed at all.
+ *
+ * Falling back to the flagship is deliberate rather than defensive. A tenancy
+ * seeded before this project existed, or one whose extras were interrupted, has
+ * a demonstration that is worse rather than one that is broken — and a console
+ * that refuses to open because its preferred project is missing would be the
+ * more expensive failure.
+ */
+function landingProject(platform: Platform, tenantId: string, name: string): string | undefined {
+  return platform.ledger
+    .entitiesOfType('Project')
+    .find((record) => record.tenantId === tenantId && record.state.name === name)
+    ?.refId;
+}
+
 export function getOrCreateConsoleSession(platform: Platform): Promise<{
   projectId: string;
   email: string;
@@ -984,8 +1009,8 @@ export function getOrCreateConsoleSession(platform: Platform): Promise<{
         // that, so this is safe to run on every bootstrap.
         await ensureDemonstrationExtras(platform);
         return {
-          projectId: project.refId,
-          email: DEMO_TENANCY.primaryEmail,
+          projectId: landingProject(platform, tenantId, DEMO_TENANCY.landingProjectName) ?? project.refId,
+          email: DEMO_TENANCY.landingEmail,
           enterpriseName: DEMO_TENANCY.enterpriseName,
           portfolioName: DEMO_TENANCY.portfolioName,
         };
@@ -996,8 +1021,8 @@ export function getOrCreateConsoleSession(platform: Platform): Promise<{
 
     const seed = await seedDemoProject(platform);
     return {
-      projectId: seed.projectId,
-      email: DEMO_TENANCY.primaryEmail,
+      projectId: landingProject(platform, seed.tenantId, DEMO_TENANCY.landingProjectName) ?? seed.projectId,
+      email: DEMO_TENANCY.landingEmail,
       enterpriseName: seed.enterpriseName,
       portfolioName: seed.portfolioName,
     };

@@ -23665,15 +23665,72 @@ being unfilled because the managing director could sign it themselves.
   and nothing on the operator's, and an owner-only tenancy still reports its
   unfilled seats.
 
-### What this did not fix
+### The two that were left, and then closed
 
-The demonstration still signs a visitor in as the project manager on the
-Operations project, which remains the narrowest combination of the four projects
-and thirteen identities seeded. That is a demonstration configuration question
-rather than a platform one, and it is recorded here rather than changed quietly.
+Both were recorded here as open before being fixed. They are kept in that order
+because the second turned up a billing defect that had nothing to do with either.
 
-`AI_MODE` is `local` on any deployment with no provider configured, so the
-copilot answers from deterministic engine state with no language model involved.
-The startup banner says so plainly — "AI mode: local (deterministic engines, no
-provider spend)" — and the console does not. A reader meeting a thin answer has
-no way to tell that no model was asked. Not built.
+**The demonstration opened onto the wrong room.** It signed an anonymous visitor
+in as the project manager on Ashworth, which is in Operations: the narrowest of
+the thirteen identities on the least active of the four projects. It now opens on
+**Rossendale Trunk Main Diversion at CONSTRUCTION, as the owner** — the phase
+where the most of the lifecycle is live, as the identity that holds every
+capability in the tenancy. Measured the same way as before: a visitor lands on
+**102 live commands across twelve screens**.
+
+The reasoning was already written down one level deeper. The site project exists
+*because* "with Ashworth in Operations and Calderdale at Tender there was no
+project on which a site manager could issue a permit... A screen that is correct
+and looks broken is a screen that has failed." That project was built and the
+console kept bootstrapping onto Ashworth anyway. Nothing is removed: all four
+projects stay in the picker, all thirteen identities stay on the sign-in page.
+Seeing the product first and its governance second is the right order; the
+reverse reads as a locked door.
+
+**The console now says when no model was asked.** `AI_MODE=local` means no
+provider is called at all — the engines compute from the ledger and the copilot
+answers from the result. The startup banner had always said so, to whoever
+started the process, and never to the person reading the answer. A thin reply and
+an unasked question are indistinguishable from the reply alone, which is how a
+reader concluded the AI was a toy when in fact nothing had been asked anything.
+`aiModeNotice` in `frontend/lib/insight.js` renders what
+`GET /v1/ai/control-plane` already publishes, on the copilot, on Autopilot and on
+the AI Insight panel that thirteen screens carry. It says nothing in `staging` or
+`production`, because a banner repeating "this is normal" on every AI screen is
+the noise this codebase spends its effort removing.
+
+### The demonstration was being billed
+
+Found by fixing the landing, and worth more than the thing that found it.
+
+Landing as the owner put an unexpected modal on the visitor's first screen:
+**"Activate Meridian Infrastructure Group Ltd's subscription — £6,500.00 a month
+— Choose how to pay"**, over a fictional company, with a payment reference for a
+bank transfer, covering the console until dismissed. A sandbox asking a stranger
+to pay is not clutter; it is a demand for money nobody owes.
+
+It had been invisible for one bad reason: the console used to sign visitors in as
+a project manager, who holds read on `BILLING_ACU` and not update, so
+`maybeShowActivation` never asked them. That is the modal being hidden from the
+one person who could not answer it, not a control.
+
+The root cause was in billing, not in the console. `raiseCharge` already declined
+to bill the platform's own tenancy, reasoning that a run over every tenancy would
+otherwise "raise a charge against the company itself and, seven days later,
+suspend the platform for not paying itself" — and it keyed that on the absence of
+a `Subscription` entity. The demonstration is created through `createTenant` like
+any customer, so it has one and fell straight through. One tenancy over, the same
+failure: with `SUBSCRIPTION_COLLECTION_ENABLED` armed, the public demonstration
+would have been charged, failed collection with no mandate, and been suspended a
+week later for not paying.
+
+The renewal had never fired, because collection is off by default. **The opening
+charge is not gated by that flag and had already been raised** — it is what the
+modal was asking to settle. Both paths now decline, and `activationPosition`
+reports that nothing is collected from a demonstration, so the console is told
+rather than made to work it out. Decided from `platform.isDemonstrationTenant`,
+which reads the identity marker the seed writes and no route can set or clear.
+
+`backend/tests/collection.test.ts` holds all three statements, plus a guard on
+the guard: a real customer is still charged for their first month, so a predicate
+that returned true everywhere could not pass.

@@ -1,6 +1,7 @@
 import { api } from '../lib/api.js';
 import { barChart, flowChart, pieChart, treemap } from '../lib/charts.js';
 import { badge, ellipsis, html, humanise, positionReport, raw, reference, render, resolveHtml, table, time, toast } from '../lib/ui.js';
+import { aiModeNotice } from '../lib/insight.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
@@ -23,7 +24,7 @@ const TONE = { URGENT: 'bad', ATTENTION: 'warn', INFO: 'info' };
 export async function autopilot(root) {
   const projectId = state.session.projectId;
 
-  const [proposals, fleet, runs, ladder, envelopes, ai] = await Promise.all([
+  const [proposals, fleet, runs, ladder, envelopes, ai, plane] = await Promise.all([
     api.get(`/v1/projects/${projectId}/proposals`).catch(() => ({ proposals: [] })),
     api.get('/v1/agents').catch(() => ({ agents: [] })),
     api.get(`/v1/projects/${projectId}/entities/AgentRun`).catch(() => ({ entities: [] })),
@@ -35,6 +36,10 @@ export async function autopilot(root) {
     api
       .get(`/v1/projects/${projectId}/ai/dispositions`)
       .catch(() => ({ executions: 0, disposed: 0, accepted: 0, acceptedWithChange: 0, rejected: 0, outstanding: [] })),
+    // What produced everything on this screen. The fleet's findings are
+    // arithmetic over the record when no provider is configured, and a reader
+    // judging the agents has to know which of the two they are judging.
+    api.get('/v1/ai/control-plane').catch(() => null),
   ]);
 
   const open = proposals.proposals ?? [];
@@ -99,6 +104,8 @@ export async function autopilot(root) {
           }
         </div>
       </div>
+
+      ${aiModeNotice(plane)}
 
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">

@@ -65,8 +65,55 @@ export const DEMO_TENANCY = {
   enterpriseName: 'Meridian Infrastructure Group',
   portfolioName: 'National Water Resilience Programme',
   projectName: 'Ashworth Water Treatment Works — Phase 2',
-  /** The identity the console signs in as when it bootstraps itself. */
+  /**
+   * The project manager, and the author of most of the flagship's record.
+   *
+   * This used to double as the identity the console bootstraps itself as, which
+   * is where `landingEmail` below came from — see the note on it.
+   */
   primaryEmail: 'pm@meridian.example',
+  /**
+   * Where an anonymous visitor lands, and as whom.
+   *
+   * ## What was wrong with landing on the flagship as the project manager
+   *
+   * Ashworth is in Operations and the visitor arrived as a PM, which is the
+   * narrowest useful combination the fixture contains. Measured across twelve
+   * screens that identity met 126 padlocked controls — every one of them
+   * correct, because a PM approves the lookahead rather than raising it and
+   * procurement is closed in Operations, and every one of them arriving before
+   * the visitor had seen anything work. A reader's verdict was that nothing
+   * could be saved and the product was a prototype. Nothing was broken; they
+   * were shown the one room in the building where nothing happens.
+   *
+   * The reasoning is already written down three hundred lines below, for the
+   * project that was added to fix exactly this at the next level down: "with
+   * Ashworth in Operations and Calderdale at Tender there was no project on
+   * which a site manager could issue a permit... A screen that is correct and
+   * looks broken is a screen that has failed." That project was built and the
+   * console kept bootstrapping onto Ashworth anyway.
+   *
+   * ## Why these two
+   *
+   * **The project on site.** Construction is the phase where the most of the
+   * lifecycle is open at once — programme, field execution, cost, change,
+   * quality and the safety file are all live — so it is the phase that shows
+   * the most product. It also carries a real delivery record rather than an
+   * empty one, for the reason given where it is built.
+   *
+   * **The owner.** An enterprise owner holds every capability in their own
+   * tenancy, so a visitor lands able to do everything the platform does and
+   * meets enforcement when they choose to, by switching to one of the other
+   * twelve identities the sign-in page lists. That is the right order: see the
+   * product, then see that it is governed. The reverse order reads as a
+   * locked door.
+   *
+   * Nothing is removed by this. All four projects stay in the picker and all
+   * thirteen identities stay on the sign-in page; this is only which one the
+   * door opens onto.
+   */
+  landingEmail: 'owner@meridian.example',
+  landingProjectName: 'Rossendale Trunk Main Diversion',
   /**
    * The flagship project's contract value, and the third reader is the reason
    * it is here.
@@ -203,6 +250,48 @@ export async function ensureDemonstrationExtras(platform: Platform): Promise<{ t
   return platform.orchestrator.withLocalProviders(() => ensureDemonstrationExtrasInner(platform));
 }
 
+/**
+ * The demonstration's package, given away rather than sold.
+ *
+ * ## Why this exists at all
+ *
+ * The demonstration tenancy is created through `createTenant` like any customer
+ * — deliberately, because a fixture that takes a private route proves nothing
+ * about the route customers take. The consequence is that it was issued a real
+ * £6,500 opening charge, and an anonymous visitor who landed as the owner met
+ * **"Activate Meridian Infrastructure Group Ltd's subscription — £6,500.00 a
+ * month — Choose how to pay"** across their first screen, with a payment
+ * reference for a bank transfer, for a company that does not exist.
+ *
+ * ## Why the free grant, and not only the guard
+ *
+ * `raiseCharge` and `raiseOpeningCharge` both decline a demonstration tenancy
+ * now, and that guard is real — but it cannot be the whole answer, because the
+ * opening charge is raised *inside* `createTenant`, before a single identity
+ * exists on the tenancy. `isDemonstrationTenant` reads the identities, so at
+ * that instant there is nothing to read. The charge is therefore deferred at
+ * creation and the package granted away here, which is the platform's own
+ * existing mechanism for "this tenancy is not billed" — the same one the group
+ * onboarding uses, recorded as an event with a reason and a decider like any
+ * other operator act. `activationPosition` already reports a free grant as
+ * nothing owed, so the console needs no special case either.
+ *
+ * Idempotent, because `ensureDemonstrationExtras` runs on every bootstrap
+ * against a tenancy this process may not have created: `setSubscriptionPackage`
+ * returns unchanged when neither the package nor the grant moves.
+ */
+function grantDemonstrationFree(platform: Platform, tenantId: string, decidedBy: string): void {
+  const subscription = platform.subscription(tenantId);
+  if (subscription.grantedFree === true) return;
+  platform.setSubscriptionPackage({
+    tenantId,
+    package: subscription.package,
+    reason: 'Demonstration tenancy — nothing is ever collected from it',
+    decidedBy,
+    grantFree: true,
+  });
+}
+
 async function ensureDemonstrationExtrasInner(platform: Platform): Promise<{ timeline: string[] }> {
   const timeline: string[] = [];
   const note = (message: string): void => {
@@ -220,6 +309,17 @@ async function ensureDemonstrationExtrasInner(platform: Platform): Promise<{ tim
   const bimLead = byEmail('bim@meridian.example');
   const admin = users.find((u) => u.roles.includes('ENTERPRISE_ADMIN'));
   if (!owner || !pm || !qs || !bimLead || !admin) return { timeline };
+
+  // A demonstration seeded before the free grant existed still carries the
+  // opening charge it was issued, and adoption is the only path that reaches
+  // it — a deployment that keeps its journal never runs the seed again. The
+  // call is idempotent, so this costs a comparison on every other bootstrap.
+  const operatorId = platform.operators()[0]?.id;
+  if (operatorId) {
+    const before = platform.subscription(tenant.id).grantedFree === true;
+    grantDemonstrationFree(platform, tenant.id, operatorId);
+    if (!before) note('Enterprise package granted free of charge — the demonstration is not a customer');
+  }
 
   // The seats the site record is actually written by. Separated from the four
   // above because the delivery record below has to be authored by whoever holds
@@ -1472,8 +1572,16 @@ async function seedDemoProjectInner(platform: Platform): Promise<SeedResult> {
     defaultCurrency: 'GBP',
     tier: 'ENTERPRISE',
     enterpriseName: DEMO_TENANCY.enterpriseName,
+    // Nothing is ever collected from the demonstration, so nothing is raised
+    // against it. See `grantDemonstrationFree` below for why this is deferred
+    // rather than simply never charged: the first month is raised *inside*
+    // `createTenant`, before this tenancy has any identity on it, so at that
+    // moment nothing can tell it apart from a customer.
+    deferOpeningCharge: true,
   });
   step(`Tenant onboarded: ${tenant.legalName} on the ${subscription.tier} tier`);
+  grantDemonstrationFree(platform, tenant.id, operator.id);
+  step('Enterprise package granted free of charge — the demonstration is not a customer');
 
   // Real AI work needs real credit; the trial grant alone will not carry a
   // whole lifecycle, and running out mid-demo is exactly what should happen

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import * as collection from '../src/billing/collection.ts';
 import { standing } from '../src/billing/entitlement.ts';
+import { activationPosition } from '../src/billing/mandate.ts';
 import { PACKAGES } from '../src/billing/seats.ts';
 import { config } from '../src/config.ts';
 import { Platform } from '../src/platform.ts';
@@ -273,5 +274,149 @@ describe('one pass over the estate', () => {
     assert.equal(config.billing.collectionEnabled, false);
     const schedule = collection.startCollectionSchedule(platform);
     schedule.stop();
+  });
+});
+
+// ── The demonstration is not a customer ─────────────────────────────────────
+
+describe('the demonstration tenancy is never billed', () => {
+  /*
+   * ## What happened
+   *
+   * An anonymous visitor's first screen was a modal reading "Activate Meridian
+   * Infrastructure Group Ltd's subscription — £6,500.00 a month — Choose how to
+   * pay", over a fictional company, with a payment reference for a bank
+   * transfer. A sandbox asking a stranger to pay is not clutter; it is a demand
+   * for money nobody owes, and it covered the console until dismissed.
+   *
+   * `raiseCharge` already declined to bill the platform's own tenancy, on the
+   * reasoning that a run over every tenancy would otherwise "raise a charge
+   * against the company itself and, seven days later, suspend the platform for
+   * not paying itself". The demonstration is created through `createTenant`
+   * like any customer, so it has the `Subscription` entity that guard keys on
+   * and fell straight through it — one tenancy over, same failure.
+   *
+   * It stayed invisible because the console used to sign visitors in as a
+   * project manager, who holds read on `BILLING_ACU` and not update, so the
+   * activation modal never asked them. That is the modal being hidden from the
+   * one person who could not answer it, not a control.
+   *
+   * ## What this holds shut
+   *
+   * Three statements, in the three places the platform makes them: no opening
+   * charge, no renewal, and an activation position that says nothing is owed.
+   */
+  /**
+   * Built the way the seed builds it, because the order is the whole point.
+   *
+   * `createTenant` raises the first month *inside itself*, before the tenancy
+   * has a single identity on it — and `isDemonstrationTenant` is decided from
+   * the identities. So at the instant the opening charge is raised there is
+   * nothing to tell this apart from a customer, and the guard in
+   * `raiseOpeningCharge` cannot fire. The seed therefore defers the charge and
+   * grants the package away, which is what the third test below checks.
+   *
+   * A fixture that created the users first would pass every test here and
+   * prove nothing about the code that runs in production.
+   */
+  const demonstration = (options: { deferAndGrant?: boolean } = {}) => {
+    const operator = platform.createOperator({ name: 'Demo Operator', email: 'ops@construx.example' });
+    const { tenant, openingCharge } = platform.createTenant({
+      legalName: 'Demonstration Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'TEAM',
+      enterpriseName: 'Demonstration',
+      ...(options.deferAndGrant ? { deferOpeningCharge: true } : {}),
+    });
+    if (options.deferAndGrant) {
+      platform.setSubscriptionPackage({
+        tenantId: tenant.id,
+        package: platform.subscription(tenant.id).package,
+        reason: 'Demonstration tenancy — nothing is ever collected from it',
+        decidedBy: operator.id,
+        grantFree: true,
+      });
+    }
+    // The one marker for this, written by the seed and unsettable by any route.
+    platform.createUser({
+      tenantId: tenant.id,
+      name: 'Demo Owner',
+      email: 'owner@demo.example',
+      roles: ['OWNER'],
+      demonstration: true,
+    });
+    return { tenant, openingCharge };
+  };
+
+  it('is never issued a first month, the way the seed actually builds it', () => {
+    // The defect in its original form: a real £6,500 charge with a payment
+    // reference, raised against a fictional company, which is what the
+    // activation modal was asking an anonymous visitor to settle.
+    const { tenant, openingCharge } = demonstration({ deferAndGrant: true });
+    assert.equal(openingCharge, undefined, 'the demonstration was charged for its first month at creation');
+    assert.equal(
+      collection.raiseOpeningCharge(platform, tenant.id, new Date()),
+      undefined,
+      'a later call raised the first month the seed had deferred',
+    );
+  });
+
+  it('would still be caught by the guard if one were built another way', () => {
+    // Belt and braces, and it is the guard rather than the grant being tested:
+    // this tenancy is charged at creation, because nothing could know yet, and
+    // then declined once it has an identity that says what it is.
+    const { tenant, openingCharge } = demonstration();
+    assert.ok(openingCharge, 'the fixture did not reproduce the charge-at-creation path');
+    assert.equal(
+      collection.raiseOpeningCharge(platform, tenant.id, new Date()),
+      undefined,
+      'the demonstration was charged again once it was recognisable as one',
+    );
+  });
+
+  it('raises no renewal against it, however long it runs', () => {
+    const { tenant } = demonstration();
+    const subscription = platform.subscription(tenant.id);
+    assert.equal(subscription.status, 'ACTIVE', 'the fixture is not an active subscription, so this proves nothing');
+    const wellPastRenewal = new Date(Date.parse(subscription.renewsAt) + 400 * DAY);
+    assert.equal(
+      collection.raiseCharge(platform, tenant.id, wellPastRenewal),
+      undefined,
+      'the demonstration was raised a renewal charge',
+    );
+  });
+
+  it('still bills a real customer, so the guard is not switched off for everybody', () => {
+    // The guard on the guard. A predicate that returned true for every tenancy
+    // would pass both tests above and stop the platform earning anything.
+    const { openingCharge } = platform.createTenant({
+      legalName: 'Real Customer Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'TEAM',
+      enterpriseName: 'Real Customer',
+    });
+    assert.ok(openingCharge, 'a paying customer was not charged for their first month');
+  });
+
+  it('tells the console nothing is owed, so no activation is demanded', () => {
+    // As the seed builds it, the free grant is the reason and it is the truer
+    // one — the package was given away, which is a fact about the subscription
+    // rather than an inference from who is signed in.
+    const { tenant } = demonstration({ deferAndGrant: true });
+    const position = activationPosition(platform, tenant.id);
+    assert.equal(position.required, false, 'the console would open a payment modal over the demonstration');
+    assert.match(position.reason, /granted free/i, 'the reason given does not say why nothing is collected');
+  });
+
+  it('says so even for a demonstration nobody granted anything to', () => {
+    // The branch the guard adds, on a tenancy built the ordinary way. Without
+    // it this reports £6,500 as due and the console opens the modal, which is
+    // exactly what an anonymous visitor met.
+    const { tenant } = demonstration();
+    const position = activationPosition(platform, tenant.id);
+    assert.equal(position.required, false, 'the console would open a payment modal over the demonstration');
+    assert.match(position.reason, /demonstration/i, 'the reason given does not say why nothing is collected');
   });
 });
