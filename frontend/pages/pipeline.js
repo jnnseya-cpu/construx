@@ -1524,27 +1524,51 @@ export async function pipeline(root) {
           ],
           hint: 'A project opened at Tender is the usual case. Leave it as "no" for a job that is not on the record yet.',
         },
-        { name: 'title', label: 'What the job is', hint: 'As the buyer names it, so it can be matched to their documents later.' },
-        { name: 'clientName', label: 'Client' },
+        // The three the project already answers. Optional, and left blank they
+        // are taken from it — the platform refuses a different answer rather
+        // than keeping two. Required only for a pursuit with no project behind
+        // it, which the API enforces and says so.
+        {
+          name: 'title',
+          label: 'What the job is',
+          required: false,
+          hint: 'Leave blank when a project is chosen — its name is used. Needed only for a pursuit with no project yet.',
+        },
+        { name: 'clientName', label: 'Client', hint: 'Always asked: a project does not record who is buying.' },
         {
           name: 'sectorType',
           label: 'Sector',
           type: 'select',
-          options: SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })),
+          required: false,
+          options: [
+            { value: '', label: '— From the project —' },
+            ...SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })),
+          ],
         },
-        { name: 'estimatedValue', label: 'Estimated value (£)', type: 'number', hint: 'The buyer’s figure where they give one, this business’s estimate where they do not.' },
+        {
+          name: 'estimatedValue',
+          label: 'Estimated value (£)',
+          type: 'number',
+          required: false,
+          hint: 'Leave blank when a project is chosen — its contract value is used, and correcting the project corrects this.',
+        },
         { name: 'source', label: 'Where it came from', hint: 'The portal, the framework, the person who told you.' },
         { name: 'submissionDueAt', label: 'Submission due', type: 'datetime-local', required: false, hint: 'The deadline as stated. It can be recorded precisely with the invitation afterwards.' },
         { name: 'countryCode', label: 'Country code', required: false, placeholder: 'GB' },
         { name: 'city', label: 'Town or city', required: false },
         { name: 'notes', label: 'Anything worth knowing', type: 'textarea', required: false },
       ],
+      // Only what was actually answered. Sending an empty title or a zero value
+      // would be the browser inventing an answer the person did not give, and
+      // the platform would then have to decide which of two to believe.
       transform: (v) => ({
         ...(v.projectId ? { projectId: v.projectId } : {}),
-        title: v.title,
+        ...(v.title ? { title: v.title } : {}),
         clientName: v.clientName,
-        sectorType: v.sectorType,
-        estimatedValueMinor: Math.round(Number(v.estimatedValue || 0) * 100),
+        ...(v.sectorType ? { sectorType: v.sectorType } : {}),
+        ...(v.estimatedValue !== '' && v.estimatedValue !== undefined
+          ? { estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100) }
+          : {}),
         source: v.source,
         ...(v.submissionDueAt ? { submissionDueAt: new Date(v.submissionDueAt).toISOString() } : {}),
         ...(v.countryCode ? { countryCode: String(v.countryCode).toUpperCase() } : {}),

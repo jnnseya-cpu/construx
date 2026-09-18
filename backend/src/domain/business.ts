@@ -299,10 +299,19 @@ function requireOpportunity(ctx: EngineContext, opportunityId: string) {
 export function registerOpportunity(
   ctx: EngineContext,
   input: {
-    title: string;
+    /**
+     * Taken from the project where one is named, so nothing is typed twice.
+     *
+     * Required only for a pursuit with no project behind it. A business that
+     * already holds the job on the record was being asked to type its title,
+     * sector and value in again — and two answers to one question is two sets
+     * of data with nothing deciding which is right. The project is the source;
+     * this is optional so the caller can stay silent and let it be.
+     */
+    title?: string;
     clientName: string;
-    sectorType: SectorType;
-    estimatedValueMinor: number;
+    sectorType?: SectorType;
+    estimatedValueMinor?: number;
     /** Where it came from — framework, tender portal, relationship, repeat client. */
     source: string;
     /** When the return is due. The single most important date in this stage. */
@@ -330,9 +339,7 @@ export function registerOpportunity(
 ): { opportunityId: string } {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'C');
 
-  if (input.estimatedValueMinor < 0) {
-    throw new DomainError('VALUE_NEGATIVE', 'An opportunity cannot have a negative value');
-  }
+  let derived: { title?: string; sectorType?: SectorType; estimatedValueMinor?: number; countryCode?: string; city?: string } = {};
 
   if (input.projectId !== undefined) {
     const project = ctx.ledger.get({ refType: 'Project', refId: input.projectId });
@@ -355,6 +362,58 @@ export function registerOpportunity(
         409,
       );
     }
+
+    /*
+     * The project's facts, not a second copy of them.
+     *
+     * Taking them here rather than trusting what the caller sent is what makes
+     * this one source rather than two that happened to agree on the day. A
+     * caller who sends a different title or value is refused by name: silently
+     * preferring one of the two is how a record ends up saying something
+     * nobody chose.
+     */
+    const location = (project.state.location ?? {}) as { countryCode?: string; city?: string };
+    derived = {
+      title: String(project.state.name),
+      sectorType: project.state.sectorType as SectorType,
+      estimatedValueMinor: Number(project.state.contractValueMinor ?? 0),
+      ...(location.countryCode ? { countryCode: location.countryCode } : {}),
+      ...(location.city ? { city: location.city } : {}),
+    };
+
+    for (const [field, fromProject] of [
+      ['title', derived.title],
+      ['sectorType', derived.sectorType],
+      ['estimatedValueMinor', derived.estimatedValueMinor],
+    ] as const) {
+      const sent = (input as Record<string, unknown>)[field];
+      if (sent !== undefined && sent !== fromProject) {
+        throw new DomainError(
+          'CONTRADICTS_PROJECT',
+          `This pursuit is for ${String(project.state.name)}, where ${field} is already recorded. ` +
+            'Correct the project rather than giving the pursuit a different answer — one job has one set of facts.',
+          409,
+          [{ field, message: 'taken from the project' }],
+        );
+      }
+    }
+  }
+
+  const title = derived.title ?? input.title;
+  const sectorType = derived.sectorType ?? input.sectorType;
+  const estimatedValueMinor = derived.estimatedValueMinor ?? input.estimatedValueMinor;
+
+  // Required only where there is no project to take them from.
+  for (const [field, value] of [['title', title], ['sectorType', sectorType], ['estimatedValueMinor', estimatedValueMinor]] as const) {
+    if (value === undefined || value === '') {
+      throw new DomainError('FIELD_REQUIRED', `A pursuit with no project behind it needs its own ${field}.`, 422, [
+        { field, message: 'required' },
+      ]);
+    }
+  }
+
+  if (Number(estimatedValueMinor) < 0) {
+    throw new DomainError('VALUE_NEGATIVE', 'An opportunity cannot have a negative value');
   }
 
   const opportunityId = ulid();
@@ -365,14 +424,14 @@ export function registerOpportunity(
     nextState: {
       id: opportunityId,
       tenantId: ctx.tenantId,
-      title: input.title,
+      title,
       clientName: input.clientName,
-      sectorType: input.sectorType,
-      estimatedValueMinor: input.estimatedValueMinor,
+      sectorType,
+      estimatedValueMinor,
       source: input.source,
       submissionDueAt: input.submissionDueAt,
-      countryCode: input.countryCode,
-      city: input.city,
+      countryCode: derived.countryCode ?? input.countryCode,
+      city: derived.city ?? input.city,
       notes: input.notes,
       // The job this pursuit is for, where it already exists as one.
       ...(input.projectId ? { projectId: input.projectId } : {}),

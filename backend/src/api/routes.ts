@@ -3755,7 +3755,11 @@ export const ROUTES: Route[] = [
     description: 'Register an opportunity — the head of the delivery chain',
     schema: {
       type: 'object',
-      required: ['title', 'clientName', 'sectorType', 'estimatedValueMinor', 'source'],
+      // `title`, `sectorType` and `estimatedValueMinor` are required only for a
+      // pursuit with no project behind it, which the schema cannot express and
+      // `registerOpportunity` enforces — with a project they are taken from it,
+      // so that one job has one set of facts rather than two that agreed once.
+      required: ['clientName', 'source'],
       properties: {
         title: stringField,
         clientName: stringField,

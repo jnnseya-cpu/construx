@@ -1765,6 +1765,45 @@ export function amendProject(
     },
   });
 
+  /*
+   * The pursuit follows the job.
+   *
+   * An opportunity registered against a project takes its title, sector and
+   * value from the project rather than holding a second copy — that is what
+   * makes them one set of facts. Correcting the project and leaving the pursuit
+   * behind would recreate the divergence the derivation exists to prevent, and
+   * the visible symptom would be the pipeline quoting the figure that was just
+   * corrected.
+   *
+   * Only before a bid decision. Once somebody has scored and decided a pursuit
+   * they decided it on a stated figure, and moving that figure underneath the
+   * decision would make the record say they weighed something they never saw.
+   * After that the two are allowed to differ, because they genuinely do: the
+   * decision is history and the project is current.
+   */
+  const pursued = ctx.ledger
+    .listByTenant(ctx.tenantId, 'Opportunity')
+    .find((record) => record.state.projectId === ctx.projectId);
+  if (pursued && (pursued.state.stage === 'IDENTIFIED' || pursued.state.stage === 'QUALIFIED')) {
+    const follows: Record<string, unknown> = {};
+    if (changed.name) follows.title = changed.name.to;
+    if (changed.sectorType) follows.sectorType = changed.sectorType.to;
+    if (changed.contractValueMinor) follows.estimatedValueMinor = changed.contractValueMinor.to;
+    if (changed.location) {
+      const to = changed.location.to as { countryCode?: string; city?: string };
+      if (to?.countryCode) follows.countryCode = to.countryCode;
+      if (to?.city) follows.city = to.city;
+    }
+    if (Object.keys(follows).length > 0) {
+      write(ctx, {
+        projectId: `${ctx.tenantId}-governance`,
+        eventType: 'OPPORTUNITY_FOLLOWED_PROJECT',
+        entity: { refType: 'Opportunity', refId: pursued.refId },
+        nextState: { ...pursued.state, ...follows },
+      });
+    }
+  }
+
   return { projectId: ctx.projectId, changed };
 }
 

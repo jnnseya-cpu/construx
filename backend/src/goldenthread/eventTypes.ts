@@ -76,6 +76,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // to chase the job at all.
   def('OPPORTUNITY_REGISTERED', 'Opportunity', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   def('OPPORTUNITY_QUALIFIED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // A pursuit following the job it is for.
+  //
+  // An opportunity registered against a project takes its title, sector and
+  // value from the project rather than holding a second copy. Correcting the
+  // project and leaving the pursuit behind would put back the divergence the
+  // derivation exists to prevent — the pipeline quoting the figure that was
+  // just corrected — so the correction carries, and carries as its own event
+  // rather than by rewriting the registration.
+  def('OPPORTUNITY_FOLLOWED_PROJECT', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   // Deciding what the business chases is a governance act. An AI actor may
   // score an opportunity; it may not decide to pursue one.
   def('BID_NO_BID_DECIDED', 'Opportunity', 'APPROVE', 'BUSINESS_DEVELOPMENT'),

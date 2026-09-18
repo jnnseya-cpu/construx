@@ -106,18 +106,31 @@ function select(id, label, chosen, entries) {
 const chosen = { portfolio: '', sector: '', region: '', manager: '' };
 
 export async function portfolio(root) {
-  const [command, portfolios] = await Promise.all([
+  /*
+   * `position`, not `command`.
+   *
+   * This was `const [command, portfolios]`, which shadowed the `command`
+   * function imported at the top of this file for the whole of the rest of it —
+   * so "Assign a manager" called the estate payload as though it were a
+   * function and died with "command is not a function" before the form opened.
+   * The only symptom was a button that did nothing, on the one screen that
+   * reports a project as having nobody accountable for it.
+   *
+   * Named for what it is: the same endpoint `enterprise.js` reads into
+   * `position`.
+   */
+  const [position, portfolios] = await Promise.all([
     api.get('/v1/enterprise/command').catch((error) => ({ error })),
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
   ]);
 
-  if (command.error) {
+  if (position.error) {
     render(
       root,
       html`<div class="view-head"><div><h1>Portfolio Dashboard</h1></div></div>
         <div class="notice warn">
           <div>
-            <b>The estate is not visible to your role.</b><br />${command.error.message ?? ''}
+            <b>The estate is not visible to your role.</b><br />${position.error.message ?? ''}
             An enterprise administrator, project director or owner sees it; a role scoped to one project sees that
             project's own screens instead.
           </div>
@@ -129,7 +142,7 @@ export async function portfolio(root) {
   const names = new Map((portfolios.portfolios ?? []).map((entry) => [entry.portfolioId ?? entry.id, entry.name]));
   const portfolioName = (id) => names.get(id) ?? id ?? 'Portfolio not set';
 
-  const all = command.projects ?? [];
+  const all = position.projects ?? [];
   const rows = all.filter(
     (row) =>
       (!chosen.portfolio || row.portfolioId === chosen.portfolio) &&
@@ -138,7 +151,7 @@ export async function portfolio(root) {
       (!chosen.manager || managerOf(row) === chosen.manager),
   );
   const filtered = rows.length !== all.length;
-  const currency = command.estate?.currency ?? 'GBP';
+  const currency = position.estate?.currency ?? 'GBP';
 
   // Recomputed over the filtered set, and only for the figures that are a plain
   // sum of a per-project value. Nothing derived — forecast variance, unapproved
@@ -162,7 +175,7 @@ export async function portfolio(root) {
         <div>
           <h1>Portfolio Dashboard</h1>
           <p>
-            Every project at once, as at ${command.asAt?.slice(0, 10) ?? 'now'}. Each figure carries how many projects
+            Every project at once, as at ${position.asAt?.slice(0, 10) ?? 'now'}. Each figure carries how many projects
             it was computed from — a roll-up over the three that reported is not a statement about the twelve that
             exist.
           </p>
@@ -195,7 +208,7 @@ export async function portfolio(root) {
         ${kpiCard({
           label: 'Projects',
           value: String(rows.length),
-          sub: `${Object.entries(command.estate?.byPhase ?? {}).length} lifecycle phases represented across the estate.`,
+          sub: `${Object.entries(position.estate?.byPhase ?? {}).length} lifecycle phases represented across the estate.`,
         })}
         ${kpiCard({
           label: 'On track',
@@ -206,18 +219,18 @@ export async function portfolio(root) {
         ${kpiCard({
           label: 'Contract value',
           value: money(contractValue, currency),
-          sub: command.estate?.currency
+          sub: position.estate?.currency
             ? 'One currency across the estate.'
             : 'The estate holds more than one currency; this total adds minor units and is indicative only.',
-          tone: command.estate?.currency ? '' : 'warn',
+          tone: position.estate?.currency ? '' : 'warn',
         })}
         ${kpiCard({
           label: 'Forecast variance',
-          value: money(command.financial?.varianceMinor ?? 0, currency),
-          tone: (command.financial?.varianceMinor ?? 0) < 0 ? 'bad' : 'good',
+          value: money(position.financial?.varianceMinor ?? 0, currency),
+          tone: (position.financial?.varianceMinor ?? 0) < 0 ? 'bad' : 'good',
           sub:
-            `Whole estate, from ${command.financial?.coverage?.withCvr ?? 0} of ` +
-            `${command.financial?.coverage?.of ?? 0} projects that have published a CVR.`,
+            `Whole estate, from ${position.financial?.coverage?.withCvr ?? 0} of ` +
+            `${position.financial?.coverage?.of ?? 0} projects that have published a CVR.`,
         })}
       </div>
 
@@ -231,11 +244,11 @@ export async function portfolio(root) {
           <div class="split-list">
             <div class="row">
               <span class="lbl">Commercial position published</span>
-              <span class="val">${command.financial?.coverage?.withCvr ?? 0} of ${command.financial?.coverage?.of ?? 0}</span>
+              <span class="val">${position.financial?.coverage?.withCvr ?? 0} of ${position.financial?.coverage?.of ?? 0}</span>
             </div>
             <div class="row">
               <span class="lbl">Approved delivery baseline</span>
-              <span class="val">${command.delivery?.coverage?.withBaseline ?? 0} of ${command.delivery?.coverage?.of ?? 0}</span>
+              <span class="val">${position.delivery?.coverage?.withBaseline ?? 0} of ${position.delivery?.coverage?.of ?? 0}</span>
             </div>
             <div class="row">
               <span class="lbl">Progress measured</span>
@@ -243,13 +256,13 @@ export async function portfolio(root) {
             </div>
             <div class="row">
               <span class="lbl">Loss-making</span>
-              <span class="val ${raw((command.financial?.lossMaking ?? 0) > 0 ? 'bad' : '')}">
-                ${command.financial?.lossMaking ?? 0}
+              <span class="val ${raw((position.financial?.lossMaking ?? 0) > 0 ? 'bad' : '')}">
+                ${position.financial?.lossMaking ?? 0}
               </span>
             </div>
             <div class="row">
               <span class="lbl">Unapproved change exposure</span>
-              <span class="val">${money(command.financial?.unapprovedExposureMinor ?? 0, currency)}</span>
+              <span class="val">${money(position.financial?.unapprovedExposureMinor ?? 0, currency)}</span>
             </div>
             <div class="row">
               <span class="lbl">Open issues</span>
@@ -257,11 +270,11 @@ export async function portfolio(root) {
             </div>
           </div>
           ${
-            (command.withheld ?? []).length > 0
+            (position.withheld ?? []).length > 0
               ? html`<div class="notice warn" style="margin-top:12px">
                   <div>
-                    <b>${command.withheld.length} thing(s) your role may not see</b> were withheld rather than silently
-                    dropped: ${command.withheld.join('; ')}.
+                    <b>${position.withheld.length} thing(s) your role may not see</b> were withheld rather than silently
+                    dropped: ${position.withheld.join('; ')}.
                   </div>
                 </div>`
               : ''
@@ -311,7 +324,7 @@ export async function portfolio(root) {
           ${table({
             headers: ['Region', 'Countries', 'Portfolios', 'Projects', 'Contract value'],
             align: ['', '', 'num', 'num', 'num'],
-            rows: (command.byRegion ?? []).map((region) => [
+            rows: (position.byRegion ?? []).map((region) => [
               region.continentCode ? (REGION[region.continentCode] ?? region.continentCode) : 'Not set',
               region.countryCodes.join(', ') || '—',
               region.portfolios,
@@ -389,7 +402,7 @@ export async function portfolio(root) {
         ${table({
           headers: ['Project', 'Risk', 'Severity', 'Probability', 'Exposure'],
           align: ['', '', '', 'num', 'num'],
-          rows: (command.risks ?? []).map((risk) => [
+          rows: (position.risks ?? []).map((risk) => [
             html`<button class="btn quiet sm" data-open-project="${risk.projectId}">${risk.projectName}</button>`,
             risk.title,
             badge(risk.severity, risk.severity === 'HIGH' ? 'bad' : risk.severity === 'MEDIUM' ? 'warn' : ''),

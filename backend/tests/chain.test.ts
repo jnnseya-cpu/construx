@@ -1512,20 +1512,65 @@ describe('an opportunity can name the project it is for', () => {
     }).projectId;
   });
 
+  // Only what a project cannot answer: who is buying, and where it came from.
   const pursuit = (projectId?: string) =>
     business.registerOpportunity(gov(), {
-      title: 'Carlton Parish Church retaining wall',
       clientName: 'Carlton Parochial Church Council',
-      sectorType: 'COMMERCIAL',
-      estimatedValueMinor: 2_000_000,
       source: 'Invitation by email',
       ...(projectId ? { projectId } : {}),
     });
 
-  it('carries the project onto the opportunity, so the two are one job', () => {
+  it('takes the job’s facts from the project rather than asking twice', () => {
     const { opportunityId } = pursuit(projectAtTender);
     const record = platform2.ledger.require({ refType: 'Opportunity', refId: opportunityId });
     assert.equal(record.state.projectId, projectAtTender, 'the pursuit does not name the job it is for');
+    // Nothing was typed in: every one of these came off the project.
+    assert.equal(record.state.title, 'Carlton Parish Church retaining wall');
+    assert.equal(record.state.sectorType, 'COMMERCIAL');
+    assert.equal(record.state.estimatedValueMinor, 2_000_000);
+    assert.equal(record.state.city, 'Carlton');
+  });
+
+  it('refuses a different answer rather than keeping two', () => {
+    // Silently preferring one of the two is how a record ends up saying
+    // something nobody chose. A second project, because the first is already
+    // pursued and that refusal would fire first.
+    const portfolios = platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio');
+    const other = structure.createProject(gov(), {
+      portfolioId: String(portfolios[0]!.state.id),
+      name: 'A second job entirely',
+      sectorType: 'COMMERCIAL',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Carlton' },
+      contractValueMinor: 3_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-10-01',
+      plannedCompletion: '2027-03-31',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Pricing a design somebody else produced',
+    }).projectId;
+
+    throwsCode(
+      () =>
+        business.registerOpportunity(gov(), {
+          projectId: other,
+          clientName: 'Someone else',
+          source: 'Portal',
+          estimatedValueMinor: 999,
+        }),
+      'CONTRADICTS_PROJECT',
+    );
+  });
+
+  it('keeps the pursuit in step when the project is corrected', () => {
+    // The whole point of deriving rather than copying. A contract value fixed
+    // on the project must not leave the pipeline quoting the old figure.
+    const gov2 = platform2.context(seed2.users.owner!.auth, projectAtTender, { source: 'WEB' });
+    structure.amendProject(gov2, { reason: 'Value was entered in pence by mistake', contractValueMinor: 4_000_000 });
+    const pursued = platform2.ledger
+      .listByTenant(seed2.tenantId, 'Opportunity')
+      .find((record) => record.state.projectId === projectAtTender)!;
+    assert.equal(pursued.state.estimatedValueMinor, 4_000_000, 'the pursuit still quotes the figure that was corrected');
   });
 
   it('pursues a job once', () => {
@@ -1546,6 +1591,15 @@ describe('an opportunity can name the project it is for', () => {
       source: 'Portal',
     });
     assert.equal(platform2.ledger.require({ refType: 'Opportunity', refId: opportunityId }).state.projectId, undefined);
+  });
+
+  it('asks for the facts when there is no project to take them from', () => {
+    // Optional only because a project answers them. With none, silence would
+    // file a pursuit with no title and no value.
+    throwsCode(
+      () => business.registerOpportunity(gov(), { clientName: 'A new client', source: 'Portal' }),
+      'FIELD_REQUIRED',
+    );
   });
 
   it('refuses a project from another tenancy without confirming it exists', () => {
