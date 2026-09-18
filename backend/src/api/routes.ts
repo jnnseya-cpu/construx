@@ -24423,6 +24423,23 @@ export const ROUTES: Route[] = [
         // takes an unvalidated body, and a generated form for it can only offer
         // free text — the console says so instead of implying a checked form.
         withoutSchema: commands.filter((command) => !command.schema).length,
+        /**
+         * The per-file ceiling every evidence upload is held to.
+         *
+         * Published because the console could not otherwise know it, and the
+         * order of operations makes that expensive: a command files the ledger
+         * record first and the bytes follow it, so a file over the ceiling
+         * produced a filed record, a refused upload, and a file queued on the
+         * device that would be retried for ever and never accepted. The record
+         * named a document nobody could ever open.
+         *
+         * Knowing the number, the console refuses the file before the record is
+         * written, which is the only point at which refusing costs nothing.
+         * Raised with `EVIDENCE_MAX_BYTES`; the gateway buffers an upload in
+         * memory, so it is a memory figure per concurrent upload as much as a
+         * storage one.
+         */
+        evidenceMaxBytes: config.evidence.maxBytes,
       };
     },
   },

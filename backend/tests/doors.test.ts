@@ -111,13 +111,38 @@ describe('every command has a door', () => {
       return !new RegExp(`/${literal}(?![A-Za-z0-9-])`).test(source);
     });
 
-    // Reported rather than merely counted: a failure here should name what lost
-    // its door, not say a number went up.
+    /*
+     * A ratchet, because the assertion here used to be a no-op.
+     *
+     * This built `unreachable` and then asserted `usesCatalogue` — the same
+     * thing the line above already asserts. The list was only ever the *message*
+     * of an assertion about something else, so no route without a panel has ever
+     * failed this test, however important the route.
+     *
+     * Two found the expensive way. `POST /v1/pipeline/opportunities` describes
+     * itself as "the head of the delivery chain" and had no door: every command
+     * on Pipeline & Bids acts against an opportunity, so a business with a
+     * tender to bid opened the screen, pressed Record an ITT and was told the
+     * project holds no opportunity — with nothing anywhere to make one. And
+     * `PUT /v1/company/profile`, which the radar screens against, had none
+     * either, so the panel above it reported "This could not be read" to every
+     * company there has ever been.
+     *
+     * The catalogue is a real fallback and these routes are reachable through
+     * it, which is why this is a ceiling rather than zero. What it now refuses
+     * is the number going *up*: a new write route with no panel fails here, and
+     * somebody decides whether the catalogue is genuinely where it belongs
+     * rather than finding out from a customer.
+     *
+     * Lower it when you give one a door. It is meant to fall.
+     */
+    const CEILING = 298;
     assert.ok(
-      usesCatalogue,
-      `${unreachable.length} write routes are reachable only through the catalogue:\n  ${unreachable
-        .map((r) => `${r.method} ${r.pattern}`)
-        .join('\n  ')}`,
+      unreachable.length <= CEILING,
+      `${unreachable.length} write routes have no hand-built door, up from ${CEILING}. ` +
+        `Give the new one a panel, or raise the ceiling deliberately:\n  ${unreachable
+          .map((r) => `${r.method} ${r.pattern}`)
+          .join('\n  ')}`,
     );
   });
 

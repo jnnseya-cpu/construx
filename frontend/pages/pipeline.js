@@ -661,6 +661,9 @@ export async function pipeline(root) {
               // Tenant-scoped: the bid pipeline exists before there is a
               // project, so no project's lifecycle phase gates it. The API
               // runs these against the tenant governance scope.
+              // First, because everything after it acts against one.
+              { id: 'opportunity', label: 'Register an opportunity', tone: '',
+                permitted: can('BUSINESS_DEVELOPMENT', 'C', TENANT), reason: blockedReason('BUSINESS_DEVELOPMENT', 'C', TENANT) },
               { id: 'invitation', label: 'Record an ITT', tone: '',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'deliverable', label: 'Add a deliverable',
@@ -1469,6 +1472,55 @@ export async function pipeline(root) {
         feedback: String(feedback ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
       }),
     },
+    opportunity: {
+      /*
+       * The head of the delivery chain, and it had no door.
+       *
+       * `POST /v1/pipeline/opportunities` describes itself as "the head of the
+       * delivery chain" and nothing in the console called it. Every command on
+       * this screen needs one to act against — Record an ITT answers "this
+       * needs an opportunity to act against, and this project holds none", the
+       * scoring has nothing to score, the bands have nothing to calibrate
+       * from — so a business with a live tender to bid opened Pipeline & Bids
+       * and found no way to begin. The chain was complete except for its first
+       * link.
+       */
+      title: 'Register an opportunity',
+      intent:
+        'A job worth pursuing, before anything is decided about it. Everything else on this screen acts against one: ' +
+        'the invitation and its deadline, the ten-factor score, the bid or no-bid decision and the submission. ' +
+        'Registering it is not deciding to bid — that is a separate, recorded decision.',
+      path: '/v1/pipeline/opportunities',
+      submitLabel: 'Register it',
+      fields: [
+        { name: 'title', label: 'What the job is', hint: 'As the buyer names it, so it can be matched to their documents later.' },
+        { name: 'clientName', label: 'Client' },
+        {
+          name: 'sectorType',
+          label: 'Sector',
+          type: 'select',
+          options: SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })),
+        },
+        { name: 'estimatedValue', label: 'Estimated value (£)', type: 'number', hint: 'The buyer’s figure where they give one, this business’s estimate where they do not.' },
+        { name: 'source', label: 'Where it came from', hint: 'The portal, the framework, the person who told you.' },
+        { name: 'submissionDueAt', label: 'Submission due', type: 'datetime-local', required: false, hint: 'The deadline as stated. It can be recorded precisely with the invitation afterwards.' },
+        { name: 'countryCode', label: 'Country code', required: false, placeholder: 'GB' },
+        { name: 'city', label: 'Town or city', required: false },
+        { name: 'notes', label: 'Anything worth knowing', type: 'textarea', required: false },
+      ],
+      transform: (v) => ({
+        title: v.title,
+        clientName: v.clientName,
+        sectorType: v.sectorType,
+        estimatedValueMinor: Math.round(Number(v.estimatedValue || 0) * 100),
+        source: v.source,
+        ...(v.submissionDueAt ? { submissionDueAt: new Date(v.submissionDueAt).toISOString() } : {}),
+        ...(v.countryCode ? { countryCode: String(v.countryCode).toUpperCase() } : {}),
+        ...(v.city ? { city: v.city } : {}),
+        ...(v.notes ? { notes: v.notes } : {}),
+      }),
+    },
+
     invitation: {
       title: 'Record an invitation to tender',
       intent:
@@ -1600,32 +1652,39 @@ export async function pipeline(root) {
     const uploadTender = event.target.closest('[data-upload-tender]');
     if (uploadTender) {
       const filed = await command({
-        title: 'Upload a tender document',
+        title: 'Upload tender documents',
         intent:
           'A tender pack arrives in whatever the buyer’s portal produces — Word, a spreadsheet, a CSV, a PDF, a ' +
-          'scan. This files the document against the project so its bytes may be stored: it records that a file ' +
-          'with this content arrived as part of this tender, and nothing more. What the document says is read ' +
-          'afterwards, and a person confirms it.',
+          'scan, a drawing set, a model, photographs of the site. Choose as many as the pack contains: each is ' +
+          'filed as its own document with its own hash, because one document is one record. This records that a ' +
+          'file with this content arrived as part of this tender, and nothing more. What the documents say is ' +
+          'read afterwards, and a person confirms it.',
         path: `/v1/projects/${projectId}/tender/document`,
-        submitLabel: 'File it',
+        submitLabel: 'File them',
         fields: [
           {
             name: 'hash',
-            label: 'The document',
+            label: 'The documents',
             type: 'file',
+            // Many, because a tender pack is many. Filing a twelve-file pack
+            // one modal at a time is not something anybody does twelve times.
+            multiple: true,
             // The file picker is not the place to argue about formats: the
             // platform takes the bytes whatever they are, says what it found,
             // and refuses to *read* what it cannot read — with the reason.
             voice: false,
             nameInto: 'filename',
-            hint: 'Hashed in your browser. The hash goes on the record first; the file follows it.',
+            hint:
+              'Select several at once — hold Ctrl, or ⌘ on a Mac. Each is hashed in your browser; the hash goes on ' +
+              'the record first and the file follows it. A file over the platform’s per-file limit is refused here, ' +
+              'before anything is written.',
           },
         ],
       });
       if (!filed) return;
       toast(
         'Filed',
-        `${filed.description}. The file is being stored — refresh in a moment and it can be looked at.`,
+        `${filed.description}. The files are being stored — refresh in a moment and they can be looked at.`,
         'ok',
       );
       await draw();

@@ -66,6 +66,28 @@ async function storeEvidence(files) {
   }
 }
 
+
+/**
+ * The per-file upload ceiling the platform enforces, read from the platform.
+ *
+ * Fetched once per page load and remembered. `/v1/commands` publishes it beside
+ * the schemas for the same reason it publishes those: the console holds no rule
+ * the API does not, and a limit guessed here would be a second limit to keep in
+ * step with `EVIDENCE_MAX_BYTES`.
+ *
+ * Returns 0 when it cannot be read, which means "do not refuse anything" — a
+ * console that blocked every upload because one read failed would be worse than
+ * one that lets the server refuse a file it was always going to refuse.
+ */
+let ceilingPromise = null;
+function evidenceCeiling() {
+  ceilingPromise ??= api
+    .get('/v1/commands')
+    .then((published) => Number(published?.evidenceMaxBytes ?? 0) || 0)
+    .catch(() => 0);
+  return ceilingPromise;
+}
+
 function control(field) {
   const id = `cmd-${field.name}`;
   const required = field.required === false ? '' : 'required';
@@ -129,7 +151,12 @@ function control(field) {
     // sometimes a photograph and sometimes a sentence — offering only one of
     // the two would move the gap rather than close it.
     const support = field.voice === false ? { available: false } : voiceSupport();
-    return `<input id="${id}" name="${esc(field.name)}" type="file" ${required}>
+    // `multiple` is one field that files many records. A tender pack is a Word
+    // instruction, a spreadsheet of deliverables, a drawing set, a model and a
+    // dozen photographs of a site, and filing them one modal at a time is not
+    // something anybody does twelve times.
+    const many = field.multiple ? ' multiple' : '';
+    return `<input id="${id}" name="${esc(field.name)}" type="file"${many} ${required}>
       ${
         support.available
           ? `<div class="voice-field" style="margin-top:8px">
@@ -170,8 +197,19 @@ function control(field) {
     placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} ${required}>${datalist}`;
 }
 
+/**
+ * Read the form into the body the command will send.
+ *
+ * Returns the body and, where a file field took more than one file, one overlay
+ * per extra file. Each overlay carries that file's hash and name, and the
+ * caller sends the command once per overlay — because one document is one
+ * record. Filing ten documents as one record with ten hashes would make the
+ * ledger say a thing that is not true: that one document arrived with ten
+ * different contents.
+ */
 async function collect(host, fields, files = []) {
   const body = {};
+  const repeats = [];
   for (const field of fields) {
     if (field.type === 'file') {
       const el = host.querySelector(`[name="${CSS.escape(field.name)}"]`);
@@ -179,10 +217,31 @@ async function collect(host, fields, files = []) {
       // which is read-only. Either way it is the same `File` from here on and
       // takes the same path: prepared, hashed, filed, uploaded, queued if it
       // cannot be.
-      const file = el?.dictated ?? el?.files?.[0];
+      const chosen = el?.dictated ? [el.dictated] : [...(el?.files ?? [])];
+      const file = chosen[0];
       if (!file) {
         if (field.required === false) continue;
         throw new ApiError({ title: 'EVIDENCE_REQUIRED', detail: `${field.label} is required` }, 400);
+      }
+      // Refused here, before any record is written.
+      //
+      // The record is filed first and the bytes follow it, so a file over the
+      // ceiling used to produce a filed record naming a document the platform
+      // would never accept, and a file queued on the device retrying for ever.
+      // The ceiling is published on `/v1/commands` rather than assumed.
+      const ceiling = await evidenceCeiling();
+      const tooBig = chosen.filter((candidate) => ceiling > 0 && candidate.size > ceiling);
+      if (tooBig.length > 0) {
+        throw new ApiError(
+          {
+            title: 'FILE_TOO_LARGE',
+            detail:
+              `${tooBig.map((f) => f.name).join(', ')} ${tooBig.length === 1 ? 'is' : 'are'} over the ` +
+              `${Math.round(ceiling / 1_048_576)}MB limit for a single file. Nothing has been filed. ` +
+              'Split the file, or ask the operator to raise EVIDENCE_MAX_BYTES.',
+          },
+          413,
+        );
       }
       // Resize before hashing, never after. The hash is the address the bytes
       // are stored at and the value written into an append-only event, so it
@@ -198,6 +257,19 @@ async function collect(host, fields, files = []) {
       // Held for after the command succeeds. The upload is refused until a
       // ledger record names the hash, and this command is what creates it.
       files.push({ hash, file: prepared });
+
+      // Every file after the first becomes another run of the same command.
+      if (field.multiple && chosen.length > 1) {
+        for (const extra of chosen.slice(1)) {
+          const preparedExtra = await forEvidence(extra);
+          const extraHash = await hashFile(preparedExtra);
+          files.push({ hash: extraHash, file: preparedExtra });
+          repeats.push({
+            [field.name]: extraHash,
+            ...(field.nameInto ? { [field.nameInto]: preparedExtra.name } : {}),
+          });
+        }
+      }
       continue;
     }
 
@@ -236,7 +308,7 @@ async function collect(host, fields, files = []) {
 
     body[field.name] = value;
   }
-  return body;
+  return { body, repeats };
 }
 
 /**
@@ -461,11 +533,51 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
 
       const files = [];
       try {
-        const collected = await collect(host, fields, files);
-        const payload = transform ? transform(collected) : collected;
-        const target = typeof path === 'function' ? path(collected) : path;
-        const response = method === 'PUT' ? await api.put(target, payload) : await api.post(target, payload);
-        toast(title, 'Recorded in the Golden Thread', 'ok');
+        const { body: collected, repeats } = await collect(host, fields, files);
+
+        /*
+         * One command per document.
+         *
+         * A tender pack is many files and each one is its own record with its
+         * own hash — so this runs the command once for the first file and once
+         * more for each of the others, with that file's hash and name swapped
+         * in. The alternative, one record carrying ten hashes, would have the
+         * ledger assert that a single document arrived with ten different
+         * contents.
+         *
+         * Each run is a separate command the platform has accepted, so a
+         * failure part-way through is not a failure of the ones before it. The
+         * ones that landed stay landed and the error names how far it got,
+         * rather than reporting the whole batch as lost and leaving somebody to
+         * re-file documents that are already on the record.
+         */
+        const runs = [collected, ...repeats.map((overlay) => ({ ...collected, ...overlay }))];
+        let response;
+        let filed = 0;
+        try {
+          for (const run of runs) {
+            const payload = transform ? transform(run) : run;
+            const target = typeof path === 'function' ? path(run) : path;
+            response = method === 'PUT' ? await api.put(target, payload) : await api.post(target, payload);
+            filed += 1;
+          }
+        } catch (error) {
+          if (filed > 0) {
+            toast(
+              `${filed} of ${runs.length} filed`,
+              `The rest stopped at: ${error.message ?? String(error)}. What is filed is on the record; re-file only the remainder.`,
+              'warn',
+            );
+            void storeEvidence(files.slice(0, filed));
+          }
+          throw error;
+        }
+
+        toast(
+          title,
+          runs.length === 1 ? 'Recorded in the Golden Thread' : `${runs.length} documents recorded in the Golden Thread`,
+          'ok',
+        );
         // Afterwards, and never as a condition of the command. The record is
         // what the chain is made of; the file is what makes it useful in three
         // years, and a failed upload must not undo a command the platform has

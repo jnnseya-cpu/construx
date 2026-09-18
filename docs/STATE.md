@@ -23919,3 +23919,68 @@ a customer is **Found a group from this company**, then **Add a company** on the
 Group screen, up to the group licence's five. That path now works from end to
 end; what does not exist is a sixth company, or a second unrelated tenancy from
 inside the first.
+
+---
+
+## A tender pack is many files, and the chain had no first link
+
+### Many attachments, one record each
+
+A tender document upload took one file. A tender pack is a Word instruction, a
+spreadsheet of return deliverables, a drawing set, a model and photographs of
+the site, and filing twelve of them meant opening the same modal twelve times.
+
+The file field now takes `multiple`. Each file is prepared, hashed and filed as
+**its own record**, because one document is one record: a single record carrying
+twelve hashes would have the ledger assert that one document arrived with twelve
+different contents. The command runs once per file, with that file's hash and
+name swapped in.
+
+**A failure part-way through is reported as one.** Each run is a command the
+platform has already accepted, so the ones that landed stay landed; the toast
+says how many of how many were filed and names where it stopped, rather than
+reporting the batch as lost and leaving somebody to re-file documents that are
+already on the record.
+
+**The per-file ceiling is published and enforced in the browser.** It could not
+be before: `/v1/commands` now carries `evidenceMaxBytes`, and an oversized file
+is refused *before* any record is written. The order of operations made that
+worth doing — the record is filed first and the bytes follow, so a file over the
+ceiling previously produced a filed record, a refused upload, and a file queued
+on the device to be retried for ever. The record named a document nobody could
+ever open. The ceiling is `EVIDENCE_MAX_BYTES`, 50MB by default; the gateway
+buffers an upload in memory, so raising it is a memory figure per concurrent
+upload as much as a storage one, and it is left to the operator rather than
+raised here.
+
+### The head of the delivery chain had no door
+
+`POST /v1/pipeline/opportunities` describes itself, in its own route
+description, as "the head of the delivery chain". Nothing in the console called
+it.
+
+Every command on Pipeline & Bids acts against an opportunity. A business with a
+live tender opened the screen, pressed **Record an ITT** and was told "this needs
+an opportunity to act against, and this project holds none" — with nothing
+anywhere on the platform to make one. The scoring had nothing to score, the
+bands nothing to calibrate from, and the twelve panels below each explained that
+they become populated as the project progresses. They do not. **Register an
+opportunity** is now the first command on the bar, because it is first in the
+chain.
+
+### Why neither was caught
+
+`doors.test.ts` exists to stop exactly this, and could not. It built a list of
+write routes with no hand-built door and then asserted `usesCatalogue` — the
+same thing the line above it already asserted. The list was only ever the
+*message* of an assertion about something else, so no route without a panel has
+ever failed the test, however important the route.
+
+It is now a ratchet at **298 of 795 write routes**. Those are reachable through
+the generic command catalogue, which is a real fallback, so the assertion is a
+ceiling rather than zero — what it refuses is the number going up. A new write
+route with no panel fails, and somebody decides whether the catalogue is
+genuinely where it belongs rather than finding out from a customer.
+
+The remaining 298 include the rest of the bid chain — `qualify`, `decide`,
+`convert` — which will want doors next.
