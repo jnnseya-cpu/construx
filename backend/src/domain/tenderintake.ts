@@ -817,8 +817,23 @@ export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): 
 
   const blockers: string[] = [];
   if (!invitation.state.requirementsExtracted) {
+    /*
+     * Named the remedy as well as the fault.
+     *
+     * This said the invitation "has not been read: no deliverables and no
+     * compliance matrix are recorded against it", which is true and leaves
+     * somebody looking at a blocked bid with nothing to do about it. It reads
+     * as though the platform is waiting for an AI reading — and it is not: one
+     * deliverable filed by hand clears it, because what the gate is actually
+     * asking is whether anybody has written down what has to go back.
+     *
+     * The sentence is put in front of somebody with a return date coming, so it
+     * says which of the two ways out is quickest.
+     */
     blockers.push(
-      `Invitation ${String(invitation.state.reference)} has not been read: no deliverables and no compliance matrix are recorded against it`,
+      `Invitation ${String(invitation.state.reference)} has not been read: nothing is recorded about what the ` +
+        'submission has to contain. Add the return items one at a time with "Add a deliverable", or read the ' +
+        'invitation with AI to file the whole register and a compliance matrix at once.',
     );
   }
   blockers.push(...deliverableBlockers((invitation.state.deliverables as TenderDeliverable[] | undefined) ?? []));
