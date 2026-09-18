@@ -239,9 +239,16 @@ echo "The origin people are emailed"
 # all passed silently and then failed at `docker compose up` on the gateway,
 # with "required variable CONSTRUX_DOMAIN is missing a value" and nothing in
 # .env.example to look it up in.
+#
+# A note rather than a fault, because there are two front doors and only one of
+# them needs this. `compose.gateway.yaml` brings its own Caddy and requires the
+# name; `compose.edge.yaml` joins a proxy that is already on the host, and that
+# proxy owns the domain, the certificate and the www redirect — CONSTRUX_DOMAIN
+# is correctly unset there, and reporting it as critical would send somebody to
+# fix a variable their deployment does not read.
 if ! is_set CONSTRUX_DOMAIN; then
-  echo "  WARNING  CONSTRUX_DOMAIN is not set — the TLS gateway refuses to start without it, and every emailed link points at a host nothing serves"
-  missing_critical=$((missing_critical + 1))
+  echo "  note     CONSTRUX_DOMAIN is not set. Right if this host already runs its own proxy (compose.edge.yaml);"
+  echo "           set it if you use the bundled TLS gateway (compose.gateway.yaml), which will not start without it."
 fi
 if is_set CONSTRUX_DOMAIN; then
   domain="$(value_of CONSTRUX_DOMAIN | tr -d '[:space:]')"
