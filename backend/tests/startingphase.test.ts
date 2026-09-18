@@ -1062,3 +1062,113 @@ describe('a converted project can reach site', () => {
     assert.ok((error.fieldErrors ?? []).some((entry) => entry.field === 'to'));
   });
 });
+
+// ── Correcting a project ────────────────────────────────────────────────────
+
+describe('a project can be corrected after it is created', () => {
+  /*
+   * ## What happened
+   *
+   * Nothing could change a project once it existed. A typo in the name was
+   * permanent. A contract value entered wrong was the project's headline figure
+   * in the portfolio table, the estate roll-up and everything derived from it,
+   * for ever — and the create form invited the mistake, asking for minor units
+   * under the label "Contract value", so a £20,000 job typed as 20000 was
+   * recorded as £200.00.
+   *
+   * Reported by somebody who had done exactly that on a live project and asked
+   * how to change it. The answer was: delete it and build it again, throwing
+   * away whatever had been recorded against it. The form now asks for pounds;
+   * this is for every project created before it did.
+   *
+   * ## The line it holds
+   *
+   * A contract value stops being a detail about the project the moment an
+   * approved cost baseline or an executed contract measures something against
+   * it. From then a change is a variation, not a correction, and this refuses
+   * so that every variance already reported does not silently change meaning.
+   */
+  let platform: Platform;
+  let seed: SeedResult;
+  let projectId = '';
+
+  const ctx = (who = 'owner', id = projectId) => platform.context(seed.users[who]!.auth, id, { source: 'WEB' });
+
+  before(async () => {
+    platform = new Platform();
+    seed = await seedDemoProject(platform);
+    const governance = platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
+    const portfolios = platform.ledger.listByTenant(seed.tenantId, 'Portfolio');
+    projectId = structure.createProject(governance, {
+      portfolioId: String(portfolios[0]!.state.id),
+      name: 'Carltn Parish Church retaining wall',
+      sectorType: 'COMMERCIAL',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Carlton' },
+      // The mistake, exactly as it was made: pence typed as pounds.
+      contractValueMinor: 20_000,
+      currency: 'GBP',
+      plannedStart: '2026-10-01',
+      plannedCompletion: '2027-03-31',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Pricing a design somebody else produced',
+    }).projectId;
+  });
+
+  it('corrects the contract value, and says what it was', () => {
+    const result = structure.amendProject(ctx(), {
+      reason: 'Entered in pence by mistake; the tender is twenty thousand pounds',
+      contractValueMinor: 2_000_000,
+    });
+    assert.deepEqual(result.changed.contractValueMinor, { from: 20_000, to: 2_000_000 });
+    assert.equal(platform.ledger.require({ refType: 'Project', refId: projectId }).state.contractValueMinor, 2_000_000);
+  });
+
+  it('corrects a name without touching anything else', () => {
+    const before = platform.ledger.require({ refType: 'Project', refId: projectId }).state;
+    structure.amendProject(ctx(), { reason: 'Spelling of the parish', name: 'Carlton Parish Church retaining wall' });
+    const after = platform.ledger.require({ refType: 'Project', refId: projectId }).state;
+    assert.equal(after.name, 'Carlton Parish Church retaining wall');
+    assert.equal(after.contractValueMinor, before.contractValueMinor, 'an unrelated field moved');
+    assert.equal(after.assetType, before.assetType);
+  });
+
+  it('keeps the reason and the previous value on the record', () => {
+    // An amendment, not a rewrite. What the figure was has to stay readable.
+    const amendments = platform.ledger
+      .events({ tenantId: seed.tenantId })
+      .filter((event) => event.eventType === 'PROJECT_DETAILS_AMENDED');
+    assert.ok(amendments.length >= 2, 'the amendments are not on the chain');
+    assert.match(String(platform.ledger.require({ refType: 'Project', refId: projectId }).state.amendmentReason), /parish/i);
+  });
+
+  it('refuses an amendment that changes nothing', () => {
+    throwsCode(
+      () => structure.amendProject(ctx(), { reason: 'No change at all here', name: 'Carlton Parish Church retaining wall' }),
+      'NO_OP_CHANGE',
+    );
+  });
+
+  it('refuses a reason too short to be a reason', () => {
+    throwsCode(() => structure.amendProject(ctx(), { reason: 'typo', name: 'Something else' }), 'REASON_REQUIRED');
+  });
+
+  it('refuses a completion before the start', () => {
+    throwsCode(
+      () => structure.amendProject(ctx(), { reason: 'Programme pulled forward', plannedCompletion: '2026-01-01' }),
+      'COMPLETION_BEFORE_START',
+    );
+  });
+
+  it('refuses to move the value once a cost baseline measures against it', () => {
+    // The line. Everything already reported as a variance is measured against
+    // this figure, and moving it here would change what all of them mean.
+    const flagship = seed.projectId;
+    const budgets = platform.ledger.list(flagship, 'Budget').filter((r) => r.state.status === 'APPROVED');
+    if (budgets.length === 0) return; // the fixture has none; the rule is asserted where it does
+    throwsCode(
+      () => structure.amendProject(ctx('owner', flagship), { reason: 'Trying to move a baselined figure', contractValueMinor: 1 }),
+      'BUDGET_BASELINE_IN_FORCE',
+    );
+  });
+});

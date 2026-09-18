@@ -1640,6 +1640,134 @@ export function livePortfolios(ledger: EngineContext['ledger'], tenantId: string
  * end. Everything else — a test project, a duplicate, a job that never started
  * — goes, with the reason on the record.
  */
+/**
+ * Correct what a project says about itself.
+ *
+ * ## Why this exists
+ *
+ * Nothing could change a project after it was created. A typo in the name was
+ * permanent. A contract value entered wrong stayed wrong in the portfolio
+ * table, the estate roll-up and every figure derived from it — and the create
+ * form invited the mistake, asking for minor units under the label "Contract
+ * value", so a £20,000 job typed as 20000 was recorded as £200.00. The only
+ * remedy was to delete the project and build it again, which throws away
+ * whatever had already been recorded against it.
+ *
+ * ## What it will not do
+ *
+ * **Move money that has already been agreed.** Once a budget baseline is
+ * approved or a contract is executed, the contract value is not a detail about
+ * the project any more — it is a figure the commercial record is measured
+ * against, and changing it here would silently move the denominator under every
+ * variance already reported. Those go through the award and change-control
+ * routes, which record what moved and why against the baseline. This refuses
+ * and says which.
+ *
+ * **Rewrite history.** The event carries the previous values and the reason, so
+ * the record says what the figure was, what it became and who decided. An
+ * amendment is a new entry on the chain like everything else.
+ *
+ * Authorised on `PROJECT_SETUP` approve rather than update: correcting the
+ * headline value of a job is not the same class of act as editing a field on a
+ * record inside it.
+ */
+export function amendProject(
+  ctx: EngineContext,
+  input: {
+    reason: string;
+    name?: string;
+    assetType?: string;
+    sectorType?: SectorType;
+    contractValueMinor?: number;
+    plannedStart?: string;
+    plannedCompletion?: string;
+    location?: { continentCode: string; countryCode: string; city: string };
+  },
+): { projectId: string; changed: Record<string, { from: unknown; to: unknown }> } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  if (!isLiveProject(project.state)) {
+    throw new DomainError('PROJECT_DELETED', `${String(project.state.name)} has been deleted and takes no further command.`, 409);
+  }
+  if (input.reason.trim().length < 10) {
+    throw new DomainError('REASON_REQUIRED', 'Say why the project is being amended; it is the sentence the record keeps.', 422, [
+      { field: 'reason', message: 'At least ten characters' },
+    ]);
+  }
+
+  const changed: Record<string, { from: unknown; to: unknown }> = {};
+  const next: Record<string, unknown> = { ...project.state };
+
+  const move = (field: string, to: unknown): void => {
+    if (to === undefined) return;
+    const from = (project.state as Record<string, unknown>)[field];
+    if (JSON.stringify(from) === JSON.stringify(to)) return;
+    changed[field] = { from, to };
+    next[field] = to;
+  };
+
+  if (input.contractValueMinor !== undefined && input.contractValueMinor !== Number(project.state.contractValueMinor)) {
+    if (!Number.isInteger(input.contractValueMinor) || input.contractValueMinor < 0) {
+      throw new DomainError('CONTRACT_VALUE_INVALID', 'A contract value is a whole number of minor units and cannot be negative.', 422, [
+        { field: 'contractValueMinor', message: 'whole minor units' },
+      ]);
+    }
+    const baselines = ctx.ledger.list(ctx.projectId, 'Budget').filter((record) => record.state.status === 'APPROVED').length;
+    if (baselines > 0) {
+      throw new DomainError(
+        'BUDGET_BASELINE_IN_FORCE',
+        'An approved cost baseline governs this project. The contract value is what its variances are measured against, ' +
+          'so it moves through change control rather than by amendment — otherwise every variance already reported ' +
+          'silently changes meaning.',
+        409,
+      );
+    }
+    const executed = ctx.ledger.list(ctx.projectId, 'Contract').filter((record) => record.state.status === 'EXECUTED').length;
+    if (executed > 0) {
+      throw new DomainError(
+        'CONTRACT_IN_FORCE',
+        'An executed contract is in force. Its sum is recorded against the award, and a change to it is a variation ' +
+          'rather than a correction.',
+        409,
+      );
+    }
+  }
+
+  move('name', input.name?.trim());
+  move('assetType', input.assetType?.trim());
+  move('sectorType', input.sectorType);
+  move('contractValueMinor', input.contractValueMinor);
+  move('plannedStart', input.plannedStart);
+  move('plannedCompletion', input.plannedCompletion);
+  move('location', input.location);
+
+  if (Object.keys(changed).length === 0) {
+    throw new DomainError('NO_OP_CHANGE', 'Nothing in that amendment is different from what the record already says.', 422);
+  }
+
+  const start = String(next.plannedStart ?? '');
+  const completion = String(next.plannedCompletion ?? '');
+  if (start && completion && completion < start) {
+    throw new DomainError('COMPLETION_BEFORE_START', 'A project cannot be planned to finish before it starts.', 422, [
+      { field: 'plannedCompletion', message: 'after the start' },
+    ]);
+  }
+
+  write(ctx, {
+    eventType: 'PROJECT_DETAILS_AMENDED',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: {
+      ...next,
+      amendedAt: new Date().toISOString(),
+      amendedBy: ctx.auth.actorId,
+      amendmentReason: input.reason.trim(),
+    },
+  });
+
+  return { projectId: ctx.projectId, changed };
+}
+
 export function deleteProject(ctx: EngineContext, input: { reason: string }): { projectId: string; deletedAt: string } {
   authorise(ctx, 'PROJECT_SETUP', 'A');
 

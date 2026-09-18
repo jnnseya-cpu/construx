@@ -9382,6 +9382,36 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/amend',
+    description: 'Correct what a project says about itself — its name, what is being built, where, when and what it is worth. Refused on the value once a cost baseline is approved or a contract executed',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string', minLength: 10, maxLength: 500 },
+        name: stringField,
+        assetType: stringField,
+        sectorType: { type: 'string', enum: values(SECTOR) },
+        contractValueMinor: { type: 'integer', minimum: 0 },
+        plannedStart: { type: 'string' },
+        plannedCompletion: { type: 'string' },
+        location: {
+          type: 'object',
+          required: ['continentCode', 'countryCode', 'city'],
+          properties: { continentCode: stringField, countryCode: stringField, city: stringField },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      structure.amendProject(
+        projectContext(platform, ctx),
+        body<Parameters<typeof structure.amendProject>[1]>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/delete',
     description: 'Delete a project. The record is kept and readable by its id; it leaves the estate and takes no further command. Refused where money has been certified or a contract is executed',
     schema: {

@@ -283,6 +283,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROJECT_CREATED', 'Project', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_PHASE_TRANSITIONED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   def('PROJECT_DELETED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
+  // Correcting what a project says about itself: its name, what is being built,
+  // where, when, and what it is worth.
+  //
+  // There was no way to change any of it. A project created with a typo in its
+  // name carried the typo for thirty years, and a contract value entered wrong
+  // — which the create form invited, having asked for pence under the label
+  // "Contract value" — was the project's headline figure in every roll-up,
+  // permanently, with delete-and-recreate the only remedy.
+  //
+  // An amendment, not a correction of history: the event carries the reason and
+  // the previous values, so the record says what the figure was, what it became
+  // and why. Nothing is rewritten.
+  def('PROJECT_DETAILS_AMENDED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
   // Who is accountable for this project, by name. A governance act rather than
   // an edit: the estate cannot be reported by manager until somebody has said
   // who each manager is, and the answer has to be a person the platform knows

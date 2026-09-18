@@ -335,6 +335,26 @@ export async function enterprise(root) {
                 : blockedReason('ENTERPRISE_STRUCTURE', 'U'),
             },
             {
+              /*
+               * Correcting a project, which nothing could do.
+               *
+               * A typo in the name was permanent, and a contract value entered
+               * wrong was the project's headline figure in every roll-up for
+               * ever — with delete-and-recreate the only remedy, throwing away
+               * whatever had been recorded against it. The create form invited
+               * the mistake by asking for pence under the label "Contract
+               * value"; that is fixed above, and this is for the projects
+               * created before it was.
+               */
+              id: 'amend',
+              label: 'Correct project details',
+              tone: '',
+              permitted: can('PROJECT_SETUP', 'A') && Boolean(state.session.projectId),
+              reason: !state.session.projectId
+                ? 'No project is open. Choose one from the picker above.'
+                : blockedReason('PROJECT_SETUP', 'A'),
+            },
+            {
               id: 'check',
               label: 'Check a licence',
               tone: '',
@@ -871,7 +891,26 @@ export async function enterprise(root) {
         { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
         { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY, hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
         { name: 'city', label: 'City' },
-        { name: 'contractValueMinor', label: 'Contract value', type: 'number', hint: 'In minor units — pence for GBP' },
+        {
+          /*
+           * In pounds, because that is what somebody types.
+           *
+           * This asked for minor units — "In minor units — pence for GBP" — and
+           * a £200,000 job entered as 200000 was recorded as £2,000.00, then
+           * reported as that on the portfolio, in the estate roll-up and in
+           * every figure derived from contract value. Nobody reads a hint and
+           * multiplies by a hundred; they type the number on the letter.
+           *
+           * `money: true` is the shared conversion the command layer already
+           * has, so the field takes pounds and stores pence, which is what
+           * every other money field on the platform does.
+           */
+          name: 'contractValue',
+          label: 'Contract value (£)',
+          type: 'number',
+          money: true,
+          hint: 'As it is written on the tender or the contract — 250000 for a quarter of a million.',
+        },
         {
           name: 'currency',
           label: 'Currency',
@@ -922,9 +961,11 @@ export async function enterprise(root) {
             'after them.',
         },
       ],
-      transform: ({ continentCode, countryCode, city, contractValueMinor, startingPhaseReason, ...rest }) => ({
+      transform: ({ continentCode, countryCode, city, contractValue, startingPhaseReason, ...rest }) => ({
         ...rest,
-        contractValueMinor: Number(contractValueMinor),
+        // Already in pence: `money: true` converted it on the way out of the
+        // form, which is the one place that conversion belongs.
+        contractValueMinor: Number(contractValue),
         location: { continentCode, countryCode: String(countryCode ?? '').toUpperCase(), city },
         // Sent only when there is one. An empty string would fail the domain's
         // length check with "required" on a project that skipped nothing.
@@ -932,6 +973,41 @@ export async function enterprise(root) {
       }),
     },
     person: addPersonCommand(),
+
+    amend: {
+      title: 'Correct project details',
+      intent:
+        'What the project says about itself. Leave anything you are not changing blank. The reason is kept on the ' +
+        'record beside the old value and the new one — this is an amendment, not a rewrite, and the figure it was ' +
+        'stays readable. The contract value is refused once a cost baseline is approved or a contract executed: from ' +
+        'then it is what variances are measured against, and it moves through change control instead.',
+      path: `/v1/projects/${state.session.projectId}/amend`,
+      submitLabel: 'Correct it',
+      fields: [
+        { name: 'name', label: 'Project name', required: false, value: state.project?.name ?? '' },
+        { name: 'assetType', label: 'Asset type', required: false, value: state.project?.assetType ?? '' },
+        {
+          name: 'contractValue',
+          label: 'Contract value (£)',
+          type: 'number',
+          money: true,
+          required: false,
+          value: state.project?.contractValueMinor ? state.project.contractValueMinor / 100 : '',
+          hint: 'In pounds, as it is written on the tender or the contract.',
+        },
+        { name: 'plannedStart', label: 'Planned start', type: 'date', required: false, value: String(state.project?.plannedStart ?? '').slice(0, 10) },
+        { name: 'plannedCompletion', label: 'Planned completion', type: 'date', required: false, value: String(state.project?.plannedCompletion ?? '').slice(0, 10) },
+        { name: 'reason', label: 'Why', type: 'textarea', hint: 'At least ten characters. The sentence the record keeps beside the change.' },
+      ],
+      transform: (v) => ({
+        reason: v.reason,
+        ...(v.name ? { name: v.name } : {}),
+        ...(v.assetType ? { assetType: v.assetType } : {}),
+        ...(v.contractValue !== '' && v.contractValue !== undefined ? { contractValueMinor: Number(v.contractValue) } : {}),
+        ...(v.plannedStart ? { plannedStart: v.plannedStart } : {}),
+        ...(v.plannedCompletion ? { plannedCompletion: v.plannedCompletion } : {}),
+      }),
+    },
   };
 
   // What an administrator may do to a person, from the row. Each one is a
