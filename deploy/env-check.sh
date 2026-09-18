@@ -234,6 +234,15 @@ echo "The origin people are emailed"
 # gateway holds no certificate for, and the browser reports that as
 # ERR_SSL_PROTOCOL_ERROR: not "misconfigured", just broken, on somebody's first
 # contact with the platform.
+# Missing entirely is the case that actually happened, and the check skipped it:
+# `is_set` guarded the whole block, so a deployment with no CONSTRUX_DOMAIN at
+# all passed silently and then failed at `docker compose up` on the gateway,
+# with "required variable CONSTRUX_DOMAIN is missing a value" and nothing in
+# .env.example to look it up in.
+if ! is_set CONSTRUX_DOMAIN; then
+  echo "  WARNING  CONSTRUX_DOMAIN is not set — the TLS gateway refuses to start without it, and every emailed link points at a host nothing serves"
+  missing_critical=$((missing_critical + 1))
+fi
 if is_set CONSTRUX_DOMAIN; then
   domain="$(value_of CONSTRUX_DOMAIN | tr -d '[:space:]')"
   if [[ "$domain" == www.* ]]; then
