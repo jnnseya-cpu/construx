@@ -177,3 +177,20 @@ export function mayReceive(adapter: { name: AIProvider | string; transmits: bool
 
 /** The levels, in order, for anything that needs to publish or validate them. */
 export const SENSITIVITY_ORDER: readonly DataSensitivity[] = ORDER;
+
+/**
+ * What each level means as *work somebody is trying to do*, rather than as a
+ * classification code.
+ *
+ * A screen telling an operator that a provider is "capped at INTERNAL" has told
+ * them nothing they can act on. Telling them it cannot read a tender, a
+ * contract or a claim names the thing that will be refused, which is the only
+ * form of this fact anybody can decide against.
+ */
+export const SENSITIVITY_WORK: Record<DataSensitivity, string> = {
+  PUBLIC: 'published material',
+  INTERNAL: 'ordinary project records',
+  SAFETY_L2: 'safety records — CDM documents, inductions, competence',
+  COMMERCIAL_L3: 'commercial records — tenders, opportunities, costs, payments',
+  LEGAL_L4: 'contracts, claims, disputes and correspondence',
+};

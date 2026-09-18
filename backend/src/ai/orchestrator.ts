@@ -1,6 +1,6 @@
 import { config, type ProviderRetention } from '../config.ts';
 import type { DataSensitivity } from '../identity/abac.ts';
-import { clearanceFor, mayReceive, retentionFor, retentionStatement, sensitivityOf } from './sensitivity.ts';
+import { SENSITIVITY_ORDER, SENSITIVITY_WORK, clearanceFor, mayReceive, retentionFor, retentionStatement, sensitivityOf, within } from './sensitivity.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import { DomainError, ForbiddenError , NotFoundError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -415,7 +415,9 @@ export class AIOrchestrator {
    * is an operator looking for a diagnosis, and a provider's error body can
    * echo request content back.
    */
-  async probeProviders(): Promise<Array<{ provider: string; capability: string; ok: boolean; detail: string }>> {
+  async probeProviders(): Promise<
+    Array<{ provider: string; capability: string; ok: boolean; detail: string; clearance: DataSensitivity; refusedWork: string[] }>
+  > {
     const seen = new Set<string>();
     const candidates = [this.#reasoning, this.#perception, ...this.#spares].filter((adapter) => {
       if (!adapter || seen.has(adapter.name)) return false;
@@ -423,8 +425,37 @@ export class AIOrchestrator {
       return true;
     });
 
-    const results: Array<{ provider: string; capability: string; ok: boolean; detail: string }> = [];
+    /*
+     * What a provider is *cleared* for, beside whether it answers.
+     *
+     * A probe that reports "all three answered" and nothing else is read as
+     * "AI works", and on a deployment with `AI_PROVIDER_CLEARANCE` unset that
+     * is false for most of the platform: every provider is capped at
+     * `INTERNAL`, and a request touching a tender, a contract, a claim or any
+     * commercial record is refused 403 before a provider is contacted. The
+     * probe itself carries no records, so it sits at `INTERNAL` and sails
+     * through — it is structurally incapable of noticing the thing that stops
+     * real work.
+     *
+     * So each row says what it may receive and, in plain terms, what it may
+     * not. This is read from configuration, not measured, because clearance is
+     * a statement about a contract with the vendor rather than a property the
+     * platform can discover.
+     */
+    const refusedFor = (ceiling: DataSensitivity): string[] =>
+      SENSITIVITY_ORDER.filter((level) => !within(level, ceiling)).map((level) => SENSITIVITY_WORK[level] ?? level);
+
+    const results: Array<{
+      provider: string;
+      capability: string;
+      ok: boolean;
+      detail: string;
+      clearance: DataSensitivity;
+      refusedWork: string[];
+    }> = [];
     for (const adapter of candidates) {
+      const clearance = clearanceFor(adapter.name);
+      const refusedWork = adapter.transmits ? refusedFor(clearance) : [];
       try {
         const answer = await adapter.execute({
           task: 'PROVIDER_PROBE',
@@ -437,12 +468,14 @@ export class AIOrchestrator {
         const fields = Object.keys(answer.output ?? {});
         results.push(
           fields.length === 0
-            ? { provider: adapter.name, capability: adapter.capability, ok: false, detail: 'answered, and nothing was read from the response' }
+            ? { provider: adapter.name, capability: adapter.capability, ok: false, detail: 'answered, and nothing was read from the response', clearance, refusedWork }
             : {
                 provider: adapter.name,
                 capability: adapter.capability,
                 ok: true,
                 detail: `${fields.length} fields read (${fields.slice(0, 4).join(', ')})`,
+                clearance,
+                refusedWork,
               },
         );
       } catch (error) {
@@ -451,6 +484,8 @@ export class AIOrchestrator {
           capability: adapter.capability,
           ok: false,
           detail: String((error as Error).message ?? error).slice(0, 400),
+          clearance,
+          refusedWork,
         });
       }
     }

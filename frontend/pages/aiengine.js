@@ -251,12 +251,26 @@ export async function aiengine(root) {
     button.textContent = 'Calling…';
     try {
       const result = await api.post('/v1/admin/ai/probe', {});
-      const failed = (result.providers ?? []).filter((entry) => !entry.ok);
+      const providers = result.providers ?? [];
+      const failed = providers.filter((entry) => !entry.ok);
+      // Answering is half the question. A provider that answers and is cleared
+      // for nothing above ordinary project records will still refuse every
+      // tender, contract and claim — and the probe cannot discover that by
+      // calling, because the probe carries no records of its own.
+      const capped = providers.filter((entry) => (entry.refusedWork ?? []).length > 0);
       toast(
-        failed.length === 0 ? 'Every provider answered' : `${failed.length} of ${result.providers.length} could not answer`,
-        (result.providers ?? []).map((entry) => `${entry.provider}: ${entry.ok ? 'ok' : entry.detail}`).join(' · ') ||
-          `AI_MODE is ${result.mode} — no provider is called.`,
-        failed.length === 0 ? 'ok' : 'err',
+        failed.length > 0
+          ? `${failed.length} of ${providers.length} could not answer`
+          : capped.length > 0
+            ? `Every provider answered — ${capped.length} cleared only for ordinary project records`
+            : 'Every provider answered',
+        providers
+          .map((entry) =>
+            `${entry.provider}: ${entry.ok ? 'answered' : entry.detail}` +
+            ((entry.refusedWork ?? []).length > 0 ? ` — cannot be sent ${entry.refusedWork.join('; ')}` : ''),
+          )
+          .join(' · ') || `AI_MODE is ${result.mode} — no provider is called.`,
+        failed.length > 0 ? 'err' : capped.length > 0 ? 'warn' : 'ok',
       );
     } catch (error) {
       toast('Could not probe', error.message, 'err');

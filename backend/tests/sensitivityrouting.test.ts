@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
-import { clearanceFor, higher, mayReceive, sensitivityOf, sensitivityOfType, within } from '../src/ai/sensitivity.ts';
+import { SENSITIVITY_ORDER, SENSITIVITY_WORK, clearanceFor, higher, mayReceive, sensitivityOf, sensitivityOfType, within } from '../src/ai/sensitivity.ts';
 import { ENTITY_ACCESS } from '../src/identity/entityAccess.ts';
 import { config } from '../src/config.ts';
 import { throwsCode } from './helpers.ts';
@@ -296,5 +296,51 @@ describe('the decision is recorded with the input it was made on', () => {
         'a refused call left a queued request behind claiming a routing that never happened',
       );
     });
+  });
+});
+
+/**
+ * A provider that answers is not a provider that can do the work.
+ *
+ * Asked plainly — *"So now these businesses can use the AI and work in the
+ * platform?"* — and the honest answer turned on something no screen was saying.
+ * With `AI_PROVIDER_CLEARANCE` unset every vendor is capped at `INTERNAL`, so a
+ * request touching a tender, a contract or a claim is refused 403 before a
+ * provider is contacted. The provider probe carries no records of its own, so it
+ * sits at `INTERNAL`, sails through, and reports "every provider answered" — a
+ * true sentence that reads as "AI works" and is not.
+ *
+ * The probe now carries each provider's ceiling and what that ceiling refuses,
+ * in the terms somebody is actually trying to work in. These assertions are
+ * about that mapping being complete and honest, because a wrong one understates
+ * a refusal the customer will meet at the button.
+ */
+describe('what a provider is cleared for, beside whether it answers', () => {
+  it('names work for every level, so no ceiling reports an empty refusal', () => {
+    for (const level of SENSITIVITY_ORDER) {
+      assert.ok(
+        (SENSITIVITY_WORK[level] ?? '').trim().length > 0,
+        `${level} has no plain-terms description, so a screen would print a classification code at somebody`,
+      );
+    }
+  });
+
+  it('refuses safety, commercial and legal work at the default ceiling', () => {
+    // The default with nothing configured, and the state every deployment is in
+    // until somebody states what each vendor's contract permits.
+    const refused = SENSITIVITY_ORDER.filter((level) => !within(level, config.ai.defaultClearance));
+    assert.deepEqual(refused, ['SAFETY_L2', 'COMMERCIAL_L3', 'LEGAL_L4']);
+    // Named because this is the one that stops a bid: an Opportunity is the
+    // head of the delivery chain and it is COMMERCIAL_L3.
+    assert.equal(sensitivityOfType('Opportunity'), 'COMMERCIAL_L3');
+    assert.equal(within('COMMERCIAL_L3', config.ai.defaultClearance), false, 'a tender would be sent to an uncleared vendor');
+  });
+
+  it('refuses nothing once a vendor is cleared to the top', () => {
+    assert.deepEqual(
+      SENSITIVITY_ORDER.filter((level) => !within(level, 'LEGAL_L4')),
+      [],
+      'a fully cleared vendor still reported work it cannot be sent',
+    );
   });
 });

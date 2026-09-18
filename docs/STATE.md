@@ -24248,3 +24248,33 @@ explain one.
 `GROUP_EXISTS` itself was a dead end: true, and it named neither which group,
 nor who was in it, nor what to do instead. It now names the group, says how many
 companies it holds, and points at "Bring a company in".
+
+### "So these businesses can use the AI now?" — the probe could not answer it
+
+Billing had stopped being the blocker: the three companies are exempt, AI is
+uncharged, and two of them are no longer stuck at a nil balance. But the
+question is about whether the work runs, and one gate nothing on screen was
+naming still stood in front of it.
+
+With `AI_PROVIDER_CLEARANCE` unset, every vendor is capped at `INTERNAL` by
+`defaultClearance`. `SAFETY_L2`, `COMMERCIAL_L3` and `LEGAL_L4` are refused with
+403 `AI_CLEARANCE_REQUIRED` before a provider is contacted — **109 of the
+platform's 356 entity types**, and among them `Opportunity`, which is the head of
+the delivery chain. A tender cannot be read by AI on a deployment that has not
+stated what its vendors' contracts permit.
+
+The provider probe was structurally incapable of noticing. It carries no input
+records, so `sensitivityOf([])` is `INTERNAL`, so it clears every ceiling and
+answers "every provider answered" — a true sentence that reads as "AI works".
+Exactly the shape of the health flag it was built to replace.
+
+Each probe row now carries the vendor's ceiling and what that ceiling refuses,
+phrased as the work rather than as a classification code: *"cannot be sent
+commercial records — tenders, opportunities, costs, payments"*. The toast reports
+"every provider answered — 3 cleared only for ordinary project records" as a
+warning rather than a success. `SENSITIVITY_WORK` holds the phrasing and
+`sensitivityrouting.test.ts` pins that every level has one, because a screen that
+prints `COMMERCIAL_L3` at somebody has told them nothing they can act on.
+
+Read from configuration and not measured, deliberately: clearance is a statement
+about a contract with a vendor, and the platform cannot discover it.
