@@ -562,6 +562,19 @@ function quoteBlockedText(quote) {
  */
 export function costBlock(quote) {
   const blocked = Boolean(quote.blockedReason);
+  /*
+   * A cap passed is not a block, and showing it as one would be a lie.
+   *
+   * A ceiling the customer set does not cut an AI task in half: the run goes
+   * ahead and is charged against the funded balance as normal. So the person is
+   * told what it does to the budget — before they press it, beside the price,
+   * which is the same rule as the cost disclosure it sits next to — and the
+   * button stays live, because the platform will run it.
+   *
+   * An empty balance is a block, and is rendered as one above. Prepaid means
+   * prepaid, and no ACUs means no AI.
+   */
+  const overrun = !blocked && typeof quote.overrunReason === 'string' && quote.overrunReason !== '';
   return `<div class="cost-quote${blocked ? ' blocked' : ''}">
     <div class="cost-head">
       <div>
@@ -580,7 +593,25 @@ export function costBlock(quote) {
     <div class="metric-sub">${esc(quoteBasisText(quote))}</div>
     ${disclosureBlock(quote.disclosure)}
     ${blocked ? `<div class="notice warn">${esc(quoteBlockedText(quote))}</div>` : ''}
+    ${overrun ? `<div class="notice warn">${esc(quoteOverrunText(quote))}</div>` : ''}
   </div>`;
+}
+
+/**
+ * A cap about to be passed, worded for the person passing it.
+ *
+ * The server's sentence is written in minor units for a log. This says what it
+ * does to the budget in the customer's own currency — and it never says the
+ * work will stop, because it will not.
+ */
+function quoteOverrunText(quote) {
+  if (quote.capBreach) {
+    const { scope, capMinor, spentMinor, scopeId } = quote.capBreach;
+    const where =
+      scope === 'MONTHLY' ? 'this month’s AI budget' : scope === 'PROJECT' ? 'this project’s AI budget' : `the AI budget for ${scopeId}`;
+    return `This takes ${where} past its ${exact(capMinor)} cap — ${exact(spentMinor)} is already spent. It will still run, because a cap does not cut an AI task in half, and it is charged against your balance as normal.`;
+  }
+  return quote.overrunReason;
 }
 
 /**

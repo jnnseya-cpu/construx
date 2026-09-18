@@ -310,6 +310,18 @@ export type CostQuote = {
   blockedBy?: 'BALANCE' | 'CAP';
   capBreach?: CapBreach;
   /**
+   * That this run passes a cap the customer set, and goes ahead anyway.
+   *
+   * Shown beside the price, never instead of it. A ceiling does not cut an AI
+   * task in half — the money is funded either way — so the person pressing the
+   * button is told what it does to the budget before they press it, which is
+   * the same rule as the cost disclosure it sits next to.
+   *
+   * An empty balance is not this. It is a refusal, and it is `blockedReason`:
+   * prepaid means prepaid, and no ACUs means no AI.
+   */
+  overrunReason?: string;
+  /**
    * What running this would disclose, and to whom — §16.1.
    *
    * Beside the price rather than on a settings screen somewhere, because they
@@ -571,7 +583,9 @@ export class AIOrchestrator {
     const basis: QuoteBasis = observed.length > 0 ? 'MEASURED' : 'FLOOR';
     const estimatedRawCostMinor = basis === 'MEASURED' ? median(observed) : floorRawMinor;
 
-    const priced = input.wallet.quote(estimatedRawCostMinor, input.projectId, input.engine);
+    // Quoted as AI work, which is what it is: the disclosure a person reads
+    // before pressing the button has to match what the reservation will do.
+    const priced = input.wallet.quote(estimatedRawCostMinor, input.projectId, input.engine, undefined, true);
     const charge = (rawMinor: number): number => Math.ceil(rawMinor * priced.multiplier);
 
     return {
@@ -592,6 +606,7 @@ export class AIOrchestrator {
       blockedReason: priced.blockedReason,
       blockedBy: priced.blockedBy,
       capBreach: priced.capBreach,
+      overrunReason: priced.overrunReason,
       disclosure: {
         provider: adapter.name,
         capability: input.capability,
@@ -644,7 +659,21 @@ export class AIOrchestrator {
     this.#requests.set(aiRequest.id, aiRequest);
     const estimate = adapter.estimateCostMinor(input.request);
 
-    // Reserve first. If this throws, the provider is never called and no spend occurs.
+    /*
+     * Reserve first. If this throws, the provider is never called and no spend
+     * occurs — which is still true, and still the point, for the two things
+     * that throw: a wallet frozen by a payment dispute, and a deployment that
+     * has turned the run-to-completion rule off.
+     *
+     * `runToCompletion` is set here and in no other reservation on the
+     * platform. This is the AI path, and the rule is about AI work: a task that
+     * has to reason its way to an answer is not left half finished by a ceiling
+     * the customer set, so a cap breach is disclosed and the run is charged
+     * against the funded balance as normal. A document render or a spatial
+     * compute reserves without it and a cap refuses one, as it always did.
+     *
+     * The **balance** refuses either way. No ACUs means no AI.
+     */
     const hold = wallet.reserve({
       aiRequestId: aiRequest.id,
       estimatedRawCostMinor: estimate,
@@ -652,6 +681,7 @@ export class AIOrchestrator {
       userId: input.userId,
       module: input.engine,
       feature: input.taskType,
+      runToCompletion: true,
       ...(input.sponsorshipId ? { sponsorshipId: input.sponsorshipId } : {}),
     });
     aiRequest.status = 'HELD';

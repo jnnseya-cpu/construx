@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { config } from '../src/config.ts';
 import { before, describe, it } from 'node:test';
 import {
   AI_OUTPUT_FIELDS,
@@ -226,7 +227,51 @@ describe('rejected and retried, and refused after that', () => {
     assert.ok(result.rejected?.some((p) => p.field === 'confidence'));
   });
 
-  it('refuses after two failures rather than passing prose through', async () => {
+  it('keeps correcting past the second attempt, because AI work is not cut short', async () => {
+    /*
+     * The rule this file was changed for. It used to stop at two: one attempt,
+     * one correction, then a 502 — so a model that needed a third nudge
+     * produced nothing and the customer was told the platform had failed.
+     *
+     * Each attempt here leaves a *different* problem, which is what "making
+     * progress" looks like, and the loop stays with it until it conforms.
+     */
+    const stages = [
+      answer({ confidence: 42 }),
+      answer({ riskLevel: 'SEVERE' }),
+      answer({ approvalRequired: 'Y' }),
+      answer({ summary: '' }),
+      GOOD,
+    ];
+    let asked = 0;
+    const result = await conformToOutputStandard(async () => stages[asked++] as unknown);
+
+    assert.equal(asked, stages.length, 'the loop gave up before the model got there');
+    assert.equal(result.attempts, stages.length);
+    // The first rejection is kept, not the last: a model corrected on the same
+    // field across many runs is a prompt defect, and this is where it shows.
+    assert.ok(result.rejected?.some((problem) => problem.field === 'confidence'));
+  });
+
+  it('releases what was reserved for each rejected attempt, so nobody pays for an unusable answer', async () => {
+    const released: number[] = [];
+    let asked = 0;
+    const stages = [answer({ confidence: 42 }), answer({ riskLevel: 'SEVERE' }), GOOD];
+    await conformToOutputStandard(async () => stages[asked++] as unknown, {
+      onRejected: (_problems, attempt) => released.push(attempt),
+    });
+    // Once per rejected attempt, and never for the one that conformed.
+    assert.deepEqual(released, [1, 2]);
+  });
+
+  it('stops when the model stops converging, rather than paying for the same answer for ever', async () => {
+    /*
+     * The one honest terminating condition, and it is not a cap on cost or
+     * time: a model returning an identical set of problems again and again is
+     * not going to be corrected by being asked once more. Without it the loop
+     * would be genuinely unbounded, which is a bill nobody agreed to for an
+     * answer that is never coming.
+     */
     let asked = 0;
     await assert.rejects(
       () =>
@@ -239,6 +284,7 @@ describe('rejected and retried, and refused after that', () => {
         assert.equal(error.code, 'AI_OUTPUT_STANDARD_FAILED');
         assert.equal(error.status, 502);
         assert.ok(error.fieldErrors.length > 0, 'the refusal named no problems');
+        assert.match(error.message, /not converging/, 'the refusal did not say why it stopped');
         // The refusal must not carry the model's text. "Never shown raw to the
         // user" includes inside an error message.
         assert.ok(!error.message.includes('circumstances of the delay'));
@@ -246,7 +292,25 @@ describe('rejected and retried, and refused after that', () => {
         return true;
       },
     );
-    assert.equal(asked, 2, 'a loop, not one retry');
+    assert.equal(asked, config.ai.noProgressAttempts, 'it gave up on a different attempt than configured');
+    assert.ok(asked > 2, 'it still stopped at two, so nothing changed');
+  });
+
+  it('counts consecutive identical problems, not identical problems ever seen', async () => {
+    // A model that wobbles — same problem, then a different one, then the same
+    // again — is still making progress. Resetting on any change is what keeps
+    // the no-progress rule from cutting short a run that is getting there.
+    const stages = [
+      answer({ confidence: 42 }),
+      answer({ confidence: 42 }),
+      answer({ riskLevel: 'SEVERE' }),
+      answer({ confidence: 42 }),
+      answer({ confidence: 42 }),
+      GOOD,
+    ];
+    let asked = 0;
+    const result = await conformToOutputStandard(async () => stages[asked++] as unknown);
+    assert.equal(result.attempts, stages.length);
   });
 });
 

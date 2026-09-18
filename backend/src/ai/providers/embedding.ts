@@ -321,11 +321,16 @@ export class EmbeddingAdapter implements AIProviderAdapter {
     const started = Date.now();
 
     try {
+      // The same deadline rule as the reasoning and perception adapters, from
+      // the same setting: none by default, because AI work is not cut short by
+      // a clock. A batch of passages long enough to matter is exactly the one
+      // that used to be aborted at two minutes.
+      const deadlineMs = config.ai.providerDeadlineMs;
       const response = await fetch(this.#endpoint.url(modelClass, this.#apiKey), {
         method: 'POST',
         headers: this.#endpoint.headers(this.#apiKey),
         body: JSON.stringify(this.#endpoint.body(texts, modelClass)),
-        signal: AbortSignal.timeout(120_000),
+        ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
       });
 
       if (!response.ok) {

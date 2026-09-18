@@ -106,12 +106,53 @@ describe('the quote agrees with the reservation it precedes', () => {
   });
 
   it('refuses in advance exactly what the reservation would refuse', () => {
+    // Non-AI metered work, which stays prepaid: a document render or a spatial
+    // compute is a fixed job the platform prices up front. The quote and the
+    // reservation have to agree, which is the point of the pair below.
     const w = wallet(300);
     const quoted = w.quote(1_000);
 
     assert.ok(quoted.blockedReason, 'a quote nobody can afford has to say so');
     assert.match(quoted.blockedReason, /Insufficient ACU balance/);
     throwsCode(() => w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 1_000 }), 'ACU_EXHAUSTED');
+  });
+
+  it('refuses AI past the balance in advance, exactly as the reservation will', () => {
+    /*
+     * The quote and the reservation have to agree, and on the balance they
+     * agree on a refusal: prepaid means prepaid, and no ACUs means no AI. A
+     * screen told a button is live when the platform will refuse it is the
+     * failure the quote exists to prevent.
+     */
+    const w = wallet(300);
+    const quoted = w.quote(1_000, undefined, undefined, undefined, true);
+
+    assert.equal(quoted.blockedBy, 'BALANCE');
+    assert.ok(quoted.blockedReason);
+    assert.equal(quoted.overrunReason, undefined, 'an empty balance was offered as a cost rather than a refusal');
+    throwsCode(
+      () => w.reserve({ aiRequestId: 'req-ai', estimatedRawCostMinor: 1_000, runToCompletion: true }),
+      'ACU_EXHAUSTED',
+    );
+  });
+
+  it('quotes a cap an AI run will pass as a cost, and the reservation then runs it', () => {
+    /*
+     * The other side of the same agreement. A ceiling does not cut an AI task
+     * in half — the money is funded — so the quote says what it does to the
+     * budget and the reservation goes ahead, and the two must not disagree.
+     */
+    const w = wallet(100_000);
+    w.setCaps({ monthlyMinor: 500 });
+    const quoted = w.quote(1_000, undefined, undefined, undefined, true);
+
+    assert.equal(quoted.blockedReason, undefined, 'the quote refuses work the platform would run');
+    assert.ok(quoted.overrunReason, 'the quote said nothing about passing the cap');
+    assert.equal(quoted.capBreach?.scope, 'MONTHLY');
+
+    const hold = w.reserve({ aiRequestId: 'req-ai', estimatedRawCostMinor: 1_000, runToCompletion: true });
+    assert.equal(hold.heldMinor, quoted.chargeMinor, 'the quote and the reservation priced it differently');
+    assert.ok(hold.authorisedOverrun, 'the reservation passed the cap without saying so');
   });
 
   it('sees a cap the balance alone would not reveal', () => {
@@ -125,6 +166,14 @@ describe('the quote agrees with the reservation it precedes', () => {
     assert.ok(quoted.availableMinor > quoted.chargeMinor, 'the balance is not the constraint');
     assert.ok(quoted.blockedReason);
     assert.match(quoted.blockedReason, /cap/i);
+
+    // And on the AI path the same cap is a disclosed cost rather than a block,
+    // carrying the breach so a screen can word it in the customer's currency.
+    const forAi = w.quote(1_000, undefined, 'PLANNING', undefined, true);
+    assert.equal(forAi.blockedReason, undefined);
+    assert.ok(forAi.overrunReason);
+    assert.equal(forAi.capBreach?.scope, 'MODULE');
+    assert.equal(forAi.capBreach?.capMinor, 500);
   });
 
   it('says which of the two stopped it, as facts rather than as a sentence', () => {

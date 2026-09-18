@@ -1,3 +1,4 @@
+import { config } from '../config.ts';
 import { DomainError } from '../core/errors.ts';
 import {
   CAPABILITY_AREA_LIST,
@@ -561,41 +562,106 @@ export function attributeAccountability(output: AiOutput, resolve: OwnerResolver
 /** How the answer was arrived at, for the audit record and for the caller. */
 export type StandardResult = {
   output: AiOutput;
-  /** 1 where the first answer conformed, 2 where the correction did. */
+  /** How many times the model was asked before it answered in the required form. */
   attempts: number;
   /** What was wrong with the first answer, where there was a second. */
   rejected?: FieldError[];
 };
 
 /**
- * Ask, validate, and on failure ask once more with the problems named.
+ * Ask, validate, and keep asking with the problems named until it conforms.
  *
- * One retry, not a loop. A model that has been told exactly which fields were
- * wrong and returns the same shape again is not going to be corrected by being
- * told a third time, and each attempt is a charge against a customer's wallet.
- * Two attempts then a refusal is the honest bound.
+ * A loop, not one retry, and that is the business rule rather than a tuning
+ * choice: **AI work is not cut short by a clock or by a budget**, so a model
+ * that answers in the wrong shape is corrected until it answers in the right
+ * one. The previous bound — two attempts then a 502 — meant a task that needed
+ * a second nudge produced nothing and the customer was told the platform had
+ * failed.
  *
- * `ask` receives the correction text on the second call so the caller can put
- * it wherever its provider wants it, which differs between vendors.
+ * `ask` receives the correction text on every attempt after the first, so the
+ * caller can put it wherever its provider wants it, which differs between
+ * vendors. `onRejected` fires between attempts, for a caller that has reserved
+ * something against an answer nobody can use.
+ *
+ * The terminating conditions are in the body, and neither is a cost or time
+ * cap. See `config.ai.maxCorrectionAttempts` and `config.ai.noProgressAttempts`.
  */
 export async function conformToOutputStandard(
   ask: (correction?: string) => Promise<unknown>,
-  options: { resolve?: ReferenceResolver } = {},
+  options: {
+    resolve?: ReferenceResolver;
+    /** Called with each rejected attempt's problems, before the next ask. */
+    onRejected?: (problems: FieldError[], attempt: number) => void;
+  } = {},
 ): Promise<StandardResult> {
-  const first = validateAiOutput(await ask(), options);
-  if (first.ok) return { output: first.output, attempts: 1 };
+  /*
+   * Corrected until it validates, not twice.
+   *
+   * It was one attempt and one correction, then a 502 — a limit on how hard the
+   * platform was willing to try, and the business rule is that AI work runs
+   * until it produces the answer. So the loop continues, each attempt carrying
+   * the field problems the last one left.
+   *
+   * **Two things stop it and neither is a cap on cost or time.**
+   * `maxCorrectionAttempts` is 0 — off — by default and exists so a deployment
+   * can choose to be less patient than the rule. And *no progress*: a model
+   * returning an identical set of problems for the fifth consecutive time is
+   * not converging, and continuing is paying a vendor to receive the same
+   * answer again. That is the only honest terminating condition, because no
+   * attempt count makes a non-converging loop converge.
+   *
+   * `onRejected` fires between attempts so the caller can release what it
+   * reserved for an answer nobody can use. It is the reason this loop lives
+   * here and not in two places: `runAI` needs the same rule *and* needs to
+   * abandon its hold, and the two implementations had already drifted apart on
+   * the wording of the refusal.
+   */
+  const maxAttempts = config.ai.maxCorrectionAttempts;
+  const noProgressLimit = Math.max(2, config.ai.noProgressAttempts);
 
-  const second = validateAiOutput(await ask(correctionFor(first.problems)), options);
-  if (second.ok) return { output: second.output, attempts: 2, rejected: first.problems };
+  let attempts = 1;
+  let checked = validateAiOutput(await ask(), options);
+  let rejectedFirst: FieldError[] | undefined;
+  let sameProblems = 0;
+  let lastSignature = '';
 
-  // Both attempts failed. The refusal carries the field problems and never the
-  // model's text — "never shown raw to the user" includes inside an error.
-  throw new DomainError(
-    'AI_OUTPUT_STANDARD_FAILED',
-    'The model did not answer in the required form twice, so nothing was recorded. No charge was made for an answer that could not be used.',
-    502,
-    second.problems,
-  );
+  while (!checked.ok) {
+    if (rejectedFirst === undefined) rejectedFirst = checked.problems;
+
+    // An order-independent fingerprint of what is wrong, so "the same problems
+    // again" does not depend on the order a validator happened to report them.
+    const signature = checked.problems
+      .map((problem) => `${problem.field}:${problem.message}`)
+      .sort()
+      .join('|');
+    sameProblems = signature === lastSignature ? sameProblems + 1 : 0;
+    lastSignature = signature;
+
+    const notConverging = sameProblems + 1 >= noProgressLimit;
+    const outOfAttempts = maxAttempts > 0 && attempts >= maxAttempts;
+
+    if (notConverging || outOfAttempts) {
+      // The refusal carries the field problems and never the model's text —
+      // "never shown raw to the user" includes inside an error.
+      throw new DomainError(
+        'AI_OUTPUT_STANDARD_FAILED',
+        notConverging
+          ? `The model returned the same ${checked.problems.length} problem(s) on ${sameProblems + 1} consecutive ` +
+            `attempts across ${attempts} in total, so it is not converging. Nothing was recorded, and no charge was ` +
+            'made for an answer that could not be used.'
+          : `The model did not answer in the required form in ${attempts} attempts, so nothing was recorded. ` +
+            'No charge was made for an answer that could not be used.',
+        502,
+        checked.problems,
+      );
+    }
+
+    options.onRejected?.(checked.problems, attempts);
+    checked = validateAiOutput(await ask(correctionFor(checked.problems)), options);
+    attempts += 1;
+  }
+
+  return { output: checked.output, attempts, ...(rejectedFirst ? { rejected: rejectedFirst } : {}) };
 }
 
 /** The correction sent with the second attempt. */

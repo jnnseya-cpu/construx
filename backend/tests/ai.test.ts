@@ -119,12 +119,56 @@ describe('provider routing and failover', () => {
 
 describe('money is reserved before anything is spent', () => {
   it('never calls a provider on an empty wallet', async () => {
+    // Prepaid means prepaid. No ACUs means no AI: nothing runs a provider on
+    // credit, so the platform never lays out money it cannot bill and the
+    // customer never receives a charge they did not fund first.
     const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 500 });
     const orchestrator = new AIOrchestrator({ reasoning, perception: stubProvider('GEMINI', 'PERCEPTION') });
     const empty = new ACUWallet('tenant-1'); // no grant, no top-up
 
     await rejectsCode(() => task(orchestrator, empty), 'ACU_EXHAUSTED');
     assert.equal(reasoning.calls, 0, 'the provider was called despite an empty wallet — that is a real bill');
+  });
+
+  it('calls the provider past a cap, because a ceiling does not cut an AI task in half', async () => {
+    /*
+     * The other half of the rule, and the one that changed.
+     *
+     * A cap is a ceiling the customer set, and the money behind a run past one
+     * is funded either way — so what the cap decides is not whether the
+     * platform can afford the work but whether it is allowed to *finish* it. A
+     * reasoning task stopped at a monthly ceiling has spent the tokens and
+     * produced nothing usable, so it runs, the breach is signalled, and the
+     * charge lands against the funded balance as normal.
+     */
+    const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 50 });
+    const orchestrator = new AIOrchestrator({ reasoning, perception: stubProvider('GEMINI', 'PERCEPTION') });
+    const wallet = fundedWallet();
+    const signals: string[] = [];
+    wallet.onSignal((signal) => signals.push(signal.kind));
+    wallet.setCaps({ monthlyMinor: 1 });
+
+    const result = await task(orchestrator, wallet);
+    assert.equal(reasoning.calls, 1, 'the run was cut short by a cap');
+    assert.ok(signals.includes('LIMIT_REACHED'), 'the cap was passed and nobody was told');
+
+    result.settle([]);
+    const snapshot = wallet.snapshot();
+    assert.ok(snapshot.lifetimeBilledMinor > 0, 'the run went ahead past the cap and nothing was charged');
+    assert.ok(snapshot.balanceMinor >= 0, 'a cap breach took the balance negative');
+  });
+
+  it('still never calls a provider on a wallet frozen by a payment dispute', () => {
+    // A frozen wallet is not a budget: passing it would let a customer
+    // disputing a payment run up provider cost while the dispute is open.
+    const reasoning = stubProvider('OPENAI', 'REASONING', { cost: 500 });
+    const orchestrator = new AIOrchestrator({ reasoning, perception: stubProvider('GEMINI', 'PERCEPTION') });
+    const frozen = fundedWallet();
+    frozen.freeze('Chargeback raised on the last card payment');
+
+    return rejectsCode(() => task(orchestrator, frozen), 'WALLET_FROZEN').then(() => {
+      assert.equal(reasoning.calls, 0, 'a frozen wallet reached a provider');
+    });
   });
 
   it('debits nothing until the output has been written to the Golden Thread', async () => {

@@ -30,6 +30,7 @@ describe('ACU wallet', () => {
   });
 
   it('halts AI execution once credit is exhausted', () => {
+    // No ACUs means no AI, for a reasoning run as much as for a render.
     // Sized from the multiplier rather than from a literal, so the fixture
     // follows the price instead of quietly encoding last quarter's.
     const w = wallet(100 * config.billing.markupMultiplier);
@@ -38,6 +39,22 @@ describe('ACU wallet', () => {
     assert.equal(w.snapshot().availableMinor, 0);
     assert.equal(w.snapshot().aiHalted, true);
     assert.throws(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 1 }), /halted/);
+    assert.throws(
+      () => w.reserve({ aiRequestId: 'req-3', estimatedRawCostMinor: 1, runToCompletion: true }),
+      /halted/,
+    );
+  });
+
+  it('does not halt an AI run at a cap, because a ceiling does not cut a task in half', () => {
+    // The money is funded, so what the cap decides is whether the work is
+    // allowed to finish — and a reasoning task stopped at a ceiling has spent
+    // the tokens and produced nothing usable. Non-AI metered work is refused.
+    const w = wallet(100 * config.billing.markupMultiplier);
+    w.setCaps({ monthlyMinor: 1 });
+    assert.throws(() => w.reserve({ aiRequestId: 'render', estimatedRawCostMinor: 1 }), /cap/i);
+    const hold = w.reserve({ aiRequestId: 'reason', estimatedRawCostMinor: 1, runToCompletion: true });
+    assert.ok(hold.authorisedOverrun, 'an AI run past the cap said nothing about it');
+    assert.equal(w.snapshot().aiHalted, false);
   });
 
   it('ring-fences held funds so a second call cannot spend them', () => {

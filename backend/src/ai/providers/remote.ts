@@ -481,11 +481,26 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     const started = Date.now();
 
     try {
+      /*
+       * No deadline, by default and by decision.
+       *
+       * This was `AbortSignal.timeout(120_000)` — a business value hardcoded in
+       * a transport file, and the wrong one. A perception task over a full
+       * drawing set and a reasoning task with a long schema both genuinely
+       * exceed two minutes, and every one of them was aborted at the deadline
+       * and parked as an unknown outcome for an operator to reconcile: the work
+       * was done, the vendor billed for it, and the customer got a 504.
+       *
+       * The rule is that AI work runs until it produces the answer, so the
+       * deadline comes from configuration and its default is none. A deployment
+       * that would rather refuse than wait sets `AI_PROVIDER_DEADLINE_MS`.
+       */
+      const deadlineMs = config.ai.providerDeadlineMs;
       const response = await fetch(this.#endpoint.url, {
         method: 'POST',
         headers: this.#endpoint.headers(this.#apiKey),
         body: JSON.stringify(this.#endpoint.body(request, modelClass)),
-        signal: AbortSignal.timeout(120_000),
+        ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
       });
 
       if (!response.ok) {

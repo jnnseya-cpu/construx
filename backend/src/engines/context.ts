@@ -1,7 +1,7 @@
 import type { ACUWallet } from '../billing/acu.ts';
 import { ENGINE_CONTRACTS, engineActiveIn, type AIOrchestrator, type Engine } from '../ai/orchestrator.ts';
 import {
-  correctionFor,
+  conformToOutputStandard,
   outputStandardInstruction,
   outputStandardSchema,
   outputStandardVersion,
@@ -542,6 +542,21 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     if (!position.ok) throw new DomainError(position.code, position.message, 402);
     wallet = position.wallet;
     sponsorshipId = position.sponsorship.id;
+    /*
+     * The one ceiling that still refuses, and it is not the platform's.
+     *
+     * AI work is not cut short by a limit: a company's own caps are disclosed
+     * and passed, and the run is charged against its funded balance as normal.
+     * A **sponsorship** is a different thing entirely — it is one organisation
+     * saying how much of *its* money another organisation's person may spend on
+     * a project it does not own. Passing that would be spending a third party's
+     * money past what they authorised, which is not the platform truncating
+     * somebody's work; it is the platform ignoring consent.
+     *
+     * The sponsor already has the control for this and it is theirs to set:
+     * `overageAllowed` on the sponsorship means "run past it and bill me", and
+     * this check is skipped entirely when they have set it.
+     */
     if (!position.overageAllowed) {
       const quote = ctx.orchestrator.quote({ capability: task.capability, engine: task.engine, taskType: task.taskType, wallet, projectId: ctx.projectId, inputRefs: task.inputRefs });
       if (quote.estimatedChargeMinor > position.remainingMinor) {
@@ -600,6 +615,7 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
   // told.
   let standard: AiOutput | undefined;
   let rejectedFirst: FieldError[] | undefined;
+  let standardAttempts = 1;
 
   if (task.outputStandard) {
     // A source reference is only traceable if it resolves. The resolver is
@@ -611,32 +627,41 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
       return record !== undefined && record.tenantId === ctx.tenantId;
     };
 
-    let checked = validateAiOutput(run.response.output, { resolve });
-    if (!checked.ok) {
-      rejectedFirst = checked.problems;
-      // Released without charge. The customer did not get an answer they can
-      // use, and the retry below is what they are paying for.
-      run.abandon('AI_OUTPUT_STANDARD_REJECTED');
-
-      run = await execute({
-        ...firstRequest,
-        task: `${firstRequest.task}\n\n${correctionFor(rejectedFirst)}`,
-      });
-      checked = validateAiOutput(run.response.output, { resolve });
-
-      if (!checked.ok) {
-        run.abandon('AI_OUTPUT_STANDARD_FAILED');
-        // The field problems, never the model's text. Leaking the raw answer
-        // inside the refusal would be the same failure through another door.
-        throw new DomainError(
-          'AI_OUTPUT_STANDARD_FAILED',
-          'The model did not answer in the required form twice, so nothing was recorded and nothing was charged.',
-          502,
-          checked.problems,
-        );
-      }
+    /*
+     * Corrected until it validates, through the one loop that knows the rule.
+     *
+     * This used to be a second implementation of `conformToOutputStandard`
+     * sitting beside it, and the two had already drifted on the wording of the
+     * refusal. There is one rule about how hard the platform tries — AI work is
+     * not cut short by a clock or a budget — and it lives in `outputstandard.ts`
+     * with the validator it applies.
+     *
+     * What this call adds is the half the helper cannot know: a rejected
+     * attempt releases its hold without charge, because the customer did not
+     * get an answer they could use, and the correction is what they are paying
+     * for. The first `ask` returns the run already executed above rather than
+     * calling a provider twice for the same attempt.
+     */
+    try {
+      const conformed = await conformToOutputStandard(
+        async (correction) => {
+          if (correction !== undefined) {
+            run = await execute({ ...firstRequest, task: `${firstRequest.task}\n\n${correction}` });
+          }
+          return run.response.output;
+        },
+        { resolve, onRejected: () => run.abandon('AI_OUTPUT_STANDARD_REJECTED') },
+      );
+      standard = conformed.output;
+      standardAttempts = conformed.attempts;
+      rejectedFirst = conformed.rejected;
+    } catch (error) {
+      // The last attempt's hold is still open: the helper refused after
+      // validating it, so nothing released it. Released rather than charged —
+      // nothing was recorded, so nothing is owed.
+      run.abandon('AI_OUTPUT_STANDARD_FAILED');
+      throw error;
     }
-    standard = checked.output;
   }
 
   const events: GoldenThreadEvent[] = [];
@@ -660,9 +685,10 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
     // holding a materialised state needs to be able to tell an answer that was
     // held to the standard from one that was never checked against it, and
     // whether it took a correction to get there.
-    ...(task.outputStandard
-      ? { outputStandard: true as const, standardAttempts: rejectedFirst ? 2 : 1 }
-      : {}),
+    // The real count, not "1 or 2". The loop now corrects until the answer
+    // validates, so a reader asking how hard this answer was to get needs the
+    // number rather than a flag that saturates at two.
+    ...(task.outputStandard ? { outputStandard: true as const, standardAttempts } : {}),
   };
 
   try {

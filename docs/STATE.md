@@ -23487,3 +23487,71 @@ which is the honest shape of a single node.
 **The restore drill, timed.** 712 events and 1,294 KB shipped in parts,
 reassembled byte-identical against the manifest and replayed in 107ms. A backup
 nobody has restored is a backup nobody has; this one has been restored.
+
+### AI work runs until it produces the answer
+
+The business rule, and it is three rules in different places that a reader
+should not have to find separately.
+
+**Time — there is no deadline on a provider call.** It was
+`AbortSignal.timeout(120_000)`, hardcoded in the transport adapter, and it was
+both a business value in the wrong file and the wrong value: a perception task
+over a full drawing set and a reasoning task with a long schema both exceed two
+minutes, and every one of them was aborted at the deadline and parked as an
+*unknown outcome* for an operator to reconcile. The work had been done, the
+vendor had billed for it, and the customer got a 504. The deadline now comes
+from `AI_PROVIDER_DEADLINE_MS` and its default is 0, meaning none. The cost of
+that is stated rather than hidden: a provider that never answers holds the
+request open, bounded by the vendor's own timeout rather than by ours, and a
+deployment that would rather refuse than wait sets a positive number.
+
+**Quality — the output standard is corrected until it validates.** It was one
+attempt, one correction, then a 502, so a model that needed a third nudge
+produced nothing and the customer was told the platform had failed. The loop now
+continues, each attempt carrying the field problems the last one left, and each
+rejected attempt released without charge because the customer did not get an
+answer they could use. Two things stop it and neither is a cost or time cap:
+`AI_MAX_CORRECTION_ATTEMPTS`, which is off by default and exists so a deployment
+can be less patient than the rule; and **no progress** — a model returning an
+identical set of problems for the fifth consecutive time is not converging, and
+continuing is paying a vendor to receive the same answer again. That is the only
+honest terminating condition, because no attempt count makes a non-converging
+loop converge, and the refusal says which of the two it was.
+
+**Two implementations of that loop became one.** `runAI` had its own copy beside
+`conformToOutputStandard`, and they had already drifted on the wording of the
+refusal. The rule lives with the validator it applies; `runAI` passes an
+`onRejected` callback, which is the half the helper cannot know — a rejected
+attempt releases its hold without charge.
+
+**Limits — a cap does not cut a task in half.** A customer's own ceiling —
+monthly, per project, per module, per person — is a budget signal rather than a
+guillotine for AI. The money behind a run past one is funded either way, so what
+the cap decides is not whether the platform can afford the work but whether it
+is allowed to *finish* it, and a reasoning task stopped at a ceiling has spent
+the tokens and produced nothing usable. The breach is signalled exactly as
+before, so the company's administrators and the group's finance are told, and
+the reason travels on the hold and onto the settlement entry so the invoice line
+says why. The console shows it as a cost beside the price, with the button live,
+because the platform will run it.
+
+**What none of this touches is the balance.** Prepaid only: sufficient ACUs have
+to be available, and **no ACUs means no AI** — the features are off until the
+wallet is topped up. Nothing runs a provider on credit, so the platform never
+lays out money it cannot bill and a customer never receives a charge they did
+not fund first. A wallet frozen by a payment dispute refuses for the same
+reason, and a sponsorship ceiling refuses because that is a third party's money
+and `overageAllowed` is the sponsor's own control for lifting it.
+
+**And the price is unchanged.** Provider cost is charged at the same multiple it
+was before this work: 4×, with the floor derived from the 300% profit rule.
+Nothing here is a discount, a waiver or a giveaway.
+
+**Scoped to AI, deliberately.** `runToCompletion` is set on the orchestrator's
+reservation and on no other reservation in the platform. A document render or a
+spatial compute is a fixed job the platform prices up front — there is no "keep
+going until it is right" in a PDF — so a cap refuses one exactly as it always
+did. Verified live: an AI take-off ran past a monthly cap of 1 and consumed 60
+ACUs with the balance still positive; the same cap refused a document render
+with `402 ACU_EXHAUSTED`; and a trial wallet with 40 ACUs left refused the next
+AI run with *"Insufficient ACU balance: 52 required, 40 available."*

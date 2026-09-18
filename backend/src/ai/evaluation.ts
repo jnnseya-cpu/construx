@@ -252,17 +252,56 @@ const CASES: EvaluationCase[] = [
     protects: 'The platform not giving away provider spend it cannot bill for.',
     kind: 'REFUSAL',
     run: async (harness) => {
-      // A monthly cap of zero, which is a real condition a customer sets rather
-      // than a contrivance — and is the one that has to refuse before the
-      // provider is called, because a call made and then found to be over the
-      // cap is a bill the platform cannot pass on. Done on the throwaway
-      // platform, so nothing outside this run is affected.
-      //
-      // Put back afterwards, and that is not tidiness: the cases share one
-      // fixture, and leaving the wallet capped made every case after this one
-      // fail for a reason that had nothing to do with what it was checking.
-      // The seed sets no caps, so the empty object is the state it was in.
+      // Prepaid means prepaid: no ACUs means no AI. The wallet is drained on
+      // the throwaway platform, so nothing outside this run is affected, and
+      // the credit is put back — the cases share one fixture, and leaving it
+      // empty made every case after this one fail for an unrelated reason.
       const wallet = harness.platform.wallet(harness.tenantId);
+      const restore = wallet.snapshot().availableMinor;
+      wallet.closeOut('Evaluation: drained to check the refusal');
+      try {
+        await safety.forecastSafetyRisk(harness.safetyLead, {
+          headcount: 40,
+          highRiskActivitiesPlanned: 3,
+          adverseWeatherDays: 2,
+        });
+        return { pass: false, detail: 'the call ran on an empty wallet' };
+      } catch (error) {
+        const code = (error as { code?: string }).code ?? '';
+        const message = (error as Error).message ?? '';
+        return {
+          pass: /ACU|WALLET|BALANCE|INSUFFICIENT/i.test(`${code} ${message}`),
+          detail: `refused with ${code || message}`,
+        };
+      } finally {
+        if (restore > 0) wallet.topUp(restore, 'Evaluation: credit restored');
+      }
+    },
+  },
+  {
+    id: 'billing.cap-passed-is-billed',
+    title: 'A run past a customer ceiling finishes, is billed, and is never given away',
+    protects: 'An AI task not being left half finished by a ceiling, and always being charged for.',
+    kind: 'REFUSAL',
+    run: async (harness) => {
+      /*
+       * A cap is a ceiling the customer set, and the money behind a run past
+       * one is funded — so it no longer refuses. What protects the platform is
+       * not the refusal but that the run is *charged*: a call made over a cap
+       * and not billed is provider spend given away; one made over a cap and
+       * billed, with the reason on the entry and the signal raised, is a
+       * customer using the product and paying for it.
+       *
+       * The cap is put back afterwards, and that is not tidiness: the cases
+       * share one fixture, and leaving the wallet capped made every case after
+       * this one fail for a reason unrelated to what it was checking.
+       */
+      const wallet = harness.platform.wallet(harness.tenantId);
+      const before = wallet.snapshot().lifetimeBilledMinor;
+      let signalled = false;
+      wallet.onSignal((signal) => {
+        if (signal.kind === 'LIMIT_REACHED') signalled = true;
+      });
       wallet.setCaps({ monthlyMinor: 0 });
       try {
         await safety.forecastSafetyRisk(harness.safetyLead, {
@@ -270,16 +309,46 @@ const CASES: EvaluationCase[] = [
           highRiskActivitiesPlanned: 3,
           adverseWeatherDays: 2,
         });
-        return { pass: false, detail: 'the call ran with the wallet capped at zero' };
+      } catch (error) {
+        return { pass: false, detail: `the run was cut short by a budget: ${(error as Error).message}` };
+      } finally {
+        wallet.setCaps({});
+      }
+
+      const billed = wallet.snapshot().lifetimeBilledMinor - before;
+      if (billed <= 0) return { pass: false, detail: 'the run went ahead past the cap and nothing was charged for it' };
+      if (!signalled) return { pass: false, detail: `charged ${billed} past the cap and nobody was told` };
+      return { pass: true, detail: `charged ${billed} past a zero cap, and the cap breach was signalled` };
+    },
+  },
+  {
+    id: 'refusal.frozen-wallet',
+    title: 'A wallet frozen by a payment dispute refuses the call',
+    protects: 'The dispute process, which a run-to-completion rule must not bypass.',
+    kind: 'REFUSAL',
+    run: async (harness) => {
+      // The one ceiling that still refuses, and the reason it must: passing it
+      // would let a customer disputing a payment run up unbounded provider cost
+      // while the dispute is open. That is not somebody's work being allowed to
+      // finish; it is the dispute being ignored.
+      const wallet = harness.platform.wallet(harness.tenantId);
+      wallet.freeze('Evaluation: a chargeback raised on the last card payment');
+      try {
+        await safety.forecastSafetyRisk(harness.safetyLead, {
+          headcount: 40,
+          highRiskActivitiesPlanned: 3,
+          adverseWeatherDays: 2,
+        });
+        return { pass: false, detail: 'the call ran against a frozen wallet' };
       } catch (error) {
         const code = (error as { code?: string }).code ?? '';
         const message = (error as Error).message ?? '';
         return {
-          pass: /ACU|WALLET|BALANCE|INSUFFICIENT|CAP/i.test(`${code} ${message}`),
+          pass: /FROZEN/i.test(`${code} ${message}`),
           detail: `refused with ${code || message}`,
         };
       } finally {
-        wallet.setCaps({});
+        wallet.unfreeze();
       }
     },
   },

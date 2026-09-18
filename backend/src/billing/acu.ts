@@ -6,11 +6,22 @@ import { ulid } from '../core/ids.ts';
  * The ACU ledger — survival economics, enforced rather than hoped for.
  *
  * Rules that are not negotiable anywhere in the platform:
- *   - Prepaid only. No negative balances, ever.
  *   - Every provider call is charged at a fixed multiplier over raw cost.
  *   - Sequence is atomic: reserve -> execute -> persist -> debit. A hold that
  *     is never settled is released; no debit occurs without a Golden Thread write.
- *   - AI execution halts automatically when credits are exhausted.
+ *   - **Prepaid only. No negative balances, ever.** Sufficient ACUs have to be
+ *     available, and no ACUs means no AI: the features are off until the wallet
+ *     is topped up. This is the bound, and it is the only one on spend.
+ *   - **No *limit* cuts an AI task short.** A customer's own cap — monthly, per
+ *     project, per module, per person — is a budget signal rather than a
+ *     guillotine: an AI run that passes one goes ahead, is charged as normal
+ *     against the funded balance, and the breach is signalled and named on the
+ *     entry. A task that has to reason its way to an answer is not left half
+ *     finished by a ceiling, and nothing is ever given away to do it, because
+ *     the balance still has to fund it.
+ *
+ * The distinction is the whole of it: **the balance is real money and binds;
+ * a cap is a ceiling the customer set and reports rather than truncates.**
  *
  * Amounts are held in integer minor units (pence/cents). Floating point money
  * is how ledgers drift, and this one has to reconcile against invoices.
@@ -256,6 +267,16 @@ export type Hold = {
   heldMinor: number;
   createdAt: string;
   sponsorshipId?: string;
+  /**
+   * Why this reservation went ahead past a customer's own cap.
+   *
+   * Absent on an ordinary reservation, and absent whenever the *balance* is the
+   * constraint — that one refuses, because prepaid means prepaid. Present, with
+   * the sentence, where an AI run passed a monthly, project, module or personal
+   * ceiling: the money was funded, and a ceiling does not cut an AI task in
+   * half. It travels onto the settlement entry so the invoice line says why.
+   */
+  authorisedOverrun?: string;
 };
 
 export type WalletSnapshot = {
@@ -394,7 +415,19 @@ export class ACUWallet {
    * calculations would eventually disagree, and the one a user was shown is the
    * one they would remember.
    */
-  quote(estimatedRawCostMinor: number, projectId?: string, module?: string, userId?: string): {
+  quote(
+    estimatedRawCostMinor: number,
+    projectId?: string,
+    module?: string,
+    userId?: string,
+    /**
+     * Whether the run being quoted is AI work, which is not cut short by a
+     * budget. Set by the orchestrator and by nothing else, for the reason
+     * `reserve` states: a document render has no "keep going until it is
+     * right", so an empty wallet still blocks one.
+     */
+    runToCompletion = false,
+  ): {
     chargeMinor: number;
     multiplier: number;
     availableMinor: number;
@@ -402,11 +435,28 @@ export class ACUWallet {
     /** What stopped it, for a caller that would rather word the message itself. */
     blockedBy?: 'BALANCE' | 'CAP';
     capBreach?: CapBreach;
+    /**
+     * What running this would cost past a ceiling, where it would pass one.
+     *
+     * Distinct from `blockedReason`, and the distinction is the whole point: a
+     * block is "this will not happen", an overrun is "this will happen and here
+     * is what it does to the account". Under the rule that AI work is not cut
+     * short by a budget the second is the truth, and a screen that showed the
+     * first would be telling somebody a button is dead while the platform would
+     * run it happily on the next press.
+     */
+    overrunReason?: string;
   } {
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const chargeMinor = Math.ceil(estimatedRawCostMinor * multiplier);
     const availableMinor = this.availableMinor();
+    // The same two ceilings `reserve` checks, and on exactly the same terms —
+    // AI work, and the rule switched on — so the quote and the reservation can
+    // never disagree about whether something will run.
+    const running = runToCompletion && config.ai.runToCompletion;
 
+    // The balance blocks whatever this is: prepaid means prepaid, and no ACUs
+    // means no AI.
     if (chargeMinor > availableMinor) {
       return {
         chargeMinor,
@@ -417,16 +467,21 @@ export class ACUWallet {
       };
     }
 
+    // A cap blocks everything except AI work with the rule on, where it is
+    // disclosed instead: the money is funded, and a ceiling does not cut a
+    // reasoning task in half.
     const capBreach = this.#capBreach(chargeMinor, projectId, module, userId);
     if (capBreach) {
-      return {
-        chargeMinor,
-        multiplier,
-        availableMinor,
-        blockedBy: 'CAP',
-        capBreach,
-        blockedReason: this.#checkCaps(chargeMinor, projectId, module, userId),
-      };
+      const reason = this.#checkCaps(chargeMinor, projectId, module, userId);
+      return running
+        ? {
+            chargeMinor,
+            multiplier,
+            availableMinor,
+            capBreach,
+            overrunReason: `${reason} The run goes ahead — a cap does not cut an AI task short — and is charged against the funded balance as normal.`,
+          }
+        : { chargeMinor, multiplier, availableMinor, blockedBy: 'CAP', capBreach, blockedReason: reason };
     }
 
     return { chargeMinor, multiplier, availableMinor };
@@ -440,6 +495,18 @@ export class ACUWallet {
     module?: string;
     feature?: string;
     sponsorshipId?: string;
+    /**
+     * Whether this reservation is AI work, which is not cut short by a budget.
+     *
+     * Set by the orchestrator and by nothing else. **Deliberately not the
+     * default**, because the rule is about AI: a task that has to reason its
+     * way to an answer runs until it has one, whatever it costs. A document
+     * render or a spatial compute is metered work of a fixed size that the
+     * platform can price up front and the customer can pay for or not — there
+     * is no "keep going until it is right" in a PDF, so an empty wallet still
+     * refuses one, exactly as before.
+     */
+    runToCompletion?: boolean;
   }): Hold {
     if (this.#frozen) {
       throw new DomainError(
@@ -451,23 +518,50 @@ export class ACUWallet {
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
     const heldMinor = Math.ceil(input.estimatedRawCostMinor * multiplier);
 
+    /*
+     * **The balance binds, and it binds for AI too.**
+     *
+     * Prepaid only: sufficient ACUs have to be available, and no ACUs means no
+     * AI. Nothing here runs a provider on credit — the platform never lays out
+     * money it cannot bill, and a customer is never handed a charge they did
+     * not fund first.
+     */
     if (heldMinor > this.availableMinor()) {
       throw new ACUExhaustedError(
         `Insufficient ACU balance: ${heldMinor} required, ${this.availableMinor()} available. AI execution halted.`,
       );
     }
 
+    /*
+     * **A cap is a ceiling the customer set, and it does not cut an AI task in
+     * half.**
+     *
+     * The money is funded either way — the balance above saw to that — so what
+     * a cap decides is not whether the platform can afford the work but whether
+     * it is allowed to finish it. An AI task that has to reason its way to an
+     * answer is worth nothing half done, and stopping it at a monthly ceiling
+     * means the customer has paid for the tokens and received nothing usable.
+     *
+     * So the breach is **reported rather than enforced** for AI: the signal
+     * still goes out, so the company's administrators and the group's finance
+     * are told exactly as before, and the reason travels on the hold and onto
+     * the settlement entry so the invoice line says why. Non-AI metered work,
+     * and a deployment that has turned the rule off, are refused as they were.
+     */
     const capBreach = this.#checkCaps(heldMinor, input.projectId, input.module, input.userId);
+    let authorisedOverrun: string | undefined;
     if (capBreach) {
-      // The limit is reached: said once per scope per month, however many
-      // requests are refused against it. Non-AI work is unaffected by design.
       const breach = this.#capBreach(heldMinor, input.projectId, input.module, input.userId)!;
       const key = `${monthKey(new Date().toISOString())}:${breach.scope}:${breach.scopeId ?? ''}`;
       if (!this.#limitSignalKeys.has(key)) {
         this.#limitSignalKeys.add(key);
         this.#emit({ kind: 'LIMIT_REACHED', breach, requestedMinor: heldMinor });
       }
-      throw new ACUExhaustedError(capBreach);
+      if (input.runToCompletion === true && config.ai.runToCompletion) {
+        authorisedOverrun = `${capBreach} The run went ahead because a cap does not cut an AI task short; it is charged against the funded balance as normal.`;
+      } else {
+        throw new ACUExhaustedError(capBreach);
+      }
     }
 
     const hold: Hold = {
@@ -481,6 +575,7 @@ export class ACUWallet {
       module: input.module,
       feature: input.feature,
       ...(input.sponsorshipId ? { sponsorshipId: input.sponsorshipId } : {}),
+      ...(authorisedOverrun ? { authorisedOverrun } : {}),
     };
     this.#holds.set(hold.holdId, hold);
     this.#record({
@@ -582,12 +677,22 @@ export class ACUWallet {
       // An overrun is the one case where a customer is charged more than they
       // were quoted, and it has to be visible on the invoice line rather than
       // discovered by somebody recomputing it.
-      ...(overran
+      // Two disclosures, and a run can carry both: charged above its estimate,
+      // and run past a cap the customer set. Joined into one sentence rather
+      // than one overwriting the other, because an invoice line that named only
+      // one of them would be answering half the question somebody is asking.
+      ...(overran || hold.authorisedOverrun
         ? {
-            note:
-              `Charged above the estimate: the execution cost ${actualRawCostMinor} against an estimate held ` +
-              `at ${hold.heldMinor}, so ${chargedMinor} was charged rather than the ${hold.heldMinor} quoted. ` +
-              'AI is charged on what a run actually cost, and this one cost more than it was estimated at.',
+            note: [
+              overran
+                ? `Charged above the estimate: the execution cost ${actualRawCostMinor} against an estimate held ` +
+                  `at ${hold.heldMinor}, so ${chargedMinor} was charged rather than the ${hold.heldMinor} quoted. ` +
+                  'AI is charged on what a run actually cost, and this one cost more than it was estimated at.'
+                : '',
+              hold.authorisedOverrun ?? '',
+            ]
+              .filter(Boolean)
+              .join(' '),
           }
         : {}),
     }, -chargedMinor);
@@ -698,10 +803,12 @@ export class ACUWallet {
   }
 
   snapshot(): WalletSnapshot {
-    const halted = this.availableMinor() <= 0;
     const debits = this.#entries.filter((entry) => entry.type === 'DEBIT');
     const lifetimeBilled = debits.reduce((sum, entry) => sum + entry.billedMinor, 0);
     const lifetimeRawCost = debits.reduce((sum, entry) => sum + entry.rawCostMinor, 0);
+    // No ACUs means no AI: the features are off until the wallet is topped up,
+    // and the screen says so rather than offering a button that will refuse.
+    const halted = this.availableMinor() <= 0 || this.#frozen !== null;
     return {
       tenantId: this.tenantId,
       balanceMinor: this.#balanceMinor,
@@ -715,7 +822,7 @@ export class ACUWallet {
       monthBilledMinor: this.monthBilledMinor(),
       caps: this.#caps,
       alerts: this.alerts(),
-      aiHalted: halted || this.#frozen !== null,
+      aiHalted: halted,
       haltReason: this.#frozen
         ? `Wallet frozen: ${this.#frozen.reason}`
         : halted

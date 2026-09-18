@@ -21,7 +21,9 @@ import * as collection from '../src/billing/collection.ts';
  * Four of them, and every one is the kind that gets restated as a literal in
  * some other file six months later and then disagrees with itself:
  *
- *   1. **No AI work without available ACUs.** Not a warning, not an overdraft.
+ *   1. **No AI work without available ACUs**, and no *limit* cuts a task short.
+ *      Prepaid binds: no ACUs means no AI. A customer's own cap does not, for
+ *      AI — it is signalled and named on the entry, and the run finishes.
  *   2. **£1 buys 100 ACUs.** One ACU is one minor unit.
  *   3. **Provider cost is charged at 4x.**
  *   4. **20% of a subscription payment is credited as AI allowance.**
@@ -33,16 +35,39 @@ import * as collection from '../src/billing/collection.ts';
  * the 4x price the realised profit is 300%, comfortably clear of it.
  */
 
-describe('rule 1 — no AI work without available ACUs', () => {
-  it('refuses to reserve against an empty wallet', () => {
+describe('rule 1 — no AI work without available ACUs, and no limit cuts a task short', () => {
+  /*
+   * Two halves, and keeping them apart is the whole of the rule.
+   *
+   * **The balance binds.** Prepaid only: sufficient ACUs have to be available,
+   * and no ACUs means no AI. Nothing runs a provider on credit, so the platform
+   * never lays out money it cannot bill and a customer never receives a charge
+   * they did not fund first.
+   *
+   * **A limit does not.** A cap — monthly, per project, per module, per person
+   * — is a ceiling the customer set. The money behind an AI run past one is
+   * funded either way, so what the cap decides is not whether the platform can
+   * afford the work but whether it is allowed to *finish* it. A reasoning task
+   * stopped at a ceiling has spent the tokens and produced nothing usable, so
+   * the breach is signalled and named on the entry and the run completes.
+   */
+
+  it('refuses to reserve against an empty wallet, for AI as much as anything else', () => {
     const wallet = new ACUWallet('tenant-1');
     throwsCode(() => wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 1 }), 'ACU_EXHAUSTED');
+    throwsCode(
+      () => wallet.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 1, runToCompletion: true }),
+      'ACU_EXHAUSTED',
+    );
   });
 
   it('refuses when the balance is short, rather than going negative', () => {
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(100);
-    throwsCode(() => wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 1_000 }), 'ACU_EXHAUSTED');
+    throwsCode(
+      () => wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 1_000, runToCompletion: true }),
+      'ACU_EXHAUSTED',
+    );
     assert.equal(wallet.snapshot().balanceMinor, 100, 'the balance moved on a refused reservation');
   });
 
@@ -52,27 +77,65 @@ describe('rule 1 — no AI work without available ACUs', () => {
     const rate = config.billing.markupMultiplier;
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(150 * rate);
-    wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100 });
+    wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, runToCompletion: true });
 
     assert.equal(wallet.availableMinor(), 50 * rate);
-    throwsCode(() => wallet.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 100 }), 'ACU_EXHAUSTED');
+    throwsCode(
+      () => wallet.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 100, runToCompletion: true }),
+      'ACU_EXHAUSTED',
+    );
   });
 
   it('says so before the work is offered, not after it is clicked', () => {
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(10);
-    const quote = wallet.quote(100);
+    const quote = wallet.quote(100, undefined, undefined, undefined, true);
     assert.equal(quote.blockedBy, 'BALANCE');
     assert.ok(quote.blockedReason, 'a blocked quote gave no reason');
   });
 
-  it('halts on a cap breach as firmly as on an empty balance', () => {
-    // A cap is a customer's own limit rather than a lack of funds, and both
-    // stop the work. A cap that only warned would be a budget nobody keeps.
+  it('halts non-AI metered work on a cap breach, as firmly as on an empty balance', () => {
+    // A document render or a spatial compute is a fixed job the platform prices
+    // up front. There is no "keep going until it is right" in a PDF, so a cap
+    // stops one exactly as it always did.
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(1_000_000);
     wallet.setCaps({ monthlyMinor: 100 });
     throwsCode(() => wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100 }), 'ACU_EXHAUSTED');
+  });
+
+  it('lets an AI run pass a cap, tells the company, and names it on the entry', () => {
+    const wallet = new ACUWallet('tenant-1');
+    const signals: string[] = [];
+    wallet.onSignal((signal) => signals.push(signal.kind));
+    wallet.topUp(1_000_000);
+    wallet.setCaps({ monthlyMinor: 100 });
+
+    const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, runToCompletion: true });
+    assert.ok(hold.authorisedOverrun, 'the cap was passed silently');
+    assert.match(String(hold.authorisedOverrun), /cap/i);
+    // Told exactly as before. Being told is now the whole of the consequence.
+    assert.ok(signals.includes('LIMIT_REACHED'), 'nobody was told the cap was reached');
+
+    const entry = wallet.settle(hold.holdId, 100, 'OPENAI');
+    assert.match(String(entry.note), /cap/i);
+    // Charged against the funded balance as normal — nothing on credit.
+    assert.equal(wallet.snapshot().balanceMinor, 1_000_000 - entry.billedMinor);
+    assert.ok(wallet.snapshot().balanceMinor > 0);
+  });
+
+  it('quotes a cap an AI run will pass as a cost, never as a refusal', () => {
+    const wallet = new ACUWallet('tenant-1');
+    wallet.topUp(1_000_000);
+    wallet.setCaps({ monthlyMinor: 100 });
+
+    const forRender = wallet.quote(100);
+    assert.equal(forRender.blockedBy, 'CAP');
+
+    const forAi = wallet.quote(100, undefined, undefined, undefined, true);
+    assert.equal(forAi.blockedReason, undefined, 'the quote refuses work the platform would run');
+    assert.ok(forAi.overrunReason);
+    assert.equal(forAi.capBreach?.scope, 'MONTHLY');
   });
 });
 
@@ -160,7 +223,7 @@ describe('rule 3 — provider cost is charged at 4x', () => {
     // standing between a customer and a surprise.
     const wallet = new ACUWallet('tenant-1');
     wallet.topUp(100_000);
-    const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100 });
+    const hold = wallet.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, runToCompletion: true });
     const entry = wallet.settle(hold.holdId, 150, 'OPENAI');
 
     assert.equal(entry.billedMinor, 150 * config.billing.markupMultiplier);

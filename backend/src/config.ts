@@ -967,6 +967,67 @@ export const config = {
 
   ai: {
     mode: str('AI_MODE', 'local') as AIMode,
+    /**
+     * AI work runs until it produces the answer, whatever it takes.
+     *
+     * The business rule, stated plainly: **no AI task is cut short by a clock
+     * or by a limit.** A take-off that needs four minutes gets four minutes; a
+     * model that answers in the wrong shape is corrected until it answers in
+     * the right one; a run that passes a monthly cap finishes rather than
+     * stopping half way.
+     *
+     * Three things follow, and each is enforced somewhere different:
+     *
+     * - **Time.** `providerDeadlineMs` is 0, so no `AbortSignal` is attached to
+     *   a provider call. See `ai/providers/remote.ts`.
+     * - **Quality.** The output standard is corrected until it validates rather
+     *   than twice. See `ai/outputstandard.ts`.
+     * - **Limits.** A customer's cap is signalled and named on the entry rather
+     *   than enforced against an AI run. See `billing/acu.ts`.
+     *
+     * **What it does not touch is the balance.** Sufficient ACUs have to be
+     * available, and no ACUs means no AI: the features are off until the wallet
+     * is topped up. Nothing here runs a provider on credit, so the platform
+     * never lays out money it cannot bill and a customer never receives a
+     * charge they did not fund first. A wallet frozen by a payment dispute
+     * refuses for the same reason.
+     */
+    runToCompletion: bool('AI_RUN_TO_COMPLETION', true),
+    /**
+     * The deadline on one provider call, in milliseconds. **0 means none.**
+     *
+     * It was 120,000, hardcoded in the adapter — a business value in a
+     * transport file, and the wrong one: a perception task over a full drawing
+     * set, or a reasoning task with a long schema, genuinely takes longer than
+     * two minutes, and every one of them was aborted at the deadline and
+     * charged to reconciliation as an unknown outcome.
+     *
+     * With no deadline a provider that never answers holds the request open.
+     * That is the stated cost of the rule and it is bounded by the provider's
+     * own timeout rather than by ours; set this to a positive number on a
+     * deployment that would rather refuse than wait.
+     */
+    providerDeadlineMs: num('AI_PROVIDER_DEADLINE_MS', 0),
+    /**
+     * How many times the output standard may be corrected. **0 means until it
+     * validates.**
+     *
+     * It was two, fixed: one attempt, one correction, then a 502. A model that
+     * needed a second nudge produced nothing and the customer was told the
+     * platform had failed.
+     */
+    maxCorrectionAttempts: num('AI_MAX_CORRECTION_ATTEMPTS', 0),
+    /**
+     * Consecutive attempts returning the *same* field problems before the loop
+     * gives up.
+     *
+     * Not a cap on cost or on time. It is the point at which the work has
+     * demonstrably stopped progressing: a model returning an identical set of
+     * problems for the fifth time is not converging, and continuing is paying a
+     * vendor to receive the same answer again. Raise it to be more patient;
+     * there is no value that makes a non-converging loop terminate on its own.
+     */
+    noProgressAttempts: num('AI_NO_PROGRESS_ATTEMPTS', 5),
     reasoningProvider: str('AI_REASONING_PROVIDER', 'OPENAI'),
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
     /**
