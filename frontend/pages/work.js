@@ -309,7 +309,7 @@ export async function work(root) {
           halfway does not leave a crew with nothing.
         </p>
         <div class="actions cmd-bar" style="margin:10px 0">
-          ${commandBar([
+          ${raw(commandBar([
             // Each mirrors what `field/pack.ts` actually authorises: estimate
             // reads, issue creates, a receipt updates, a withdrawal approves.
             //
@@ -322,7 +322,7 @@ export async function work(root) {
             { id: 'pack-issue', label: 'Issue a pack', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
             { id: 'pack-receipt', label: 'Record a device receipt', tone: 'quiet', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
             { id: 'pack-revoke', label: 'Withdraw a pack', tone: 'quiet', permitted: can('FIELD_EXECUTION', 'A'), reason: blockedReason('FIELD_EXECUTION', 'A') },
-          ])}
+          ]))}
         </div>
         ${
           packs.error

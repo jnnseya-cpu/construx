@@ -430,3 +430,60 @@ describe('every command button declares the capability it needs', () => {
     );
   });
 });
+
+describe('markup-returning helpers reach the page as markup', () => {
+  /**
+   * A helper that returns HTML, interpolated without `raw()`, renders as text.
+   *
+   * The `html` tagged template escapes every interpolation, which is exactly
+   * right — it is what stops a supplier name containing `<` from becoming
+   * markup. A helper that has already built markup therefore has to say so, and
+   * `raw()` is how it says it.
+   *
+   * Forget it and the page shows the source. On the Construction Field screen's
+   * offline-pack panel, `${commandBar([...])}` printed
+   * `<button class="btn quiet" data-command="pack-estimate">Estimate a pack</button>`
+   * as visible text — four buttons that were not buttons, on a panel that
+   * looked finished. Five more were doing the same on the pipeline screen.
+   *
+   * Nothing caught it: the page rendered, no error was thrown, every test
+   * passed, and the only symptom was a human reading angle brackets on a
+   * screen. So it is a spelling check, and it belongs with the other ones.
+   *
+   * **Scope, deliberately narrow.** Only helpers whose whole return value is
+   * markup and which are used inside an `html` template. `table()` and
+   * `badge()` return tagged-template results that the outer template splices
+   * correctly, so they are not on this list and must not be added to it — a
+   * check that flagged them would be turned off within a week.
+   */
+  const RETURNS_MARKUP = ['commandBar'];
+
+  it('never interpolates a markup helper without raw()', () => {
+    const wrong: string[] = [];
+
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      for (const helper of RETURNS_MARKUP) {
+        // `${helper(` — the interpolation form. `${raw(helper(` is the correct
+        // one and does not match, because of the `raw(` between the two.
+        for (const match of source.matchAll(new RegExp(`\\$\\{\\s*${helper}\\(`, 'g'))) {
+          const line = source.slice(0, match.index).split('\n').length;
+          const name = file.slice(file.indexOf('frontend'));
+          wrong.push(`${name}:${line} — \${${helper}(…)} renders as text; it needs \${raw(${helper}(…))}`);
+        }
+      }
+    }
+
+    assert.deepEqual(wrong, [], `\n${wrong.join('\n')}\n`);
+  });
+
+  it('finds the correct form, so the check is looking at the right thing', () => {
+    // A regex that matched nothing would pass the assertion above for ever.
+    let correct = 0;
+    for (const file of pageFiles()) {
+      const source = readFileSync(file, 'utf8');
+      correct += [...source.matchAll(/\$\{\s*raw\(\s*commandBar\(/g)].length;
+    }
+    assert.ok(correct > 5, `only ${correct} correctly wrapped commandBar interpolations found — the scan is not reading the console`);
+  });
+});

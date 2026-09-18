@@ -452,12 +452,12 @@ function matrixDetail(analysis, waivers, addenda) {
                 the case a response answers perfectly and scores nothing, because it answers the old one.
               </p>
               <div style="padding:11px 17px 0">
-                ${commandBar([
+                ${raw(commandBar([
                   { id: 'assess-addendum', label: 'Assess an addendum',
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                   { id: 'review-impact', label: 'Record what was done', tone: 'quiet',
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
-                ])}
+                ]))}
               </div>
               ${table({
                 headers: ['Addendum', 'Ref', 'What moved', 'Detail', 'Weight', 'State'],
@@ -479,10 +479,10 @@ function matrixDetail(analysis, waivers, addenda) {
                 on the day, so only the requirements that actually moved are marked stale.
               </p>
               <div style="padding:11px 17px 15px">
-                ${commandBar([
+                ${raw(commandBar([
                   { id: 'assess-addendum', label: 'Assess an addendum',
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
-                ])}
+                ]))}
               </div>`
       }
 
@@ -493,12 +493,12 @@ function matrixDetail(analysis, waivers, addenda) {
         a reason and a date it stops.
       </p>
       <div style="padding:11px 17px 0">
-        ${commandBar([
+        ${raw(commandBar([
           { id: 'waive-requirement', label: 'Waive a requirement',
             permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
           { id: 'revoke-waiver', label: 'Take a waiver back', tone: 'quiet',
             permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
-        ])}
+        ]))}
       </div>
       ${table({
         headers: ['Ref', 'Requirement', 'Mandatory', 'Reason', 'Holds until', 'Granted', 'State'],
@@ -903,14 +903,14 @@ export async function pipeline(root) {
           the one who verifies it.
         </p>
         <div style="padding:11px 17px 0">
-          ${commandBar([
+          ${raw(commandBar([
             { id: 'assert-claim', label: 'Assert a claim',
               permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
             { id: 'verify-claim', label: 'Verify a claim',
               permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
             { id: 'reject-claim', label: 'Refuse a claim', tone: 'quiet',
               permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
-          ])}
+          ]))}
         </div>
         ${table({
           headers: ['Ref', 'Kind', 'Claim', 'Issued by', 'Expires', 'Checked by', 'Standing'],
@@ -1148,11 +1148,11 @@ export async function pipeline(root) {
           nothing from it.
         </p>
         <div style="padding:11px 17px 0">
-          ${commandBar([
+          ${raw(commandBar([
             { id: 'bid-outcome', label: 'Record how a bid ended',
               permitted: can('BUSINESS_DEVELOPMENT', 'U') && opportunities.some((o) => o.stage === 'BID' || o.stage === 'CONVERTED'),
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'U') ?? 'Nothing has reached a decision to bid' },
-          ])}
+          ]))}
         </div>
         ${table({
           headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Outcome', 'Due'],
