@@ -24162,3 +24162,19 @@ Verified in a browser against a running process as the operator, past the MFA
 gate: the Package door opens with `package`, `grantFree`, `grantFreeUntil` and
 `reason`, and its copy no longer claims the wallet is untouched — which it
 asserted until this commit, and which the free-AI change had made false.
+
+### An exemption with no end looked identical to one with a term
+
+The estate row badged `grantedFree` as "free of charge" and stopped there. The
+term was already on the record and already published on the listing — nothing
+rendered it. So the one screen an operator reviews exemptions from showed a
+twelve-month grant and an open-ended one as the same thing, which is the failure
+the term field was added to prevent, surviving in the place it most matters.
+
+The row now reads "free until 2027-09-30", or **"free of charge — no end date"**
+marked as a warning, because an open commitment is the state worth seeing. A
+grant whose term has run out reads "was free until …", which is the pair that
+explains a charge reappearing.
+
+Found by reading a real estate: three tenancies, all badged "free of charge",
+none of them showing whether any of it ended.

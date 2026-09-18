@@ -260,8 +260,26 @@ export async function tenants(root) {
                 tenant.demonstration ? badge('demonstration', 'info') : ''
               }${
                 // The operator has given this package away: no monthly charge
-                // is raised. The wallet is still the tenancy's own to fund.
-                tenant.grantedFree ? badge('free of charge', 'ai') : ''
+                // is raised, and no AI charge either.
+                //
+                // **With its term, or with the fact that it has none.** The
+                // badge said "free of charge" and stopped there, so an estate
+                // of exemptions read identically whether every one of them ran
+                // twelve months or forever — which is the failure the term
+                // field was added to prevent, still visible on the one screen
+                // an operator reviews exemptions from. An open-ended grant is
+                // marked as the open commitment it is rather than left looking
+                // like the others.
+                tenant.grantedFree
+                  ? tenant.grantedFreeUntil
+                    ? badge(`free until ${String(tenant.grantedFreeUntil).slice(0, 10)}`, 'ai')
+                    : badge('free of charge — no end date', 'warn')
+                  : // A term that has run out: `grantedFree` is already expired
+                    // against today, so this is "was free, until then", which is
+                    // the pair that explains a charge reappearing.
+                    tenant.grantedFreeUntil
+                    ? badge(`was free until ${String(tenant.grantedFreeUntil).slice(0, 10)}`, 'neutral')
+                    : ''
               }${
                 // What the estate sweep found wrong with this tenancy, on the
                 // row, so the register and the engine tell one story.
