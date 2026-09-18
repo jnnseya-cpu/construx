@@ -23160,3 +23160,56 @@ Recorded as BLOCKED rather than assumed:
 - Rate limiting, RFC 7807 errors with no internals leaked, correlation id on
   every response, mass assignment refused by schema, and IDOR probes answered
   404.
+
+### B-03 / AC-02: winning the job is not a check
+
+`backend/src/domain/inheritance.ts`, two routes, 10 tests, a panel on Design &
+BIM.
+
+A drawing issued during a tender is a proposal. It was produced to price the
+work, by a designer who may not have been appointed, against information that
+may not have been complete, and nobody compared it to the contract because there
+was no contract. The moment a project converted to delivery, every one of those
+drawings sat in the same register, the same search and the same "latest
+revision" as the construction information, and the only thing between a tender
+proposal and somebody building from it was that a person happened to remember
+which was which. That is a physical-safety exposure rather than a data one, and
+it is §6.2 in its own words: *a document marked Proposed during Tender cannot
+become Approved for Construction solely because the project was won.*
+
+**The award opens the question; it never answers it.** `convertToDelivery` now
+opens an inheritance register over the seven pre-award types a person can build,
+price or certify from — `Drawing`, `Specification`, `InformationContainer`,
+`BoQItem`, `DesignMaturityAssessment`, `ScopePackage`, `RiskRegisterItem` — and
+every item starts at `REQUIRES_VALIDATION`. Not "approved", not "carried over".
+Conversion is not permitted to grant authority to anything.
+
+**Inherited by reference, never copied.** A decision points at the source item
+and the source version. The drawing stays where it is at the revision it was, so
+the tender record remains readable as what was actually tendered — which is the
+whole reason the tender baseline is frozen.
+
+**One function answers "may somebody build from this".**
+`constructionAuthority()` reads the `authority` flag off the closed
+eight-disposition table, and only `ACCEPTED_CONTRACT` sets it — which itself
+requires the clause, appendix or schedule the item entered the contract by.
+`assertConstructionAuthority()` is what a command calls when the answer has to
+stop it (FR-016, BR-006). The decision is the design manager's: it authorises
+`DESIGN_INFORMATION:A` per §9, so the enterprise admin is refused.
+
+**Mobilisation will not release the design prerequisite** while any inherited
+item is still open, and the refusal names up to three of them rather than
+reporting a count — a message saying "three items are unvalidated" sends
+somebody looking; one that names them sends somebody to the right three.
+
+**The console door.** A register panel on Design & BIM, and a command whose
+disposition options come from the register response rather than a list held in
+the browser — the eight are read out of the same closed table the route
+validates against, so the form cannot offer an option meaning something
+different from what it says.
+
+Verified live over HTTP: a pre-award scope package, converted; register opened
+with one item awaiting validation and nothing authoritative; accepting with no
+contract clause refused `422 CONTRACT_REFERENCE_REQUIRED`; accepting as the
+enterprise admin refused `403 ACCESS_DENIED`; accepting as the designer granted
+authority.

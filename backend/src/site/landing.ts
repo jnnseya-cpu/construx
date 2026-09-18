@@ -663,9 +663,9 @@ ${figure('command-centre')}
 <section class="origin">
   <div class="wrap narrow">
     <div class="statute-mark">Why it exists</div>
-    <h2 class="section-h">Built by someone who spent twenty years working without it</h2>
+    <h2 class="section-h">Built by someone who spent years working without it</h2>
     <p class="origin-lede">
-      CONSTRUX comes out of <b>Justin Nseya's</b> twenty years as an MCIOB construction professional and senior
+      CONSTRUX comes out of <b>Justin Nseya's</b> years as an MCIOB construction professional and senior
       project-management leader — and out of the same failure, met on project after project.
     </p>
     <p class="origin-body">

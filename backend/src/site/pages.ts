@@ -79,7 +79,7 @@ export function about(): string {
   <div class="wrap narrow">
     <h2>Why CONSTRUX was created</h2>
     <p class="founder-lede">
-      CONSTRUX comes out of twenty years of <b>Justin Nseya's</b> work as an MCIOB construction professional and senior
+      CONSTRUX comes out of <b>Justin Nseya's</b> years of work as an MCIOB construction professional and senior
       project-management leader. It was not designed from a market gap. It was designed from the same failure, met
       again and again, on project after project.
     </p>
@@ -170,7 +170,7 @@ export function about(): string {
     </p>
     <p>
       It was created to be the integrated project control system that construction teams have been working without —
-      by someone who spent twenty years working without it.
+      by someone who spent years working without it.
     </p>
 
     <h2>What we build</h2>

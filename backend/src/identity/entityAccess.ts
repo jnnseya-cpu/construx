@@ -78,6 +78,15 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
    * inherited. A baseline is exactly the record an external party on a project
    * must not be able to read: it is what the business priced the job at.
    */
+  /*
+   * What tender information may be used for after award.
+   *
+   * `DESIGN_INFORMATION`, because deciding that a tender drawing may be built
+   * from is a design-information approval rather than a project-setup one — the
+   * permission matrix already gives that to the design manager, and a second
+   * area here would be a second answer to who may say a drawing is buildable.
+   */
+  InheritanceRegister: { area: 'DESIGN_INFORMATION' },
   ProjectBaseline: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
   AwardReconciliation: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
   User: { area: 'ENTERPRISE_STRUCTURE' },

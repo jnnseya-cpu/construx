@@ -49,6 +49,20 @@ export async function design(root) {
     .read(`/v1/projects/${projectId}/submittals`, 'DESIGN_INFORMATION')
     .catch(() => ({ submittals: [], summary: '', pastOrderingDate: 0, reviewsOverdue: 0, atRisk: 0, circling: 0 }));
 
+  // What was carried in from the tender, and what each item may be used for.
+  //
+  // On this screen because the decision is the design manager's — §9 gives it to
+  // `DESIGN_INFORMATION` approval and nowhere else — and because the question it
+  // answers is "may somebody build from this drawing", which is the question
+  // every other panel here exists to keep answerable.
+  const inherited = await api
+    .read(`/v1/projects/${projectId}/inheritance`, 'DESIGN_INFORMATION')
+    .catch(() => null);
+  const inheritedRecords = inherited?.records ?? [];
+  const awaitingInheritance = inheritedRecords.filter(
+    (record) => (inherited?.dispositions ?? []).find((d) => d.code === record.disposition)?.open,
+  );
+
   // Who could check a design, read from the ownership map rather than guessed.
   // The author picks a name from people the matrix says can actually do it —
   // and the engine refuses the author themselves, whoever is chosen.
@@ -237,6 +251,16 @@ export async function design(root) {
               reason: !can('DESIGN_INFORMATION', 'A')
                 ? blockedReason('DESIGN_INFORMATION', 'A')
                 : 'Nothing is with the reviewer.',
+            },
+            {
+              id: 'decide-inheritance',
+              label: 'Decide inherited information',
+              permitted: can('DESIGN_INFORMATION', 'A') && awaitingInheritance.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : inheritedRecords.length === 0
+                  ? 'This project did not come through a contract award, so nothing was inherited from a tender.'
+                  : 'Every inherited item has been decided.',
             },
           ]))}
         </div>
@@ -665,6 +689,53 @@ export async function design(root) {
                   empty: 'No model ingested.',
                 })}
                 <div data-model-diff style="padding:0 17px 15px"></div>
+              </div>`
+            : ''
+        }
+
+        ${
+          inheritedRecords.length > 0
+            ? html`<div class="card pad0">
+                <h2 style="padding:15px 17px 0">Information inherited from the tender</h2>
+                <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                  ${inherited.summary} Everything carried across the award starts as <b>requires validation</b> — winning
+                  the job is not a check, so nothing here may be built from until somebody says which contract clause it
+                  entered by.
+                </p>
+                ${table({
+                  headers: ['Item', 'What it is', 'From', 'May be used for', 'Decided'],
+                  rows: inheritedRecords.map((record) => {
+                    const disposition = (inherited.dispositions ?? []).find((d) => d.code === record.disposition);
+                    return [
+                      html`${record.label}${
+                        record.tenderReference ? html`<span class="metric-sub"> · ${record.tenderReference}</span>` : ''
+                      }`,
+                      html`${humanise(record.sourceRefType)}<span class="metric-sub"> v${record.sourceVersion}</span>`,
+                      humanise(record.sourceStage),
+                      html`${badge(
+                        disposition?.label ?? humanise(record.disposition),
+                        disposition?.authority ? 'good' : disposition?.open ? 'warn' : '',
+                      )}${
+                        record.contractIncorporationReference
+                          ? html`<span class="metric-sub"> ${record.contractIncorporationReference}</span>`
+                          : ''
+                      }`,
+                      record.decidedAt ? date(record.decidedAt) : '—',
+                    ];
+                  }),
+                  empty: 'Nothing was inherited.',
+                })}
+                ${
+                  awaitingInheritance.length > 0
+                    ? html`<div style="padding:0 17px 15px">
+                        <div class="notice warn">
+                          <b>${awaitingInheritance.length} inherited item(s) have not been decided.</b><br>
+                          None of them can be construction authority, and the project cannot leave mobilisation while any
+                          of them is still open.
+                        </div>
+                      </div>`
+                    : ''
+                }
               </div>`
             : ''
         }
@@ -1150,6 +1221,58 @@ export async function design(root) {
       ],
       transform: ({ submittalId: _submittalId, ...rest }) => rest,
     },
+    'decide-inheritance': {
+      title: 'Decide what an inherited item may be used for',
+      intent:
+        'A drawing issued to price the work is not a drawing anybody was appointed to build from. Accepting it into ' +
+        'the contract is the only choice that grants construction authority, and it needs the clause, appendix or ' +
+        'schedule it entered by — the item itself is never copied or restamped.',
+      path: ({ recordId }) => `/v1/projects/${projectId}/inheritance/${recordId}`,
+      submitLabel: 'Record the decision',
+      fields: [
+        {
+          name: 'recordId',
+          label: 'Inherited item',
+          type: 'select',
+          options: awaitingInheritance.map((record) => ({
+            value: record.id,
+            label: `${record.label} · ${humanise(record.sourceRefType)} from ${humanise(record.sourceStage)}`,
+          })),
+        },
+        {
+          name: 'disposition',
+          label: 'What it may be used for',
+          type: 'select',
+          // The eight come from the register itself, which reads them from the
+          // same closed table the route validates against. A list held here
+          // would be a second answer to what a disposition permits.
+          options: (inherited?.dispositions ?? []).map((entry) => ({
+            value: entry.code,
+            label: `${entry.label} — ${entry.meaning}`,
+          })),
+        },
+        {
+          name: 'rationale',
+          label: 'Why',
+          type: 'textarea',
+          rows: 3,
+          hint: 'Goes on the record beside the item. Ten characters at least — a decision with no reason is the thing this register exists to stop.',
+        },
+        {
+          name: 'contractIncorporationReference',
+          label: 'Contract reference',
+          type: 'text',
+          placeholder: 'Contract appendix B, drawing schedule item 14',
+          hint: 'Required to accept an item into the contract. The platform refuses the acceptance without it.',
+        },
+      ],
+      transform: ({ recordId: _recordId, contractIncorporationReference, ...rest }) => ({
+        registerId: inherited?.registerId,
+        ...rest,
+        ...(contractIncorporationReference ? { contractIncorporationReference } : {}),
+      }),
+    },
+
     'submit-review': {
       title: 'Submit for review',
       intent:

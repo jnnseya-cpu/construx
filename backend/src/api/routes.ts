@@ -308,6 +308,7 @@ import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from 
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import { COMMERCIAL_OUTCOMES, DELIVERY_STATUSES, LIFECYCLE_STATES, LIFECYCLE_STATE_CODES } from '../lifecycle/state.ts';
+import * as inheritance from '../domain/inheritance.ts';
 import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
@@ -9388,6 +9389,54 @@ export const ROUTES: Route[] = [
          * would also let a client change the award while claiming to retry.
          */
         ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
+      }),
+  },
+  // ------------------------------- what tender information may be used for
+  //
+  // §6. Opened by the award with every pre-award item at REQUIRES_VALIDATION,
+  // because a drawing issued to price the work is not a drawing anybody was
+  // appointed to build from — and winning the job does not change that.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/inheritance',
+    readOnly: true,
+    description: 'Pre-award information carried into delivery, and what each item may be used for',
+    handler: (platform, ctx) =>
+      inheritance.inheritanceRegister(projectContext(platform, ctx)) ?? {
+        registerId: null,
+        records: [],
+        open: 0,
+        authoritative: 0,
+        completePercent: null,
+        dispositions: inheritance.dispositionCatalogue(),
+        // Said rather than returned as an empty list: a project that never came
+        // through an award inherited nothing, and a blank register reads as
+        // validation somebody forgot to do.
+        summary: 'This project has not been through a contract award, so nothing was inherited from a tender.',
+      },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/inheritance/:recordId',
+    description: 'Decide what one inherited item may be used for',
+    schema: {
+      type: 'object',
+      required: ['registerId', 'disposition', 'rationale'],
+      properties: {
+        registerId: stringField,
+        disposition: { type: 'string', enum: inheritance.DISPOSITION_CODES },
+        rationale: { type: 'string', minLength: 10 },
+        // Required by the domain for ACCEPTED_CONTRACT — the clause, appendix
+        // or schedule the item entered the contract by.
+        contractIncorporationReference: { type: 'string' },
+        supersededByItemId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      inheritance.decideInheritance(projectContext(platform, ctx), {
+        ...body<{ registerId: string; disposition: never; rationale: string }>(ctx),
+        recordId: String(ctx.params.recordId),
       }),
   },
   {

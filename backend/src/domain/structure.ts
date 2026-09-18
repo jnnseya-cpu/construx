@@ -5,6 +5,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import * as stages from '../lifecycle/stages.ts';
+import { openInheritanceRegister } from './inheritance.ts';
 import {
   assertStartingPhase,
   assertTransitionAllowed,
@@ -1055,6 +1056,20 @@ export function convertToDelivery(
     evidenceRefs: [baselineEvidence],
   });
 
+  /*
+   * Every piece of pre-award information, with the question attached.
+   *
+   * Opened before the award is written, so a conversion that fails part way
+   * leaves no project claiming to be live with nothing governing what its
+   * tender drawings may be used for.
+   *
+   * Every record starts at REQUIRES_VALIDATION. Conversion is not permitted to
+   * grant authority to anything — see `inheritance.ts`, and §6.2: a document
+   * marked Proposed during tender cannot become approved for construction
+   * solely because the project was won.
+   */
+  const inheritance = openInheritanceRegister(ctx, { sourceStage: from, at: now });
+
   // Every difference between the two, as items somebody owns.
   const reconciliationId = openReconciliation(ctx, {
     tenderBaselineId,
@@ -1090,6 +1105,10 @@ export function convertToDelivery(
     awardBaselineId,
     reconciliationId,
     unresolvedReconciliationItems: RECONCILIATION_LINES.length,
+    // "Forty-one inherited items awaiting validation" is a number somebody
+    // acts on. A register nobody knows exists is a register nobody opens.
+    inheritanceRegisterId: inheritance.registerId,
+    inheritedItemsAwaitingValidation: inheritance.items,
     committedAt: now,
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   };
@@ -1138,6 +1157,7 @@ export function convertToDelivery(
       tenderBaselineId,
       awardBaselineId,
       reconciliationId,
+      inheritanceRegisterId: inheritance.registerId,
       // Held on the project so a retry has something to answer with, and so
       // somebody can produce the receipt a year later without a log search.
       conversionReceipt: receipt,
@@ -1176,6 +1196,10 @@ export type ConversionReceipt = {
   awardBaselineId: string;
   reconciliationId: string;
   unresolvedReconciliationItems: number;
+  /** The register governing what pre-award information may be used for. */
+  inheritanceRegisterId: string;
+  /** How many inherited items still need a disposition. All of them, at award. */
+  inheritedItemsAwaitingValidation: number;
   committedAt: string;
   idempotencyKey?: string;
   /** True only on a replay, so a caller can tell a fresh commit from an echo. */

@@ -340,6 +340,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * eight as questions, because a machine-generated "no difference" against a
    * scope nobody read is the most dangerous row this table could carry.
    */
+  /*
+   * What tender information may be used for after the job is won.
+   *
+   * A drawing issued for a tender is a proposal — produced to price the work,
+   * by a designer who may not have been appointed, against information that may
+   * not have been complete. Winning does not change any of that, but at the
+   * moment of conversion it sits in the same register as the construction
+   * information and the only thing between it and somebody building from it is
+   * that a person happens to remember which is which.
+   *
+   * Every inherited item opens at REQUIRES_VALIDATION and nothing but an
+   * explicit, reasoned, named decision moves it. Both events are
+   * `aiAllowed: false`: accepting a tender drawing into the contract is a
+   * design-information approval, and no agent mandate reaches it.
+   */
+  def('INHERITANCE_REGISTER_OPENED', 'InheritanceRegister', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('INHERITANCE_DECIDED', 'InheritanceRegister', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   def('RECONCILIATION_OPENED', 'AwardReconciliation', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
   def('RECONCILIATION_ITEM_SETTLED', 'AwardReconciliation', 'UPDATE', 'PROJECT_CONTROL'),
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),

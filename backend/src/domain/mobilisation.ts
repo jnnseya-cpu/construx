@@ -3,6 +3,7 @@ import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { packageReadiness } from './designbaseline.ts';
+import { unvalidatedTenderInformation } from './inheritance.ts';
 import { ramsCurrencyBlockedReason } from './safetycontrol.ts';
 
 /**
@@ -241,10 +242,34 @@ export function verifyPrerequisites(
   // second one here would eventually disagree with it.
   if (input.designPackageReference) {
     const readiness = packageReadiness(ctx, input.designPackageReference);
+
+    /*
+     * And whether the information is the contract's or the tender's.
+     *
+     * `packageReadiness` answers "is this package's information current". It
+     * cannot answer "is this information something we were appointed to build
+     * from", because a tender drawing at its latest revision is perfectly
+     * current and is still a proposal somebody priced from.
+     *
+     * On a project that came through a contract award, every pre-award item
+     * carries an inheritance disposition and only `ACCEPTED_CONTRACT` may be
+     * built from. Unvalidated tender information blocks a start-work
+     * authorisation here, at the last point before people are on site, which is
+     * the whole reason that gate exists.
+     */
+    const inherited = unvalidatedTenderInformation(ctx);
+    const blocked = inherited.length > 0;
+
     results.push({
       kind: 'DESIGN',
-      status: readiness.ready ? 'MET' : 'NOT_MET',
-      detail: readiness.why,
+      status: readiness.ready && !blocked ? 'MET' : 'NOT_MET',
+      detail: blocked
+        ? `${readiness.why} ${inherited.length} item${inherited.length === 1 ? '' : 's'} carried over from the tender ` +
+          `${inherited.length === 1 ? 'has' : 'have'} not been validated for delivery: ` +
+          `${inherited.slice(0, 3).map((item) => item.label).join('; ')}` +
+          `${inherited.length > 3 ? `, and ${inherited.length - 3} more` : ''}. ` +
+          'A drawing issued to price the work is not a drawing anybody was appointed to build from.'
+        : readiness.why,
       source: 'VERIFIED',
     });
   }
