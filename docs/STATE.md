@@ -24307,3 +24307,52 @@ After the fix, **142 of 143 open**. The one that does not is *Export user
 report*, which downloads a spreadsheet rather than opening a form — a false
 positive in the sweep, confirmed by driving it: one `POST 200 /v1/team/report`
 and `user-report-2026-09-18.csv` on disk.
+
+### Deleting a project takes two people
+
+Asked for directly: *"once a project has been created it can be edited but also
+it can be deleted, but it needs the owner and the enterprise owner — one to
+delete, the other to confirm."*
+
+It took one. Whoever held `PROJECT_SETUP:A` pressed a button and a project left
+every listing, roll-up and picker on the platform. The refusals around it were
+real — certified money and executed contracts each block it — but everything
+short of those came down to one person being sure.
+
+Three acts now, and the middle one is the point:
+
+- **`PROJECT_DELETION_REQUESTED`** — whoever administers the project asks, with a
+  reason of at least ten characters. **Every refusal the deletion carries is
+  applied here, at the asking.** A request that can never complete is worse than
+  a refusal: it sits in somebody's queue looking like a decision, and the answer
+  was already no. The project stays live and in every listing; a request is not
+  a deletion and may never become one.
+- **`PROJECT_DELETION_WITHDRAWN`** — either side calls it off. Both the asking
+  and the withdrawal stay on the record, and which is in force is decided by
+  which came last, because *"asked on the 3rd, called off on the 4th"* is what
+  an audit reads and a cleared field cannot say it.
+- **`PROJECT_DELETED`** — unchanged, which is what keeps every existing reader
+  of that event working, and now reachable only by confirming a standing
+  request. Two rules make it two people: the confirmer **may not be the
+  requester**, and must hold `OWNER` rather than merely project administration,
+  because the reason for asking twice is that the second answer comes from above
+  the first. The requester's reason is carried onto the deletion — the confirmer
+  agrees to it rather than writing a second one — and both names go on the
+  record, so *"who deleted this"* has two answers a year later and the pair is
+  the authority.
+
+The refusals are re-run at the confirmation as well as the request, because the
+two are separated by however long somebody takes to answer and the project does
+not stop in the meantime: a contract executed in between has to stop it.
+
+The estate row carries the standing request and **whether the reader is the one
+who asked**, decided server-side from the request context rather than by the
+console comparing identifiers — getting that comparison wrong offers the
+requester a Confirm button the server will refuse them, which is what the first
+cut of the screen did. The cell has three states: request it, confirm it with
+who asked and why beside it, or — for the requester — withdraw only.
+
+Driven end to end in a browser: a request on a project carrying three payment
+certificates refused at the asking; a request on a clean one accepted, the
+project still listed; the requester offered withdrawal and no confirmation; the
+owner offered confirmation, taking it, and the project gone from the estate.

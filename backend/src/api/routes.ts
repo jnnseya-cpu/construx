@@ -9523,15 +9523,40 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
-    pattern: '/v1/projects/:projectId/delete',
-    description: 'Delete a project. The record is kept and readable by its id; it leaves the estate and takes no further command. Refused where money has been certified or a contract is executed',
+    pattern: '/v1/projects/:projectId/delete-request',
+    description: 'Ask for a project to be deleted. Half the act: an owner of the company confirms the other half',
     schema: {
       type: 'object',
       required: ['reason'],
       properties: { reason: { type: 'string', minLength: 10, maxLength: 500 } },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => structure.deleteProject(projectContext(platform, ctx), body<{ reason: string }>(ctx)),
+    handler: (platform, ctx) => structure.requestProjectDeletion(projectContext(platform, ctx), body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/delete-withdraw',
+    description: 'Call off a standing deletion request. Either side may; it is not a decision to delete',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 10, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => structure.withdrawProjectDeletion(projectContext(platform, ctx), body<{ reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/delete',
+    description:
+      'Confirm a requested deletion, which deletes the project. Refused to the person who asked, and to anybody who is ' +
+      'not an owner of the company. The record is kept and readable by its id; it leaves the estate and takes no further command',
+    // No `reason` field. The requester's reason is carried onto the deletion —
+    // the confirmer is agreeing to it rather than writing a second one, and two
+    // reasons on one act leave the record unable to say which it was deleted
+    // for.
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => structure.deleteProject(projectContext(platform, ctx)),
   },
   {
     method: 'GET',
@@ -9540,6 +9565,7 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const context = projectContext(platform, ctx);
       const project = platform.ledger.require({ refType: 'Project', refId: ctx.params.projectId as string });
+      const pending = structure.deletionRequest(context);
       return {
         project: project.state,
         // AC-04. The version a caller sends back as `If-Match` when it amends
@@ -9547,6 +9573,29 @@ export const ROUTES: Route[] = [
         // can read the current value of is a precondition nobody can satisfy.
         aggregateVersion: project.version,
         gate: structure.evaluateCurrentGate(context),
+        /*
+         * A deletion somebody has asked for and nobody has yet confirmed.
+         *
+         * Published with the requester's name resolved, because "awaiting
+         * confirmation" is a thing an owner is being asked to decide and a
+         * user id is not something they can decide against. `you` says whether
+         * the reader is the one who asked — the one person who cannot confirm
+         * it — so the screen offers the withdrawal rather than a button that
+         * will refuse them.
+         */
+        deletionRequest: pending
+          ? {
+              ...pending,
+              requestedByName: (() => {
+                try {
+                  return platform.user(pending.requestedBy).name;
+                } catch {
+                  return pending.requestedBy;
+                }
+              })(),
+              you: pending.requestedBy === auth(ctx).actorId,
+            }
+          : null,
       };
     },
   },

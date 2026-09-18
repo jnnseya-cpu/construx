@@ -22,6 +22,7 @@ let seed: SeedResult;
 let server: Server;
 let base: string;
 let ownerToken = '';
+let adminToken = '';
 let plannerToken = '';
 let enterpriseId = '';
 
@@ -64,6 +65,7 @@ before(async () => {
   seed = await seedDemoProject(platform);
   enterpriseId = platform.ledger.listByTenant(seed.tenantId, 'Enterprise')[0]!.refId;
   ownerToken = tokenFor(seed.users.owner!.id);
+  adminToken = tokenFor(seed.users.admin!.id);
   plannerToken = tokenFor(seed.users.planner!.id);
   server = createGateway(platform);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -89,16 +91,54 @@ describe('deleting a project', () => {
   });
 
   it('needs the authority to approve project set-up, and a reason', async () => {
-    const planner = await send('POST', `/v1/projects/${projectId}/delete`, plannerToken, { reason: 'A planner tidying up the estate' });
+    const planner = await send('POST', `/v1/projects/${projectId}/delete-request`, plannerToken, { reason: 'A planner tidying up the estate' });
     assert.equal(planner.status, 403);
-    const short = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken, { reason: 'gone' });
+    const short = await send('POST', `/v1/projects/${projectId}/delete-request`, ownerToken, { reason: 'gone' });
     assert.equal(short.status, 400);
     assert.equal(short.body.title, 'VALIDATION_FAILED');
     assert.ok((await send('GET', '/v1/projects', ownerToken)).body.projects as Array<unknown>, 'still there');
   });
 
-  it('goes with the reason on the record, and leaves every listing', async () => {
-    const deleted = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken, { reason: 'Created to try the platform; never a real job' });
+  it('will not delete on one person’s say-so, however senior', async () => {
+    // The whole point of the pair. The owner holds every code in every area and
+    // still cannot do this alone, because the second answer is what is being
+    // asked for and not a permission.
+    const alone = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken);
+    assert.equal(alone.status, 409, JSON.stringify(alone.body));
+    assert.equal(alone.body.title, 'PROJECT_DELETION_NOT_REQUESTED');
+    assert.match(String(alone.body.detail), /two people/);
+  });
+
+  it('records the request, leaves the project live, and says who is waiting on whom', async () => {
+    const asked = await send('POST', `/v1/projects/${projectId}/delete-request`, adminToken, { reason: 'Created to try the platform; never a real job' });
+    assert.equal(asked.status, 201, JSON.stringify(asked.body));
+    assert.equal(asked.body.requestedBy, seed.users.admin!.id);
+
+    // Still a live project in every listing: it has not been deleted, and it
+    // may never be.
+    const listed = await send('GET', '/v1/projects', ownerToken);
+    assert.ok((listed.body.projects as Array<{ id: string }>).some((project) => project.id === projectId), 'a request is not a deletion');
+
+    const detail = await send('GET', `/v1/projects/${projectId}`, ownerToken);
+    const pending = detail.body.deletionRequest as { requestedByName: string; you: boolean; reason: string };
+    assert.equal(pending.requestedByName, 'Amara Osei', 'the owner is asked to decide against a name, not a user id');
+    assert.equal(pending.you, false, 'the owner did not ask for this one');
+    const mine = await send('GET', `/v1/projects/${projectId}`, adminToken);
+    assert.equal((mine.body.deletionRequest as { you: boolean }).you, true, 'the requester must be told they cannot confirm it');
+  });
+
+  it('refuses the same person confirming their own request, and refuses a second ask', async () => {
+    const themselves = await send('POST', `/v1/projects/${projectId}/delete`, adminToken);
+    assert.equal(themselves.status, 409, JSON.stringify(themselves.body));
+    assert.equal(themselves.body.title, 'PROJECT_DELETION_SAME_PERSON');
+
+    const twice = await send('POST', `/v1/projects/${projectId}/delete-request`, adminToken, { reason: 'Asking a second time for the same thing' });
+    assert.equal(twice.status, 409);
+    assert.equal(twice.body.title, 'PROJECT_DELETION_ALREADY_REQUESTED');
+  });
+
+  it('goes when the owner confirms, with both names and the requester’s reason on the record', async () => {
+    const deleted = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken);
     assert.equal(deleted.status, 201, JSON.stringify(deleted.body));
     assert.equal(deleted.body.projectId, projectId);
 
@@ -111,8 +151,11 @@ describe('deleting a project', () => {
 
     const record = platform.ledger.require({ refType: 'Project', refId: projectId }).state;
     assert.equal(record.status, 'DELETED');
-    assert.equal(record.deletedBy, seed.users.owner!.id);
-    assert.equal(record.deletionReason, 'Created to try the platform; never a real job');
+    // Both halves named. "Who deleted this" has two answers a year later, and
+    // the pair is the authority rather than either one of them.
+    assert.equal(record.deletedBy, seed.users.owner!.id, 'the confirmer');
+    assert.equal(record.deletionRequestedBy, seed.users.admin!.id, 'the requester');
+    assert.equal(record.deletionReason, 'Created to try the platform; never a real job', 'the requester’s reason, carried');
     assert.equal(structure.isLiveProject(record), false);
   });
 
@@ -125,12 +168,16 @@ describe('deleting a project', () => {
     assert.equal(phase.status, 409);
     assert.equal(phase.body.title, 'PROJECT_DELETED');
 
-    const again = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken, { reason: 'Deleting it a second time' });
+    const again = await send('POST', `/v1/projects/${projectId}/delete-request`, ownerToken, { reason: 'Deleting it a second time' });
     assert.equal(again.status, 409);
+    assert.ok(['PROJECT_ALREADY_DELETED', 'PROJECT_DELETED'].includes(String(again.body.title)), String(again.body.title));
   });
 
-  it('refuses a project carrying certified money or an executed contract', async () => {
-    const flagship = await send('POST', `/v1/projects/${seed.projectId}/delete`, ownerToken, { reason: 'Clearing the demonstration project' });
+  it('refuses a project carrying certified money or an executed contract, at the asking', async () => {
+    // Refused where it is asked for, not where it is confirmed. A request that
+    // can never complete is worse than a refusal: it sits in somebody's queue
+    // looking like a decision, and the answer was already no.
+    const flagship = await send('POST', `/v1/projects/${seed.projectId}/delete-request`, ownerToken, { reason: 'Clearing the demonstration project' });
     assert.equal(flagship.status, 409, JSON.stringify(flagship.body));
     assert.ok(['PROJECT_HAS_CERTIFIED_PAYMENTS', 'PROJECT_HAS_EXECUTED_CONTRACT'].includes(String(flagship.body.title)), String(flagship.body.title));
     const listed = await send('GET', '/v1/projects', ownerToken);
@@ -160,7 +207,9 @@ describe('deleting a portfolio', () => {
   });
 
   it('goes once nothing live is filed under it, and leaves the listing', async () => {
-    assert.equal((await send('POST', `/v1/projects/${projectId}/delete`, ownerToken, { reason: 'Never started; the client withdrew' })).status, 201);
+    // Two people, because that is what deleting a project takes now.
+    assert.equal((await send('POST', `/v1/projects/${projectId}/delete-request`, adminToken, { reason: 'Never started; the client withdrew' })).status, 201);
+    assert.equal((await send('POST', `/v1/projects/${projectId}/delete`, ownerToken)).status, 201);
     const deleted = await send('POST', `/v1/portfolios/${portfolioId}/delete`, ownerToken, { reason: 'We are not operating in the Americas' });
     assert.equal(deleted.status, 201, JSON.stringify(deleted.body));
     assert.equal(deleted.body.portfolioId, portfolioId);

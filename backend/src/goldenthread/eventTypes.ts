@@ -291,6 +291,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PROGRAMME_CREATED', 'Programme', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_CREATED', 'Project', 'CREATE', 'PROJECT_CONTROL'),
   def('PROJECT_PHASE_TRANSITIONED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  /*
+   * Deleting a project takes two people, and these are the two halves of it.
+   *
+   * It used to take one: whoever held `PROJECT_SETUP:A` pressed a button and a
+   * project left the estate. The refusals around it were real — certified money
+   * and executed contracts both block it — but everything short of those came
+   * down to one person being sure, on an act that removes a job from every
+   * roll-up on the platform.
+   *
+   * So the request is its own record. It names who asked and why, it is
+   * refused up front for everything that would refuse the deletion itself, and
+   * it stands until somebody else confirms it or either party withdraws it. The
+   * confirmation is `PROJECT_DELETED`, unchanged, which is what keeps every
+   * existing reader of that event working.
+   *
+   * `aiAllowed: false` on all three, by construction: no agent mandate exceeds
+   * PROPOSE, and removing a project from the estate is not a proposal.
+   */
+  def('PROJECT_DELETION_REQUESTED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
+  def('PROJECT_DELETION_WITHDRAWN', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
   def('PROJECT_DELETED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
   // Correcting what a project says about itself: its name, what is being built,
   // where, when, and what it is worth.

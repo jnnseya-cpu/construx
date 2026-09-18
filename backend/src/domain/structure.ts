@@ -1807,19 +1807,44 @@ export function amendProject(
   return { projectId: ctx.projectId, changed };
 }
 
-export function deleteProject(ctx: EngineContext, input: { reason: string }): { projectId: string; deletedAt: string } {
-  authorise(ctx, 'PROJECT_SETUP', 'A');
+/**
+ * A deletion request standing against a project, or nothing.
+ *
+ * Folded from the events rather than kept as a field on the project, so a
+ * request and its withdrawal are both on the record and the current position is
+ * the last word either of them said. The project's own state is not touched by
+ * a request: a project awaiting confirmation is a live project in every roll-up
+ * on the platform, because it has not been deleted and may never be.
+ */
+export function deletionRequest(ctx: EngineContext): { requestedBy: string; reason: string; requestedAt: string } | undefined {
+  const state = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId }).state as Record<string, unknown>;
+  const requestedAt = typeof state.deletionRequestedAt === 'string' ? state.deletionRequestedAt : '';
+  if (requestedAt === '') return undefined;
+  // A withdrawal does not erase the request; both stay on the record, and which
+  // one is in force is decided by which came last. Written this way rather than
+  // by clearing the fields because "asked on the 3rd, called off on the 4th" is
+  // the question an audit asks, and a cleared field cannot answer it.
+  const withdrawnAt = typeof state.deletionWithdrawnAt === 'string' ? state.deletionWithdrawnAt : '';
+  if (withdrawnAt !== '' && withdrawnAt >= requestedAt) return undefined;
+  return {
+    requestedBy: String(state.deletionRequestedBy ?? ''),
+    reason: String(state.deletionReason ?? ''),
+    requestedAt,
+  };
+}
 
-  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+/**
+ * Everything that refuses a deletion, checked once and used twice.
+ *
+ * Run at the request and again at the confirmation, because the two are
+ * separated by however long it takes somebody to answer and the project does
+ * not stop in the meantime — a contract executed between the asking and the
+ * confirming has to stop it, and would not if only the request were checked.
+ */
+function refuseDeletion(ctx: EngineContext, project: { state: Record<string, unknown> }): void {
   if (!isLiveProject(project.state)) {
     throw new DomainError('PROJECT_ALREADY_DELETED', `${String(project.state.name)} was deleted on ${String(project.state.deletedAt ?? '').slice(0, 10)}`, 409);
   }
-  if (input.reason.trim().length < 10) {
-    throw new DomainError('REASON_REQUIRED', 'Say why the project is being deleted; it is the sentence the record keeps.', 422, [
-      { field: 'reason', message: 'At least ten characters' },
-    ]);
-  }
-
   const certified = ctx.ledger.list(ctx.projectId, 'PaymentCertificate').length;
   if (certified > 0) {
     throw new DomainError(
@@ -1836,7 +1861,130 @@ export function deleteProject(ctx: EngineContext, input: { reason: string }): { 
       409,
     );
   }
+}
 
+function requireReason(reason: string, verb: string): string {
+  if (reason.trim().length < 10) {
+    throw new DomainError('REASON_REQUIRED', `Say why the project is being ${verb}; it is the sentence the record keeps.`, 422, [
+      { field: 'reason', message: 'At least ten characters' },
+    ]);
+  }
+  return reason.trim();
+}
+
+/**
+ * Ask for a project to be deleted. Half of the act; somebody else does the
+ * other half.
+ *
+ * Every refusal the deletion itself carries is applied here, at the asking,
+ * rather than left for the confirmation to discover. A request that can never
+ * complete is worse than a refusal: it sits in somebody's queue looking like a
+ * decision they have to make, and the answer was already no.
+ */
+export function requestProjectDeletion(
+  ctx: EngineContext,
+  input: { reason: string },
+): { projectId: string; requestedBy: string; requestedAt: string; reason: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  refuseDeletion(ctx, project);
+  const reason = requireReason(input.reason, 'deleted');
+
+  const standing = deletionRequest(ctx);
+  if (standing) {
+    throw new DomainError(
+      'PROJECT_DELETION_ALREADY_REQUESTED',
+      `A deletion of ${String(project.state.name)} was already requested on ${standing.requestedAt.slice(0, 10)}: ` +
+        `"${standing.reason}". It needs confirming by somebody else, or withdrawing — not asking twice.`,
+      409,
+    );
+  }
+
+  const requestedAt = new Date().toISOString();
+  write(ctx, {
+    eventType: 'PROJECT_DELETION_REQUESTED',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: {
+      ...project.state,
+      // The project's own status is untouched. It is live until it is deleted,
+      // and it may never be.
+      deletionRequestedBy: ctx.auth.actorId,
+      deletionRequestedAt: requestedAt,
+      deletionReason: reason,
+    },
+  });
+  return { projectId: ctx.projectId, requestedBy: ctx.auth.actorId, requestedAt, reason };
+}
+
+/** Call off a standing request. Either side may; it is not a decision to delete. */
+export function withdrawProjectDeletion(ctx: EngineContext, input: { reason: string }): { projectId: string; withdrawnAt: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const standing = deletionRequest(ctx);
+  if (!standing) {
+    throw new DomainError('PROJECT_DELETION_NOT_REQUESTED', `No deletion of ${String(project.state.name)} is waiting to be confirmed.`, 409);
+  }
+  const reason = requireReason(input.reason, 'kept');
+
+  const withdrawnAt = new Date().toISOString();
+  write(ctx, {
+    eventType: 'PROJECT_DELETION_WITHDRAWN',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: { ...project.state, deletionWithdrawnBy: ctx.auth.actorId, deletionWithdrawnAt: withdrawnAt, deletionWithdrawnReason: reason },
+  });
+  return { projectId: ctx.projectId, withdrawnAt };
+}
+
+/**
+ * Confirm a standing request, which is what actually deletes the project.
+ *
+ * **The second person is the point, so the two rules that make it two people
+ * are enforced here and nowhere else.** The confirmer may not be the requester
+ * — one person holding both halves is one person — and they must hold the
+ * tenancy's ownership, not merely project administration, because the whole
+ * reason for asking twice is that the second answer comes from somewhere above
+ * the first.
+ *
+ * `reason` is the requester's, carried from the request onto the deletion. The
+ * confirmer is agreeing to that reason rather than writing their own; two
+ * reasons on one act would leave the record unable to say which one the project
+ * was deleted for.
+ */
+export function deleteProject(ctx: EngineContext, input: { reason?: string } = {}): { projectId: string; deletedAt: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  refuseDeletion(ctx, project);
+
+  const standing = deletionRequest(ctx);
+  if (!standing) {
+    throw new DomainError(
+      'PROJECT_DELETION_NOT_REQUESTED',
+      `Deleting ${String(project.state.name)} takes two people. Nobody has requested it yet — whoever administers this ` +
+        'project asks, with a reason, and an owner of the company confirms.',
+      409,
+    );
+  }
+  if (standing.requestedBy === ctx.auth.actorId) {
+    throw new DomainError(
+      'PROJECT_DELETION_SAME_PERSON',
+      'You requested this deletion, so you cannot also confirm it. It takes two people, and one person holding both ' +
+        'halves is one person. An owner of the company confirms it, or you withdraw it.',
+      409,
+    );
+  }
+  if (!ctx.auth.roles.includes('OWNER')) {
+    throw new DomainError(
+      'PROJECT_DELETION_OWNER_REQUIRED',
+      'Only an owner of the company confirms a project deletion. The reason for asking twice is that the second ' +
+        'answer comes from above the first, and project administration is the level that asked.',
+      403,
+    );
+  }
+
+  const reason = standing.reason;
   const deletedAt = new Date().toISOString();
   write(ctx, {
     eventType: 'PROJECT_DELETED',
@@ -1845,8 +1993,13 @@ export function deleteProject(ctx: EngineContext, input: { reason: string }): { 
       ...project.state,
       status: 'DELETED',
       deletedAt,
+      // Both names on the record, which is the whole value of asking twice: a
+      // year later "who deleted this" has two answers and the pair is the
+      // authority, not either one of them.
       deletedBy: ctx.auth.actorId,
-      deletionReason: input.reason.trim(),
+      deletionRequestedBy: standing.requestedBy,
+      deletionRequestedAt: standing.requestedAt,
+      deletionReason: reason,
     },
   });
   return { projectId: ctx.projectId, deletedAt };

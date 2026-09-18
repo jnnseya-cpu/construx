@@ -515,11 +515,29 @@ export async function enterprise(root) {
             p.riskScore === undefined ? '—' : String(p.riskScore),
             String(p.openIssues),
             money(p.contractValueMinor, p.currency),
-            // The record is kept; the project leaves the estate and takes no
-            // further command. The platform refuses where money is certified or
-            // a contract is executed, and says which.
+            /*
+             * Deleting a project takes two people, so this cell has three
+             * states rather than one button.
+             *
+             * Nobody has asked: the control requests it. Somebody has, and it
+             * was not you: you are the second person, so the control confirms —
+             * with who asked and why beside it, because that is what is being
+             * agreed to. Somebody has and it *was* you: confirming would be
+             * refused, so the only move offered is to withdraw it. A button
+             * that will refuse the person pressing it is the thing this avoids.
+             */
             can('PROJECT_SETUP', 'A')
-              ? html`<button class="btn quiet danger" data-delete-project="${p.projectId}" data-name="${p.name}">Delete</button>`
+              ? p.deletionRequest
+                ? html`<div class="metric-sub" style="margin-bottom:4px">
+                      Deletion requested${p.deletionRequest.requestedByName ? html` by ${p.deletionRequest.requestedByName}` : ''}
+                      on ${p.deletionRequest.requestedAt.slice(0, 10)}: “${p.deletionRequest.reason}”
+                    </div>
+                    ${p.deletionRequest.you
+                      ? html`<span class="metric-sub">Yours to withdraw; somebody else confirms it.</span>`
+                      : html`<button class="btn quiet danger" data-confirm-delete="${p.projectId}" data-name="${p.name}"
+                            data-reason="${p.deletionRequest.reason}">Confirm deletion</button>`}
+                    <button class="btn quiet sm" data-withdraw-delete="${p.projectId}" data-name="${p.name}">Withdraw</button>`
+                : html`<button class="btn quiet danger" data-delete-project="${p.projectId}" data-name="${p.name}">Request deletion</button>`
               : '',
           ]),
           empty: 'No projects',
@@ -1108,12 +1126,49 @@ export async function enterprise(root) {
     button.addEventListener('click', async () => {
       const projectId = button.getAttribute('data-delete-project');
       const result = await command({
-        title: `Delete ${button.getAttribute('data-name')}`,
+        title: `Request the deletion of ${button.getAttribute('data-name')}`,
         intent:
-          'The project leaves the estate, every screen and the picker, and takes no further command. Its record is kept and stays readable by its id. Refused where money has been certified or a contract is executed.',
-        path: `/v1/projects/${projectId}/delete`,
-        submitLabel: 'Delete the project',
+          'Half of the act. Nothing is deleted by this: the project stays live and in every listing until an owner of ' +
+          'the company confirms it, and either of you can withdraw it before then. Your reason is the one the record ' +
+          'keeps, and the one they are agreeing to. Refused now, rather than at the confirmation, where money has been ' +
+          'certified or a contract is executed.',
+        path: `/v1/projects/${projectId}/delete-request`,
+        submitLabel: 'Request deletion',
         fields: [{ name: 'reason', label: 'Why', type: 'textarea', hint: 'At least ten characters. This is the sentence the record keeps.' }],
+      });
+      if (!result) return;
+      // Nothing has been deleted, so nothing about the workspace moves. Said
+      // in as many words, because a "Delete" control that reports success and
+      // leaves the project on screen otherwise reads as a failure.
+      toast(
+        'Requested, not deleted',
+        `${button.getAttribute('data-name')} stays live, and in every listing, until an owner of the company confirms it. ` +
+          'Either of you can withdraw it before then.',
+        'ok',
+      );
+      await draw();
+    }),
+  );
+
+  /**
+   * The second half. Only offered to somebody who did not ask for it — the
+   * platform refuses the requester either way, and a button that refuses the
+   * person pressing it is not a button.
+   */
+  root.querySelectorAll('[data-confirm-delete]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const projectId = button.getAttribute('data-confirm-delete');
+      const name = button.getAttribute('data-name');
+      const result = await command({
+        title: `Confirm the deletion of ${name}`,
+        intent:
+          `Somebody has asked for this project to be deleted, for this reason: “${button.getAttribute('data-reason')}”. ` +
+          'Confirming is the second of the two answers the platform requires, and it is the one that does it. The ' +
+          'project leaves the estate, every screen and the picker, and takes no further command; its record is kept ' +
+          'and stays readable by its id. Both names go on the record.',
+        path: `/v1/projects/${projectId}/delete`,
+        submitLabel: 'Confirm the deletion',
+        fields: [],
       });
       if (!result) return;
       // The workspace was on the project just deleted: move to another, or to
@@ -1131,6 +1186,23 @@ export async function enterprise(root) {
         state.gate = null;
       }
       await draw();
+    }),
+  );
+
+  /** Calling it off. Either side may; it is not a decision to delete. */
+  root.querySelectorAll('[data-withdraw-delete]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const projectId = button.getAttribute('data-withdraw-delete');
+      const result = await command({
+        title: `Withdraw the deletion of ${button.getAttribute('data-name')}`,
+        intent:
+          'The request is called off and the project carries on. Both the asking and the withdrawal stay on the record ' +
+          '— "asked on the 3rd, called off on the 4th" is what an audit reads, and a cleared field cannot say it.',
+        path: `/v1/projects/${projectId}/delete-withdraw`,
+        submitLabel: 'Withdraw the request',
+        fields: [{ name: 'reason', label: 'Why it is being kept', type: 'textarea', hint: 'At least ten characters. This is the sentence the record keeps.' }],
+      });
+      if (result) await draw();
     }),
   );
 

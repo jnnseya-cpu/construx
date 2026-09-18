@@ -46,6 +46,30 @@ export type ProjectRow = {
   riskScore?: number;
   openIssues: number;
   /**
+   * A deletion somebody has asked for and nobody has confirmed.
+   *
+   * On the estate row because that is where the Delete control lives, and a
+   * two-person act needs the second person to be able to see there is a first.
+   * Without it the row would offer "Request deletion" to an owner whose only
+   * useful move is to confirm the one already standing.
+   */
+  deletionRequest?: {
+    requestedBy: string;
+    requestedByName?: string;
+    reason: string;
+    requestedAt: string;
+    /**
+     * Whether the person reading this row is the one who asked.
+     *
+     * Decided here rather than by the console comparing ids, because the
+     * console's idea of who it is comes from a different call with a different
+     * shape, and getting that comparison wrong offers the requester a Confirm
+     * button the server will refuse them. The context knows who is asking; it
+     * is the only place that cannot be wrong about it.
+     */
+    you: boolean;
+  };
+  /**
    * The portfolio this project is filed under, and where in the world it is.
    *
    * Carried because CONSTRUX is a worldwide platform and the estate could not
@@ -450,6 +474,24 @@ export function enterpriseCommand(
       portfolioId: String(state.portfolioId ?? ''),
       location: state.location as ProjectRow['location'],
     };
+
+    // Folded from the project's own state, the same way `deletionRequest` in
+    // `structure.ts` does it: a request stands until a withdrawal dated at or
+    // after it, and the deletion itself takes the project off this list
+    // entirely.
+    const requestedAt = typeof state.deletionRequestedAt === 'string' ? state.deletionRequestedAt : '';
+    const withdrawnAt = typeof state.deletionWithdrawnAt === 'string' ? state.deletionWithdrawnAt : '';
+    if (requestedAt !== '' && !(withdrawnAt !== '' && withdrawnAt >= requestedAt)) {
+      const requestedBy = String(state.deletionRequestedBy ?? '');
+      const asker = identities.find((entry) => entry.id === requestedBy);
+      row.deletionRequest = {
+        requestedBy,
+        ...(asker ? { requestedByName: asker.name } : {}),
+        reason: String(state.deletionReason ?? ''),
+        requestedAt,
+        you: requestedBy === ctx.auth.actorId,
+      };
+    }
 
     const manager = state.accountableManager as { userId: string; assignedAt: string } | undefined;
     if (manager) {
