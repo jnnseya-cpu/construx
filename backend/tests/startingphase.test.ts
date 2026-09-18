@@ -165,6 +165,17 @@ describe('a project opens where the business joins the lifecycle', () => {
   });
 });
 
+/**
+ * AC-05: every material movement between tender and contract carries a name.
+ *
+ * The fixture awards deliberately move the price and the programme, because a
+ * conversion where nothing moved proves nothing about the register. Since the
+ * conversion now refuses a material movement with nobody against it, the
+ * fixtures name owners — and the tests that exercise the refusal leave them out
+ * on purpose.
+ */
+const OWNERS = { PRICE: 'u-commercial-lead', PROGRAMME: 'u-planner', SCOPE: 'u-commercial-lead' };
+
 describe('a won tender converts the same project — it does not create a second one', () => {
   /**
    * The correction this file was rewritten for.
@@ -207,6 +218,7 @@ describe('a won tender converts the same project — it does not create a second
 
     const result = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded under LOI-4471; conversion approved by the commercial director.',
     });
@@ -244,6 +256,7 @@ describe('a won tender converts the same project — it does not create a second
     const { projectId, ctx } = bid('Conversion not regression');
     structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; contractor carries the detailed design.',
     });
@@ -257,6 +270,7 @@ describe('a won tender converts the same project — it does not create a second
     const { projectId, ctx } = bid('Novated design');
     const result = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'CONSTRUCTION',
       justification: 'Design novated complete at award; works start on site directly.',
     });
@@ -270,6 +284,7 @@ describe('a won tender converts the same project — it does not create a second
 
     structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded at a negotiated figure above the tendered sum.',
     });
@@ -288,6 +303,7 @@ describe('a won tender converts the same project — it does not create a second
 
     structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; freezing the tender position before design starts.',
     });
@@ -311,6 +327,7 @@ describe('a won tender converts the same project — it does not create a second
     const { projectId, ctx } = bid('Reconciliation');
     structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; reconciliation of tender against contract opens now.',
     });
@@ -352,6 +369,7 @@ describe('a won tender converts the same project — it does not create a second
     const { ctx } = bid('Settling');
     const { reconciliationId } = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; the reconciliation is the first month of work.',
     });
@@ -382,6 +400,7 @@ describe('a won tender converts the same project — it does not create a second
     const { ctx } = bid('In progress');
     const { reconciliationId } = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; work starts on the reconciliation immediately.',
     });
@@ -411,6 +430,7 @@ describe('a won tender converts the same project — it does not create a second
 
     const first = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded under LOI-4471; approved by the commercial director.',
       idempotencyKey: key,
@@ -419,6 +439,7 @@ describe('a won tender converts the same project — it does not create a second
 
     const replay = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded under LOI-4471; approved by the commercial director.',
       idempotencyKey: key,
@@ -443,6 +464,7 @@ describe('a won tender converts the same project — it does not create a second
     const { ctx } = bid('Second award attempt');
     structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded and converted.',
       idempotencyKey: 'idem-first',
@@ -451,6 +473,7 @@ describe('a won tender converts the same project — it does not create a second
       () =>
         structure.convertToDelivery(ctx, {
           award: { ...AWARD, contractSumMinor: 999 },
+          varianceOwners: OWNERS,
           deliveryEntry: 'DESIGN',
           justification: 'A different award entirely.',
           idempotencyKey: 'idem-second',
@@ -463,6 +486,7 @@ describe('a won tender converts the same project — it does not create a second
     const { ctx } = bid('Receipt shape');
     const receipt = structure.convertToDelivery(ctx, {
       award: AWARD,
+      varianceOwners: OWNERS,
       deliveryEntry: 'DESIGN',
       justification: 'Awarded; the receipt is what somebody produces a year later.',
     });
@@ -478,9 +502,9 @@ describe('a won tender converts the same project — it does not create a second
 
   it('refuses a second award on one project', () => {
     const { ctx } = bid('Awarded once');
-    structure.convertToDelivery(ctx, { award: AWARD, deliveryEntry: 'DESIGN', justification: 'Awarded under the framework.' });
+    structure.convertToDelivery(ctx, { award: AWARD, varianceOwners: OWNERS, deliveryEntry: 'DESIGN', justification: 'Awarded under the framework.' });
     throwsCode(
-      () => structure.convertToDelivery(ctx, { award: AWARD, deliveryEntry: 'DESIGN', justification: 'Awarded again somehow.' }),
+      () => structure.convertToDelivery(ctx, { award: AWARD, varianceOwners: OWNERS, deliveryEntry: 'DESIGN', justification: 'Awarded again somehow.' }),
       'ALREADY_CONVERTED',
     );
   });
@@ -489,7 +513,7 @@ describe('a won tender converts the same project — it does not create a second
     const concept = open('Never tendered');
     const ctx = platform.context(seed.users.admin!.auth, concept.projectId, { source: 'WEB' });
     throwsCode(
-      () => structure.convertToDelivery(ctx, { award: AWARD, deliveryEntry: 'DESIGN', justification: 'Awarded, allegedly.' }),
+      () => structure.convertToDelivery(ctx, { award: AWARD, varianceOwners: OWNERS, deliveryEntry: 'DESIGN', justification: 'Awarded, allegedly.' }),
       'PROJECT_NOT_AT_TENDER',
     );
   });
@@ -497,7 +521,7 @@ describe('a won tender converts the same project — it does not create a second
   it('refuses a tender outcome once the project has been converted', () => {
     const { ctx } = ((): { ctx: ReturnType<Platform['context']> } => {
       const made = bid('Converted then reconsidered');
-      structure.convertToDelivery(made.ctx, { award: AWARD, deliveryEntry: 'DESIGN', justification: 'Awarded and under way.' });
+      structure.convertToDelivery(made.ctx, { award: AWARD, varianceOwners: OWNERS, deliveryEntry: 'DESIGN', justification: 'Awarded and under way.' });
       return made;
     })();
     throwsCode(
@@ -651,6 +675,7 @@ describe('the lifecycle state is its own dimension', () => {
         contractStartDate: '2026-05-05',
         contractCompletionDate: '2027-11-30',
       },
+      varianceOwners: OWNERS,
       deliveryEntry: 'CONSTRUCTION',
       justification: 'Awarded and converted; works start on site in May.',
     });
@@ -721,5 +746,319 @@ describe('the lifecycle transition table itself', () => {
       const ways = [...definition.next, ...(definition.reopenTo ?? [])];
       assert.ok(ways.length > 0, `${definition.state} is a dead end, so the only way out is a duplicate project`);
     }
+  });
+});
+
+describe('the award is validated before anything is written', () => {
+  /**
+   * §5.4's first rule: *no partial visible conversion is permitted*.
+   *
+   * On an append-only ledger that cannot be kept by rolling back, so it is kept
+   * by validating everything first. These tests assert both halves — the
+   * refusal, and that nothing was committed by the attempt.
+   */
+  function bid(name: string, over: Record<string, unknown> = {}): ReturnType<Platform['context']> {
+    const created = open(name, {
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Pricing the client design against their bill of quantities.',
+      ...over,
+    });
+    return platform.context(seed.users.admin!.auth, created.projectId, { source: 'WEB' });
+  }
+
+  /** Awarded at the tender price and the tender programme: nothing material moved. */
+  const FLAT = {
+    contractAwardDate: '2026-04-20',
+    contractSumMinor: 100_000_000,
+    contractForm: 'NEC4 ECC Option A',
+    contractedScope: 'Exactly as tendered, with no change to scope, price or programme.',
+    contractStartDate: '2026-02-02',
+    contractCompletionDate: '2027-08-13',
+  };
+
+  it('AC-05 — refuses a material price movement with nobody against it, naming the field', () => {
+    const ctx = bid('AC-05 price');
+    const before = platform.ledger.list(ctx.projectId, 'AwardReconciliation').length;
+
+    // 100,000,000 tendered against 142,500,000 contracted: 42.5%, far past the
+    // share at which a movement stops being a detail.
+    const error = throwsCode(
+      () =>
+        structure.convertToDelivery(ctx, {
+          award: { ...FLAT, contractSumMinor: 142_500_000 },
+          deliveryEntry: 'DESIGN',
+          justification: 'Awarded at a figure nobody has been made responsible for.',
+        }),
+      'CONVERSION_NOT_READY',
+    ) as { status?: number; fieldErrors?: Array<{ field: string; message: string }> };
+
+    assert.equal(error.status, 422);
+    // Field-level remediation, which is the whole of AC-05's third column: the
+    // form marks the box rather than printing a paragraph above it.
+    assert.ok(
+      (error.fieldErrors ?? []).some((entry) => entry.field === 'varianceOwners.PRICE'),
+      `the refusal named no field: ${JSON.stringify(error.fieldErrors)}`,
+    );
+
+    // And nothing was written by the attempt.
+    assert.equal(platform.ledger.list(ctx.projectId, 'AwardReconciliation').length, before);
+    assert.equal(platform.ledger.list(ctx.projectId, 'InheritanceRegister').length, 0);
+    assert.equal(platform.ledger.list(ctx.projectId, 'ProjectBaseline').length, 0);
+    assert.equal(projectState(ctx.projectId).lifecycleState, 'PRE_AWARD');
+  });
+
+  it('AC-05 — refuses a material programme movement, and a struck-out exclusion, by name', () => {
+    const programme = throwsCode(
+      () =>
+        structure.convertToDelivery(bid('AC-05 programme'), {
+          // 558 tendered days against 663: 18.8%.
+          award: { ...FLAT, contractCompletionDate: '2027-11-30' },
+          deliveryEntry: 'DESIGN',
+          justification: 'Awarded on a programme three months longer than the one priced.',
+        }),
+      'CONVERSION_NOT_READY',
+    ) as { fieldErrors?: Array<{ field: string }> };
+    assert.ok((programme.fieldErrors ?? []).some((entry) => entry.field === 'varianceOwners.PROGRAMME'));
+
+    // A struck-out exclusion is material at any size: the business priced the
+    // work without it and is now carrying it for nothing.
+    const scope = throwsCode(
+      () =>
+        structure.convertToDelivery(bid('AC-05 scope'), {
+          award: { ...FLAT, removedExclusions: ['Asbestos removal in the existing plant room'] },
+          deliveryEntry: 'DESIGN',
+          justification: 'Awarded with the asbestos exclusion struck out by the client.',
+        }),
+      'CONVERSION_NOT_READY',
+    ) as { fieldErrors?: Array<{ field: string }> };
+    assert.ok((scope.fieldErrors ?? []).some((entry) => entry.field === 'varianceOwners.SCOPE'));
+  });
+
+  it('AC-05 — converts once the owners are named, and opens those lines already owned', () => {
+    const ctx = bid('AC-05 owned');
+    const receipt = structure.convertToDelivery(ctx, {
+      award: { ...FLAT, contractSumMinor: 142_500_000, contractCompletionDate: '2027-11-30' },
+      varianceOwners: { PRICE: 'u-commercial-lead', PROGRAMME: 'u-planner' },
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded; the commercial lead owns the price movement and the planner the programme.',
+    });
+
+    const register = structure.awardReconciliation(ctx)!;
+    const price = register.items.find((item) => item.id === 'PRICE')!;
+    const programme = register.items.find((item) => item.id === 'PROGRAMME')!;
+    const scope = register.items.find((item) => item.id === 'SCOPE')!;
+
+    assert.equal(price.owner, 'u-commercial-lead');
+    assert.equal(programme.owner, 'u-planner');
+    assert.equal(price.material, true, 'a 42.5% price movement is not marked material');
+    // Nothing moved on scope in this award, so it opens unowned like the rest.
+    assert.equal(scope.material, false);
+    assert.equal(scope.owner, null);
+    assert.ok(receipt.reconciliationId);
+  });
+
+  it('AC-05 — leaves an immaterial movement alone rather than demanding an owner for it', () => {
+    // A movement below the share is a detail, and a platform that blocked a
+    // conversion over one would teach people to name a fictional owner.
+    const ctx = bid('AC-05 immaterial');
+    const receipt = structure.convertToDelivery(ctx, {
+      award: { ...FLAT, contractSumMinor: 100_200_000 },
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded at the tender figure less a rounding adjustment.',
+    });
+    assert.ok(receipt.conversionId);
+    const price = structure.awardReconciliation(ctx)!.items.find((item) => item.id === 'PRICE')!;
+    assert.equal(price.material, false);
+  });
+
+  it('AC-09 — refuses to convert a framework appointment that has no call-off', () => {
+    const ctx = bid('AC-09 framework');
+    const error = throwsCode(
+      () =>
+        structure.convertToDelivery(ctx, {
+          award: { ...FLAT, frameworkAppointment: true },
+          deliveryEntry: 'CONSTRUCTION',
+          justification: 'Appointed to the framework, so the job is live, allegedly.',
+        }),
+      'CONVERSION_NOT_READY',
+    ) as { fieldErrors?: Array<{ field: string }> };
+
+    assert.ok((error.fieldErrors ?? []).some((entry) => entry.field === 'award.callOffReference'));
+    assert.equal(projectState(ctx.projectId).lifecycleState, 'PRE_AWARD', 'the framework appointment went live');
+
+    // Named the call-off, and it converts.
+    const receipt = structure.convertToDelivery(ctx, {
+      award: { ...FLAT, frameworkAppointment: true, callOffReference: 'Call-off 7 — Ribble catchment, task order TO-118', callOffDate: '2026-04-22' },
+      deliveryEntry: 'CONSTRUCTION',
+      justification: 'Call-off 7 instructed under the framework; this is the job being delivered.',
+    });
+    assert.equal(receipt.currentState, 'LIVE_MOBILISING');
+  });
+
+  it('AC-09 — treats a project already recorded as framework-appointed the same way', () => {
+    // The flag can come from either side: the award says so, or the project was
+    // already marked FRAMEWORK_APPOINTED when the outcome was recorded. Both
+    // are the same commercial fact and neither is a job.
+    const ctx = bid('AC-09 outcome');
+    structure.setLifecycleState(ctx, {
+      to: 'ON_HOLD',
+      reason: 'Appointed to the framework; waiting on the first call-off.',
+      commercialOutcome: 'FRAMEWORK_APPOINTED',
+    });
+    throwsCode(
+      () =>
+        structure.convertToDelivery(ctx, {
+          award: FLAT,
+          deliveryEntry: 'CONSTRUCTION',
+          justification: 'Converting the framework place into a live job.',
+        }),
+      'CONVERSION_NOT_READY',
+    );
+  });
+
+  it('AC-04 — a commit against a stale project version is refused, and writes nothing', () => {
+    const ctx = bid('AC-04 stale');
+    const held = platform.ledger.require({ refType: 'Project', refId: ctx.projectId }).version;
+
+    // Somebody else moves the project after this caller read it.
+    structure.setLifecycleState(ctx, { to: 'NEGOTIATION', reason: 'Clarifications issued; the bid is in negotiation.' });
+    const current = platform.ledger.require({ refType: 'Project', refId: ctx.projectId }).version;
+    assert.ok(current > held, 'the project did not move, so this proves nothing');
+
+    const stale = platform.context(seed.users.admin!.auth, ctx.projectId, { source: 'WEB', expectedVersion: held });
+    assert.throws(
+      () =>
+        structure.convertToDelivery(stale, {
+          award: FLAT,
+          deliveryEntry: 'DESIGN',
+          justification: 'Awarded, from a screen loaded before somebody else moved it.',
+        }),
+      (error: { code?: string; status?: number; currentVersion?: number; expectedVersion?: number }) => {
+        assert.equal(error.code, 'VERSION_CONFLICT');
+        assert.equal(error.status, 409);
+        assert.equal(error.currentVersion, current);
+        assert.equal(error.expectedVersion, held);
+        return true;
+      },
+    );
+
+    // §5.4: no partial visible conversion. Refused before the baselines rather
+    // than at the project write four commitments later.
+    assert.equal(platform.ledger.list(ctx.projectId, 'ProjectBaseline').length, 0);
+    assert.equal(platform.ledger.list(ctx.projectId, 'AwardReconciliation').length, 0);
+    assert.equal(platform.ledger.list(ctx.projectId, 'InheritanceRegister').length, 0);
+
+    // And the same award at the current version goes through.
+    const fresh = platform.context(seed.users.admin!.auth, ctx.projectId, { source: 'WEB', expectedVersion: current });
+    assert.equal(
+      structure.convertToDelivery(fresh, {
+        award: FLAT,
+        deliveryEntry: 'DESIGN',
+        justification: 'Awarded, from a screen that had been reloaded.',
+      }).currentState,
+      'LIVE_MOBILISING',
+    );
+  });
+});
+
+describe('a converted project can reach site', () => {
+  /**
+   * The defect this closes, found by driving a conversion over HTTP rather than
+   * by reading the rule.
+   *
+   * A design-and-build contractor registers at TENDER, wins, and the conversion
+   * opens delivery at DESIGN — earlier in this order, because the order is the
+   * asset's and the asset's order is the client's. The job then goes to site,
+   * and `DESIGN → CONSTRUCTION` steps over TENDER. Read as a skip it was
+   * refused, so **every design-and-build project the platform converted was
+   * stuck at DESIGN**, and the only way forward was a "regression" to TENDER
+   * the project was not in fact making: a false statement in the record, made
+   * to satisfy a check.
+   *
+   * The rule is not one step at a time. It is that nothing may be passed over
+   * unseen.
+   */
+  function converted(name: string): ReturnType<Platform['context']> {
+    const created = open(name, {
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Pricing the client design against their bill of quantities.',
+    });
+    const ctx = platform.context(seed.users.admin!.auth, created.projectId, { source: 'WEB' });
+    structure.convertToDelivery(ctx, {
+      award: {
+        contractAwardDate: '2026-04-20',
+        contractSumMinor: 100_000_000,
+        contractForm: 'NEC4 ECC Option A',
+        contractedScope: 'Design and build of the treatment works, as tendered.',
+        contractStartDate: '2026-02-02',
+        contractCompletionDate: '2027-08-13',
+      },
+      deliveryEntry: 'DESIGN',
+      justification: 'Awarded; the contractor develops the concept design it priced.',
+    });
+
+    // The DESIGN gate, satisfied honestly. The point of this test is the skip
+    // rule, and a project that cleared the gate is the only one that can reach
+    // it — a fixture that skipped the gate would be testing the wrong refusal.
+    const designer = platform.context(seed.users.designer!.auth, created.projectId, { source: 'WEB' });
+    structure.assessDesignMaturity(designer, {
+      packageId: 'PKG-CIVILS',
+      disciplineScores: [{ discipline: 'Civil', ribaStage: 4, completenessPercent: 92, frozen: true }],
+      informationGaps: [],
+      assessorNotes: 'Civils package frozen at RIBA 4; quantities measurable and the sequence agreed.',
+    });
+    return ctx;
+  }
+
+  it('moves from DESIGN to CONSTRUCTION, stepping over the tender it has already been through', () => {
+    const ctx = converted('Converted to site');
+    assert.equal(projectState(ctx.projectId).phase, 'DESIGN');
+
+    const moved = structure.transitionPhase(ctx, {
+      to: 'CONSTRUCTION',
+      justification: 'The design is issued for construction and the ground works have started on site.',
+    });
+
+    assert.equal(moved.direction, 'FORWARD', 'going to site was recorded as the project going backwards');
+    assert.equal(projectState(ctx.projectId).phase, 'CONSTRUCTION');
+    // And the entry stage is unchanged: this project entered at tender and
+    // still says so, which is how a reader tells it from one that came through
+    // concept and design.
+    assert.equal(projectState(ctx.projectId).startedAtPhase, 'TENDER');
+  });
+
+  it('still refuses a leap over a phase the project has never been in', () => {
+    // The failure the check exists for, which the fix must not open.
+    const { projectId } = open('Never been anywhere', {
+      startingPhase: 'CONCEPT',
+      startingPhaseReason: 'An ordinary project, starting at the start.',
+    });
+    const ctx = platform.context(seed.users.admin!.auth, projectId, { source: 'WEB' });
+    throwsCode(
+      () =>
+        structure.transitionPhase(ctx, {
+          to: 'CONSTRUCTION',
+          justification: 'Straight to site, with no design and no tender behind it.',
+        }),
+      'PHASE_SKIP_FORBIDDEN',
+    );
+    assert.equal(projectState(projectId).phase, 'CONCEPT');
+  });
+
+  it('names what was passed over, rather than saying the move is forbidden', () => {
+    const { projectId } = open('Named skip', {
+      startingPhase: 'CONCEPT',
+      startingPhaseReason: 'An ordinary project, starting at the start.',
+    });
+    const ctx = platform.context(seed.users.admin!.auth, projectId, { source: 'WEB' });
+    const error = throwsCode(
+      () => structure.transitionPhase(ctx, { to: 'HANDOVER', justification: 'Straight to handover, somehow.' }),
+      'PHASE_SKIP_FORBIDDEN',
+    ) as { message: string; fieldErrors?: Array<{ field: string }> };
+
+    for (const phase of ['DESIGN', 'TENDER', 'CONSTRUCTION', 'COMMISSIONING']) {
+      assert.match(error.message, new RegExp(phase), `${phase} was passed over and not named`);
+    }
+    assert.ok((error.fieldErrors ?? []).some((entry) => entry.field === 'to'));
   });
 });

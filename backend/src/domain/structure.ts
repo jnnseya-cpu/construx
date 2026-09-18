@@ -1,11 +1,13 @@
 import { COUNTRY, values } from '../../../shared/vocabulary.js';
 import { hashEvidence } from '../core/canonical.ts';
 import { assertOrder } from './dates.ts';
+import { MATERIALITY } from './designchange.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import { assertAggregateVersion, authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import * as stages from '../lifecycle/stages.ts';
 import { openInheritanceRegister } from './inheritance.ts';
+import { openConversionWorkstreams, type WorkstreamType } from '../lifecycle/workstreams.ts';
 import {
   assertStartingPhase,
   assertTransitionAllowed,
@@ -618,8 +620,210 @@ const RECONCILIATION_LINES: ReadonlyArray<{
   { id: 'PROCUREMENT', tender: 'Supplier quotations', contract: 'Award-ready procurement packages', measurable: false },
 ];
 
+/**
+ * The line ids, published so a route schema and a console chooser offer exactly
+ * the lines the register holds rather than a second list of the same names.
+ */
+export const RECONCILIATION_LINE_IDS: readonly string[] = RECONCILIATION_LINES.map((line) => line.id);
+
 /** Days from award before a reconciliation item is overdue. */
 const RECONCILIATION_DUE_DAYS = 28;
+
+/**
+ * When a movement between what was tendered and what was contracted stops being
+ * a detail and becomes somebody's job.
+ *
+ * A proportion rather than an amount, which is `lifecycle/scale.ts`'s rule and
+ * the reason it exists: an absolute threshold is always wrong at one end of the
+ * market. £50,000 is the whole margin on a school and a rounding error on a
+ * hospital.
+ *
+ * **Price reuses the design-change share rather than declaring a second
+ * number.** `MATERIALITY.significantSharePercent` is the point at which a
+ * change stops being one manager's to approve alone; a price movement at award
+ * that would need a project director's decision as a design change needs a
+ * named owner at award for the same reason, and two numbers meaning the same
+ * thing is how they drift apart.
+ *
+ * **Programme has its own share because it is measured in different stuff.**
+ * Two per cent of a tender programme — a week on a year — is the point at which
+ * the sequence the price assumed no longer holds: the winter works move, the
+ * crane comes off hire late, the prelims run on. Below that a date moves;
+ * above it the job is a different job.
+ */
+export const VARIANCE_MATERIALITY = {
+  priceSharePercent: MATERIALITY.significantSharePercent,
+  programmeSharePercent: 2,
+} as const;
+
+/** One thing that stops a conversion, with the field a person has to fill. */
+export type ConversionBlocker = {
+  code: string;
+  /** The reconciliation line it belongs to, where it belongs to one. */
+  line?: string;
+  field: string;
+  message: string;
+};
+
+/** A movement big enough to need an owner, with the arithmetic that says so. */
+export type MaterialVariance = {
+  line: string;
+  unit: 'MONEY' | 'DAYS' | 'SCOPE';
+  movement?: number;
+  sharePercent?: number;
+  why: string;
+  owner?: string;
+};
+
+/**
+ * Whether this award may be committed, and what is stopping it — §5.2 step 8.
+ *
+ * Pure, and separate from the command, for the reason every validation on this
+ * platform is: the answer has to be the same whether it is being *shown* to
+ * somebody filling a form or *enforced* at the moment of commit. A rule written
+ * inside the command can only ever refuse; a rule written here can also explain
+ * before anybody presses anything.
+ *
+ * Two things block a conversion, and both are AC rows.
+ *
+ * **AC-05 — a material variance with no owner.** The difference between what
+ * was tendered and what was contracted is the single most expensive thing on a
+ * project, and the way it gets lost is not that nobody noticed it: it is that
+ * everybody noticed it and it was nobody's. A movement above materiality
+ * therefore has to carry a name before the job goes live, and the refusal names
+ * the field rather than the problem — `varianceOwners.PRICE`, not "fix your
+ * variances".
+ *
+ * A struck-out exclusion is a scope variance by construction. The business
+ * priced the work without it; the client removed it; that scope is now carried
+ * for nothing. It is material at any size, so it needs an owner whatever the
+ * money says.
+ *
+ * **AC-09 — a framework appointment with no call-off.** Being appointed to a
+ * framework is a place on a list. It is not a job, there is no scope, no
+ * programme and no sum, and converting one to live delivery produces a project
+ * that reports itself as being built when nobody has instructed anything. The
+ * call-off is the job, and it is what this asks for.
+ */
+export function conversionReadiness(input: {
+  project: Record<string, unknown>;
+  award: AwardParticulars;
+  /** Reconciliation line id to the person who owns closing it. */
+  varianceOwners?: Record<string, string>;
+}): { ready: boolean; blockers: ConversionBlocker[]; materialVariances: MaterialVariance[] } {
+  const blockers: ConversionBlocker[] = [];
+  const material: MaterialVariance[] = [];
+  const owners = input.varianceOwners ?? {};
+  const owned = (line: string): string | undefined => {
+    const owner = owners[line];
+    return owner && owner.trim() ? owner.trim() : undefined;
+  };
+
+  // --- AC-09, checked first: a framework with no call-off is not a job at all,
+  // and reporting its variances would be arithmetic about nothing.
+  const frameworkOutcome = input.project.commercialOutcome === 'FRAMEWORK_APPOINTED';
+  if (input.award.frameworkAppointment === true || frameworkOutcome) {
+    if (!(input.award.callOffReference ?? '').trim()) {
+      blockers.push({
+        code: 'FRAMEWORK_CALL_OFF_REQUIRED',
+        field: 'award.callOffReference',
+        message:
+          'A framework appointment is a place on a list, not a job. Name the call-off, task order or instruction ' +
+          'being converted — a framework with no call-off has no scope, no programme and no sum to deliver against.',
+      });
+    }
+  }
+
+  // --- AC-05, price.
+  const tenderValue = Number(input.project.contractValueMinor ?? 0);
+  const contractSum = Number(input.award.contractSumMinor ?? 0);
+  if (tenderValue > 0) {
+    const movement = contractSum - tenderValue;
+    const sharePercent = Number(((Math.abs(movement) / tenderValue) * 100).toFixed(3));
+    if (sharePercent > VARIANCE_MATERIALITY.priceSharePercent) {
+      const owner = owned('PRICE');
+      material.push({
+        line: 'PRICE',
+        unit: 'MONEY',
+        movement,
+        sharePercent,
+        why:
+          `The contract sum is ${sharePercent}% ${movement > 0 ? 'above' : 'below'} the tender price, which is past ` +
+          `the ${VARIANCE_MATERIALITY.priceSharePercent}% share at which a movement stops being a detail.`,
+        ...(owner ? { owner } : {}),
+      });
+      if (!owner) {
+        blockers.push({
+          code: 'MATERIAL_VARIANCE_UNOWNED',
+          line: 'PRICE',
+          field: 'varianceOwners.PRICE',
+          message:
+            `The contract sum moved ${sharePercent}% against the tender price. Name who owns closing that ` +
+            'difference before the job goes live.',
+        });
+      }
+    }
+  }
+
+  // --- AC-05, programme.
+  const tenderDays = daysBetween(String(input.project.plannedStart ?? ''), String(input.project.plannedCompletion ?? ''));
+  const contractDays = daysBetween(input.award.contractStartDate, input.award.contractCompletionDate);
+  if (tenderDays !== undefined && tenderDays > 0 && contractDays !== undefined) {
+    const movement = contractDays - tenderDays;
+    const sharePercent = Number(((Math.abs(movement) / tenderDays) * 100).toFixed(3));
+    if (sharePercent > VARIANCE_MATERIALITY.programmeSharePercent) {
+      const owner = owned('PROGRAMME');
+      material.push({
+        line: 'PROGRAMME',
+        unit: 'DAYS',
+        movement,
+        sharePercent,
+        why:
+          `The contract programme is ${Math.abs(movement)} day(s) ${movement > 0 ? 'longer' : 'shorter'} than the ` +
+          `tender programme — ${sharePercent}%, past the ${VARIANCE_MATERIALITY.programmeSharePercent}% share at ` +
+          'which the sequence the price assumed no longer holds.',
+        ...(owner ? { owner } : {}),
+      });
+      if (!owner) {
+        blockers.push({
+          code: 'MATERIAL_VARIANCE_UNOWNED',
+          line: 'PROGRAMME',
+          field: 'varianceOwners.PROGRAMME',
+          message:
+            `The contract programme moved ${Math.abs(movement)} day(s) against the tender. Name who owns closing ` +
+            'that difference before the job goes live.',
+        });
+      }
+    }
+  }
+
+  // --- AC-05, scope. Material at any size: this is scope the business excluded
+  // when it priced and is now carrying for nothing.
+  const removed = (input.award.removedExclusions ?? []).filter((entry) => String(entry ?? '').trim());
+  if (removed.length > 0) {
+    const owner = owned('SCOPE');
+    material.push({
+      line: 'SCOPE',
+      unit: 'SCOPE',
+      why:
+        `${removed.length} exclusion(s) the tender was priced on were struck out of the contract: ` +
+        `${removed.slice(0, 3).join('; ')}${removed.length > 3 ? '; …' : ''}. That scope is now carried for nothing.`,
+      ...(owner ? { owner } : {}),
+    });
+    if (!owner) {
+      blockers.push({
+        code: 'MATERIAL_VARIANCE_UNOWNED',
+        line: 'SCOPE',
+        field: 'varianceOwners.SCOPE',
+        message:
+          `${removed.length} exclusion(s) the price depended on were struck out of the contract. Name who owns ` +
+          'pricing and recovering that scope before the job goes live.',
+      });
+    }
+  }
+
+  return { ready: blockers.length === 0, blockers, materialVariances: material };
+}
 
 /**
  * Open the reconciliation.
@@ -637,6 +841,8 @@ function openReconciliation(
     project: Record<string, unknown>;
     award: AwardParticulars;
     at: string;
+    /** What the readiness check found, so the register opens knowing it. */
+    materialVariances: MaterialVariance[];
   },
 ): string {
   const reconciliationId = ulid();
@@ -663,6 +869,12 @@ function openReconciliation(
       measured = { tenderSide: tenderDays, contractSide: contractDays, movement: contractDays - tenderDays };
     }
 
+    // What the readiness check said about this line. A material line opens with
+    // the owner the award named — AC-05 refuses the conversion without one — so
+    // the register starts with the expensive lines already belonging to
+    // somebody, and the rest blank for a person to fill.
+    const variance = input.materialVariances.find((entry) => entry.line === line.id);
+
     return {
       id: line.id,
       tender: line.tender,
@@ -671,7 +883,10 @@ function openReconciliation(
       unit: line.unit ?? null,
       ...measured,
       status: 'OPEN' as const,
-      owner: null,
+      material: variance !== undefined,
+      materiality: variance?.why ?? null,
+      sharePercent: variance?.sharePercent ?? null,
+      owner: variance?.owner ?? null,
       dueDate: due,
       note: null,
       approvedBy: null,
@@ -862,6 +1077,18 @@ export type AwardParticulars = {
   regulatoryObligations?: string[];
   contractParties?: Array<{ role: string; name: string }>;
   keySubcontractors?: string[];
+  /**
+   * Whether this award is an appointment to a framework rather than a job.
+   *
+   * §3.3's own scenario row: *framework win before call-off — call-off pursuit
+   * only; no delivery conversion until award.* A framework place has no scope,
+   * no programme and no sum; converting one produces a project that reports
+   * itself as being built when nobody has instructed anything.
+   */
+  frameworkAppointment?: boolean;
+  /** The call-off, task order or instruction under the framework that is the job. */
+  callOffReference?: string;
+  callOffDate?: string;
 };
 
 /**
@@ -922,6 +1149,16 @@ export function convertToDelivery(
      * person creates the duplicate project this whole model exists to prevent.
      */
     idempotencyKey?: string;
+    /**
+     * Who owns closing each material difference between tender and contract,
+     * by reconciliation line id — AC-05.
+     *
+     * Taken at award rather than filled in afterwards because afterwards is
+     * where it does not happen: the price moved, everybody saw it move, and by
+     * the time somebody asks whose it is the people who could have answered
+     * have moved on to the next job.
+     */
+    varianceOwners?: Record<string, string>;
   },
 ): ConversionReceipt {
   /*
@@ -937,6 +1174,18 @@ export function convertToDelivery(
 
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
   const from = project.state.phase as LifecyclePhase;
+
+  /*
+   * AC-04. The caller's `If-Match` is asserted against the project here, before
+   * anything is committed, rather than being caught at the project write four
+   * commitments later.
+   *
+   * The version is published as `aggregateVersion` on the project read, so a
+   * client that read the project and then converted it is refused with 409 and
+   * the current version if somebody else moved it in between — which on this
+   * command is somebody else awarding, suspending or withdrawing the same job.
+   */
+  assertAggregateVersion(ctx, { refType: 'Project', refId: ctx.projectId });
 
   /*
    * A retry of a conversion that already succeeded.
@@ -979,6 +1228,31 @@ export function convertToDelivery(
   }
 
   assertOrder(input.award.contractStartDate, input.award.contractCompletionDate, 'contractStartDate', 'contractCompletionDate');
+
+  /*
+   * §5.2 step 8, enforced. Everything is validated before anything is written —
+   * §5.4's first rule, "no partial visible conversion is permitted", which on an
+   * append-only ledger is the only way to keep it: there is nothing to roll back
+   * afterwards.
+   *
+   * The 422 carries the blockers as field errors, so the form marks the box a
+   * person has to fill rather than printing a paragraph above it.
+   */
+  const readiness = conversionReadiness({
+    project: project.state,
+    award: input.award,
+    ...(input.varianceOwners ? { varianceOwners: input.varianceOwners } : {}),
+  });
+  if (!readiness.ready) {
+    throw new DomainError(
+      'CONVERSION_NOT_READY',
+      readiness.blockers.length === 1
+        ? readiness.blockers[0]!.message
+        : `${readiness.blockers.length} things have to be settled before this award can be converted.`,
+      422,
+      readiness.blockers.map((blocker) => ({ field: blocker.field, message: blocker.message })),
+    );
+  }
 
   const now = new Date().toISOString();
 
@@ -1077,7 +1351,18 @@ export function convertToDelivery(
     project: project.state,
     award: input.award,
     at: now,
+    materialVariances: readiness.materialVariances,
   });
+
+  /*
+   * What is actually running from the moment the job goes live — §3.3.
+   *
+   * Opened here rather than left to somebody to remember. A project whose only
+   * statement about itself is "primary stage: Design" has quietly asserted that
+   * procurement and the tender reconciliation are not happening, and the first
+   * report built on that is wrong.
+   */
+  const workstreams = openConversionWorkstreams(ctx, input.deliveryEntry);
 
   const awardEvidence = registerEvidence(ctx, {
     type: 'CONTRACT_AWARD',
@@ -1109,6 +1394,7 @@ export function convertToDelivery(
     // acts on. A register nobody knows exists is a register nobody opens.
     inheritanceRegisterId: inheritance.registerId,
     inheritedItemsAwaitingValidation: inheritance.items,
+    workstreams: workstreams.map((entry) => entry.type),
     committedAt: now,
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
   };
@@ -1200,6 +1486,14 @@ export type ConversionReceipt = {
   inheritanceRegisterId: string;
   /** How many inherited items still need a disposition. All of them, at award. */
   inheritedItemsAwaitingValidation: number;
+  /**
+   * The workstreams the award opened — §3.3's scenario table, applied.
+   *
+   * On the receipt because what is running is part of what was committed. A
+   * conversion that quietly opened four registers nobody was told about is a
+   * conversion nobody can check.
+   */
+  workstreams: WorkstreamType[];
   committedAt: string;
   idempotencyKey?: string;
   /** True only on a replay, so a caller can tell a fresh commit from an echo. */
@@ -1568,7 +1862,26 @@ export function transitionPhase(
   }
 
   const evaluation = evaluatePhaseGate(from, (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state));
-  const { direction } = assertTransitionAllowed(from, input.to, evaluation);
+  /*
+   * What this project has actually been through, read from the stage instances
+   * rather than inferred from where it is now.
+   *
+   * A design-and-build job registers at TENDER, wins, and converts to DESIGN —
+   * which is earlier in the asset's order. Going to site then steps over
+   * TENDER, and without this the move is refused as a skip and the only way
+   * forward is a regression the project is not making. The stage instances are
+   * the record of occupancy, so they are what the question is asked of.
+   */
+  const traversed = stages
+    .stageInstances(ctx)
+    .map((instance) => instance.phase as LifecyclePhase)
+    .filter((phase) => LIFECYCLE_ORDER.includes(phase));
+  const { direction } = assertTransitionAllowed(from, input.to, evaluation, [
+    ...traversed,
+    // The phase it opened at, for a project old enough to predate stage
+    // instances or one that converted without opening one for the phase it left.
+    ...((project.state.startedAtPhase ? [project.state.startedAtPhase] : []) as LifecyclePhase[]),
+  ]);
 
   // The write itself lives in `lifecycle/stages.ts`.
   //

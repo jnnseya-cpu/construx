@@ -89,6 +89,19 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   InheritanceRegister: { area: 'DESIGN_INFORMATION' },
   ProjectBaseline: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
   AwardReconciliation: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
+  /*
+   * `PROJECT_SETUP`, because which workstreams a project is running is the same
+   * question as which stage it is at and who set it up that way — and the
+   * permission matrix already answers that one.
+   */
+  Workstream: { area: 'PROJECT_SETUP' },
+  /*
+   * Which pursuit produced which job, and on whose authority. Commercially
+   * sensitive rather than merely structural: the family is the answer to "how
+   * much did that framework actually turn into", which is the number a
+   * competitor would most like.
+   */
+  ProjectRelationship: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
   User: { area: 'ENTERPRISE_STRUCTURE' },
   // What a company decided somebody may do. Same area as the people it applies to.
   CustomRole: { area: 'ENTERPRISE_STRUCTURE' },

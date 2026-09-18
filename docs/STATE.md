@@ -23033,16 +23033,14 @@ foundation — and part of increment 2. Still open, and none of it is claimed:
 - **§5.2 the ten-step conversion wizard.** Conversion is one command, not a
   drafted, validated, approved and committed workflow. No draft, no readiness
   validation, no approval routing, no receipt.
-- **FR-005 / AC-03 idempotency.** A retried conversion returns `409` rather than
-  the original receipt. That is a guard against double-award, not idempotency.
-- **AC-04 optimistic concurrency.** There is no `If-Match` on the project
-  aggregate and no `aggregate_version`.
-- **§6 information inheritance.** No dispositions, no provenance, no maturity.
-  AC-02 — a Proposed tender drawing must not become IFC through conversion —
-  **would fail today**, and it is the most dangerous gap on this list.
-- **§3.1 / FR-009 workstreams.** One primary stage, no concurrent workstreams.
-- **§7 the remaining five baselines**, §10 `project_relationship` and child
-  projects, §11's outbox and event envelope, §13.2 step-up authentication.
+- **§5.2 the ten-step conversion wizard.** Conversion is one command, not a
+  drafted, validated, approved and committed workflow.
+- **§13.2 step-up authentication.**
+
+Closed since, each with its own section below: FR-005 / AC-03 idempotency;
+AC-04 optimistic concurrency; §6 information inheritance and AC-02; §3.1 /
+FR-009 workstreams and AC-06; §10 `project_relationship` and AC-10; §11's outbox
+and event envelope and AC-12; AC-05 and AC-09 as conversion preconditions.
 
 ### The landing page headline sold the artefact
 
@@ -23213,3 +23211,199 @@ with one item awaiting validation and nothing authoritative; accepting with no
 contract clause refused `422 CONTRACT_REFERENCE_REQUIRED`; accepting as the
 enterprise admin refused `403 ACCESS_DENIED`; accepting as the designer granted
 authority.
+
+### AC-04: the precondition is asserted first, and spent
+
+§15.1's optimistic concurrency already existed and was enforced inside `write`,
+which is the right place for a command that makes one change and the wrong place
+for a command that makes several. `convertToDelivery` freezes two baselines,
+opens an inheritance register and opens a reconciliation before it touches the
+project, so a stale `If-Match` caught at the project write would already have
+four commitments behind it — and the ledger is append-only, so there is nothing
+to roll back. §5.4's first rule is that no partial visible conversion is
+permitted; on this ledger that is kept by validating everything first.
+
+`assertAggregateVersion` asserts the precondition against the named aggregate
+before anything is written, and the project read now publishes
+`aggregateVersion` — a precondition nobody can read the current value of is one
+nobody can satisfy.
+
+**And it is spent, which is not a detail.** Left in place, the precondition is
+re-asserted at every subsequent write in the same command, including the
+command's own earlier writes to the same aggregate. The award write took the
+project from version 2 to 3 and the phase change immediately after was refused
+for amending version 2 — a correct conversion failing halfway through with a
+conflict against itself. Asserted once, cleared, and every write after it in
+that command is that command's own.
+
+Verified live: `GET /v1/projects/{id}` returns `aggregateVersion: 3`; a convert
+carrying `If-Match: 2` is refused 409 `VERSION_CONFLICT` with `currentVersion`,
+`expectedVersion` and the three permitted resolutions, and nothing is written.
+
+### AC-05 and AC-09: what has to be settled before an award can be committed
+
+§5.2's step 8 — readiness validation — enforced as a precondition rather than
+built as a wizard screen. `conversionReadiness` is pure and separate from the
+command, because the answer has to be the same whether it is being shown to
+somebody filling a form or enforced at the moment of commit.
+
+**A material movement carries a name (AC-05).** The difference between what was
+tendered and what was contracted is the most expensive thing on a project, and
+the way it gets lost is not that nobody noticed: it is that everybody noticed
+and it was nobody's. Three lines, each computed rather than declared — the price
+movement as a share of the tender price, the programme movement as a share of
+the tender programme, and a struck-out exclusion, which is material at any size
+because the business priced the work without it and now carries it for nothing.
+Above materiality with nobody against it, the conversion is refused 422 with the
+field named: `varianceOwners.PRICE`, not "fix your variances". The owners land
+on the reconciliation lines, so the register opens with the expensive lines
+already belonging to somebody.
+
+Price reuses `MATERIALITY.significantSharePercent` rather than declaring a
+second number — a movement that would need a project director's decision as a
+design change needs an owner at award for the same reason, and two numbers
+meaning the same thing is how they drift apart. Programme has its own share (2%)
+because it is measured in different stuff: a week on a year is where the
+sequence the price assumed stops holding.
+
+**A framework place is not a job (AC-09).** §3.3's own scenario row. An
+appointment has no scope, no programme and no sum, and converting one produces a
+project that reports itself as being built when nobody has instructed anything.
+Conversion asks for the call-off, and refuses without it — whether the framework
+is declared on the award or already recorded as the project's commercial
+outcome.
+
+Verified live: 422 naming `varianceOwners.PRICE` and `varianceOwners.PROGRAMME`;
+422 naming `award.callOffReference`; and the same award with owners named
+converting to `LIVE_MOBILISING`.
+
+### A converted design-and-build project could not reach site
+
+Found by driving a conversion over HTTP rather than by reading the rule, which
+is the only way it could have been found.
+
+A design-and-build contractor registers at `TENDER`, wins, and the conversion
+opens delivery at `DESIGN` — earlier in this order, because the order is the
+asset's and the asset's order is the client's. The job then goes to site, and
+`DESIGN → CONSTRUCTION` steps over `TENDER`. Read as a skip it was refused. So
+**every design-and-build project the platform converted was stuck at DESIGN**,
+and the only way forward was a "regression" to `TENDER` the project was not in
+fact making: a false statement in the record, made to satisfy a check.
+
+The rule is not one step at a time. It is that **nothing may be passed over
+unseen**: a forward move is permitted when every phase strictly between the two
+has already been occupied, read from the project's own stage instances. A
+project genuinely leaping from `CONCEPT` to `CONSTRUCTION` is still refused, and
+the refusal now names what was passed over rather than saying the move is
+forbidden.
+
+### §3.1 / AC-06: what is running, beside where the project is
+
+`backend/src/lifecycle/workstreams.ts`, three routes, 9 tests, a panel on
+Project Control.
+
+A project has one primary stage, and the primary stage is a reporting answer —
+where the bulk of the work is, which workspace opens by default, which column of
+the portfolio it sits in. It is not a description of what anybody is doing. Real
+projects overlap: design is still running when the first pour goes in,
+procurement is buying the fit-out while the frame goes up, the tender
+reconciliation is still open eight weeks after the job started. A model that
+says a project is "in Construction" and nothing else has quietly asserted that
+design finished, and that assertion is what puts a gang on site with nothing to
+build from.
+
+**Thirteen types, closed**, every one of them named in §3.3's scenario table.
+**Five statuses**, and `BLOCKED` is deliberately counted as active: a workstream
+waiting on somebody is work in progress that has stopped moving, and counting it
+as inactive is how it disappears from the report that would have got it
+unblocked.
+
+**Nothing but a person closes one — which is AC-06.** `applyPhaseChange` does
+not touch these records and must not learn how to; the test drives a real stage
+change and asserts the statuses are unmoved. A closed workstream does not
+reopen either: work that restarts is a new record with its own history, or the
+register cannot say it stopped and started again.
+
+The award opens the set §3.3 says is running — design, procurement,
+reconciliation and mobilisation entering at DESIGN; reconciliation, mobilisation
+and construction entering at CONSTRUCTION, with no design workstream, because
+that contractor did not take design responsibility. A replayed conversion does
+not open a second set.
+
+### §10 / AC-10: one pursuit, more than one contract
+
+`backend/src/domain/family.ts`, two routes, 7 tests, a panel on Project Control.
+
+An award converts a project in place and never produces a second one. That is
+settled and it is right. It does not cover the case where the *work* splits: one
+tender, two contracts; a framework place and its call-offs; a scheme let in
+phases. What happens without a record for it is not that the platform refuses —
+it is that somebody opens a second project and types the client, the site, the
+team and the contract in again, which is the re-keying this platform exists to
+remove arriving through the one door left open.
+
+The parent is the pursuit; the children are the jobs; the link is a record
+carrying the type, the reason and who approved it, because those are properties
+of the link rather than of either project. **Three relationship types**, each a
+real thing a business does — a free list fills with "related", which tells a
+reader nothing and a rollup nothing at all.
+
+**No cycles (§10.2), and the check bites.** An ancestor walk that meets a loop
+does not report wrongly, it does not finish. `assertNoCycle` walks up from the
+proposed parent and refuses if the child is already above it; the walk is
+bounded by the number of relationships as well, so a chain corrupted some other
+way terminates rather than hanging the request that found it. A job gets one
+parent, or a rollup counts it twice. §11.2's idempotency key is honoured: the
+request that creates the second contract is the one a person double-clicks.
+
+### AC-12: the integrator feed was built, and nothing ever called it
+
+The webhook outbox already had the queue, the signature, the bounded backoff,
+the abandonment threshold and the developer register. **Nothing ever called
+`enqueue`, and nothing ever drained it.** Every integrator subscription on the
+platform was a URL that would never be posted to: the subscribe screen worked,
+the delivery register was empty, and there was no failure anywhere to say why.
+Its own tests passed, because every function in it worked.
+
+`publish` is now called from `write` — the single write path — because "every
+command remembers to publish" is not a property a codebase can hold, and the
+proof is that for as long as the module existed nothing published at all. The
+import is a deliberate static cycle: both sides are hoisted function
+declarations and neither is called during module initialisation, and the
+alternative — a publisher registered at boot — would make the feed silently off
+in any process that forgot to register it, which is the defect being fixed.
+
+`backend/src/developer/delivery.ts` is the other half: it posts what is owed,
+signs each attempt over the exact body that was queued, backs off, abandons
+after the allowance and disables an endpoint that keeps refusing. Wired into
+boot beside the notification drain, and a follower does not drain — two
+processes posting the same queue is a duplicate every receiver has to
+deduplicate.
+
+**The three properties AC-12 asks for**, each held by something specific. The
+conversion commits: deliveries are queued, never sent inline, and `publish`
+swallows its own failures, because §5.4 forbids an asynchronous downstream
+problem from rolling back the act that caused it. Live state remains valid:
+nothing in the drain writes project state. It retries without duplication: the
+delivery id is minted when the entry is queued and travels in the signed body,
+so every retry of one event carries the same `deliveryId` and the same
+`eventId`.
+
+**§11.6's envelope**, added to what was already carried: `schemaVersion`,
+`aggregateVersion` — the version the aggregate reached because of this event —
+and `domainEvent`, the published contract name. Seven of §11.5's nine map onto
+events that actually happen; the two that do not are the conversion wizard's,
+which is not built, and publishing a `conversion.approved` from a platform with
+no approval routing would be a contract nobody can honour.
+
+**Two real defects the AC-12 test found**, both of which only a test driving the
+platform could see. The drain built its engine context from the tenant id, so
+every attempt was refused as a tenant-isolation breach — correctly, because a
+delivery record lives on the stream of the write that caused it. And
+`recordDelivery` wrote the subscription's health back to the caller's project
+rather than the subscription's own, which worked only while the caller happened
+to be on the same stream. A third was a stale read: the subscription snapshot
+was taken once per tenancy, so the second delivery to a recovering endpoint
+computed its health update against the old failure count and the ledger refused
+it as a no-op — aborting the drain on precisely the endpoint with a backlog
+behind it.

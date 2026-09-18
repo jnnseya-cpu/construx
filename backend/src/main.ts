@@ -19,6 +19,7 @@ import { stripeConfigured } from './billing/stripe.ts';
 import { coverGroupCompanies } from './group/onboarding.ts';
 import { startErasureSchedule } from './identity/erasure.ts';
 import { drain, outboxPosition, startOutboxDrain } from './notifications/outbox.ts';
+import { drainWebhooks, startWebhookDrain, webhookOutboxPosition } from './developer/delivery.ts';
 import { rehydrateKeys } from './developer/keys.ts';
 import { attachViewJournal, viewJournalPath } from './site/views.ts';
 import { startMarketingSchedule } from './site/visibility.ts';
@@ -527,6 +528,32 @@ if (owed > 0) {
 }
 const outboxTimer = follower ? (): void => undefined : startOutboxDrain(platform);
 
+/*
+ * And the integrator feed's own drain.
+ *
+ * Separate from the notification outbox above and deliberately so: that one
+ * delivers to people through a closed catalogue of notification codes with
+ * consent and branding attached, this one posts a signed body to a URL. What
+ * they share is the discipline — a delivery that fails is owed rather than
+ * lost, retries back off, and abandonment is recorded with its reason.
+ *
+ * A follower does not drain. Two processes posting the same queue is a
+ * duplicate every receiver has to deduplicate, and the follower is the one
+ * that must not.
+ */
+const webhookTimer = follower ? (): void => undefined : startWebhookDrain(platform);
+const owedToIntegrators = webhookOutboxPosition(platform).due;
+if (!follower && owedToIntegrators > 0) {
+  process.stdout.write(
+    `[webhooks] ${owedToIntegrators} deliver${owedToIntegrators === 1 ? 'y' : 'ies'} queued by a previous process — delivering\n`,
+  );
+  void drainWebhooks(platform).then((report) => {
+    process.stdout.write(
+      `[webhooks] ${report.delivered} delivered, ${report.retrying} still owed, ${report.abandoned} out of attempts\n`,
+    );
+  });
+}
+
 // The platform watching its own counters. Nothing read them before this; a
 // counter nobody reads is one that will be wrong for a week before anybody
 // notices.
@@ -747,6 +774,7 @@ const shutdown = (signal: string): void => {
   collection.stop();
   erasures.stop();
   outboxTimer();
+  webhookTimer();
   watchTimer();
   heartbeatTimer();
   backupTimer();

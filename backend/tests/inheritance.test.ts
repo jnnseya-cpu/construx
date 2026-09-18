@@ -103,6 +103,9 @@ function bidWithTenderDrawing(name: string): { projectId: string; ctx: ReturnTyp
 function convert(ctx: ReturnType<Platform['context']>): ReturnType<typeof structure.convertToDelivery> {
   return structure.convertToDelivery(ctx, {
     award: AWARD,
+    // AC-05. Whatever this award moved against the tender belongs to somebody
+    // before the job goes live; that refusal is exercised in `startingphase`.
+    varianceOwners: { PRICE: 'u-commercial-lead', PROGRAMME: 'u-planner', SCOPE: 'u-commercial-lead' },
     deliveryEntry: 'DESIGN',
     justification: 'Awarded under LOI-4471; conversion approved by the commercial director.',
   });

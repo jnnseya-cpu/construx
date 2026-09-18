@@ -325,15 +325,27 @@ export function verifySignature(
  * putting state in the webhook would mean a payload that is already stale on
  * arrival and a second definition of what each entity looks like.
  */
-export function envelope(event: GoldenThreadEvent, deliveryId: string): string {
+export function envelope(event: GoldenThreadEvent, deliveryId: string, aggregateVersion?: number): string {
   return JSON.stringify({
     deliveryId,
     eventId: event.eventId,
     eventType: event.eventType,
+    // §11.6's versioned envelope. The schema version is what makes a breaking
+    // change to this shape survivable: a receiver written against 1 can refuse
+    // a 2 it does not understand instead of silently mis-reading it.
+    schemaVersion: ENVELOPE_SCHEMA_VERSION,
+    // The published contract name, where this event has one. §11.5 names nine
+    // events an integrator builds against; every other event still arrives
+    // under its own type, which is what keeps the feed complete.
+    ...(PUBLISHED_EVENT_NAMES[event.eventType] ? { domainEvent: PUBLISHED_EVENT_NAMES[event.eventType] } : {}),
     occurredAt: event.timestamp,
     tenantId: event.tenantId,
     projectId: event.projectId,
     entity: event.entity,
+    // The version the aggregate reached *because of* this event, which is what
+    // a consumer compares against the `aggregateVersion` on the read API — and
+    // what tells it whether the state it is holding is older than this message.
+    ...(aggregateVersion === undefined ? {} : { aggregateVersion }),
     action: event.action,
     actor: event.actor,
     correlationId: event.correlationId,
@@ -342,6 +354,52 @@ export function envelope(event: GoldenThreadEvent, deliveryId: string): string {
     sequence: event.chainHash,
   });
 }
+
+/**
+ * The envelope's own version — §11.6.
+ *
+ * One number for the shape of the message, not for its contents. It moves when
+ * a field is removed or its meaning changes, never when one is added: a
+ * receiver that ignores unknown keys is not broken by an addition, and bumping
+ * the version for one would force every integrator to do work for nothing.
+ */
+export const ENVELOPE_SCHEMA_VERSION = 1;
+
+/**
+ * §11.5's published domain events, mapped onto the events that actually happen.
+ *
+ * The specification names nine events an integrator writes code against. This
+ * platform's catalogue is its own — `TENDER_WON`, not
+ * `construx.project.converted_to_live` — and renaming 800 event types to match
+ * nine would be the tail wagging the dog. So the contract name travels *with*
+ * the event instead, and an integrator can match on either.
+ *
+ * **Five of the nine, and the four that are absent are absent honestly.**
+ * `conversion.requested` and `conversion.approved` belong to §5.2's ten-step
+ * wizard, which is not built: there is no draft to submit and no approval to
+ * route, so an event claiming one happened would be a lie with a version number
+ * on it. `tender.outcome.recorded` maps to the lifecycle state change that
+ * records an outcome, which is the same act under this platform's model.
+ */
+export const PUBLISHED_EVENT_NAMES: Record<string, string> = {
+  PROJECT_CREATED: 'construx.project.created',
+  PROJECT_LIFECYCLE_STATE_CHANGED: 'construx.tender.outcome.recorded',
+  TENDER_WON: 'construx.project.converted_to_live',
+  BASELINE_FROZEN: 'construx.baseline.locked',
+  INHERITANCE_DECIDED: 'construx.information.inheritance.decided',
+  PROJECT_PHASE_TRANSITIONED: 'construx.project.stage.changed',
+  PROJECT_CHILD_LINKED: 'construx.project.child.created',
+};
+
+/**
+ * The events the feed does not carry, because carrying them would loop.
+ *
+ * Queueing a delivery is itself a write, so publishing the queue event would
+ * queue a delivery for it. The re-entrancy guard in `publish` stops the
+ * recursion; this stops the traffic — a tenancy subscribed to everything would
+ * otherwise receive one message per message it receives.
+ */
+const NOT_PUBLISHED = new Set(['WEBHOOK_DELIVERY_QUEUED', 'WEBHOOK_DELIVERY_ATTEMPTED', 'WEBHOOK_SUBSCRIPTION_HEALTH']);
 
 /** Which subscriptions want this event. */
 export function matching(subscriptions: Subscription[], event: GoldenThreadEvent): Subscription[] {
@@ -360,7 +418,7 @@ export function matching(subscriptions: Subscription[], event: GoldenThreadEvent
  * by the time this runs, and a delivery attempted inline would put a customer's
  * unreachable endpoint on the critical path of their own write.
  */
-export function enqueue(ctx: EngineContext, event: GoldenThreadEvent): Delivery[] {
+export function enqueue(ctx: EngineContext, event: GoldenThreadEvent, aggregateVersion?: number): Delivery[] {
   const wanted = matching(subscriptionsOf(ctx), event);
   const now = new Date().toISOString();
 
@@ -372,7 +430,7 @@ export function enqueue(ctx: EngineContext, event: GoldenThreadEvent): Delivery[
       tenantId: subscription.tenantId,
       eventId: event.eventId,
       eventType: event.eventType,
-      body: envelope(event, id),
+      body: envelope(event, id, aggregateVersion),
       status: 'QUEUED',
       attempts: 0,
       queuedAt: now,
@@ -387,6 +445,51 @@ export function enqueue(ctx: EngineContext, event: GoldenThreadEvent): Delivery[
 
     return delivery;
   });
+}
+
+/**
+ * Re-entrancy. `enqueue` writes, and a write publishes.
+ *
+ * A flag rather than a queue-and-flush, because the recursion is exactly one
+ * level deep and always the same level: the delivery record. `NOT_PUBLISHED`
+ * above already stops those three event types being carried, so this is the
+ * belt to that brace — and it is what keeps a future bookkeeping event from
+ * reintroducing the loop by being added to the catalogue and not to that set.
+ */
+let publishing = false;
+
+/**
+ * Put a committed event on the feed — AC-12, and the reason it was failing.
+ *
+ * The outbox, the signature, the backoff and the abandonment were all built,
+ * tested and exported, and **nothing ever called `enqueue`**. Every integrator
+ * subscription on the platform was a URL that would never be posted to: the
+ * subscription screen worked, the delivery register was empty, and there was
+ * no failure anywhere to say why. Wired here, at the single write path, because
+ * an event published from each command is an event published from most commands.
+ *
+ * ## It cannot fail the write
+ *
+ * §5.4 is explicit: *asynchronous downstream failures shall not roll back the
+ * award.* A conversion that committed and then threw because a webhook queue
+ * misbehaved would leave a project whose award the caller was told had failed —
+ * the exact situation AC-12 exists to prevent. So the publication is wrapped,
+ * and a failure here is written to stderr and dropped rather than raised. The
+ * event is in the chain either way, and the chain is the record of what
+ * happened; the feed is a convenience over it.
+ */
+export function publish(ctx: EngineContext, event: GoldenThreadEvent, aggregateVersion?: number): void {
+  if (publishing || NOT_PUBLISHED.has(event.eventType)) return;
+  publishing = true;
+  try {
+    enqueue(ctx, event, aggregateVersion);
+  } catch (error) {
+    process.stderr.write(
+      `[webhooks] could not queue ${event.eventType} (${event.eventId}): ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  } finally {
+    publishing = false;
+  }
 }
 
 export type DeliveryOutcome = {
@@ -462,6 +565,12 @@ export async function attempt(
  * the next attempt, and continuing to post to it is a slow outbound flood
  * against somebody else's server.
  */
+/** The project stream a subscription already lives on, where it is on one. */
+function subscriptionStream(ctx: EngineContext, subscriptionId: string): { projectId: string } | undefined {
+  const held = ctx.ledger.get({ refType: 'WebhookSubscription', refId: subscriptionId });
+  return held ? { projectId: held.projectId } : undefined;
+}
+
 export function recordDelivery(
   ctx: EngineContext,
   input: { subscription: Subscription; delivery: Delivery; outcome: DeliveryOutcome },
@@ -517,6 +626,17 @@ export function recordDelivery(
       // failing, which is precisely the wrong moment.
       eventType: shouldDisable ? 'WEBHOOK_DISABLED' : 'WEBHOOK_SUBSCRIPTION_HEALTH',
       entity: { refType: 'WebhookSubscription', refId: subscription.id },
+      // On the subscription's own stream, not the caller's.
+      //
+      // A subscription is created from wherever the integrator happened to be
+      // — usually the governance stream — and the health update now comes from
+      // the drain, which holds a context on the *delivery's* project. Without
+      // this the commit moves the entity between projects and the ledger
+      // refuses it as a tenant-isolation breach, which is exactly right and is
+      // what made every drain attempt fail. Recording it against the caller's
+      // project would have been the other way to satisfy the ledger and the
+      // wrong one: it would put the same subscription on two chains.
+      ...(subscriptionStream(ctx, subscription.id) ?? {}),
       nextState: subscription as unknown as Record<string, unknown>,
     });
   }

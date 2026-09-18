@@ -309,6 +309,8 @@ import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
 import { COMMERCIAL_OUTCOMES, DELIVERY_STATUSES, LIFECYCLE_STATES, LIFECYCLE_STATE_CODES } from '../lifecycle/state.ts';
 import * as inheritance from '../domain/inheritance.ts';
+import * as workstreams from '../lifecycle/workstreams.ts';
+import * as family from '../domain/family.ts';
 import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
@@ -9262,7 +9264,14 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       const context = projectContext(platform, ctx);
       const project = platform.ledger.require({ refType: 'Project', refId: ctx.params.projectId as string });
-      return { project: project.state, gate: structure.evaluateCurrentGate(context) };
+      return {
+        project: project.state,
+        // AC-04. The version a caller sends back as `If-Match` when it amends
+        // the project aggregate. Published here because a precondition nobody
+        // can read the current value of is a precondition nobody can satisfy.
+        aggregateVersion: project.version,
+        gate: structure.evaluateCurrentGate(context),
+      };
     },
   },
   {
@@ -9371,7 +9380,23 @@ export const ROUTES: Route[] = [
               },
             },
             keySubcontractors: { type: 'array', items: { type: 'string' } },
+            // AC-09. A framework place is not a job, so converting one asks for
+            // the call-off that is.
+            frameworkAppointment: { type: 'boolean' },
+            callOffReference: { type: 'string' },
+            callOffDate: { type: 'string' },
           },
+          additionalProperties: false,
+        },
+        // AC-05. Who owns closing each material difference between the tender
+        // and the contract, by reconciliation line — PRICE, PROGRAMME, SCOPE.
+        // The conversion is refused with a field error naming the line where a
+        // material movement has nobody against it.
+        varianceOwners: {
+          type: 'object',
+          properties: Object.fromEntries(
+            structure.RECONCILIATION_LINE_IDS.map((id) => [id, { type: 'string', minLength: 1 }]),
+          ),
           additionalProperties: false,
         },
       },
@@ -9437,6 +9462,91 @@ export const ROUTES: Route[] = [
       inheritance.decideInheritance(projectContext(platform, ctx), {
         ...body<{ registerId: string; disposition: never; rationale: string }>(ctx),
         recordId: String(ctx.params.recordId),
+      }),
+  },
+  // --------------------------------------- one pursuit, more than one contract
+  //
+  // §10.1 / AC-10. An award converts a project in place and never makes a second
+  // one; this is the different case where the work itself splits.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/family',
+    readOnly: true,
+    description: 'What pursuit this project came from, and which separate contracts came out of it',
+    handler: (platform, ctx) => family.projectFamily(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/children',
+    description: 'Record that a separate contract came out of this pursuit',
+    schema: {
+      type: 'object',
+      required: ['childProjectId', 'relationshipType', 'reason'],
+      properties: {
+        childProjectId: stringField,
+        relationshipType: { type: 'string', enum: family.RELATIONSHIP_TYPE_CODES },
+        reason: { type: 'string', minLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      family.linkChildProject(projectContext(platform, ctx), {
+        ...body<{ childProjectId: string; relationshipType: string; reason: string }>(ctx),
+        parentProjectId: String(ctx.params.projectId),
+        // §11.2 names this request specifically: the one that creates the second
+        // contract is the one a person double-clicks.
+        ...(ctx.idempotencyKey ? { idempotencyKey: ctx.idempotencyKey } : {}),
+      }),
+  },
+  // ------------------------------------------- what is running, across stages
+  //
+  // §3.1. The primary stage says where the project is; these say what is
+  // actually being done. AC-06: a stage change never closes one.
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/workstreams',
+    readOnly: true,
+    description: 'Concurrent workstreams — what is running on this project, what is blocked and what has closed',
+    handler: (platform, ctx) => workstreams.projectWorkstreams(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/workstreams',
+    description: 'Open a workstream alongside the primary stage',
+    schema: {
+      type: 'object',
+      required: ['type'],
+      properties: {
+        type: { type: 'string', enum: workstreams.WORKSTREAM_TYPE_CODES },
+        status: { type: 'string', enum: ['NOT_STARTED', 'ACTIVE'] },
+        ownerId: { type: 'string' },
+        plannedStart: { type: 'string' },
+        plannedFinish: { type: 'string' },
+        reason: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      workstreams.activateWorkstream(projectContext(platform, ctx), body<{ type: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/workstreams/:workstreamId/status',
+    description: 'Move a workstream’s status — the only way one stops being active',
+    schema: {
+      type: 'object',
+      required: ['status', 'reason'],
+      properties: {
+        status: { type: 'string', enum: workstreams.WORKSTREAM_STATUS_CODES },
+        reason: { type: 'string', minLength: 1 },
+        ownerId: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      workstreams.setWorkstreamStatus(projectContext(platform, ctx), {
+        ...body<{ status: string; reason: string }>(ctx),
+        workstreamId: String(ctx.params.workstreamId),
       }),
   },
   {

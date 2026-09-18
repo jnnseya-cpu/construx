@@ -359,6 +359,31 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('INHERITANCE_DECIDED', 'InheritanceRegister', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   def('RECONCILIATION_OPENED', 'AwardReconciliation', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
   def('RECONCILIATION_ITEM_SETTLED', 'AwardReconciliation', 'UPDATE', 'PROJECT_CONTROL'),
+  /*
+   * Work that runs across stages rather than inside one — §3.1.
+   *
+   * The primary stage is where the project is; these say what is actually being
+   * done. A project reported as "in Construction" and nothing else has quietly
+   * asserted that design finished, and that assertion is what puts a gang on
+   * site with nothing to build from.
+   *
+   * `WORKSTREAM_STATUS_CHANGED` is the only way a workstream stops being
+   * active, which is AC-06: a stage change is a statement about where the
+   * project is, not permission to decide somebody else's work has finished.
+   */
+  def('WORKSTREAM_ACTIVATED', 'Workstream', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('WORKSTREAM_STATUS_CHANGED', 'Workstream', 'UPDATE', 'PROJECT_CONTROL'),
+  /*
+   * One pursuit, more than one job — §10.1's `project_relationship`.
+   *
+   * An award converts a project in place and never produces a second one. What
+   * this covers is the different case where the *work* splits: one tender, two
+   * contracts; a framework place and its call-offs; a scheme let in phases.
+   * Without a record for it somebody opens a second project and types the
+   * client, the site and the team in again, which is the re-keying the platform
+   * exists to remove arriving through the one door left open.
+   */
+  def('PROJECT_CHILD_LINKED', 'ProjectRelationship', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),
   def('WORKPACKAGE_CREATED', 'WorkPackage', 'CREATE', 'PROJECT_CONTROL'),
 

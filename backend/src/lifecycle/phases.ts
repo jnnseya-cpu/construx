@@ -177,11 +177,29 @@ export function evaluatePhaseGate(
  * A phase transition is a governed event, not a dropdown. Forward moves must
  * clear the gate; backward moves are permitted (projects genuinely do re-tender
  * or re-enter design) but are recorded explicitly as regressions.
+ *
+ * ## A phase already occupied is not a phase being skipped
+ *
+ * `traversed` is what the project has actually been through, and without it the
+ * in-place conversion model produces a project that cannot move.
+ *
+ * A design-and-build contractor registers at `TENDER`, wins, and the conversion
+ * opens delivery at `DESIGN` — which is *earlier* in this order, because the
+ * order is the asset's and the asset's order is the client's. The job then goes
+ * to site, and `DESIGN → CONSTRUCTION` steps over `TENDER`. Read as a skip it is
+ * refused, and the only way out is a "regression" to `TENDER` the project is not
+ * in fact re-entering: a false statement in the record, made to satisfy a check.
+ *
+ * So the rule is not "one step at a time". It is that **nothing may be passed
+ * over unseen**: a forward move is permitted when every phase strictly between
+ * the two has already been occupied. A project genuinely leaping from `CONCEPT`
+ * to `CONSTRUCTION` is still refused, which is the failure the check exists for.
  */
 export function assertTransitionAllowed(
   from: LifecyclePhase,
   to: LifecyclePhase,
   evaluation: GateEvaluation,
+  traversed: readonly LifecyclePhase[] = [],
 ): { direction: 'FORWARD' | 'REGRESSION' } {
   const fromIndex = phaseIndex(from);
   const toIndex = phaseIndex(to);
@@ -190,8 +208,16 @@ export function assertTransitionAllowed(
 
   if (toIndex < fromIndex) return { direction: 'REGRESSION' };
 
-  if (toIndex > fromIndex + 1) {
-    throw new DomainError('PHASE_SKIP_FORBIDDEN', `Cannot skip from ${from} directly to ${to}`);
+  const steppedOver = LIFECYCLE_ORDER.slice(fromIndex + 1, toIndex);
+  const unseen = steppedOver.filter((phase) => !traversed.includes(phase));
+  if (unseen.length > 0) {
+    throw new DomainError(
+      'PHASE_SKIP_FORBIDDEN',
+      `Cannot move from ${from} to ${to} without ${unseen.join(', ')}. ` +
+        'A phase the project has already been through may be stepped over; one it has not may not.',
+      422,
+      [{ field: 'to', message: `${unseen.join(', ')} ${unseen.length === 1 ? 'has' : 'have'} not been reached` }],
+    );
   }
   if (!evaluation.passed) {
     const failing = evaluation.criteria.filter((c) => !c.satisfied).map((c) => c.id);

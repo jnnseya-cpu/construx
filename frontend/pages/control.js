@@ -72,6 +72,90 @@ const CHAIN_CHECKS = new Set([
  * the current stage would make a won job look like one that had slipped
  * backwards. Showing both says what actually happened.
  */
+/**
+ * What is actually running, beside where the project is — §3.1.
+ *
+ * A separate panel from the lifecycle one above, deliberately. That panel
+ * answers "where is this project"; this one answers "what is anybody doing",
+ * and a screen that collapses them is a screen that says "Construction" to
+ * somebody asking whether design has finished.
+ *
+ * Nothing here closes a workstream. A stage change is a statement about where
+ * the project is, not permission to decide somebody else's work is over, so the
+ * only control is the explicit one on the command bar.
+ */
+function workstreamPanel(position) {
+  if (!position || (position.workstreams ?? []).length === 0) return '';
+
+  const statusOf = (code) => (position.statuses ?? []).find((entry) => entry.code === code);
+  const tone = (code) => (code === 'BLOCKED' ? 'warn' : code === 'CANCELLED' ? 'bad' : code === 'COMPLETE' ? 'good' : '');
+
+  return html`<div class="card pad0" style="margin-bottom:14px">
+    <h2 style="padding:15px 17px 0">What is running</h2>
+    <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+      ${position.summary} A blocked workstream still counts as running — work that has stopped moving is exactly what a
+      report has to keep showing, because dropping it from the count is how it stops being anybody's.
+    </p>
+    ${table({
+      headers: ['Workstream', 'Status', 'Opened at', 'Owner', 'Since'],
+      rows: (position.workstreams ?? []).map((entry) => [
+        html`${entry.label}<span class="metric-sub"> ${
+          (position.types ?? []).find((type) => type.code === entry.type)?.what ?? ''
+        }</span>`,
+        badge(statusOf(entry.status)?.label ?? humanise(entry.status), tone(entry.status)),
+        entry.stageContext ? humanise(entry.stageContext) : '—',
+        entry.ownerId ?? '—',
+        date(entry.statusAt),
+      ]),
+      empty: 'No workstreams are open.',
+    })}
+  </div>`;
+}
+
+/**
+ * What pursuit produced this job, and what else it produced — §10.1.
+ *
+ * Rendered only where there is a family. Most projects stand on their own, and
+ * a panel saying so on every one of them is noise on the screen a project
+ * manager opens every morning.
+ */
+function familyPanel(position) {
+  if (!position || (!position.parent && (position.children ?? []).length === 0)) return '';
+
+  return html`<div class="card pad0" style="margin-bottom:14px">
+    <h2 style="padding:15px 17px 0">One pursuit, more than one contract</h2>
+    <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">${position.summary}</p>
+    ${
+      !position.parent
+        ? ''
+        : html`<div style="padding:10px 17px 0">
+            <div class="notice">
+              <b>Came from ${position.parent.name}.</b>
+              ${(position.types ?? []).find((type) => type.code === position.parent.relationshipType)?.label ?? ''} —
+              ${position.parent.reason}
+            </div>
+          </div>`
+    }
+    ${
+      (position.children ?? []).length === 0
+        ? ''
+        : table({
+            headers: ['Contract', 'How it relates', 'Lifecycle', 'Value', 'Why it is separate'],
+            align: ['', '', '', 'num', ''],
+            rows: position.children.map((child) => [
+              child.name,
+              (position.types ?? []).find((type) => type.code === child.relationshipType)?.label ??
+                humanise(child.relationshipType),
+              child.lifecycleState ? badge(humanise(child.lifecycleState), '') : '—',
+              child.contractValueMinor === null ? '—' : money(child.contractValueMinor),
+              child.reason,
+            ]),
+            empty: 'No separate contracts came out of this pursuit.',
+          })
+    }
+  </div>`;
+}
+
 function lifecyclePosition(project, reconciliation) {
   const entry = project.startedAtPhase;
   const converted = project.commercialStatus === 'AWARDED';
@@ -317,7 +401,7 @@ function responsibilityPanel(matrix) {
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility, reconciliation, lifecycle] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility, reconciliation, lifecycle, workstreams, family] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.read('/v1/lessons', 'RISK_REGISTER').catch(() => null),
@@ -351,6 +435,14 @@ export async function control(root) {
     // the transition table is the platform's, and a second copy here would be a
     // second answer to what the lifecycle permits.
     api.get('/v1/lifecycle/states').catch(() => null),
+    // §3.1. The primary stage says where the project is; these say what is
+    // actually being done. A project reported as "in Construction" and nothing
+    // else has quietly asserted that design finished.
+    api.get(`/v1/projects/${projectId}/workstreams`).catch(() => null),
+    // §10.1. What pursuit this project came from, and which separate contracts
+    // came out of it. Most projects stand on their own and the panel says so
+    // rather than showing an empty table.
+    api.get(`/v1/projects/${projectId}/family`).catch(() => null),
   ]);
 
   // The choosers for the responsibility form. A package named from the project's
@@ -384,6 +476,25 @@ export async function control(root) {
   // offering a reference where an id is required produces a 404 with a
   // plausible-looking cause.
   const snapshots = await entities(projectId, 'PeriodSnapshot').catch(() => []);
+
+  // The workstreams whose status can still move. A closed one cannot: work that
+  // restarts is a new workstream with its own history, so offering it here
+  // would offer a refusal.
+  const openWorkstreams = (workstreams?.workstreams ?? []).filter((entry) => {
+    const status = (workstreams?.statuses ?? []).find((code) => code.code === entry.status);
+    return status ? status.active || entry.status === 'NOT_STARTED' : false;
+  });
+
+  // Projects that could sit under this one: every other project in the estate
+  // that does not already have a parent. Read from the estate the screen
+  // already holds rather than fetched again, and filtered against the family so
+  // the form cannot offer a link the platform will refuse.
+  const alreadyParented = new Set(
+    (family?.children ?? []).map((child) => child.projectId).concat(family?.parent ? [family.parent.projectId] : []),
+  );
+  const linkableProjects = (estate?.projects ?? []).filter(
+    (entry) => entry.projectId !== projectId && !alreadyParented.has(entry.projectId),
+  );
 
   const LOOKUPS = [
     {
@@ -515,6 +626,28 @@ export async function control(root) {
                 ]
               : []),
             {
+              id: 'workstream',
+              label: 'Open a workstream',
+              permitted: can('PROJECT_SETUP', 'U'),
+              reason: blockedReason('PROJECT_SETUP', 'U'),
+            },
+            {
+              id: 'workstream-status',
+              label: 'Move a workstream',
+              permitted: can('PROJECT_SETUP', 'U') && openWorkstreams.length > 0,
+              reason: !can('PROJECT_SETUP', 'U')
+                ? blockedReason('PROJECT_SETUP', 'U')
+                : 'Nothing is open. A workstream is opened before its status can move.',
+            },
+            {
+              id: 'child-project',
+              label: 'Record a separate contract',
+              permitted: can('PROJECT_SETUP', 'A') && linkableProjects.length > 0,
+              reason: !can('PROJECT_SETUP', 'A')
+                ? blockedReason('PROJECT_SETUP', 'A')
+                : 'No other project on this tenancy is free to sit under this one — every one already has a parent.',
+            },
+            {
               id: 'responsibility',
               label: 'Record a responsibility',
               permitted: can('WORKPACKAGES_TASKS', 'C'),
@@ -546,6 +679,10 @@ export async function control(root) {
       </div>
 
       ${lifecyclePosition(project, reconciliation)}
+
+      ${workstreamPanel(workstreams)}
+
+      ${familyPanel(family)}
 
       ${
         !gate
@@ -1219,6 +1356,67 @@ export async function control(root) {
           required: false,
         },
         {
+          name: 'removedExclusions',
+          label: 'Exclusions the client struck out',
+          type: 'text',
+          placeholder: 'Asbestos removal in the existing plant room, temporary diversion of the culvert',
+          required: false,
+          hint:
+            'Separated by commas. Scope the price depended on excluding and that the contract now carries for ' +
+            'nothing — the most expensive line on any award, and the one nobody writes down.',
+        },
+        {
+          name: 'frameworkAppointment',
+          label: 'Is this a framework appointment?',
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: 'No — this is a contract for a job' },
+            { value: 'YES', label: 'Yes — appointed to a framework' },
+          ],
+        },
+        {
+          name: 'callOffReference',
+          label: 'Call-off being converted',
+          type: 'text',
+          placeholder: 'Call-off 7 — Ribble catchment, task order TO-118',
+          required: false,
+          hint:
+            'Required for a framework. A framework place is not a job: it has no scope, no programme and no sum, ' +
+            'and the call-off is the thing being delivered.',
+        },
+        /*
+         * AC-05. Named at award rather than filled in afterwards, because
+         * afterwards is where it does not happen: the price moved, everybody
+         * saw it move, and by the time somebody asks whose it is the people
+         * who could have answered are on the next job.
+         *
+         * Offered for all three lines and demanded only for the ones that
+         * actually moved — the platform computes which, and refuses the
+         * conversion naming the field.
+         */
+        {
+          name: 'varianceOwnerPrice',
+          label: 'Who owns the price movement',
+          type: 'text',
+          required: false,
+          hint: 'Required where the contract sum moved materially against the tender price.',
+        },
+        {
+          name: 'varianceOwnerProgramme',
+          label: 'Who owns the programme movement',
+          type: 'text',
+          required: false,
+          hint: 'Required where the contract programme moved materially against the tendered one.',
+        },
+        {
+          name: 'varianceOwnerScope',
+          label: 'Who owns the scope difference',
+          type: 'text',
+          required: false,
+          hint: 'Required where an exclusion the price depended on was struck out.',
+        },
+        {
           name: 'justification',
           label: 'On whose authority',
           type: 'text',
@@ -1232,11 +1430,37 @@ export async function control(root) {
        * dropped rather than sent empty — an empty string in a contract term
        * is a term somebody will later read as agreed-and-nil.
        */
-      transform: ({ deliveryEntry, justification, contractSumMinor, paymentTermsDays, retentionPercent, ...award }) => {
+      transform: ({
+        deliveryEntry,
+        justification,
+        contractSumMinor,
+        paymentTermsDays,
+        retentionPercent,
+        removedExclusions,
+        frameworkAppointment,
+        callOffReference,
+        varianceOwnerPrice,
+        varianceOwnerProgramme,
+        varianceOwnerScope,
+        ...award
+      }) => {
         const optional = (key, value) => (String(value ?? '').trim() ? { [key]: String(value).trim() } : {});
+        // Blank owners are dropped rather than sent empty. An empty string
+        // satisfies "a field was supplied" and satisfies nobody who later asks
+        // whose the movement was.
+        const owners = {
+          ...optional('PRICE', varianceOwnerPrice),
+          ...optional('PROGRAMME', varianceOwnerProgramme),
+          ...optional('SCOPE', varianceOwnerScope),
+        };
+        const struck = String(removedExclusions ?? '')
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean);
         return {
           deliveryEntry,
           justification,
+          ...(Object.keys(owners).length > 0 ? { varianceOwners: owners } : {}),
           award: {
             contractAwardDate: award.contractAwardDate,
             contractSumMinor: Number(contractSumMinor),
@@ -1246,12 +1470,132 @@ export async function control(root) {
             contractCompletionDate: award.contractCompletionDate,
             ...(String(paymentTermsDays ?? '').trim() ? { paymentTermsDays: Number(paymentTermsDays) } : {}),
             ...(String(retentionPercent ?? '').trim() ? { retentionPercent: Number(retentionPercent) } : {}),
+            ...(struck.length > 0 ? { removedExclusions: struck } : {}),
+            ...(frameworkAppointment === 'YES' ? { frameworkAppointment: true } : {}),
+            ...optional('callOffReference', callOffReference),
             ...optional('amendments', award.amendments),
             ...optional('designResponsibility', award.designResponsibility),
             ...optional('novationArrangements', award.novationArrangements),
           },
         };
       },
+    },
+
+    /*
+     * §3.1. Work that runs across stages rather than inside one.
+     *
+     * Two commands, not one with a status dropdown, and the split matters:
+     * opening a workstream is a statement that work has started, and closing
+     * one is a statement that somebody else's work has finished. The second is
+     * the one that needs a reason, and putting both behind a single form would
+     * put "cancelled" one click from "active".
+     */
+    workstream: {
+      title: 'Open a workstream',
+      intent:
+        'The primary stage says where the project is. A workstream says what is actually being done — and nothing ' +
+        'closes one except a person, so design stays open when the first pour goes in.',
+      path: `/v1/projects/${projectId}/workstreams`,
+      submitLabel: 'Open it',
+      fields: [
+        {
+          name: 'type',
+          label: 'Workstream',
+          type: 'select',
+          options: (workstreams?.types ?? []).map((entry) => ({
+            value: entry.code,
+            label: `${entry.label} — ${entry.what}`,
+          })),
+        },
+        {
+          name: 'status',
+          label: 'Starting status',
+          type: 'select',
+          options: [
+            { value: 'ACTIVE', label: 'Active — it is running now' },
+            { value: 'NOT_STARTED', label: 'Not started — planned, not begun' },
+          ],
+        },
+        { name: 'ownerId', label: 'Owner', type: 'text', required: false },
+        { name: 'plannedStart', label: 'Planned start', type: 'date', required: false },
+        { name: 'plannedFinish', label: 'Planned finish', type: 'date', required: false },
+        { name: 'reason', label: 'Why now', type: 'text', required: false },
+      ],
+    },
+
+    'workstream-status': {
+      title: 'Move a workstream',
+      intent:
+        'Blocked still counts as running: work that has stopped moving is exactly what a report has to keep showing. ' +
+        'Complete and cancelled close it, and a closed workstream does not reopen — work that restarts is a new one ' +
+        'with its own history, or the record cannot say it stopped and started again.',
+      path: ({ workstreamId }) => `/v1/projects/${projectId}/workstreams/${workstreamId}/status`,
+      submitLabel: 'Record it',
+      fields: [
+        {
+          name: 'workstreamId',
+          label: 'Workstream',
+          type: 'select',
+          options: openWorkstreams.map((entry) => ({
+            value: entry.id,
+            label: `${entry.label} — ${humanise(entry.status)}`,
+          })),
+        },
+        {
+          name: 'status',
+          label: 'Status',
+          type: 'select',
+          options: (workstreams?.statuses ?? []).map((entry) => ({ value: entry.code, label: entry.label })),
+        },
+        { name: 'ownerId', label: 'Owner', type: 'text', required: false },
+        {
+          name: 'reason',
+          label: 'Why',
+          type: 'textarea',
+          rows: 3,
+          hint: 'Closing one needs the sentence saying what finished, or why it was cancelled.',
+        },
+      ],
+      transform: ({ workstreamId: _workstreamId, ...rest }) => rest,
+    },
+
+    /*
+     * §10.1 / AC-10. One pursuit, more than one contract.
+     *
+     * An award converts this project in place and never makes a second one.
+     * This is the different case: the work itself split, and the alternative to
+     * recording it is somebody opening a second project and typing the client,
+     * the site and the team in again.
+     */
+    'child-project': {
+      title: 'Record a separate contract from this pursuit',
+      intent:
+        'The other project keeps its own id, chain, award and account. What this adds is the statement that it came ' +
+        'out of this pursuit — so “we won two contracts off that tender” becomes something the platform can answer ' +
+        'rather than something somebody remembers.',
+      path: `/v1/projects/${projectId}/children`,
+      submitLabel: 'Record it',
+      fields: [
+        {
+          name: 'childProjectId',
+          label: 'The separate contract',
+          type: 'select',
+          options: linkableProjects.map((entry) => ({ value: entry.projectId, label: entry.name })),
+        },
+        {
+          name: 'relationshipType',
+          label: 'How it relates',
+          type: 'select',
+          options: (family?.types ?? []).map((entry) => ({ value: entry.code, label: `${entry.label} — ${entry.what}` })),
+        },
+        {
+          name: 'reason',
+          label: 'Why these are two jobs',
+          type: 'textarea',
+          rows: 3,
+          hint: 'That sentence is what a reader needs three years later, when somebody asks why the tender and the account do not match.',
+        },
+      ],
     },
     tenderOutcome: {
       title: 'Move this project through the lifecycle',

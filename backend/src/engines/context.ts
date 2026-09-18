@@ -23,6 +23,7 @@ import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import type { TenancyStanding } from '../billing/entitlement.ts';
 import type { AcuResolution } from '../billing/sponsorship.ts';
+import { publish } from '../developer/webhooks.ts';
 
 /**
  * Shared execution context for every engine.
@@ -247,6 +248,33 @@ function resolutionsFor(state: Record<string, unknown> | undefined): ConflictRes
  *
  * A create is never a conflict: there is nothing to be stale about.
  */
+/**
+ * The same precondition, asserted before a command writes anything — and spent.
+ *
+ * `assertVersion` below runs inside `write`, which is the right place for a
+ * command that makes one change. It is the wrong place for a command that makes
+ * several: `convertToDelivery` freezes two baselines, opens an inheritance
+ * register and opens a reconciliation before it touches the project, so a stale
+ * `If-Match` caught at the project write would already have four commitments
+ * behind it — and the ledger is append-only, so there is nothing to roll back.
+ * The rule the codebase settled on for exactly this is validate-everything-
+ * then-commit.
+ *
+ * **Spent, and this is not a detail.** A precondition is an assertion about the
+ * state the caller read, and a command answers it once. Left in place it is
+ * re-asserted at every subsequent write in the same command — including the
+ * command's *own* earlier writes to the same aggregate, which have by then moved
+ * it on. `convertToDelivery` proved it: the award write took the project from
+ * version 2 to 3, and the phase change immediately after was refused for
+ * amending version 2, so a correct conversion failed halfway through with a
+ * conflict against itself. Asserted here, cleared here, and every write after it
+ * in this command is this command's own.
+ */
+export function assertAggregateVersion(ctx: EngineContext, entity: EntityRef): void {
+  assertVersion(ctx, entity);
+  delete ctx.expectedVersion;
+}
+
 function assertVersion(ctx: EngineContext, entity: EntityRef): void {
   if (ctx.expectedVersion === undefined) return;
   const held = ctx.ledger.get(entity);
@@ -302,6 +330,28 @@ export function write(
     // reporting the wrong project's phase is worse than reporting none.
     ...(target === ctx.projectId ? withPhase(ctx) : {}),
   });
+
+  /*
+   * And onto the integrator feed — §11.6's transactional outbox.
+   *
+   * Here rather than at each command, for the reason everything else in this
+   * function is here: "every command remembers to publish" is not a property a
+   * codebase can hold, and the proof is that for as long as the webhook module
+   * existed nothing called it at all. A delivery is *queued*, never sent, so a
+   * customer's unreachable endpoint is never on the critical path of their own
+   * write — and `publish` swallows its own failures, because §5.4 forbids an
+   * asynchronous downstream problem from rolling back the act that caused it.
+   *
+   * **Imported statically, into a cycle, deliberately.** `webhooks.ts` imports
+   * `write` from here and this imports `publish` from there. Both are hoisted
+   * function declarations and neither is called during module initialisation,
+   * so the cycle resolves whichever module is loaded first. The alternative —
+   * a publisher registered at boot — would make the feed silently off in any
+   * process that forgot to register it, and a feature that is silently off is
+   * the defect this wiring exists to fix.
+   */
+  publish(ctx, event, record.version);
+
   return { event, state: record.state };
 }
 
