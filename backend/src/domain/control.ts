@@ -10,6 +10,7 @@ import {
   type ControlStage,
 } from '../lifecycle/control.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
+import { currentLifecycleState } from './structure.ts';
 import { liveProjects } from './structure.ts';
 
 /**
@@ -258,6 +259,15 @@ export function projectControl(ctx: EngineContext): ControlReport {
      * how a dashboard says "design" to a commercial manager who asked whether
      * the thing was signed.
      */
+    /*
+     * The canonical lifecycle state, derived forward for a project written
+     * before the field existed rather than defaulted — a project mid-
+     * construction reporting itself as a draft would be wrong in the most
+     * visible possible way.
+     */
+    lifecycleState: currentLifecycleState(project.state),
+    lifecycleHistory: (project.state.lifecycleHistory as Array<Record<string, unknown>> | undefined) ?? [],
+    commercialOutcome: project.state.commercialOutcome as string | undefined,
     commercialStatus: (project.state.commercialStatus as string | undefined) ?? 'PRE_AWARD',
     deliveryStatus: project.state.deliveryStatus as string | undefined,
     tenderOutcome: project.state.tenderOutcome as string | undefined,

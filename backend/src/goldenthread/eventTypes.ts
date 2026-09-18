@@ -309,7 +309,19 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * so all are `aiAllowed: false` and all carry evidence.
    */
   def('TENDER_WON', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
-  def('TENDER_OUTCOME_RECORDED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  /*
+   * Every lifecycle move except contract award.
+   *
+   * The lifecycle state is a dimension of its own — what the project *is* —
+   * beside the phase, which is where the work is. A project can go on hold, be
+   * suspended, be lost, be withdrawn or be reopened without the work moving an
+   * inch, and one event type covers all of them because they are one kind of
+   * act: an authorised person deciding what this project now is.
+   *
+   * Evidence is required for the same reason award needs it: these are
+   * decisions taken on information from outside the platform.
+   */
+  def('PROJECT_LIFECYCLE_STATE_CHANGED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   /*
    * The protected baselines.
    *

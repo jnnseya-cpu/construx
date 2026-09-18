@@ -581,6 +581,12 @@ export type ControlReport = {
    * Three fields rather than one, because they move independently: a project is
    * `AWARDED` and `MOBILISING` while its phase is still `DESIGN`.
    */
+  /** What the project *is* — see `lifecycle/state.ts`. Separate from the phase. */
+  lifecycleState?: string;
+  /** Every state it has been in, opening entry first. */
+  lifecycleHistory?: Array<Record<string, unknown>>;
+  /** How the bid went, which is not the same question as whether it is live. */
+  commercialOutcome?: string;
   commercialStatus?: string;
   deliveryStatus?: string;
   /** How the tender ended, on a project that was one. */

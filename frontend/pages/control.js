@@ -317,7 +317,7 @@ function responsibilityPanel(matrix) {
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility, reconciliation] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility, reconciliation, lifecycle] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.read('/v1/lessons', 'RISK_REGISTER').catch(() => null),
@@ -346,6 +346,11 @@ export async function control(root) {
     // project has one, and the route says so in a sentence rather than
     // returning a blank table that reads as a reconciliation nobody did.
     api.get(`/v1/projects/${projectId}/tender/reconciliation`).catch(() => null),
+    // The canonical lifecycle: the fifteen states, their entry conditions and
+    // where each may go next. Published rather than restated in the browser —
+    // the transition table is the platform's, and a second copy here would be a
+    // second answer to what the lifecycle permits.
+    api.get('/v1/lifecycle/states').catch(() => null),
   ]);
 
   // The choosers for the responsibility form. A package named from the project's
@@ -500,11 +505,11 @@ export async function control(root) {
                   },
                   {
                     id: 'tenderOutcome',
-                    label: 'Record the outcome',
+                    label: 'Move the lifecycle',
                     permitted: can('PROJECT_SETUP', 'A') && project.commercialStatus !== 'CLOSED',
                     reason:
                       project.commercialStatus === 'CLOSED'
-                        ? `This bid was closed as ${String(project.tenderOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
+                        ? `This bid was closed as ${String(project.commercialOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
                         : blockedReason('PROJECT_SETUP', 'A'),
                   },
                 ]
@@ -1120,6 +1125,19 @@ export async function control(root) {
     }),
   };
 
+  /*
+   * Where this project can go from where it is.
+   *
+   * `next` is the ordinary set. The reopen set is deliberately excluded from
+   * this control: reopening a closed project is a separate authorised act with
+   * its own reason, and offering it in the same dropdown that advances a live
+   * project is how a lost bid becomes a live job by accident.
+   */
+  const here = (lifecycle?.states ?? []).find((entry) => entry.state === (project.lifecycleState ?? 'PRE_AWARD'));
+  const reachable = (here?.next ?? [])
+    .map((code) => (lifecycle?.states ?? []).find((entry) => entry.state === code))
+    .filter(Boolean);
+
   const COMMANDS = {
     responsibility: RESPONSIBILITY_COMMAND,
     gate: GATE_COMMAND,
@@ -1236,24 +1254,41 @@ export async function control(root) {
       },
     },
     tenderOutcome: {
-      title: 'Record how this tender ended',
+      title: 'Move this project through the lifecycle',
       intent:
-        'Everything except winning. Recorded rather than left blank because a bid that went nowhere and a bid still ' +
-        'being priced look identical otherwise — and a hit rate computed from that is the ratio of wins to open ' +
-        'bids, which always flatters. On hold and in negotiation leave the project exactly where it is.',
-      path: `/v1/projects/${projectId}/tender/outcome`,
-      submitLabel: 'Record the outcome',
+        'Everything except contract award. What the project is — an opportunity, negotiating, on hold, lost — is a ' +
+        'different question from where the work is, so this moves the lifecycle and leaves the stage alone. On hold ' +
+        'and in negotiation keep the project exactly where it is; lost and withdrawn close it without deleting ' +
+        'anything.',
+      path: `/v1/projects/${projectId}/lifecycle`,
+      submitLabel: 'Move it',
       fields: [
         {
-          name: 'outcome',
-          label: 'Outcome',
+          name: 'to',
+          label: 'Move it to',
           type: 'select',
+          /*
+           * The states this project can actually reach from where it is, read
+           * from `/v1/lifecycle/states` rather than listed here.
+           *
+           * A dropdown offering a transition the server refuses is a dead end
+           * the person cannot diagnose — and the transition table is the
+           * platform's, so a second copy in the browser would be a second
+           * answer to what the lifecycle permits.
+           */
+          options: reachable.map((entry) => ({ value: entry.state, label: `${entry.label} — ${entry.entryCondition}` })),
+        },
+        {
+          name: 'commercialOutcome',
+          label: 'And the bid outcome',
+          type: 'select',
+          required: false,
+          hint:
+            'Separate from the state on purpose: a bid is Won while the project is still in award validation waiting ' +
+            'for an executed contract, and that gap is where mobilisation cost at risk lives.',
           options: [
-            { value: 'LOST', label: 'Lost — somebody else was awarded it' },
-            { value: 'WITHDRAWN', label: 'Withdrawn — we pulled the bid' },
-            { value: 'ON_HOLD', label: 'On hold — paused, state preserved' },
-            { value: 'NEGOTIATION', label: 'In negotiation — the tender workspace stays open' },
-            { value: 'FRAMEWORK_APPOINTMENT', label: 'Framework appointment — awaiting a call-off' },
+            { value: '', label: 'Leave unchanged' },
+            ...Object.entries(lifecycle?.commercialOutcomes ?? {}).map(([value, meta]) => ({ value, label: meta.label })),
           ],
         },
         {
@@ -1276,8 +1311,9 @@ export async function control(root) {
           required: false,
         },
       ],
-      transform: ({ winningValueMinor, wonBy, frameworkReference, ...rest }) => ({
+      transform: ({ winningValueMinor, wonBy, frameworkReference, commercialOutcome, ...rest }) => ({
         ...rest,
+        ...(String(commercialOutcome ?? '').trim() ? { commercialOutcome } : {}),
         // Absent rather than zero. A zero would read as "won for nothing",
         // which is a different and much more interesting claim than "unknown".
         ...(String(winningValueMinor ?? '').trim() ? { winningValueMinor: Number(winningValueMinor) } : {}),

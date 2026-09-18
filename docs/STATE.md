@@ -22959,3 +22959,87 @@ project must not be able to read: it is what the business priced the job at.
 typecheck and then tests, capturing only the second exit code. It now gates on
 both and prints each, which is how the classification failure surfaced in the
 same run rather than in a later one.
+
+## The lifecycle state, as its own dimension
+
+The specification's §3.1 asks for seven independent control dimensions. The
+platform had three of them fused into one field, and the consequence is worth
+stating plainly: a project in `DESIGN` could be a live job mobilising, a
+suspended job with everybody demobilised, or a bid nobody had won — and the
+screen said `DESIGN` to all three.
+
+`backend/src/lifecycle/state.ts` holds the fifteen canonical states from §3.2
+with their entry conditions and permitted transitions, beside two more
+dimensions the specification separates for the same reason:
+
+- **`lifecycleState`** — what the project *is*. Tender opportunity, award
+  validation, live mobilisation, suspended, closed lost.
+- **`commercialOutcome`** — how the bid went. Pending, Won, Lost, Withdrawn,
+  No-bid, Framework appointed.
+- **`deliveryStatus`** — what the team is doing. Not started, Mobilising,
+  Active, Suspended, Complete.
+
+And the **phase** stays what it was: the *primary stage*, which is where the
+work is. A suspended job is still in `CONSTRUCTION`; it has not moved, it has
+stopped.
+
+### Why three fields and not one
+
+BR-002 in one sentence: **a Won outcome does not make a project live.** A bid is
+`WON` while the project sits in `AWARD_PENDING` waiting for an executed
+contract, and that gap is where every at-risk mobilisation cost lives. One field
+cannot hold both, and a business that collapses them cannot tell "we have won
+it" from "we have started it".
+
+The same argument decides `live`. Only `LIVE_MOBILISING`, `LIVE_ACTIVE`,
+`HANDOVER` and `OPERATIONS` count as live delivery. **`SUSPENDED` does not** —
+a suspended job counted as live is a portfolio reporting capacity it does not
+have — and neither does `AWARD_PENDING`, which is an unsigned job.
+
+### Reopening is permitted, and is a different act
+
+`CLOSED_LOST`, `WITHDRAWN`, `CLOSED_COMPLETE` and `CANCELLED` are terminal in
+normal operation. The transition table marks the way out as a **reopen** and the
+command demands `reopen: true` with its own reason, so a closed project cannot
+be reopened by the control that advances a live one — a lost bid one click from
+being a live job is exactly the accident this prevents.
+
+It is deliberately not forbidden. Refusing outright sends people to create a
+duplicate project instead, and the duplicate is the thing the whole identity
+model exists to prevent. Every terminal state has a way out, asserted.
+
+### What the history carries
+
+`lifecycleHistory` starts at creation — `{ from: null, to: PRE_AWARD }` — rather
+than at the first change, because a history beginning at the first *change*
+cannot say what the project opened as, which is where every "how did this get
+here" starts. A reopen is marked in the entry that records it.
+
+### Backfill without fabricating history
+
+§19.1 requires existing projects to carry an explicit entry stage and lifecycle
+state "without fabricating history". `currentLifecycleState` derives the state
+from the phase for a project written before the field existed, rather than
+defaulting to `DRAFT` — a project mid-construction reporting itself as a draft
+would be wrong in the most visible possible way. The ledger is append-only, so
+historic records cannot be rewritten to carry a field they were written without;
+they are read forward instead.
+
+### What this increment does not close
+
+Against the specification's own increment plan, this is increment 1 — the domain
+foundation — and part of increment 2. Still open, and none of it is claimed:
+
+- **§5.2 the ten-step conversion wizard.** Conversion is one command, not a
+  drafted, validated, approved and committed workflow. No draft, no readiness
+  validation, no approval routing, no receipt.
+- **FR-005 / AC-03 idempotency.** A retried conversion returns `409` rather than
+  the original receipt. That is a guard against double-award, not idempotency.
+- **AC-04 optimistic concurrency.** There is no `If-Match` on the project
+  aggregate and no `aggregate_version`.
+- **§6 information inheritance.** No dispositions, no provenance, no maturity.
+  AC-02 — a Proposed tender drawing must not become IFC through conversion —
+  **would fail today**, and it is the most dangerous gap on this list.
+- **§3.1 / FR-009 workstreams.** One primary stage, no concurrent workstreams.
+- **§7 the remaining five baselines**, §10 `project_relationship` and child
+  projects, §11's outbox and event envelope, §13.2 step-up authentication.

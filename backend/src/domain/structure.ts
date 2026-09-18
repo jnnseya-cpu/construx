@@ -15,6 +15,14 @@ import {
   type GateEvaluation,
   type LifecyclePhase,
 } from '../lifecycle/phases.ts';
+import {
+  assertLifecycleTransition,
+  lifecycleLabel,
+  lifecycleState,
+  type CommercialOutcome,
+  type DeliveryStatus,
+  type LifecycleState,
+} from '../lifecycle/state.ts';
 
 /**
  * Governance and delivery structure.
@@ -330,6 +338,21 @@ export function createProject(
       // forward only through governed gates — what changed is where it starts,
       // not how it advances.
       phase: startingPhase,
+      /*
+       * The lifecycle state, which is a different question from the phase.
+       *
+       * The phase says where the work is; this says what the project *is* — a
+       * tender opportunity, a live job, a suspended one. A project opened at
+       * TENDER is `PRE_AWARD` and has won nothing; one opened at CONSTRUCTION
+       * is already being built. See `lifecycle/state.ts`.
+       */
+      lifecycleState: openingLifecycleState(startingPhase),
+      lifecycleStateAt: openedAt,
+      lifecycleStateBy: ctx.auth.actorId,
+      lifecycleHistory: [
+        { from: null, to: openingLifecycleState(startingPhase), at: openedAt, by: ctx.auth.actorId, reason: 'Project created' },
+      ],
+      commercialOutcome: openingLifecycleState(startingPhase) === 'PRE_AWARD' ? 'PENDING' : undefined,
       /**
        * The phases this project never entered, and the reason it did not.
        *
@@ -381,165 +404,171 @@ export function createProject(
   return { projectId, phase: startingPhase };
 }
 
-// --------------------------------------------- the tender outcome gate
+// ------------------------------- the lifecycle state, and how a bid ends
 
 /**
- * How a tender ends.
+ * Moving a project through the canonical lifecycle.
  *
- * Six outcomes, because a bid register with two states is a register that
- * cannot be read. "Won" and "lost" leave everything genuinely in between —
- * still negotiating, on hold, withdrawn, sitting on a framework awaiting a
- * call-off — indistinguishable from "still being priced", and a business
- * looking at its pipeline then cannot tell live work from dead paper.
+ * Every transition except contract award comes through here. Award is
+ * `convertToDelivery`, which is a separate command with its own gate, because
+ * it changes what the project *is* and an award reachable from the same
+ * dropdown as "put it on hold" is a contract award nobody reviewed.
+ *
+ * ## Three dimensions, not one field
+ *
+ * `lifecycleState` says what the project is — a tender opportunity, a live job,
+ * a suspended one, a lost one. `commercialOutcome` says how the bid went.
+ * `deliveryStatus` says what the team is doing. They move at different times
+ * and for different reasons: a bid is `WON` while the project is still
+ * `AWARD_PENDING` waiting for an executed contract, and that gap is where every
+ * at-risk mobilisation cost lives.
+ *
+ * The phase — `CONCEPT` through `OPERATIONS` — is a fourth and separate thing:
+ * the *primary stage*, which is where the work is rather than what the project
+ * is. A suspended job is still in `CONSTRUCTION`; it is simply not proceeding.
+ *
+ * ## Reopening is permitted and is not the same act
+ *
+ * `CLOSED_LOST`, `WITHDRAWN`, `CLOSED_COMPLETE` and `CANCELLED` are terminal in
+ * normal operation. They can be left, but the transition table marks it as a
+ * reopen and this command demands `reopen: true` with it — an explicit second
+ * act, because reopening a closed project is how a lost bid quietly becomes a
+ * live one. Refusing outright would be worse: people would create a duplicate
+ * project instead, and the duplicate is the thing the whole identity model
+ * exists to prevent.
  */
-export type TenderOutcome =
-  | 'WON'
-  | 'LOST'
-  | 'WITHDRAWN'
-  | 'ON_HOLD'
-  | 'NEGOTIATION'
-  | 'FRAMEWORK_APPOINTMENT';
-
-/** What each outcome means for the project, and whether it is the end of it. */
-export const TENDER_OUTCOMES: Record<
-  TenderOutcome,
-  { label: string; closes: boolean; converts: boolean; needs: string }
-> = {
-  WON: {
-    label: 'Won',
-    closes: false,
-    converts: true,
-    needs: 'The award information, captured at the conversion gate.',
-  },
-  LOST: {
-    label: 'Lost',
-    closes: true,
-    converts: false,
-    needs: 'Why it was not won, long enough for an estimating review to learn from.',
-  },
-  WITHDRAWN: {
-    label: 'Withdrawn',
-    closes: true,
-    converts: false,
-    needs: 'Why the bid was pulled, and who approved pulling it.',
-  },
-  ON_HOLD: {
-    label: 'On hold',
-    closes: false,
-    converts: false,
-    needs: 'What the bid is waiting on. Workflows suspend; the state is preserved exactly.',
-  },
-  NEGOTIATION: {
-    label: 'In negotiation',
-    closes: false,
-    converts: false,
-    needs: 'What is being negotiated. The tender workspace stays open.',
-  },
-  FRAMEWORK_APPOINTMENT: {
-    label: 'Framework appointment',
-    closes: false,
-    converts: false,
-    needs: 'The framework appointed to. Call-offs become child projects of this one.',
-  },
-};
-
-/**
- * Record how the tender ended, without converting anything.
- *
- * Every outcome except `WON` comes through here. Winning is a different act
- * with a different gate — `convertToDelivery` — because it changes what the
- * project *is*, and an award buried in a dropdown beside "on hold" would be a
- * contract award nobody reviewed.
- *
- * An outcome is not final. A bid `ON_HOLD` becomes `NEGOTIATION` becomes `WON`,
- * and each is a recorded act with its own reason; what is refused is recording
- * an outcome on a project that has already been converted, because the bid is
- * then over.
- */
-export function recordTenderOutcome(
+export function setLifecycleState(
   ctx: EngineContext,
   input: {
-    outcome: Exclude<TenderOutcome, 'WON'>;
+    to: LifecycleState;
     reason: string;
-    /** Who won it, where it is known and the outcome is a loss. */
+    /** Required when the transition table says this is a reopen. */
+    reopen?: boolean;
+    /** Set alongside, where this transition also decides the bid. */
+    commercialOutcome?: CommercialOutcome;
+    /** On a loss, where it is known. */
     wonBy?: string;
     winningValueMinor?: number;
-    /** The framework appointed to, where that is the outcome. */
+    /** On a framework appointment. */
     frameworkReference?: string;
     evidenceHash?: string;
   },
-): { projectId: string; outcome: TenderOutcome } {
+): { projectId: string; from: LifecycleState; to: LifecycleState; reopened: boolean } {
   authorise(ctx, 'PROJECT_SETUP', 'A');
 
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
-  const phase = project.state.phase as LifecyclePhase;
+  const from = currentLifecycleState(project.state);
 
-  if (project.state.commercialStatus === 'AWARDED') {
+  const { requiresReopen } = assertLifecycleTransition(from, input.to);
+
+  if (requiresReopen && input.reopen !== true) {
     throw new DomainError(
-      'TENDER_ALREADY_CONVERTED',
-      'This project has been converted to delivery. Its tender is over, and a tender outcome recorded now would ' +
-        'contradict the contract it is being built under.',
+      'REOPEN_REQUIRED',
+      `${lifecycleLabel(from)} is a closed state. Reopening it to ${lifecycleLabel(input.to)} is a separate ` +
+        'authorised act and has to say so — a closed project that can be reopened by the same control that ' +
+        'advances a live one is a lost bid one click away from becoming a live job.',
       409,
     );
   }
-  if (phase !== 'TENDER') {
-    throw new DomainError(
-      'PROJECT_NOT_AT_TENDER',
-      `A tender outcome is recorded from TENDER and this project is at ${phase}.`,
-      409,
-    );
-  }
+
   if (input.reason.trim().length < 10) {
-    throw new DomainError(
-      'OUTCOME_REASON_REQUIRED',
-      `Say why: ${TENDER_OUTCOMES[input.outcome].needs}`,
-      422,
-      [{ field: 'reason', message: 'Required, and long enough to be read' }],
-    );
+    throw new DomainError('LIFECYCLE_REASON_REQUIRED', 'Say why this project is moving state.', 422, [
+      { field: 'reason', message: 'Required, and long enough to be read' },
+    ]);
   }
 
   const evidence = registerEvidence(ctx, {
-    type: 'TENDER_OUTCOME',
-    hash: input.evidenceHash ?? hashEvidence(JSON.stringify({ project: ctx.projectId, outcome: input.outcome, reason: input.reason })),
-    description: `${String(project.state.name)} — ${TENDER_OUTCOMES[input.outcome].label}: ${input.reason.slice(0, 80)}`,
+    type: 'LIFECYCLE_TRANSITION',
+    hash: input.evidenceHash ?? hashEvidence(JSON.stringify({ project: ctx.projectId, from, to: input.to, reason: input.reason })),
+    description: `${String(project.state.name)}: ${lifecycleLabel(from)} → ${lifecycleLabel(input.to)}`,
   });
 
-  const history = (project.state.outcomeHistory as Array<Record<string, unknown>>) ?? [];
   const now = new Date().toISOString();
+  const history = (project.state.lifecycleHistory as Array<Record<string, unknown>>) ?? [];
 
   write(ctx, {
-    eventType: 'TENDER_OUTCOME_RECORDED',
+    eventType: 'PROJECT_LIFECYCLE_STATE_CHANGED',
     entity: { refType: 'Project', refId: ctx.projectId },
     nextState: {
       ...project.state,
-      tenderOutcome: input.outcome,
-      outcomeAt: now,
-      outcomeBy: ctx.auth.actorId,
-      outcomeReason: input.reason,
-      lostTo: input.wonBy,
-      winningValueMinor: input.winningValueMinor,
-      frameworkReference: input.frameworkReference,
+      lifecycleState: input.to,
+      lifecycleStateAt: now,
+      lifecycleStateBy: ctx.auth.actorId,
+      lifecycleStateReason: input.reason,
       /*
-       * Every outcome this bid has had, in order.
+       * Every state this project has been in, in order.
        *
-       * A bid that went on hold in March, back into negotiation in May and was
-       * lost in July has a story, and a single overwritten field tells none of
-       * it. The estimating review that asks "how long were we carrying this"
-       * reads the list.
+       * A project that went on hold in March, back to tender in May and was
+       * lost in July has a story, and one overwritten field tells none of it.
+       * A reopen is marked, because "it was closed and somebody reopened it" is
+       * the single most-asked question of any closed-then-live project.
        */
-      outcomeHistory: [
+      lifecycleHistory: [
         ...history,
-        { outcome: input.outcome, at: now, by: ctx.auth.actorId, reason: input.reason },
+        { from, to: input.to, at: now, by: ctx.auth.actorId, reason: input.reason, ...(requiresReopen ? { reopened: true } : {}) },
       ],
-      // Closed outcomes stop the project being live work. The others leave it
-      // exactly where it was, which is the point of having six.
-      status: TENDER_OUTCOMES[input.outcome].closes ? input.outcome : project.state.status,
-      commercialStatus: TENDER_OUTCOMES[input.outcome].closes ? 'CLOSED' : 'PRE_AWARD',
+      ...(input.commercialOutcome ? { commercialOutcome: input.commercialOutcome } : {}),
+      ...(input.wonBy ? { lostTo: input.wonBy } : {}),
+      ...(input.winningValueMinor !== undefined ? { winningValueMinor: input.winningValueMinor } : {}),
+      ...(input.frameworkReference ? { frameworkReference: input.frameworkReference } : {}),
+      // Delivery follows the lifecycle where the lifecycle decides it. A
+      // suspended project's team is not mobilising, whatever the field said
+      // before, and leaving the two to be set independently is how a screen
+      // reports a demobilised job as active.
+      deliveryStatus: deliveryFor(input.to) ?? project.state.deliveryStatus,
+      status: lifecycleState(input.to).terminal ? 'CLOSED' : 'ACTIVE',
     },
     evidenceRefs: [evidence],
   });
 
-  return { projectId: ctx.projectId, outcome: input.outcome };
+  return { projectId: ctx.projectId, from, to: input.to, reopened: requiresReopen };
+}
+
+/**
+ * The lifecycle state a project is in, for one created before the field existed.
+ *
+ * Derived from the phase rather than defaulted to `DRAFT`, because a project
+ * mid-construction that reported itself as a draft would be wrong in the most
+ * visible possible way — and the ledger is append-only, so the historic records
+ * cannot be rewritten to carry a field they were written without.
+ */
+export function currentLifecycleState(state: Record<string, unknown>): LifecycleState {
+  const held = state.lifecycleState as LifecycleState | undefined;
+  if (held) return held;
+
+  const phase = state.phase as LifecyclePhase | undefined;
+  if (phase === 'TENDER') return 'PRE_AWARD';
+  if (phase === 'HANDOVER') return 'HANDOVER';
+  if (phase === 'OPERATIONS') return 'OPERATIONS';
+  if (phase === 'CONCEPT' || phase === 'DESIGN') {
+    // Pre-award unless an award has been recorded — a contractor's design work
+    // happens after the win, a client's before the tender, and the award is the
+    // only thing that tells the two apart.
+    return state.awardedAt ? 'LIVE_ACTIVE' : 'PRE_AWARD';
+  }
+  return 'LIVE_ACTIVE';
+}
+
+/** The delivery status a lifecycle state settles, where it settles one. */
+function deliveryFor(state: LifecycleState): DeliveryStatus | undefined {
+  if (state === 'LIVE_MOBILISING') return 'MOBILISING';
+  if (state === 'LIVE_ACTIVE') return 'ACTIVE';
+  if (state === 'SUSPENDED') return 'SUSPENDED';
+  if (state === 'CLOSED_COMPLETE' || state === 'OPERATIONS') return 'COMPLETE';
+  // Pre-award states say nothing about delivery, which has not started.
+  if (!lifecycleState(state).live && !lifecycleState(state).terminal) return 'NOT_STARTED';
+  return undefined;
+}
+
+/** The lifecycle state a project opens in, given where it joins the lifecycle. */
+export function openingLifecycleState(startingPhase: LifecyclePhase): LifecycleState {
+  if (startingPhase === 'TENDER') return 'PRE_AWARD';
+  if (startingPhase === 'HANDOVER') return 'HANDOVER';
+  if (startingPhase === 'OPERATIONS') return 'OPERATIONS';
+  // A project opened at CONCEPT or DESIGN by a client is pre-award work on
+  // their own asset; one opened at CONSTRUCTION is already being built.
+  if (startingPhase === 'CONCEPT' || startingPhase === 'DESIGN') return 'PRE_AWARD';
+  return 'LIVE_ACTIVE';
 }
 
 
@@ -1019,18 +1048,27 @@ export function convertToDelivery(
     description: `Contract award: ${input.award.contractForm}, ${input.award.contractAwardDate}`,
   });
 
-  const outcomeHistory = (project.state.outcomeHistory as Array<Record<string, unknown>>) ?? [];
-
   write(ctx, {
     eventType: 'TENDER_WON',
     entity: { refType: 'Project', refId: ctx.projectId },
     nextState: {
       ...project.state,
-      tenderOutcome: 'WON' satisfies TenderOutcome,
+      // BR-002: a Won outcome does not itself make the project live — the award
+      // gate does, and this is that gate. The outcome and the state move
+      // together here precisely because this is the one command that completes
+      // both.
+      commercialOutcome: 'WON' satisfies CommercialOutcome,
+      lifecycleState: 'LIVE_MOBILISING' satisfies LifecycleState,
+      lifecycleStateAt: now,
+      lifecycleStateBy: ctx.auth.actorId,
+      lifecycleStateReason: input.justification,
+      lifecycleHistory: [
+        ...((project.state.lifecycleHistory as Array<Record<string, unknown>>) ?? []),
+        { from: currentLifecycleState(project.state), to: 'LIVE_MOBILISING', at: now, by: ctx.auth.actorId, reason: input.justification },
+      ],
       outcomeAt: now,
       outcomeBy: ctx.auth.actorId,
       outcomeReason: input.justification,
-      outcomeHistory: [...outcomeHistory, { outcome: 'WON', at: now, by: ctx.auth.actorId, reason: input.justification }],
       /*
        * The three statuses a converted project carries, and why they are three.
        *

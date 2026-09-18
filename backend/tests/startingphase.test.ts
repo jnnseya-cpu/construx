@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import * as structure from '../src/domain/structure.ts';
 import { LIFECYCLE_ORDER, phasesBefore } from '../src/lifecycle/phases.ts';
+import { LIFECYCLE_STATES, LIFECYCLE_STATE_CODES, lifecycleState } from '../src/lifecycle/state.ts';
 import * as stages from '../src/lifecycle/stages.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -226,7 +227,10 @@ describe('a won tender converts the same project — it does not create a second
     assert.equal(state.phase, 'DESIGN');
     assert.equal(state.commercialStatus, 'AWARDED');
     assert.equal(state.deliveryStatus, 'MOBILISING');
-    assert.equal(state.tenderOutcome, 'WON');
+    // The commercial outcome and the lifecycle state both move here, because
+    // this is the one command that completes the bid and opens delivery.
+    assert.equal(state.commercialOutcome, 'WON');
+    assert.equal(state.lifecycleState, 'LIVE_MOBILISING');
   });
 
   it('moves to DESIGN as a conversion, not as a regression', () => {
@@ -419,13 +423,28 @@ describe('a won tender converts the same project — it does not create a second
       return made;
     })();
     throwsCode(
-      () => structure.recordTenderOutcome(ctx, { outcome: 'LOST', reason: 'Changed our mind about having won it.' }),
-      'TENDER_ALREADY_CONVERTED',
+      () =>
+        structure.setLifecycleState(ctx, {
+          to: 'CLOSED_LOST',
+          reason: 'Changed our mind about having won it.',
+        }),
+      'LIFECYCLE_TRANSITION_FORBIDDEN',
     );
   });
 });
 
-describe('the five endings that are not a win', () => {
+describe('the lifecycle state is its own dimension', () => {
+  /**
+   * The specification's §3.1 asks for seven independent control dimensions and
+   * the platform had three of them fused. A project in `DESIGN` could be a live
+   * job mobilising, a suspended job with everyone demobilised, or a bid nobody
+   * has won — and one field said `DESIGN` to all three.
+   *
+   * These assert the separation rather than the states: that the lifecycle can
+   * move without the phase moving, that the commercial outcome can be set
+   * without the project going live, and that delivery follows the lifecycle
+   * rather than drifting from it.
+   */
   function bid(name: string): ReturnType<Platform['context']> {
     const created = open(name, {
       startingPhase: 'TENDER',
@@ -434,100 +453,195 @@ describe('the five endings that are not a win', () => {
     return platform.context(seed.users.admin!.auth, created.projectId, { source: 'WEB' });
   }
 
-  it('carries six outcomes, because two cannot describe a pipeline', () => {
-    // A register that knows only won and lost reads everything genuinely in
-    // between — negotiating, on hold, withdrawn, awaiting a framework call-off —
-    // as "still being priced", and a business then cannot tell live work from
-    // dead paper.
-    assert.deepEqual(Object.keys(structure.TENDER_OUTCOMES).sort(), [
-      'FRAMEWORK_APPOINTMENT',
-      'LOST',
-      'NEGOTIATION',
-      'ON_HOLD',
-      'WITHDRAWN',
-      'WON',
-    ]);
-    // Only one of them converts, and it is the only one with its own gate.
-    assert.deepEqual(
-      Object.entries(structure.TENDER_OUTCOMES).filter(([, meta]) => meta.converts).map(([id]) => id),
-      ['WON'],
+  const stateOf = (ctx: { projectId: string }): Record<string, unknown> =>
+    platform.ledger.entitiesOfType('Project').find((r) => r.state.id === ctx.projectId)!.state;
+
+  it('opens a tender project as a tender opportunity, not a draft', () => {
+    const ctx = bid('Opens pre-award');
+    assert.equal(stateOf(ctx).lifecycleState, 'PRE_AWARD');
+    assert.equal(stateOf(ctx).deliveryStatus, undefined, 'delivery started before anything was won');
+  });
+
+  it('moves into negotiation without moving the phase', () => {
+    const ctx = bid('Negotiating');
+    structure.setLifecycleState(ctx, {
+      to: 'NEGOTIATION',
+      reason: 'Client has opened commercial negotiation on preliminaries and the programme.',
+    });
+
+    const state = stateOf(ctx);
+    assert.equal(state.lifecycleState, 'NEGOTIATION');
+    // The work has not moved. The phase is where the work is; the lifecycle is
+    // what the project is, and this is the separation the dimension exists for.
+    assert.equal(state.phase, 'TENDER');
+    assert.equal(state.deliveryStatus, 'NOT_STARTED');
+  });
+
+  it('refuses a transition the table does not allow, and says what is allowed', () => {
+    const ctx = bid('Illegal move');
+    const refusal = throwsCode(
+      () => structure.setLifecycleState(ctx, { to: 'HANDOVER', reason: 'Skipping straight to handover, somehow.' }),
+      'LIFECYCLE_TRANSITION_FORBIDDEN',
+    );
+    // The sentence names the permitted states in words, not codes — the screen
+    // shows this to a person, and "PRE_AWARD" is not a thing anybody says.
+    assert.match(String(refusal.message), /Tender negotiation/);
+    assert.match(String(refusal.message), /Award validation/);
+    assert.doesNotMatch(String(refusal.message), /AWARD_PENDING/);
+  });
+
+  it('will not reopen a closed project through the control that advances a live one', () => {
+    const ctx = bid('Reopen guard');
+    structure.setLifecycleState(ctx, {
+      to: 'CLOSED_LOST',
+      reason: 'Client awarded to an incumbent on their own framework.',
+      commercialOutcome: 'LOST',
+    });
+
+    // The transition is permitted — but only as a reopen, and only when the
+    // caller says so. A lost bid one click from being live is the failure.
+    throwsCode(
+      () => structure.setLifecycleState(ctx, { to: 'PRE_AWARD', reason: 'Client came back and asked us to re-bid.' }),
+      'REOPEN_REQUIRED',
+    );
+
+    const reopened = structure.setLifecycleState(ctx, {
+      to: 'PRE_AWARD',
+      reason: 'Client cancelled the first award and invited us to re-bid the package.',
+      reopen: true,
+    });
+    assert.equal(reopened.reopened, true);
+
+    const history = stateOf(ctx).lifecycleHistory as Array<Record<string, unknown>>;
+    assert.equal(history.at(-1)!.reopened, true, 'a reopen is not marked in the history that records it');
+  });
+
+  it('keeps every state the project has been in, in order', () => {
+    const ctx = bid('Long road');
+    structure.setLifecycleState(ctx, { to: 'ON_HOLD', reason: 'Client paused pending a funding decision.' });
+    structure.setLifecycleState(ctx, { to: 'AWARD_PENDING', reason: 'Funding released; intent to award received.' });
+    structure.setLifecycleState(ctx, { to: 'CLOSED_LOST', reason: 'Intent withdrawn; awarded elsewhere.', commercialOutcome: 'LOST' });
+
+    const history = stateOf(ctx).lifecycleHistory as Array<Record<string, unknown>>;
+    // Creation is the first entry. A history that began at the first *change*
+    // could not say what the project opened as, which is the question every
+    // "how did this get here" starts with.
+    assert.deepEqual(history.map((entry) => entry.to), ['PRE_AWARD', 'ON_HOLD', 'AWARD_PENDING', 'CLOSED_LOST']);
+    assert.equal(history[0]!.from, null, 'the opening entry claims a previous state');
+    assert.equal(stateOf(ctx).lifecycleState, 'CLOSED_LOST');
+  });
+
+  it('separates the commercial outcome from the lifecycle state', () => {
+    // BR-002 in one assertion: a Won outcome does not make a project live.
+    const ctx = bid('Won but not live');
+    structure.setLifecycleState(ctx, {
+      to: 'AWARD_PENDING',
+      reason: 'Letter of intent received; the executed contract is still with their solicitors.',
+      commercialOutcome: 'WON',
+    });
+
+    const state = stateOf(ctx);
+    assert.equal(state.commercialOutcome, 'WON');
+    assert.equal(state.lifecycleState, 'AWARD_PENDING');
+    assert.notEqual(state.lifecycleState, 'LIVE_MOBILISING');
+    assert.equal(state.deliveryStatus, 'NOT_STARTED', 'delivery started on a letter of intent');
+  });
+
+  it('records a no-bid, which is not a loss', () => {
+    // Counting a decision not to price as a loss understates a hit rate as
+    // surely as ignoring losses overstates it.
+    const ctx = bid('No bid');
+    structure.setLifecycleState(ctx, {
+      to: 'WITHDRAWN',
+      reason: 'Qualified out at the bid/no-bid review: no capacity in the window and the risk profile was wrong.',
+      commercialOutcome: 'NO_BID',
+    });
+    assert.equal(stateOf(ctx).commercialOutcome, 'NO_BID');
+    assert.equal(stateOf(ctx).lifecycleState, 'WITHDRAWN');
+  });
+
+  it('suspends a live job without pretending it is still live', () => {
+    // BR-009's sibling: a suspended job counted as live is how a portfolio
+    // reports capacity it does not have.
+    const ctx = bid('Suspended');
+    structure.convertToDelivery(ctx, {
+      award: {
+        contractAwardDate: '2026-04-20',
+        contractSumMinor: 50_000_000,
+        contractForm: 'JCT D&B 2016',
+        contractedScope: 'As tendered.',
+        contractStartDate: '2026-05-05',
+        contractCompletionDate: '2027-11-30',
+      },
+      deliveryEntry: 'CONSTRUCTION',
+      justification: 'Awarded and converted; works start on site in May.',
+    });
+    assert.equal(stateOf(ctx).lifecycleState, 'LIVE_MOBILISING');
+
+    structure.setLifecycleState(ctx, { to: 'SUSPENDED', reason: 'Client suspended the works pending a planning appeal.' });
+
+    const state = stateOf(ctx);
+    assert.equal(state.lifecycleState, 'SUSPENDED');
+    assert.equal(state.deliveryStatus, 'SUSPENDED');
+    // Still in CONSTRUCTION. The work has not moved; it has stopped.
+    assert.equal(state.phase, 'CONSTRUCTION');
+  });
+
+  it('refuses a state that is not one', () => {
+    const ctx = bid('Nonsense state');
+    throwsCode(
+      () => structure.setLifecycleState(ctx, { to: 'MOBILISED' as never, reason: 'Sounds plausible enough.' }),
+      'LIFECYCLE_STATE_UNKNOWN',
     );
   });
 
-  it('closes a lost bid and records who won it', () => {
-    const ctx = bid('Lost');
-    structure.recordTenderOutcome(ctx, {
-      outcome: 'LOST',
-      reason: 'Priced 11% above the winner on preliminaries; our programme was four weeks longer.',
-      wonBy: 'Hartley Civils',
-      winningValueMinor: 128_000_000,
-    });
+  it('refuses a one-word reason', () => {
+    const ctx = bid('Terse');
+    throwsCode(() => structure.setLifecycleState(ctx, { to: 'ON_HOLD', reason: 'paused' }), 'LIFECYCLE_REASON_REQUIRED');
+  });
+});
 
-    const state = platform.ledger.entitiesOfType('Project').find((r) => r.state.id === ctx.projectId)!.state;
-    assert.equal(state.tenderOutcome, 'LOST');
-    assert.equal(state.commercialStatus, 'CLOSED');
-    assert.equal(state.lostTo, 'Hartley Civils');
-    // Still at TENDER. The project did not move; it stopped.
-    assert.equal(state.phase, 'TENDER');
+describe('the lifecycle transition table itself', () => {
+  it('carries the fifteen canonical states', () => {
+    assert.equal(LIFECYCLE_STATES.length, 15);
+    assert.deepEqual(new Set(LIFECYCLE_STATE_CODES).size, 15, 'a state code is duplicated');
   });
 
-  it('leaves an on-hold or negotiating bid exactly where it was', () => {
-    for (const outcome of ['ON_HOLD', 'NEGOTIATION'] as const) {
-      const ctx = bid(`Still live — ${outcome}`);
-      structure.recordTenderOutcome(ctx, {
-        outcome,
-        reason: 'Client has paused the award pending a funding decision in the autumn.',
-      });
-      const state = platform.ledger.entitiesOfType('Project').find((r) => r.state.id === ctx.projectId)!.state;
-      assert.equal(state.tenderOutcome, outcome);
-      assert.equal(state.commercialStatus, 'PRE_AWARD', `${outcome} closed a bid that is still live`);
-      assert.equal(state.status, 'ACTIVE');
+  it('names every state it points at', () => {
+    // A transition to a state that does not exist is a dead end nobody finds
+    // until somebody tries to take it.
+    const known = new Set<string>(LIFECYCLE_STATE_CODES);
+    for (const definition of LIFECYCLE_STATES) {
+      for (const target of [...definition.next, ...(definition.reopenTo ?? [])]) {
+        assert.ok(known.has(target), `${definition.state} points at ${target}, which is not a state`);
+      }
     }
   });
 
-  it('keeps every outcome a bid has had, in order', () => {
-    // A bid that went on hold in March, back into negotiation in May and was
-    // lost in July has a story, and one overwritten field tells none of it.
-    const ctx = bid('Long road');
-    structure.recordTenderOutcome(ctx, { outcome: 'ON_HOLD', reason: 'Client paused pending a funding decision.' });
-    structure.recordTenderOutcome(ctx, { outcome: 'NEGOTIATION', reason: 'Funding released; commercial terms reopened.' });
-    structure.recordTenderOutcome(ctx, { outcome: 'LOST', reason: 'Client awarded to an incumbent on their framework.' });
-
-    const state = platform.ledger.entitiesOfType('Project').find((r) => r.state.id === ctx.projectId)!.state;
-    const history = state.outcomeHistory as Array<Record<string, unknown>>;
-    assert.deepEqual(history.map((entry) => entry.outcome), ['ON_HOLD', 'NEGOTIATION', 'LOST']);
-    assert.equal(state.tenderOutcome, 'LOST');
+  it('gives every state a label and an entry condition a person can read', () => {
+    for (const definition of LIFECYCLE_STATES) {
+      assert.ok(definition.label.length > 2, `${definition.state} has no label`);
+      assert.ok(definition.entryCondition.length > 8, `${definition.state} has no entry condition`);
+      // No underscores and no shouting: §9's UI principle is that users see
+      // decisions and status, never implementation codes. "Draft" is a fine
+      // label for DRAFT; "LIVE_MOBILISING" would not be one for itself.
+      assert.doesNotMatch(definition.label, /_/, `${definition.state}'s label is a code`);
+      assert.notEqual(definition.label, definition.label.toUpperCase(), `${definition.state}'s label is shouted`);
+    }
   });
 
-  it('records a framework appointment without converting anything', () => {
-    const ctx = bid('Framework');
-    structure.recordTenderOutcome(ctx, {
-      outcome: 'FRAMEWORK_APPOINTMENT',
-      reason: 'Appointed to Lot 3 of the regional framework; call-offs follow as child projects.',
-      frameworkReference: 'RWF-2026-L3',
-    });
-    const state = platform.ledger.entitiesOfType('Project').find((r) => r.state.id === ctx.projectId)!.state;
-    assert.equal(state.frameworkReference, 'RWF-2026-L3');
-    assert.equal(state.commercialStatus, 'PRE_AWARD');
-    assert.equal(state.phase, 'TENDER');
+  it('counts only genuinely live states as live', () => {
+    const live = LIFECYCLE_STATES.filter((d) => d.live).map((d) => d.state);
+    assert.deepEqual(live.sort(), ['HANDOVER', 'LIVE_ACTIVE', 'LIVE_MOBILISING', 'OPERATIONS']);
+    // The two that would be wrong, asserted by name because both are tempting.
+    assert.equal(lifecycleState('SUSPENDED').live, false, 'a suspended job counts as live capacity');
+    assert.equal(lifecycleState('AWARD_PENDING').live, false, 'an unsigned job counts as live work');
   });
 
-  it('refuses the one-word reason a business gives itself instead of looking', () => {
-    const ctx = bid('Terse loss');
-    throwsCode(() => structure.recordTenderOutcome(ctx, { outcome: 'LOST', reason: 'price' }), 'OUTCOME_REASON_REQUIRED');
-  });
-
-  it('leaves a hit rate computable, which is why a loss is recorded at all', () => {
-    // Without a loss record a bid that went nowhere and a bid still being priced
-    // are the same row, and the ratio of wins to *open* bids always flatters.
-    const bids = platform.ledger
-      .entitiesOfType('Project')
-      .map((record) => record.state)
-      .filter((state) => state.startedAtPhase === 'TENDER');
-
-    assert.ok(bids.length >= 5);
-    assert.ok(bids.some((s) => s.tenderOutcome === 'WON'));
-    assert.ok(bids.some((s) => s.tenderOutcome === 'LOST'));
-    assert.ok(bids.some((s) => s.tenderOutcome === undefined), 'every bid was decided — the denominator is complete by accident');
+  it('lets every terminal state be reopened, rather than forcing a duplicate project', () => {
+    for (const definition of LIFECYCLE_STATES.filter((d) => d.terminal)) {
+      const ways = [...definition.next, ...(definition.reopenTo ?? [])];
+      assert.ok(ways.length > 0, `${definition.state} is a dead end, so the only way out is a duplicate project`);
+    }
   });
 });

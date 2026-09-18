@@ -307,6 +307,7 @@ import { customRoleRegister, GRANTABLE_AREAS } from '../identity/customroles.ts'
 import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
+import { COMMERCIAL_OUTCOMES, DELIVERY_STATUSES, LIFECYCLE_STATES, LIFECYCLE_STATE_CODES } from '../lifecycle/state.ts';
 import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import { parseVerification, VERIFICATION_SCHEME, type ExportAudience, type ExportFormat } from '../export/exporter.ts';
 import { posture as envelopePosture, verifyTag } from '../evidence/envelope.ts';
@@ -9277,22 +9278,28 @@ export const ROUTES: Route[] = [
   },
   // ------------------------------------------------ the tender outcome gate
   //
-  // A project opened at TENDER is a bid, and the bid ends one of six ways. Five
-  // of them are recorded here and change nothing about what the project is.
-  // The sixth — won — is a contract award, and it converts this same project
-  // into a live delivery project through its own gate below. It is a separate
-  // route because an award buried in a dropdown beside "on hold" is a contract
-  // award nobody reviewed.
+  // Every lifecycle move except contract award. Award is the route below,
+  // because it changes what the project is and an award reachable from the same
+  // dropdown as "put it on hold" is a contract award nobody reviewed.
+  //
+  // The state and the commercial outcome are separate fields on purpose: a bid
+  // is WON while the project is still AWARD_PENDING waiting for an executed
+  // contract, and that gap is where every at-risk mobilisation cost lives.
   {
     method: 'POST',
-    pattern: '/v1/projects/:projectId/tender/outcome',
-    description: 'Record how a tender ended — lost, withdrawn, on hold, in negotiation, or appointed to a framework',
+    pattern: '/v1/projects/:projectId/lifecycle',
+    description: 'Move the project through the lifecycle — negotiation, hold, suspension, loss, withdrawal, reopen',
     schema: {
       type: 'object',
-      required: ['outcome', 'reason'],
+      required: ['to', 'reason'],
       properties: {
-        outcome: { type: 'string', enum: ['LOST', 'WITHDRAWN', 'ON_HOLD', 'NEGOTIATION', 'FRAMEWORK_APPOINTMENT'] },
-        reason: stringField,
+        to: { type: 'string', enum: LIFECYCLE_STATE_CODES },
+        reason: { type: 'string', minLength: 10 },
+        // Demanded separately when the transition table says the target is a
+        // closed state. A reopen that looked like an ordinary advance would put
+        // a lost bid one click from being a live job.
+        reopen: { type: 'boolean' },
+        commercialOutcome: { type: 'string', enum: Object.keys(COMMERCIAL_OUTCOMES) },
         wonBy: { type: 'string' },
         winningValueMinor: { type: 'integer', minimum: 0 },
         frameworkReference: { type: 'string' },
@@ -9300,7 +9307,19 @@ export const ROUTES: Route[] = [
       },
       additionalProperties: false,
     },
-    handler: (platform, ctx) => structure.recordTenderOutcome(projectContext(platform, ctx), body(ctx)),
+    handler: (platform, ctx) => structure.setLifecycleState(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/lifecycle/states',
+    guest: 'REFERENCE',
+    readOnly: true,
+    description: 'The canonical lifecycle states, what each means and where each may go next',
+    handler: () => ({
+      states: LIFECYCLE_STATES,
+      commercialOutcomes: COMMERCIAL_OUTCOMES,
+      deliveryStatuses: DELIVERY_STATUSES,
+    }),
   },
   {
     method: 'POST',
