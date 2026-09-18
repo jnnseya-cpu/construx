@@ -773,7 +773,10 @@ export async function tenants(root) {
         result = await command({
           title: `${name} — exempt from charges`,
           intent:
-            'Grants every company in the group its current package free of charge. Nobody moves plan; what changes is whether the monthly charge is raised. Leave the date empty and the exemption never ends — with one, the charge resumes by itself the day after and nobody has to remember.',
+            'Grants every company in the group its current package free of charge, and its AI with it — no monthly charge is raised, ' +
+            'and nothing is taken from the wallet for an AI run. Nobody moves plan. The providers are still paid and what they cost ' +
+            'stays on the record, borne by this platform and reported as absorbed on the estate view. Leave the date empty and the ' +
+            'exemption never ends — with one, both halves resume by themselves the day after and nobody has to remember.',
           path: `/v1/admin/groups/${groupId}/exempt`,
           submitLabel: 'Apply to every company',
           fields: [

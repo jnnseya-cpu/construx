@@ -422,7 +422,11 @@ export function readiness(now = new Date()): Readiness {
           ? 'NOT_SET'
           : 'DEGRADED',
       detail: config.publicBaseUrl.startsWith('https://')
-        ? `Links the platform sends — sign-in, unsubscribe, payment returns — are built on ${config.publicBaseUrl}.`
+        ? `Links the platform sends — sign-in, invitations, unsubscribe, payment returns — and the webhook endpoints quoted to ` +
+          `card and mobile-money providers are all built on ${config.publicBaseUrl}. Being set is not the same as working: this ` +
+          `says the value is an https origin, not that the host resolves or holds a certificate for that exact name. ` +
+          `"Open the public address" answers that, and a "www." host that was never given a DNS record passes this check and ` +
+          `fails that one.`
         : config.publicBaseUrl.startsWith('http://localhost')
           ? 'Still the local default, so every link the platform emails points at the machine it is running on.'
           : 'Not https. Signed links, including unsubscribe tokens, would be readable in transit and leaked to every hop a mail client follows.',

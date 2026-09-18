@@ -4,7 +4,7 @@ import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import * as agents from '../src/agents/runtime.ts';
 import { AGENTS, deployedAgents } from '../src/agents/registry.ts';
-import { tierCost } from '../src/billing/acu.ts';
+import { tierCost, effectiveMultiplier } from '../src/billing/acu.ts';
 import { config } from '../src/config.ts';
 import { ForbiddenError } from '../src/core/errors.ts';
 import type { AgentDefinition } from '../src/agents/types.ts';
@@ -45,8 +45,8 @@ describe('a tier is what prices a proposal', () => {
     for (const tier of ['LOW', 'MED', 'HIGH', 'PREMIUM'] as const) {
       const cost = tierCost(tier);
       assert.equal(cost.rawCostMinor, config.billing.acuTierRawCostMinor[tier]);
-      assert.equal(cost.multiplier, config.billing.markupMultiplier);
-      assert.equal(cost.chargeMinor, cost.rawCostMinor * config.billing.markupMultiplier);
+      assert.equal(cost.multiplier, effectiveMultiplier(0, false));
+      assert.equal(cost.chargeMinor, cost.rawCostMinor * effectiveMultiplier(0, false));
     }
   });
 

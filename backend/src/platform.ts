@@ -3332,9 +3332,50 @@ export class Platform {
     return wallet;
   }
 
+  /**
+   * A tenancy's own ACU wallet, with the exemption in force stamped on it.
+   *
+   * **A free package means free AI.** Reported as a group granted twelve months
+   * free still being metered: the exemption was recorded against the
+   * subscription, which is the monthly platform fee, and the wallet knew
+   * nothing about it — so the customer was told their AI cost nothing and then
+   * watched a prepaid balance fall, with a runway counting down beside it. Two
+   * meanings of "free" is one too many. There is one grant, it covers both, and
+   * it is applied here because this is the one accessor every reader of a
+   * wallet goes through.
+   *
+   * Stamped on each read rather than at the moment the grant is made, for the
+   * reason `#asAt` gives: an exemption that expired in the subscription and not
+   * in the wallet is an exemption that leaks money in a direction nobody
+   * notices, because nothing fails when a customer is not charged.
+   */
   wallet(tenantId: string): ACUWallet {
     const wallet = this.#wallets.get(tenantId);
     if (!wallet) throw new NotFoundError(`No ACU wallet for tenant ${tenantId}`);
+    const stored = this.#subscriptions.get(tenantId);
+    const subscription = stored ? this.#asAt(stored, new Date()) : undefined;
+    /*
+     * **The demonstration tenancy is the one exception, and it is deliberate.**
+     *
+     * Its package is granted free so an anonymous visitor is not shown a
+     * £6,500 activation notice on the landing page. Its AI is not, because
+     * anybody on the internet can drive it, and an unmetered demonstration is
+     * a public button that spends this company's own provider budget with no
+     * ceiling on it. The seeded ACU allowance is what bounds that, and it has
+     * to stay finite to bound anything.
+     *
+     * A free package therefore means free AI for a customer, and the
+     * demonstration is not a customer — which is the same line `closeTenant`
+     * and `raiseOpeningCharge` already draw.
+     */
+    wallet.setUnmetered(
+      subscription?.grantedFree === true && !this.isDemonstrationTenant(tenantId)
+        ? {
+            reason: `${PACKAGES[subscription.package].label} was granted free of charge, and AI with it`,
+            ...(subscription.grantedFreeUntil ? { until: subscription.grantedFreeUntil } : {}),
+          }
+        : null,
+    );
     return wallet;
   }
 
@@ -3370,7 +3411,11 @@ export class Platform {
     } catch {
       primary = undefined;
     }
-    const shared = primary && primary.id !== tenantId ? this.#wallets.get(primary.id) : undefined;
+    // Through `wallet()` rather than the map, so the group's wallet carries its
+    // own exemption when a member company spends from it. Reading the map
+    // directly returned an unstamped wallet, and a company of an exempt group
+    // was then metered against the group's balance.
+    const shared = primary && primary.id !== tenantId && this.#wallets.has(primary.id) ? this.wallet(primary.id) : undefined;
     if (!primary || !shared) return { wallet: own, sharedFrom: null };
     return { wallet: shared, sharedFrom: { tenantId: primary.id, name: primary.legalName } };
   }

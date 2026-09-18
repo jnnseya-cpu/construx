@@ -4,7 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
-import { ACUWallet } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
 import { config } from '../src/config.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import { issueTokens } from '../src/identity/auth.ts';
@@ -219,7 +219,7 @@ describe('the quote agrees with the reservation it precedes', () => {
     // held; a second of 500 raw costs exactly what is left and is affordable,
     // and at 501 it is not — the quote has to know before it is offered rather
     // than after the click.
-    const rate = config.billing.markupMultiplier;
+    const rate = effectiveMultiplier(0, false);
     const w = wallet(800 * rate);
     w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 300 });
 
@@ -323,19 +323,23 @@ describe('the estimate says where it came from', () => {
     // cost is stored and the quote is always ceil(raw x the current multiplier),
     // so if the rate ever moves the history reprices with it.
     //
-    // This used to prove that by switching the volume incentive on and watching
-    // the rate drop. The bands are now flat at the headline rate by decision, so
-    // the demonstration inverts: flipping the switch must change nothing at all.
-    // That is the stronger assertion — a flag that silently discounted would be
-    // how a rate below the headline came back without anyone deciding it.
+    // Demonstrated by moving the rate underneath a settled entry and asking
+    // again. The price is a range now — the top of it for a small consumer,
+    // the bottom for a negotiated tenancy — so switching the incentive on is a
+    // real change of rate, and the quote has to follow it rather than repeat
+    // what the entry was charged at.
+    //
+    // This assertion has been inverted twice: it proved a discount, then proved
+    // a flat rate could not be discounted, and now proves the range moves. The
+    // property underneath never changed.
     const w = wallet(10_000_000);
     const hold = w.reserve({
       aiRequestId: 'req-1',
-      estimatedRawCostMinor: 250_000,
+      estimatedRawCostMinor: 250,
       module: 'PLANNING',
       feature: 'delay_risk_forecast',
     });
-    w.settle(hold.holdId, 250_000, 'OPENAI');
+    w.settle(hold.holdId, 250, 'OPENAI');
 
     const ask = () =>
       orchestrator.quote({
@@ -350,13 +354,14 @@ describe('the estimate says where it came from', () => {
     const after = ask();
 
     assert.equal(before.estimatedRawCostMinor, after.estimatedRawCostMinor, 'the same measurement');
-    assert.equal(after.multiplier, config.billing.markupMultiplier, 'the incentive produced a rate below the headline');
-    assert.equal(after.multiplier, before.multiplier, 'the rate moved when nothing should move it');
-    assert.equal(after.estimatedChargeMinor, before.estimatedChargeMinor);
+    assert.equal(before.multiplier, effectiveMultiplier(w.monthRawSpendMinor(), false));
+    assert.equal(after.multiplier, config.billing.markupMultiplier, 'a negotiated tenancy was not held at the bottom of the range');
+    assert.ok(after.multiplier < before.multiplier, 'the rate did not move when the tenancy moved to the negotiated one');
+    assert.ok(after.estimatedChargeMinor < before.estimatedChargeMinor, 'the quote did not follow the rate');
 
     // And the charge really is derived from the raw figure, not carried over
     // from the settled entry.
-    assert.equal(after.estimatedChargeMinor, Math.ceil(after.estimatedRawCostMinor * config.billing.markupMultiplier));
+    assert.equal(after.estimatedChargeMinor, Math.ceil(after.estimatedRawCostMinor * after.multiplier));
   });
 
   it('shows what the balance would be afterwards, and refuses to show a negative one', () => {

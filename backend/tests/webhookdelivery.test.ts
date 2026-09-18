@@ -12,15 +12,18 @@ import { resetWebhookHealth, webhookHealth, webhookSecretShape } from '../src/bi
 import { resetKodaWebhookHealth, kodaWebhookHealth } from '../src/billing/koda.ts';
 import {
   REFUSALS,
+  WEBHOOK_PATH,
   deliveryHealth,
   diagnose,
   dominantCode,
+  endpointUrl,
   recordAccepted,
   recordRefused,
   resetDelivery,
   secretShape,
   type WebhookHealthRecord,
 } from '../src/billing/webhookdelivery.ts';
+import { ROUTES } from '../src/api/routes.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject } from '../src/seed.ts';
 
@@ -382,6 +385,35 @@ describe('the verdict', () => {
     assert.equal(verdict.state, 'NOT_CONFIGURED');
     assert.equal(verdict.moneyAtRisk, false);
     assert.ok(verdict.remedy.includes('STRIPE_WEBHOOK_SECRET'));
+  });
+
+  it('names the exact endpoint URL to paste, not the site root', () => {
+    /*
+     * Reported as guidance reading "check the endpoint URL in the provider's
+     * dashboard against https://www.construxvg.com". Nobody configures a
+     * webhook against a site root, so the comparison it asked for could not be
+     * made, and the one thing needed — the string to compare against — was the
+     * one thing missing.
+     */
+    const verdict = diagnose({ rail: 'CARD', configured: true, shape: goodShape(), health: blank() });
+    assert.equal(verdict.state, 'NEVER_DELIVERED');
+    assert.ok(verdict.remedy.includes(WEBHOOK_PATH.CARD), 'the remedy does not name the path the process serves');
+    assert.ok(verdict.remedy.includes(endpointUrl('CARD')), 'the remedy does not give the full URL to paste');
+    assert.ok(
+      diagnose({ rail: 'MOBILE_MONEY', configured: true, shape: secretShape('x'.repeat(32), ''), health: blank() }).remedy.includes(
+        WEBHOOK_PATH.MOBILE_MONEY,
+      ),
+      'the mobile-money rail names the card path or none at all',
+    );
+  });
+
+  it('serves every path it tells an operator to configure', () => {
+    // A diagnosis naming a URL this process does not serve sends somebody to
+    // reconfigure a working endpoint. The route table is the authority.
+    const patterns = new Set(ROUTES.map((route) => route.pattern));
+    for (const [rail, path] of Object.entries(WEBHOOK_PATH)) {
+      assert.ok(patterns.has(path), `${rail} guidance names ${path}, which no route serves`);
+    }
   });
 
   it('carries no secret into the verdict', () => {

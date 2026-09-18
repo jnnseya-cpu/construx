@@ -1173,24 +1173,53 @@ export const config = {
      * own record, and changing this affects new top-ups rather than in-flight
      * ones. Review it when the market moves; the drift between reviews is the
      * cost of not having a feed, and it is bounded and visible.
+     *
+     * **There is no default, and that is the point.** It used to fall back to
+     * `1.27` — a plausible figure, from no source, on no date, which nobody had
+     * agreed to and which the screen printed as a fact. A deployment that keyed
+     * the rail and never set a rate converted real settlements at it and the
+     * boot check stayed quiet, because a positive number is a positive number.
+     * Unset now reads as zero, which the check below reports and which
+     * `convertToBillingMinor` refuses, so a mobile-money credit cannot be made
+     * at a rate nobody chose.
      */
-    usdPerGbp: num('KODA_USD_PER_GBP', 1.27),
+    usdPerGbp: num('KODA_USD_PER_GBP', 0),
   },
 
   billing: {
     /**
-     * Hard economic rule: 1 unit of provider cost is charged at 4.
+     * The bottom of the AI price range: 1 unit of provider cost charged at 4.
      *
      * The company keeps £3 of every £4 it takes — 300% profit on what it paid
-     * the provider. Stated by the business as two halves of one rule: the
-     * price is four times provider cost, and every £1 the platform spends with
-     * a provider has to produce £4 of revenue.
+     * the provider. Every £1 the platform spends with a provider has to produce
+     * at least £4 of revenue, and nothing anywhere may take a charge below it.
+     *
+     * **This used to be the whole price, and it is now the floor of a range.**
+     * The rate runs from `maxMarkupMultiplier` at the smallest volumes down to
+     * this at the largest — see `VOLUME_BANDS` for why, and for the ladder
+     * between them. A tenancy spending pennies a month costs about as much to
+     * serve as one spending hundreds, so a single multiple either overcharges
+     * the large account or fails to cover the small one.
      *
      * Everything downstream derives from this number — the wallet's charge, the
      * quote a screen shows before spending, what an ACU bundle is worth, the
-     * invoice line — so this is the only place the rate is set.
+     * invoice line — so this is the only place the bottom of the range is set.
      */
     markupMultiplier: num('ACU_MARKUP_MULTIPLIER', 4),
+    /**
+     * The top of the AI price range: 1 unit of provider cost charged at 10.
+     *
+     * What the smallest consumers pay. A run whose provider cost is a fraction
+     * of a penny still takes a routing decision, a wallet reservation, a ledger
+     * append, an evidence write and a settlement — work whose cost does not
+     * shrink with the token count. At the bottom of the range that work is not
+     * covered; at the top it is, and the account that grows into volume walks
+     * down the ladder to `markupMultiplier` as it goes.
+     *
+     * Must be at or above `markupMultiplier`; a value below it would invert the
+     * range, and `assertConfig` refuses to boot on one.
+     */
+    maxMarkupMultiplier: num('ACU_MAX_MARKUP_MULTIPLIER', 10),
     /**
      * The company's required profit on every AI transaction, as a percentage
      * of what the provider charged.
@@ -1201,20 +1230,20 @@ export const config = {
      * `minimumMultiplier` invites somebody to tune it without asking what
      * profit it leaves.
      *
-     * **The floor and the price coincide at 4×, and that has a consequence
-     * worth stating rather than discovering.** `settle` capped an execution
-     * that overran its estimate at the amount reserved and disclosed, *unless*
-     * honouring the cap would sell below this floor. With the floor at the
-     * price, `floor === billed` on every settlement, so the cap is inert: an
-     * execution that costs more than its estimate is charged in full at 4× and
-     * the customer pays more than they were quoted.
+     * **The floor is the bottom of the price range, and the gap between them
+     * is what lets a quote be honoured.** `settle` caps an execution that
+     * overran its estimate at the amount reserved and disclosed, *unless*
+     * honouring that cap would sell below this floor.
      *
-     * That is the rule as instructed — every £1 of provider cost produces £4,
-     * with no case in which it produces less — and the exposure it creates is
-     * handled by disclosure rather than by a silent discount: an overrun is
-     * named on the ledger entry, carried into the invoice line, and shows up in
-     * the operator's realised-multiplier view. Nothing about it is inferred
-     * from arithmetic after the fact.
+     * While the price was one flat 4× the two coincided, so `floor === billed`
+     * on every settlement, the cap was inert, and an execution costing more
+     * than its estimate was charged in full — disclosed on the entry and the
+     * invoice line, but more than the customer had been quoted. With the price
+     * running from `maxMarkupMultiplier` down to this, there is room between
+     * them: a modest overrun is charged at the quote, and only an overrun large
+     * enough to breach the floor is charged above it. The disclosure stays
+     * either way — an overrun is named on the ledger entry, carried into the
+     * invoice line, and shows up in the operator's realised-multiplier view.
      */
     minimumProfitPercent: num('ACU_MINIMUM_PROFIT_PERCENT', 300),
     /**
@@ -1842,13 +1871,28 @@ export function assertProductionSafety(): string[] {
     if (config.koda.webhookSecret !== '' && config.koda.secretKey === '') {
       warnings.push('KODA_WEBHOOK_SECRET is set but KODA_SECRET_KEY is not — no mobile-money checkout can be opened');
     }
+    // The AI price is a range with two ends, and they have to be the right way
+    // round. Inverted, the ladder would charge the largest consumers the most
+    // and the smallest the least — the opposite of the rule, and invisible,
+    // because every rung still clears the profit floor and nothing fails.
+    if (config.billing.maxMarkupMultiplier < config.billing.markupMultiplier) {
+      warnings.push(
+        `ACU_MAX_MARKUP_MULTIPLIER (${config.billing.maxMarkupMultiplier}) is below ACU_MARKUP_MULTIPLIER ` +
+          `(${config.billing.markupMultiplier}) — the AI price range is inverted, so heavy consumers are charged more than light ` +
+          'ones. The floor still holds, so nothing sells at a loss; the ladder is simply upside down.',
+      );
+    }
     // The rate every mobile-money credit is divided by. Zero or negative would
     // reach a wallet as an infinite or negative credit, and the conversion
     // refuses it — but at the point of payment, which is far too late to find
     // out. Say so at boot instead.
     if (config.koda.secretKey !== '' && !(config.koda.usdPerGbp > 0)) {
       warnings.push(
-        `KODA_USD_PER_GBP is ${config.koda.usdPerGbp} — mobile-money payments will be refused at settlement until it is a positive rate`,
+        config.koda.usdPerGbp === 0
+          ? 'KODA_SECRET_KEY is set but KODA_USD_PER_GBP is not — mobile-money settlements have no rate to convert at and will be ' +
+            'refused. Set it to the rate you are prepared to settle at; there is deliberately no default, because a rate nobody ' +
+            'chose would credit wallets at a figure nobody agreed.'
+          : `KODA_USD_PER_GBP is ${config.koda.usdPerGbp} — mobile-money payments will be refused at settlement until it is a positive rate`,
       );
     }
     if (config.newsletter.enabled && !config.smtp.host) {

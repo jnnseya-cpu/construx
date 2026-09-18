@@ -34,6 +34,7 @@ import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
 import * as consistencySweep from '../ops/consistencysweep.ts';
 import { blueprintPosition } from '../ops/blueprint.ts';
+import { checkSelfReach } from '../ops/selfreach.ts';
 import { eventStorePosition, platformEventStream } from '../ops/eventstore.ts';
 import * as reports from '../ops/reports.ts';
 import { forecastPosition } from '../ops/forecast.ts';
@@ -6702,6 +6703,30 @@ export const ROUTES: Route[] = [
        */
       operatorOnly(ctx, 'probe the AI providers');
       return { mode: config.ai.mode, providers: await platform.orchestrator.probeProviders() };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/reachability',
+    description: 'Open PUBLIC_BASE_URL from this process and report whether it resolves, serves TLS and answers as this build (platform operator only)',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: async (_platform, ctx) => {
+      /*
+       * Whether the address in every email this platform sends actually works.
+       *
+       * Reported twice, as two faults with one cause: an invitation link that
+       * would not open (`ERR_SSL_PROTOCOL_ERROR`), and payments guidance
+       * quoting a webhook origin that answered nothing. `PUBLIC_BASE_URL` is
+       * both, and nothing had ever opened it. It is a string until a customer
+       * clicks it.
+       *
+       * A POST rather than a field on the readiness map: it makes a real
+       * outbound request through DNS, the proxy and the certificate, and
+       * putting that on a screen's load would have this deployment knocking on
+       * its own front door every time somebody looked at it.
+       */
+      operatorOnly(ctx, 'check whether this deployment is reachable at its public address');
+      return await checkSelfReach();
     },
   },
   {

@@ -1,3 +1,4 @@
+import { effectiveMultiplier } from '../src/billing/acu.ts';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.ts';
 import type { Server } from 'node:http';
@@ -113,7 +114,7 @@ describe('§9.3 — the company and the group are told as AI spend approaches it
      * silently stops crossing them the moment the business changes its rate,
      * and the test then fails somewhere far from the thing that changed.
      */
-    const raw = (billedMinor: number): number => billedMinor / config.billing.markupMultiplier;
+    const raw = (billedMinor: number): number => billedMinor / effectiveMultiplier(0, false);
 
     // Half the limit: 5,000 billed of 10,000.
     const first = wallet.reserve({ aiRequestId: 'run-1', estimatedRawCostMinor: raw(5_000) });

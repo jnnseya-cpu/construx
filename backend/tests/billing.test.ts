@@ -2,11 +2,22 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { ALL_ROLES, OPERATOR_ONLY_ROLES } from '../src/identity/roles.ts';
-import { ACUWallet, effectiveMultiplier, minimumMultiplier, profitPercent, subscriptionAcuAllocationMinor } from '../src/billing/acu.ts';
+import { ACUWallet, VOLUME_BANDS, effectiveMultiplier, minimumMultiplier, profitPercent, subscriptionAcuAllocationMinor } from '../src/billing/acu.ts';
 import { assignIdentity, revokeIdentity, SeatLimitError, TIERS, type Subscription } from '../src/billing/subscription.ts';
 import { buildInvoice, formatContractValue } from '../src/billing/invoice.ts';
 import { ACU_BUNDLES, PACKAGES, SEATS, UNCHARGED_ROLES, seatForRole } from '../src/billing/seats.ts';
 import { config } from '../src/config.ts';
+
+/**
+ * The rate an ordinary test wallet is charged at.
+ *
+ * The AI price is a range, not a number: the top of it at the smallest volumes
+ * down to the profit floor at the largest. A fixture that restates one end
+ * asserts the wrong figure the moment either end moves, so this derives the
+ * rate from the same function the wallet uses. These wallets settle tens of
+ * pence a month, which is the first band.
+ */
+const RATE = effectiveMultiplier(0, false);
 
 function wallet(balanceMinor = 10_000): ACUWallet {
   const w = new ACUWallet('tenant-1');
@@ -20,7 +31,7 @@ describe('ACU wallet', () => {
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     const entry = w.settle(hold.holdId, 100, 'OPENAI');
     assert.equal(entry.rawCostMinor, 100);
-    assert.equal(entry.billedMinor, 100 * config.billing.markupMultiplier);
+    assert.equal(entry.billedMinor, 100 * RATE);
   });
 
   it('never allows the balance to go negative', () => {
@@ -33,7 +44,7 @@ describe('ACU wallet', () => {
     // No ACUs means no AI, for a reasoning run as much as for a render.
     // Sized from the multiplier rather than from a literal, so the fixture
     // follows the price instead of quietly encoding last quarter's.
-    const w = wallet(100 * config.billing.markupMultiplier);
+    const w = wallet(100 * RATE);
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     w.settle(hold.holdId, 100, 'OPENAI');
     assert.equal(w.snapshot().availableMinor, 0);
@@ -45,11 +56,47 @@ describe('ACU wallet', () => {
     );
   });
 
+  it('charges nothing while the tenancy is exempt, and still records what the providers cost', () => {
+    // Reported as a group holding twelve months of free ACUs watching a
+    // prepaid balance fall anyway. The spend is real and stays on the record;
+    // what changes is who pays for it.
+    const w = new ACUWallet('tenant-1');
+    w.setUnmetered({ reason: 'Enterprise was granted free of charge, and AI with it' });
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    assert.equal(hold.heldMinor, 0, 'nothing is ring-fenced against a charge that is not coming');
+    const entry = w.settle(hold.holdId, 100, 'OPENAI');
+    assert.equal(entry.billedMinor, 0);
+    assert.equal(entry.rawCostMinor, 100, 'what the provider charged this platform is still on the entry');
+    assert.match(entry.note ?? '', /Not charged/);
+    const snap = w.snapshot();
+    assert.equal(snap.balanceMinor, 0);
+    assert.equal(snap.aiHalted, false, 'an empty balance does not halt AI that is not billed to it');
+    assert.equal(snap.unmetered?.reason, 'Enterprise was granted free of charge, and AI with it');
+  });
+
+  it('quotes an exempt tenancy nil, so the price before the button matches the charge after it', () => {
+    const w = new ACUWallet('tenant-1');
+    w.setUnmetered({ reason: 'granted free' });
+    const quote = w.quote(100);
+    assert.equal(quote.chargeMinor, 0);
+    assert.equal(quote.blockedReason, undefined, 'an empty balance cannot block a run that costs nothing');
+  });
+
+  it('charges again the moment the exemption term runs out', () => {
+    // Expiry is applied at the accessor, not by a sweep: nothing fails when a
+    // customer is not charged, so a missed sweep would be invisible.
+    const w = wallet(100 * RATE);
+    w.setUnmetered({ reason: 'twelve months free', until: '2020-01-01T00:00:00.000Z' });
+    assert.equal(w.unmetered(), null, 'a term in the past is not a grant in force');
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    assert.equal(w.settle(hold.holdId, 100, 'OPENAI').billedMinor, 100 * RATE);
+  });
+
   it('does not halt an AI run at a cap, because a ceiling does not cut a task in half', () => {
     // The money is funded, so what the cap decides is whether the work is
     // allowed to finish — and a reasoning task stopped at a ceiling has spent
     // the tokens and produced nothing usable. Non-AI metered work is refused.
-    const w = wallet(100 * config.billing.markupMultiplier);
+    const w = wallet(100 * RATE);
     w.setCaps({ monthlyMinor: 1 });
     assert.throws(() => w.reserve({ aiRequestId: 'render', estimatedRawCostMinor: 1 }), /cap/i);
     const hold = w.reserve({ aiRequestId: 'reason', estimatedRawCostMinor: 1, runToCompletion: true });
@@ -60,7 +107,7 @@ describe('ACU wallet', () => {
   it('ring-fences held funds so a second call cannot spend them', () => {
     // Two calls' worth of credit at the current rate, so the fixture tracks
     // the price rather than restating a number from a previous one.
-    const charge = 100 * config.billing.markupMultiplier;
+    const charge = 100 * RATE;
     const w = wallet(charge * 2);
     w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     assert.equal(w.snapshot().heldMinor, charge);
@@ -76,21 +123,37 @@ describe('ACU wallet', () => {
     assert.equal(w.snapshot().heldMinor, 0);
   });
 
-  it('charges an overrun in full, and says so on the entry', () => {
-    // Estimate 100 raw, held at the platform rate. Actual 150 raw bills more
-    // than that, and the larger figure is what is charged: the profit floor is
-    // the price, so the cap at the disclosed hold can never win.
-    //
-    // This asserted the opposite until the floor moved. The rule is that £1 of
-    // provider cost produces the full multiple with no exceptions, so the customer pays for
-    // what the run actually cost rather than what it was estimated at — and
-    // the whole exposure that creates rests on the entry saying so, which is
-    // why the note is asserted rather than treated as decoration.
+  it('caps a modest overrun at what was quoted, because the floor leaves room to', () => {
+    /*
+     * Estimate 100 raw, held at the rate. Actual 150 raw.
+     *
+     * **This asserted the opposite while the price and the profit floor were
+     * the same number.** With one flat multiple, honouring the quote would
+     * always have sold below the floor, so the quote could never be honoured
+     * and every overrun was charged in full — disclosed, but a surprise.
+     *
+     * The price is a range now and the floor is its bottom rung, so there is
+     * room between them: a run that overruns its estimate is charged what the
+     * customer was quoted, as long as that still clears the floor. The next
+     * test covers the case where it does not.
+     */
     const w = wallet();
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     const entry = w.settle(hold.holdId, 150, 'OPENAI');
 
-    assert.equal(entry.billedMinor, 150 * config.billing.markupMultiplier, 'an overrun is charged at the rate');
+    assert.equal(entry.billedMinor, hold.heldMinor, 'the customer was charged more than they were quoted');
+    assert.ok(entry.billedMinor >= 150 * minimumMultiplier(), 'honouring the quote sold below the profit floor');
+  });
+
+  it('charges the floor rather than the quote when honouring it would sell at a loss', () => {
+    // Estimate 100 raw, actual 1,000 raw — an answer ten times the size of the
+    // question, which anybody can produce on purpose. Capping at the hold would
+    // charge less than the providers cost.
+    const w = wallet();
+    const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
+    const entry = w.settle(hold.holdId, 1_000, 'OPENAI');
+
+    assert.equal(entry.billedMinor, 1_000 * minimumMultiplier(), 'an overrun past the floor was not charged at it');
     assert.ok(entry.billedMinor > hold.heldMinor, 'the charge did not exceed the estimate, so nothing overran');
     assert.match(String(entry.note), /above the estimate/i, 'an overrun that is not disclosed is a surprise');
     assert.match(String(entry.note), new RegExp(String(hold.heldMinor)), 'the note must name what was quoted');
@@ -145,7 +208,10 @@ describe('ACU wallet', () => {
 
   it('enforces a monthly cap before contacting a provider', () => {
     const w = wallet(100_000);
-    w.setCaps({ monthlyMinor: 500 });
+    // Room for exactly one call at the current rate, so the second breaches.
+    // Derived rather than written as a figure: a cap fixture pinned to a
+    // multiplier stops testing the cap and starts testing the rate.
+    w.setCaps({ monthlyMinor: 100 * RATE + 1 });
     const hold = w.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 100 });
     w.settle(hold.holdId, 100, 'OPENAI');
     assert.throws(() => w.reserve({ aiRequestId: 'req-2', estimatedRawCostMinor: 100 }), /Monthly AI cap/);
@@ -156,7 +222,7 @@ describe('ACU wallet', () => {
     // One call's worth at the current rate, so the second breaches. Derived
     // rather than written as a figure: a cap fixture pinned to the old
     // multiplier stops testing the cap and starts testing the rate.
-    w.setCaps({ perProjectMinor: { 'project-a': 100 * config.billing.markupMultiplier } });
+    w.setCaps({ perProjectMinor: { 'project-a': 100 * RATE } });
     const first = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 100, projectId: 'project-a' });
     w.settle(first.holdId, 100, 'OPENAI');
     assert.throws(() => w.reserve({ aiRequestId: 'r2', estimatedRawCostMinor: 100, projectId: 'project-a' }), /Project AI cap/);
@@ -170,7 +236,7 @@ describe('ACU wallet', () => {
     // enough to cross the 50% and 80% thresholds, low enough that nothing
     // breaches — a breach would halt execution and this test would be
     // measuring the cap rather than the alerts.
-    const charge = 100 * config.billing.markupMultiplier;
+    const charge = 100 * RATE;
     w.setCaps({ monthlyMinor: Math.ceil((charge * 3) / 0.9) });
     for (const request of ['r1', 'r2', 'r3']) {
       const hold = w.reserve({ aiRequestId: request, estimatedRawCostMinor: 100 });
@@ -229,49 +295,77 @@ describe('ACU wallet', () => {
   });
 });
 
-describe('volume incentive', () => {
-  it('holds the full multiplier at low monthly spend', () => {
-    assert.equal(effectiveMultiplier(100_000, true), 4.0);
-  });
-
-  it('charges 4x at every level of spend, with no step down', () => {
-    // The bands stepped 4.0 → 3.6 → 3.3 and were flattened by decision: the
-    // price is 4x and there is no rate below it anywhere in the platform. A
-    // tenant spending a million a month pays the same multiplier as one
-    // spending ten pounds.
-    for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
-      assert.equal(
-        effectiveMultiplier(spend, true),
-        config.billing.markupMultiplier,
-        `a monthly spend of ${spend} was not charged at the headline rate`,
+describe('the AI price range', () => {
+  /*
+   * **The price is a range of 4× to 10×, by decision of the business, and this
+   * is where that is held to.**
+   *
+   * It was one flat multiple at every level of spend. That priced a tenancy
+   * spending £0.43 of provider cost a month identically to one spending
+   * £4,000, and the two do not cost the same to serve: a run whose provider
+   * cost is a fraction of a penny still takes a routing decision, a
+   * reservation, a ledger append, an evidence write and a settlement, none of
+   * which shrink with the token count.
+   *
+   * So the smallest consumers pay the top and the largest pay the bottom, and
+   * the bottom is the profit floor, which nothing may go below.
+   */
+  it('spans the configured range, top to bottom, and never leaves it', () => {
+    for (const spend of [0, 500, 1_000, 5_000, 20_000, 100_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
+      const rate = effectiveMultiplier(spend, false);
+      assert.ok(
+        rate >= config.billing.markupMultiplier && rate <= config.billing.maxMarkupMultiplier,
+        `a monthly spend of ${spend} priced at ${rate}×, outside the ${config.billing.markupMultiplier}–${config.billing.maxMarkupMultiplier}× range`,
       );
     }
   });
 
-  it('is the same rate whether or not the incentive is switched on', () => {
-    // The mechanism is retained and audited so a band could be reintroduced
-    // deliberately. Until one is, the switch changes nothing — which is the
-    // property worth asserting, because a flag that silently discounts is how
-    // a rate below the headline would come back without anyone deciding it.
-    for (const spend of [0, 500_000, 5_000_000]) {
-      assert.equal(effectiveMultiplier(spend, true), effectiveMultiplier(spend, false));
+  it('charges the top of the range at the smallest spend and the bottom at the largest', () => {
+    assert.equal(effectiveMultiplier(0, false), config.billing.maxMarkupMultiplier);
+    assert.equal(effectiveMultiplier(Number.MAX_SAFE_INTEGER, false), config.billing.markupMultiplier);
+  });
+
+  it('only ever falls as spend rises, so growing can never cost more', () => {
+    // A ladder with a step the wrong way round would charge an account more
+    // for spending more, which nothing else would catch: every rung still
+    // clears the floor and no assertion anywhere compares two of them.
+    let previous = Number.POSITIVE_INFINITY;
+    for (const spend of [0, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 50_000, 100_000, 1_000_000]) {
+      const rate = effectiveMultiplier(spend, false);
+      assert.ok(rate <= previous, `a monthly spend of ${spend} cost ${rate}×, more than the band below it`);
+      previous = rate;
+    }
+  });
+
+  it('holds a negotiated tenancy at the bottom of the range whatever it spends', () => {
+    // What the flag has always meant — this account pays less — now expressed
+    // against a range rather than against a table that discounted below the
+    // headline. Set for the ENTERPRISE and SOVEREIGN tiers.
+    for (const spend of [0, 100_000, 5_000_000]) {
+      assert.equal(effectiveMultiplier(spend, true), config.billing.markupMultiplier);
     }
   });
 
   it('never discounts through the floor, whatever the bands say', () => {
     // The guard that makes "the platform never sells AI at a loss" a property
-    // of the code rather than of whoever last tuned the band table. Every rate
-    // the incentive can produce is at or above the floor.
+    // of the code rather than of whoever last tuned the band table.
     for (const spend of [0, 100_000, 500_000, 5_000_000, Number.MAX_SAFE_INTEGER]) {
-      assert.ok(
-        effectiveMultiplier(spend, true) >= minimumMultiplier(),
-        `a monthly spend of ${spend} priced below the ${minimumMultiplier()}x floor`,
-      );
+      for (const negotiated of [true, false]) {
+        assert.ok(
+          effectiveMultiplier(spend, negotiated) >= minimumMultiplier(),
+          `a monthly spend of ${spend} priced below the ${minimumMultiplier()}x floor`,
+        );
+      }
     }
   });
 
-  it('is off unless enabled for the tenant', () => {
-    assert.equal(effectiveMultiplier(5_000_000, false), config.billing.markupMultiplier);
+  it('publishes a band table that spans the range it claims to', () => {
+    // The ladder is computed from the two ends rather than written out, so the
+    // published range and the table implementing it cannot drift. This is what
+    // holds that true.
+    assert.equal(VOLUME_BANDS[0]!.multiplier, config.billing.maxMarkupMultiplier);
+    assert.equal(VOLUME_BANDS.at(-1)!.multiplier, config.billing.markupMultiplier);
+    assert.equal(VOLUME_BANDS.at(-1)!.upToRawMinor, Number.POSITIVE_INFINITY, 'the ladder has no rung for the largest spenders');
   });
 });
 
@@ -494,9 +588,9 @@ describe('invoicing', () => {
 
     const invoice = buildInvoice(subscription, w, new Date().toISOString().slice(0, 7));
     assert.equal(invoice.subscriptionMinor, PACKAGES.PROFESSIONAL_DELIVERY.monthlyPriceMinor);
-    assert.equal(invoice.aiUsageMinor, 100 * config.billing.markupMultiplier);
+    assert.equal(invoice.aiUsageMinor, 100 * RATE);
     assert.equal(invoice.aiRawCostMinor, 100);
-    assert.equal(invoice.effectiveMultiplier, config.billing.markupMultiplier);
+    assert.equal(invoice.effectiveMultiplier, RATE);
 
     // The total is the subscription, not the subscription plus the AI.
     //

@@ -7,7 +7,7 @@ import { rateLimiter } from '../src/api/middleware.ts';
 import { Platform, type PlatformUser } from '../src/platform.ts';
 import * as structure from '../src/domain/structure.ts';
 import { authOf } from '../src/seed.ts';
-import { ACUWallet } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
 import { config } from '../src/config.ts';
 import { issueDocument } from '../src/group/issuance.ts';
 import { MODULES } from '../src/identity/modules.ts';
@@ -260,15 +260,18 @@ describe('§10 — wallets, reservations and budgets (AT-20 to AT-23)', () => {
      * The rate is pinned once, in `economics.test.ts`, which is the test whose
      * subject it is.
      */
-    const rate = config.billing.markupMultiplier;
+    const rate = effectiveMultiplier(0, false);
+    const bigRaw = 14;
+    // The balance is derived too, for the same reason the held amounts are:
+    // room for one reservation of `bigRaw` and not for two, whatever the rate.
+    const balance = bigRaw * rate * 2 - 1;
     const wallet = new ACUWallet('arith');
-    wallet.topUp(100);
+    wallet.topUp(balance);
 
     // Most of the balance, but not all of it.
-    const bigRaw = 14;
     const big = wallet.reserve({ aiRequestId: 'job-big', estimatedRawCostMinor: bigRaw });
     assert.equal(big.heldMinor, bigRaw * rate);
-    assert.equal(wallet.availableMinor(), 100 - bigRaw * rate);
+    assert.equal(wallet.availableMinor(), balance - bigRaw * rate);
 
     // A second that no longer fits, refused rather than overdrawn.
     assert.throws(
@@ -281,14 +284,14 @@ describe('§10 — wallets, reservations and budgets (AT-20 to AT-23)', () => {
     const actualRaw = 11;
     const settled = wallet.settle(big.holdId, actualRaw, 'provider-a');
     assert.equal(settled.billedMinor, actualRaw * rate);
-    assert.equal(wallet.availableMinor(), 100 - actualRaw * rate);
+    assert.equal(wallet.availableMinor(), balance - actualRaw * rate);
     assert.equal(wallet.heldMinor(), 0);
     assert.equal(wallet.snapshot().lifetimeBilledMinor, actualRaw * rate);
 
     // AT-21: the same settlement arriving twice is one settlement.
     const replayed = wallet.settle(big.holdId, actualRaw, 'provider-a');
     assert.equal(replayed.id, settled.id, 'the same settlement, not a second one');
-    assert.equal(wallet.availableMinor(), 100 - actualRaw * rate);
+    assert.equal(wallet.availableMinor(), balance - actualRaw * rate);
     assert.equal(wallet.snapshot().lifetimeBilledMinor, actualRaw * rate);
     assert.equal(wallet.release(big.holdId), undefined, 'commit and release are mutually exclusive');
   });

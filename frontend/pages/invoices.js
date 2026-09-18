@@ -165,12 +165,27 @@ export async function invoices(root) {
               <span class="lbl">Rejected</span>
               <span class="val">${badge(String(payments.mobileMoney.webhook.rejected), payments.mobileMoney.webhook.rejected > 0 ? 'warn' : 'ok')}</span>
             </div>
-            <div class="row"><span class="lbl">USD per GBP</span><span class="val">${payments.mobileMoney.usdPerGbp}</span></div>
+            <div class="row">
+              <span class="lbl">USD per GBP</span>
+              <span class="val">${
+                // A rate nobody set is not a rate. It used to fall back to a
+                // plausible-looking constant and print it here as fact.
+                payments.mobileMoney.usdPerGbp > 0
+                  ? payments.mobileMoney.usdPerGbp
+                  : badge('not set', 'bad')
+              }</span>
+            </div>
           </div>
           ${railPanel(payments.mobileMoney)}
           <div class="metric-sub" style="margin-top:12px">
-            The rate is quoted onto the intent when it is raised, so somebody mid-payment gets what they were quoted
-            even if this figure moves underneath them.
+            ${
+              payments.mobileMoney.usdPerGbp > 0
+                ? html`The rate is quoted onto the intent when it is raised, so somebody mid-payment gets what they were quoted
+                    even if this figure moves underneath them.`
+                : html`<b>No rate is set, so every mobile-money settlement is refused.</b> There is no default on purpose: a rate
+                    nobody chose would credit wallets at a figure nobody agreed. Set <code>KODA_USD_PER_GBP</code> to the rate this
+                    business is prepared to settle at and redeploy.`
+            }
           </div>
         </div>
       </div>

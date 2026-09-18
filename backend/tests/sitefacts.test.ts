@@ -184,10 +184,16 @@ describe('the commercial terms the pages publish', () => {
     // Terms section 5 charges "at the published multiplier". It was published
     // nowhere.
     assert.ok(/published multiplier/.test(terms()), 'the Terms no longer refer to a published multiplier');
-    assert.ok(
-      getStarted().includes(`<b>${config.billing.markupMultiplier}</b>`),
-      'the pricing page does not publish the multiplier the Terms commit to',
-    );
+    // Both ends of it. The price is a range, and publishing only the bottom
+    // would be a rate nobody is actually charged at the volumes most accounts
+    // run at — which is worse than publishing nothing, because it reads as a
+    // commitment.
+    for (const end of [config.billing.markupMultiplier, config.billing.maxMarkupMultiplier]) {
+      assert.ok(
+        getStarted().includes(`<b>${end}</b>`),
+        `the pricing page does not publish ${end}×, one end of the range the Terms commit to`,
+      );
+    }
   });
 
   it('does not promise a signup with no card on a page that charges before it opens', () => {

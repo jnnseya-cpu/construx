@@ -61,7 +61,13 @@ export async function billing(root) {
       <div class="view-head">
         <div>
           <h1>ACU &amp; Billing</h1>
-          <p>Prepaid AI credit. No provider is contacted on an empty wallet, and nothing is charged until the output is committed. A cap reports AI spend rather than stopping a run half way.</p>
+          <p>${
+            wallet.unmetered
+              ? html`AI is not charged on this account${wallet.unmetered.until ? html` until ${wallet.unmetered.until.slice(0, 10)}` : ''}. What follows is a
+                  record of what was run and what it cost this platform, so the usage is visible without anything being taken from you.`
+              : html`Prepaid AI credit. No provider is contacted on an empty wallet, and nothing is charged until the output is committed.
+                  A cap reports AI spend rather than stopping a run half way.`
+          }</p>
         </div>
         <div class="actions">
           ${can('BILLING_ACU', 'U') && !wallet.sharedFrom ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
@@ -171,7 +177,21 @@ export async function billing(root) {
           ? html`<div class="notice ok" style="margin-bottom:14px">
               <div>
                 <b>${subscription.subscription.packageLabel}, granted free of charge.</b> No monthly subscription is raised for this
-                account. AI is a separate purchase: top up the wallet below and every engine runs against that credit, nothing else.
+                account.
+                ${
+                  // Two halves of one grant, and they do not always both apply:
+                  // the demonstration tenancy holds a free package precisely so
+                  // an anonymous visitor is not shown an activation charge, and
+                  // is still metered for AI because anybody can drive it. The
+                  // notice reads the wallet rather than assuming.
+                  wallet.unmetered
+                    ? html`<b>AI is not charged either</b>${
+                        wallet.unmetered.until ? html` — the exemption runs until ${wallet.unmetered.until.slice(0, 10)}` : ''
+                      }. Every engine runs and nothing is taken from the wallet; the figures below record what the AI providers
+                      cost this platform, which it bears, so the usage is still visible to you.`
+                    : html`AI is a separate purchase: top up the wallet below and every engine runs against that credit,
+                      nothing else.`
+                }
               </div>
             </div>`
           : ''
@@ -195,8 +215,15 @@ export async function billing(root) {
           ? html`<div class="card" style="margin-bottom:14px">
               <h2>Your package — ${seats.package.label}</h2>
               <p class="metric-sub" style="margin-bottom:12px">
-                The package is charged, not the sum of its seats. No package includes AI: ACUs are bought separately,
-                which is why a heavy AI user pays for what they consume rather than everybody absorbing it.
+                The package is charged, not the sum of its seats.
+                ${
+                  wallet.unmetered
+                    ? html`No package includes AI — ACUs are bought separately, so a heavy user pays for what they consume rather
+                        than everybody absorbing it. <b>This account is exempt from both</b>, so the monthly allowance a paid
+                        package credits does not apply to it: nothing is charged for an AI run at all.`
+                    : html`No package includes AI: ACUs are bought separately, which is why a heavy AI user pays for what they
+                        consume rather than everybody absorbing it.`
+                }
               </p>
               <div class="split-list">
                 <div class="row"><span class="lbl">Seats</span><span class="val">${seats.seatsUsed} of ${
@@ -274,18 +301,32 @@ export async function billing(root) {
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
           <h2>Available</h2>
-          <div class="metric ${raw(wallet.aiHalted ? 'bad' : 'good')}">${exact(wallet.availableMinor)}</div>
-          <div class="metric-sub">of ${exact(wallet.balanceMinor)} balance</div>
+          ${
+            // An exempt account has no balance to run out of, and a figure
+            // counting towards zero beside "your AI is free" is the thing that
+            // made somebody ask why they were being charged.
+            wallet.unmetered
+              ? html`<div class="metric good">Unlimited</div>
+                  <div class="metric-sub">AI is not charged on this account${
+                    wallet.unmetered.until ? ` until ${wallet.unmetered.until.slice(0, 10)}` : ''
+                  }</div>`
+              : html`<div class="metric ${raw(wallet.aiHalted ? 'bad' : 'good')}">${exact(wallet.availableMinor)}</div>
+                  <div class="metric-sub">of ${exact(wallet.balanceMinor)} balance</div>`
+          }
         </div>
         <div class="card">
           <h2>Held</h2>
           <div class="metric warn">${exact(wallet.heldMinor)}</div>
-          <div class="metric-sub">ring-fenced against running executions</div>
+          <div class="metric-sub">${wallet.unmetered ? 'nothing is ring-fenced while AI is not charged' : 'ring-fenced against running executions'}</div>
         </div>
         <div class="card">
           <h2>Billed this month</h2>
           <div class="metric orange">${exact(wallet.monthBilledMinor)}</div>
-          <div class="metric-sub">on ${exact(wallet.monthRawSpendMinor)} of provider cost</div>
+          <div class="metric-sub">${
+            wallet.unmetered
+              ? html`borne by CONSTRUX — the providers charged ${exact(wallet.monthRawSpendMinor)}`
+              : html`on ${exact(wallet.monthRawSpendMinor)} of provider cost`
+          }</div>
         </div>
         <div class="card">
           <h2>Effective multiplier</h2>

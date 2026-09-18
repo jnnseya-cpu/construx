@@ -261,6 +261,41 @@ describe('a free grant can be given for a fixed period', () => {
     );
   });
 
+  it('does not charge for AI either, and says so on the wallet', () => {
+    /*
+     * Reported as: a group holding twelve months of free ACUs watched its
+     * prepaid balance fall anyway, with a runway counting down beside it.
+     *
+     * The exemption was real and was applied everywhere it was looked for —
+     * but everywhere it was looked for was the *subscription*, the monthly
+     * platform fee. The AI wallet knew nothing about it, so the customer was
+     * told their AI was free and then metered. One grant, both halves.
+     */
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const wallet = platform.wallet(tenantId);
+    assert.ok(wallet.unmetered(), 'an exempt tenancy was still being metered for AI');
+
+    const hold = wallet.reserve({ aiRequestId: 'req-1', estimatedRawCostMinor: 43 });
+    const entry = wallet.settle(hold.holdId, 43, 'OPENAI');
+    assert.equal(entry.billedMinor, 0, 'an exempt tenancy was charged for an AI run');
+    assert.equal(entry.rawCostMinor, 43, 'what the providers cost this platform must stay on the record');
+
+    const snapshot = platform.wallet(tenantId).snapshot();
+    assert.equal(snapshot.balanceMinor, 0, 'the balance moved for a charge that was not made');
+    assert.equal(snapshot.aiHalted, false, 'an empty balance halted AI that is not billed to it');
+    assert.ok(snapshot.unmetered, 'the screen has no way to say why the balance is not falling');
+  });
+
+  it('meters AI again the day the term ends', () => {
+    // The wallet reads the term through the same accessor as the charge cycle,
+    // so neither can outlive the other.
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const wallet = platform.wallet(tenantId);
+    const afterTheTerm = new Date(Date.now() + YEAR + DAY).toISOString();
+    assert.ok(wallet.unmetered(), 'the grant is not in force during its own term');
+    assert.equal(wallet.unmetered(afterTheTerm), null, 'the AI exemption outlived its own end date');
+  });
+
   it('keeps the term on the record after it expires, so the past stays answerable', () => {
     // "Was this month paid for" is a question a revenue reconciliation asks
     // about a month that has gone. An expiry that erased the grant would make

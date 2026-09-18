@@ -91,11 +91,23 @@ describe('the generated editions match their source', () => {
 
 describe('every price the plan quotes is the price the platform charges', () => {
   it('quotes the markup the platform actually applies', () => {
-    const stated = [...markdown.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*(?:×|x)\s*markup/gi)].map((m) => Number(m[1]));
+    /*
+     * The price is a range now, so the plan quotes two numbers rather than one
+     * and this has to accept both — but only those two. A plan quoting a third
+     * figure, or one end of a range the platform no longer charges, is the
+     * drift this check exists for: the go-to-market documents once advertised
+     * 3× while billing ran at 4×, and nothing caught it.
+     */
+    const stated = [
+      ...markdown.matchAll(/([0-9]+(?:\.[0-9]+)?)\s*(?:×|x)(?:\s*(?:and|–|-|to)\s*([0-9]+(?:\.[0-9]+)?)\s*(?:×|x))?\s*markup/gi),
+      ...markdown.matchAll(/charged at between ([0-9]+(?:\.[0-9]+)?)\s*(?:×|x) and ([0-9]+(?:\.[0-9]+)?)\s*(?:×|x)/gi),
+    ].flatMap((match) => [match[1], match[2]].filter(Boolean).map(Number));
     assert.ok(stated.length > 0, 'the plan states no markup at all — this check matched nothing');
+    const ends = [config.billing.markupMultiplier, config.billing.maxMarkupMultiplier];
     for (const value of stated) {
-      assert.equal(value, config.billing.markupMultiplier, `the plan quotes a ${value}× markup`);
+      assert.ok(ends.includes(value), `the plan quotes a ${value}× markup, which is neither end of the ${ends.join('–')}× range`);
     }
+    assert.ok(stated.includes(config.billing.maxMarkupMultiplier), 'the plan quotes only the bottom of the range');
   });
 
   it('quotes package prices that exist, at the price they cost', () => {

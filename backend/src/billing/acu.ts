@@ -149,11 +149,60 @@ export type WalletSignal =
   | { kind: 'THRESHOLD'; alert: ACUAlert }
   | { kind: 'LIMIT_REACHED'; breach: CapBreach; requestedMinor: number };
 
-export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = [
-  { upToRawMinor: 200_000, multiplier: 4.0 },
-  { upToRawMinor: 1_000_000, multiplier: 4.0 },
-  { upToRawMinor: Number.POSITIVE_INFINITY, multiplier: 4.0 },
+/**
+ * Where each band sits in the price range, as a fraction of the way from the
+ * bottom (`markupMultiplier`) to the top (`maxMarkupMultiplier`), against the
+ * raw provider cost this tenancy has run up this calendar month.
+ *
+ * Positions rather than multipliers, so the ladder cannot drift away from the
+ * range it is meant to span: move either end in config and every rung moves
+ * with it, and the top and bottom rungs are the ends by construction rather
+ * than by somebody remembering to edit them too.
+ *
+ * The thresholds are raw provider cost in minor units — £10, £50, £200, £1,000
+ * a month — because that is the quantity the economics turn on. Charged spend
+ * would make the band depend on the multiplier that the band decides.
+ */
+const BAND_POSITIONS: Array<{ upToRawMinor: number; positionInRange: number }> = [
+  { upToRawMinor: 1_000, positionInRange: 1 },
+  { upToRawMinor: 5_000, positionInRange: 0.75 },
+  { upToRawMinor: 20_000, positionInRange: 0.5 },
+  { upToRawMinor: 100_000, positionInRange: 0.25 },
+  { upToRawMinor: Number.POSITIVE_INFINITY, positionInRange: 0 },
 ];
+
+/**
+ * The price ladder, from the top of the range down to the bottom.
+ *
+ * **This used to be flat at 4× and is now a range of 4× to 10×, by decision of
+ * the business.** The rule it replaces — one multiple at every level of spend —
+ * priced a tenancy spending £0.43 of provider cost a month identically to one
+ * spending £4,000, and the two do not cost the same to serve: a run whose
+ * provider cost is a fraction of a penny still takes a routing decision, a
+ * reservation, a ledger append, an evidence write and a settlement, none of
+ * which shrink with the token count.
+ *
+ * So the smallest consumers pay the top of the range and the largest pay the
+ * bottom, and the bottom is `minimumMultiplier` — the profit floor — so nothing
+ * on this ladder can sell AI below the company's profit rule whatever the
+ * bands say. Every charge is stamped with the multiplier it was raised at, so a
+ * customer's realised rate is on their own ledger entries rather than inferred
+ * from a total, and the operator's estate view shows the realised multiplier
+ * per tenancy beside the charge.
+ *
+ * Computed from the two ends rather than written out, so the published range
+ * and the table that implements it are the same fact.
+ */
+export const VOLUME_BANDS: Array<{ upToRawMinor: number; multiplier: number }> = BAND_POSITIONS.map((band) => ({
+  upToRawMinor: band.upToRawMinor,
+  // Rounded to two places so a rate never reaches an invoice as 6.4999999999.
+  multiplier:
+    Math.round(
+      (config.billing.markupMultiplier +
+        (config.billing.maxMarkupMultiplier - config.billing.markupMultiplier) * band.positionInRange) *
+        100,
+    ) / 100,
+}));
 
 /**
  * What a unit of provider cost is charged at, for this tenant, this month.
@@ -190,9 +239,23 @@ export function profitPercent(rawCostMinor: number, billedMinor: number): number
   return ((billedMinor - rawCostMinor) / rawCostMinor) * 100;
 }
 
+/**
+ * What a unit of provider cost is charged at, for this tenant, this month.
+ *
+ * The ladder applies to everybody. `volumeIncentiveEnabled` — set for the
+ * ENTERPRISE and SOVEREIGN tiers, and for the platform's own wallet — holds
+ * that tenancy at the bottom of the range whatever it spends, which is what a
+ * negotiated enterprise rate is. It kept its name and its direction: the flag
+ * has always meant "this account pays less", and it still does.
+ *
+ * The floor is the last word in both paths. A band table is exactly the kind of
+ * constant somebody tunes without re-deriving what it does to margin, and
+ * `minimumMultiplier` is what makes "the platform never sells AI at a loss" a
+ * property of the code rather than of whoever last edited the ladder.
+ */
 export function effectiveMultiplier(monthlyRawSpendMinor: number, volumeIncentiveEnabled: boolean): number {
   const floor = minimumMultiplier();
-  if (!volumeIncentiveEnabled) return Math.max(config.billing.markupMultiplier, floor);
+  if (volumeIncentiveEnabled) return Math.max(config.billing.markupMultiplier, floor);
   for (const band of VOLUME_BANDS) {
     if (monthlyRawSpendMinor <= band.upToRawMinor) return Math.max(band.multiplier, floor);
   }
@@ -303,7 +366,24 @@ export type WalletSnapshot = {
   frozen: { reason: string; at: string } | null;
   /** Holds whose provider call ended without evidence either way, waiting on the operator (§10.2 reconciliation_required). */
   unresolvedHolds: number;
+  /**
+   * Set while the platform is bearing this tenancy's AI cost instead of
+   * charging it. The balance does not move, an empty one does not stop a run,
+   * and every screen that would otherwise show a depleting prepaid balance says
+   * this instead.
+   */
+  unmetered: UnmeteredGrant | null;
 };
+
+/**
+ * An exemption from AI charging, with a term.
+ *
+ * Distinct from a free *package*: that is the monthly platform fee, and a
+ * customer can hold a free package and still buy ACUs. This is the other half —
+ * the AI itself costs them nothing while it runs. `until` omitted means
+ * open-ended.
+ */
+export type UnmeteredGrant = { reason: string; until?: string };
 
 function monthKey(iso: string): string {
   return iso.slice(0, 7);
@@ -321,10 +401,52 @@ export class ACUWallet {
   readonly #alerts: ACUAlert[] = [];
   #raisedAlertKeys = new Set<string>();
   #sink: ((entry: ACUEntry) => void) | undefined;
+  #unmetered: UnmeteredGrant | null = null;
 
   constructor(tenantId: string, options: { volumeIncentive?: boolean } = {}) {
     this.tenantId = tenantId;
     this.#volumeIncentive = options.volumeIncentive ?? false;
+  }
+
+  // --- Unmetered AI ------------------------------------------------------------
+
+  /**
+   * Bear this tenancy's AI cost rather than charge it, until a date.
+   *
+   * Reported as a group holding twelve months of free ACUs still watching a
+   * prepaid balance fall towards zero. The exemption existed, but it was an
+   * exemption from the *subscription* — the monthly platform fee — and the AI
+   * wallet knew nothing about it, so the customer was told their AI was free
+   * and then metered anyway, with a runway counting down beside it.
+   *
+   * The spend is still recorded in full. `rawCostMinor` on every entry is what
+   * the providers actually charged this platform, because that cost is real
+   * whoever pays it, and the operator's burn view has to see it or the estate's
+   * economics are a fiction. What changes is `billedMinor`, which is nil, and
+   * the arithmetic in `burn.ts` then reports the whole of the forgone charge
+   * under **Absorbed**, which is precisely what it is.
+   *
+   * Set from the subscription grant at `Platform.wallet`, so there is one place
+   * that decides whether a tenancy is exempt and one term for it to run to.
+   * Passing `null` withdraws it.
+   */
+  setUnmetered(grant: UnmeteredGrant | null): void {
+    this.#unmetered = grant;
+  }
+
+  /**
+   * The grant in force now, or `null`.
+   *
+   * Expiry is applied here, at the accessor, rather than by a job that clears
+   * the field on a date: a grant whose term has run out has to stop applying
+   * everywhere at once, and nothing fails when a customer is not charged, so a
+   * missed sweep is invisible. An absent `until` is open-ended.
+   */
+  unmetered(at: string = new Date().toISOString()): UnmeteredGrant | null {
+    const grant = this.#unmetered;
+    if (!grant) return null;
+    if (grant.until !== undefined && at >= grant.until) return null;
+    return grant;
   }
 
   // --- Funding ---------------------------------------------------------------
@@ -448,7 +570,12 @@ export class ACUWallet {
     overrunReason?: string;
   } {
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
-    const chargeMinor = Math.ceil(estimatedRawCostMinor * multiplier);
+    // Quoted at nil for an exempt tenancy, because that is what `settle` will
+    // take. The disclosure before the button and the charge after it are read
+    // from the same rule, so a customer cannot be shown a price they will not
+    // pay — nor be blocked by a balance that is not going to be touched.
+    const exempt = this.unmetered();
+    const chargeMinor = exempt ? 0 : Math.ceil(estimatedRawCostMinor * multiplier);
     const availableMinor = this.availableMinor();
     // The same two ceilings `reserve` checks, and on exactly the same terms —
     // AI work, and the rule switched on — so the quote and the reservation can
@@ -516,7 +643,13 @@ export class ACUWallet {
       );
     }
     const multiplier = effectiveMultiplier(this.monthRawSpendMinor(), this.#volumeIncentive);
-    const heldMinor = Math.ceil(input.estimatedRawCostMinor * multiplier);
+    const exempt = this.unmetered();
+    // Nothing is reserved against a balance that is not going to be charged.
+    // Holding the notional amount would work — the settlement bills nil either
+    // way — but it would take an exempt customer's own topped-up credit out of
+    // `availableMinor` for the length of the call, and refuse the call outright
+    // once the two met. A nil hold makes both impossible rather than unlikely.
+    const heldMinor = exempt ? 0 : Math.ceil(input.estimatedRawCostMinor * multiplier);
 
     /*
      * **The balance binds, and it binds for AI too.**
@@ -656,7 +789,15 @@ export class ACUWallet {
     // named on the entry rather than left to be inferred by anybody who
     // recomputes the arithmetic.
     const floorMinor = Math.ceil(actualRawCostMinor * minimumMultiplier());
-    const chargedMinor = Math.max(Math.min(billedMinor, hold.heldMinor), floorMinor);
+    // The profit floor is a rule about what the platform sells at, not about
+    // what it gives away. An exemption is the operator deciding to bear this
+    // cost, so the floor does not apply to it and the charge is nil — but
+    // `effectiveMultiplier` on the entry stays the real one, because
+    // `burn.ts` reads Absorbed as "what this would have been charged, less what
+    // was taken", and a nil multiplier would report the giveaway as costing the
+    // platform nothing.
+    const exempt = this.unmetered();
+    const chargedMinor = exempt ? 0 : Math.max(Math.min(billedMinor, hold.heldMinor), floorMinor);
     const overran = chargedMinor > hold.heldMinor;
 
     this.#holds.delete(holdId);
@@ -682,9 +823,15 @@ export class ACUWallet {
       // and run past a cap the customer set. Joined into one sentence rather
       // than one overwriting the other, because an invoice line that named only
       // one of them would be answering half the question somebody is asking.
-      ...(overran || hold.authorisedOverrun
+      // A nil charge needs a reason on the line, or the entry reads as a bug:
+      // a debit against a named provider, for real compute, charging nothing.
+      ...(overran || hold.authorisedOverrun || exempt
         ? {
             note: [
+              exempt
+                ? `Not charged — ${exempt.reason}. The providers charged ${actualRawCostMinor} for this run and ` +
+                  `this platform bore it${exempt.until ? `; the exemption runs until ${exempt.until.slice(0, 10)}` : ''}.`
+                : '',
               overran
                 ? `Charged above the estimate: the execution cost ${actualRawCostMinor} against an estimate held ` +
                   `at ${hold.heldMinor}, so ${chargedMinor} was charged rather than the ${hold.heldMinor} quoted. ` +
@@ -809,8 +956,13 @@ export class ACUWallet {
     const lifetimeRawCost = debits.reduce((sum, entry) => sum + entry.rawCostMinor, 0);
     // No ACUs means no AI: the features are off until the wallet is topped up,
     // and the screen says so rather than offering a button that will refuse.
-    const halted = this.availableMinor() <= 0 || this.#frozen !== null;
+    // An exempt tenancy is never halted for want of credit: there is nothing
+    // to run out of. A freeze still stops it — that is a payment dispute, and
+    // it is about the account rather than about the balance.
+    const exempt = this.unmetered();
+    const halted = (this.availableMinor() <= 0 && !exempt) || this.#frozen !== null;
     return {
+      unmetered: exempt,
       tenantId: this.tenantId,
       balanceMinor: this.#balanceMinor,
       heldMinor: this.heldMinor(),

@@ -1,3 +1,4 @@
+import { effectiveMultiplier } from '../src/billing/acu.ts';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.ts';
 import type { Server } from 'node:http';
@@ -382,7 +383,7 @@ describe('the money paths that must keep working', () => {
     // derived from the rate rather than written as `/ 4`: a fixture pinned to
     // an old multiplier stops testing the refusal and starts failing on the
     // price.
-    const drain = Math.floor(available / config.billing.markupMultiplier);
+    const drain = Math.floor(available / effectiveMultiplier(0, false));
     const hold = wallet.reserve({ aiRequestId: 'drain', estimatedRawCostMinor: drain });
     wallet.settle(hold.holdId, drain, 'OPENAI');
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { TRIAL_GRANT_NOTE } from '../src/billing/acu.ts';
+import { TRIAL_GRANT_NOTE, effectiveMultiplier } from '../src/billing/acu.ts';
 import { config } from '../src/config.ts';
 import { Platform } from '../src/platform.ts';
 
@@ -125,7 +125,7 @@ describe('the defaults are the balance, stated', () => {
     const grantMinor = original.freeTrialGrantMinor;
     const budgetMinor = original.trialMonthlyBudgetMinor;
     // Worst-case provider cost of one grant is its face value over the markup.
-    const worstCaseCostMinor = grantMinor / config.billing.markupMultiplier;
+    const worstCaseCostMinor = grantMinor / effectiveMultiplier(0, false);
     assert.ok(worstCaseCostMinor <= 25, `one trial may cost up to ${worstCaseCostMinor} minor — that is a real invoice per signup`);
     assert.ok(budgetMinor > 0, 'a budget of zero is a free tier that never gives anything');
     assert.ok(budgetMinor / grantMinor >= 100, 'the default month should carry at least a hundred trials');

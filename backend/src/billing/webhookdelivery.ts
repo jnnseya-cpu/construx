@@ -42,6 +42,37 @@ import { config } from '../config.ts';
 /** The two rails money arrives on. One tally each; they fail independently. */
 export type WebhookRail = 'CARD' | 'MOBILE_MONEY';
 
+/**
+ * Where each rail's webhook route actually lives, as one place rather than a
+ * string repeated between the route table and the screens that explain it.
+ *
+ * The paths are the routes' own patterns in `api/routes.ts`; `webhooks.test.ts`
+ * asserts the two agree, because a diagnosis that names a URL the process does
+ * not serve sends an operator to reconfigure a working endpoint.
+ */
+export const WEBHOOK_PATH: Record<WebhookRail, string> = {
+  CARD: '/v1/webhooks/stripe',
+  MOBILE_MONEY: '/v1/webhooks/koda',
+};
+
+/**
+ * The exact value to paste into the provider's dashboard.
+ *
+ * Reported as guidance that read "check the endpoint URL against
+ * https://www.construxvg.com" — the deployment's own base URL, with no path.
+ * Nobody configures a webhook against a site root, so the check it asked for
+ * could not be performed, and the one thing the operator needed — the string to
+ * compare against — was the one thing it did not give them.
+ *
+ * The base is `PUBLIC_BASE_URL`, which is also what every email link is built
+ * from. If that hostname does not resolve, this URL is wrong and so is every
+ * invitation; `selfReach` in `ops/` is the check that catches it.
+ */
+export function endpointUrl(rail: WebhookRail): string {
+  const base = config.publicBaseUrl.replace(/\/+$/, '');
+  return `${base}${WEBHOOK_PATH[rail]}`;
+}
+
 export type WebhookHealthRecord = {
   accepted: number;
   rejected: number;
@@ -306,6 +337,7 @@ export function diagnose(input: {
   health: WebhookHealthRecord;
 }): WebhookDiagnosis {
   const { rail, configured, shape, health } = input;
+  const endpoint = endpointUrl(rail);
   const liveOnly = rail === 'CARD' && config.env === 'production';
   const rider = liveOnly
     ? ' This deployment runs as production and refuses test-mode events, so test the rail in live mode with a real card.'
@@ -347,8 +379,9 @@ export function diagnose(input: {
       because:
         'Nothing has reached this endpoint since the process started. A deploy resets this tally, so on a day with frequent deploys it means "since the last one" rather than "never".',
       remedy:
-        `Check the endpoint URL in the provider's dashboard against ${config.publicBaseUrl || 'this deployment'}` +
-        `, and that the endpoint is subscribed to the events this platform acts on.${rider}`,
+        `The endpoint in the provider's dashboard must be exactly ${endpoint} — check it character for character, and check ` +
+        `that hostname resolves and serves this deployment, because a dashboard accepts a URL that reaches nothing. ` +
+        `Check too that the endpoint is subscribed to the events this platform acts on.${rider}`,
       moneyAtRisk: false,
       liveOnly,
     };

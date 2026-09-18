@@ -71,8 +71,14 @@ application. Do not rebuild them.
 2. **£1 buys 100 ACUs.** One ACU is one minor unit. Stated as its own value
    rather than assumed, because a currency with a different exponent would
    otherwise silently change what an ACU is worth.
-3. **Provider cost is charged at 4×.** Revenue 4, cost 1 — every £1 the
-   platform spends with a provider produces £4.
+3. **Provider cost is charged at between 4× and 10×.** Where in that range
+   depends on one thing only: how much AI the account has used this calendar
+   month. The ladder is 10× up to £10 of provider cost, then 8.5×, 7×, 5.5× and
+   4× above £1,000 — computed from the two ends rather than written out, so the
+   published range and the table implementing it cannot drift. Every £1 the
+   platform spends with a provider produces at least £4, and the bottom of the
+   range is that floor. A tenancy on the ENTERPRISE or SOVEREIGN tier is held at
+   the bottom whatever it spends, which is what a negotiated rate is.
 4. **20% of every subscription payment is credited as AI allowance.** Credited
    when the period's charge *settles*, once per period — not at activation and
    not when an invoice is issued, because a month nobody has paid for is not a
@@ -81,29 +87,34 @@ application. Do not rebuild them.
    a paid package carries the allowance of each month paid and no grant.
    Rounded down, because a fraction of an ACU cannot be spent.
 
-The rule under all of them: **the company takes at least 100% profit on every
-AI transaction** — 300%, which is the price: £1 of provider cost produces £4.
+The rule under all of them: **the company takes at least 300% profit on every
+AI transaction** — £1 of provider cost produces at least £4.
 `minimumProfitPercent` states it, and the multiplier floor is *derived* from it
 (`1 + pct/100 = 4×`) rather than configured beside it, so the rule and the
 arithmetic cannot drift apart.
 
-**The floor is set at the price, by decision.** The rule is that £1 of provider
-cost produces £4 with no exceptions — no band, no bundle, no cap that could make
-it less — so `minimumProfitPercent` is 300 and `minimumMultiplier()` is 4.
+**The floor is the bottom of the price range, by decision.** The rate was one
+flat 4× at every level of spend until the business widened it to a range. The
+reason it was widened: a tenancy spending £0.43 of provider cost a month was
+priced identically to one spending £4,000, and the two do not cost the same to
+serve — a run whose provider cost is a fraction of a penny still takes a routing
+decision, a reservation, a ledger append, an evidence write and a settlement,
+none of which shrink with the token count.
 
-The consequence was raised before it was made and is recorded here rather than
-left to be discovered. `settle` capped an execution that overran its estimate at
-the amount reserved and disclosed, *unless* honouring the cap would sell below
-the floor. With the floor at the price, `floor === billed` on every settlement,
-so **the cap is inert**: a run that costs more than its estimate is charged for
-what it cost, and the customer pays more than they were quoted.
+**Widening the range restored the estimate cap, which is a change worth
+stating.** `settle` caps an execution that overran its estimate at the amount
+reserved and disclosed, *unless* honouring that cap would sell below the floor.
+While the price and the floor were the same number, `floor === billed` on every
+settlement and the cap was inert: a run costing more than its estimate was
+charged in full and the customer paid more than they were quoted. With a range
+there is room between the price and the floor, so a modest overrun is now
+charged at the quote, and only an overrun large enough to breach the floor is
+charged above it.
 
-That exposure is handled by disclosure rather than by a silent discount. An
-overrun is named on the ledger entry — what was quoted, what it cost, what was
-charged — carried into the invoice line, and visible in the operator's realised
-multiplier. `billing.test.ts` and `economics.test.ts` both assert the note,
-because with the cap gone it is the only thing standing between a customer and a
-surprise.
+The disclosure stays either way. An overrun is named on the ledger entry — what
+was quoted, what it cost, what was charged — carried into the invoice line, and
+visible in the operator's realised multiplier. `billing.test.ts` and
+`economics.test.ts` both assert the note and both sides of the cap.
 
 The arithmetic in `settle` is left in its `max(min(billed, held), floor)` shape
 rather than simplified to `billed`: the shape is what shows a cap exists and
@@ -3200,7 +3211,10 @@ per-field problem+json error; and the estate's contract-value card switched to
 "mixed currencies" rather than adding dollars to pounds.
 
 **4× everywhere, and no rate below it.** Confirmed as a pricing decision and
-applied through the whole billing path.
+applied through the whole billing path. *(The "everywhere" half was later
+widened to a 4×–10× range; the "no rate below it" half is unchanged and is now
+the bottom of that range. See "The AI rate is a range: 4× to 10×" at the end of
+this file.)*
 
 Three things were carrying a 3× assumption. The **volume bands** stepped
 4.0 → 3.6 → 3.3, so a large consumer paid below the headline; they are now flat
@@ -14493,10 +14507,13 @@ that event" is not.
 Reachable at `POST /v1/projects/:projectId/agents/run` with an optional
 `trigger`, and `POST /v1/projects/:projectId/agents/run-changes`.
 
-### The AI rate is 4×
+### The AI rate is 4× *(superseded — see "The AI rate is a range: 4× to 10×")*
 
 Stated by the business as two halves of one rule: **provider cost is charged at
 four times, and every £1 the platform spends with a provider must produce £4.**
+The second half still holds and is the floor; the first was widened to a range
+by a later decision, recorded at the end of this file. What follows is the
+record of the flat rate as it stood.
 
 It was briefly moved to 5× and has been set back to 4× by the business. One
 value moves — `ACU_MARKUP_MULTIPLIER` — and everything downstream follows
@@ -23984,3 +24001,114 @@ genuinely where it belongs rather than finding out from a customer.
 
 The remaining 298 include the rest of the bid chain — `qualify`, `decide`,
 `convert` — which will want doors next.
+
+### A free package now means free AI, and a twelve-month grant covers both
+
+Reported by a group holding twelve months of free ACUs: *"ETABLIX and JNseya
+Construction & Consultants are part of JNN GLOBAL LTD who had 12 month of
+unlimited free ACUs… but you still don't get it."* The operator's estate view
+showed JNN GLOBAL LTD charged £1.72 against £0.43 of provider cost, £19.28
+available, 336 days of runway — a prepaid balance falling, with a countdown
+beside it, on an account that had been told its AI was free.
+
+The exemption was real, was recorded correctly and was applied everywhere it was
+looked for. Everywhere it was looked for was the **subscription** — the monthly
+platform fee. The **AI wallet** knew nothing about it. Two meanings of "free"
+was one too many.
+
+There is one grant now and it covers both halves. `Platform.wallet` stamps the
+exemption onto the wallet on every read, through the same `#asAt` expiry as the
+charge cycle, so neither half can outlive the other. An exempt wallet reserves
+nothing, settles at nil, cannot be halted by an empty balance, and publishes
+`unmetered` so every screen says why the balance is not falling instead of
+showing a runway. The spend is still recorded in full — `rawCostMinor` is what
+the providers actually charged, because that cost is real whoever pays it, and
+`burn.ts` then reports the whole forgone charge under **Absorbed**, which is what
+it is.
+
+A second, independent cause sat underneath the same complaint: a paid package
+credits 20% of its price as monthly AI allowance, and a granted-free package's
+price is zero, so `allocateFromSubscription` credited nothing. The package card
+promised "44,000 ACUs of AI credited each month" to an account that was
+structurally never going to receive them. With the AI unmetered the allowance is
+moot, and the card says so rather than quoting a figure it cannot honour.
+
+**The demonstration tenancy is the one exception, deliberately.** Its package is
+granted free so an anonymous visitor is not shown a £6,500 activation notice on
+the landing page; its AI is not, because anybody on the internet can drive it and
+an unmetered demonstration is a public button spending this company's own
+provider budget with no ceiling. The seeded allowance is what bounds that and has
+to stay finite to bound anything. A free package means free AI *for a customer*,
+and the demonstration is not a customer — the same line `closeTenant` and
+`raiseOpeningCharge` already draw.
+
+### The AI rate is a range: 4× to 10×
+
+Changed by the business from one flat multiple. The reason is in the figures that
+prompted the previous entry: a tenancy spending £0.43 of provider cost a month
+was priced identically to one spending £4,000, and the two do not cost the same
+to serve — a run whose provider cost is a fraction of a penny still takes a
+routing decision, a reservation, a ledger append, an evidence write and a
+settlement, none of which shrink with the token count.
+
+The ladder is 10× up to £10 of provider cost in a calendar month, then 8.5×, 7×,
+5.5×, and 4× above £1,000. It is **computed from the two ends** —
+`ACU_MARKUP_MULTIPLIER` and `ACU_MAX_MARKUP_MULTIPLIER` — as positions in the
+range rather than written out, so the published range and the table implementing
+it are the same fact and neither can drift from the other. `VOLUME_BANDS` is the
+mechanism that was kept flat rather than deleted for exactly this; it was already
+plumbed and audited, and every charge was already stamped with the rate it was
+raised at, so a customer's realised rate is on their own ledger entries and the
+operator's estate view shows it per tenancy.
+
+`volumeIncentive` — set for the ENTERPRISE and SOVEREIGN tiers and for the
+platform's own wallet — now holds a tenancy at the bottom of the range whatever
+it spends, which is what a negotiated enterprise rate is. It kept its name and
+its direction: the flag has always meant "this account pays less".
+
+**This restored the estimate cap.** `settle` caps an execution that overran its
+estimate at the amount reserved and disclosed, unless honouring that cap would
+sell below the floor. While the price and the floor were the same number the cap
+could never win, and every overrun was charged in full — disclosed, but more than
+the customer was quoted. With room between the price and the floor, a modest
+overrun is charged at the quote again; only an overrun large enough to breach the
+floor is charged above it. Both sides are asserted.
+
+Nothing prices below the floor in either path, which is unchanged and is what
+`minimumMultiplier` exists for. The public pricing page publishes both ends and
+says what moves an account between them, because the Terms charge "at the
+published multiplier" and publishing only the bottom would read as a commitment
+the platform does not make. The go-to-market documents follow, and `gtm.test.ts`
+now accepts the two ends and refuses any third figure.
+
+### Three things that were not true on screen
+
+**The webhook guidance named a site root.** A deployment with no deliveries was
+told to "check the endpoint URL in the provider's dashboard against
+https://www.construxvg.com". Nobody configures a webhook against a site root, so
+the comparison it asked for could not be made, and the one thing needed — the
+string to paste — was the one thing missing. `WEBHOOK_PATH` now holds each rail's
+route in one place, the diagnosis gives the full URL, and `webhookdelivery.test.ts`
+asserts every path it names is one the route table actually serves.
+
+**`PUBLIC_BASE_URL` was never opened.** The same host is where every invitation,
+password reset and notification link points, and an invitation had already come
+back *"This site can't provide a secure connection, ERR_SSL_PROTOCOL_ERROR"* — a
+`www.` subdomain with no DNS record. Being set is not the same as working, and
+nothing checked. `ops/selfreach.ts` opens `${PUBLIC_BASE_URL}/readyz` from inside
+the process and separates the four faults that have four different remedies: the
+host answers nothing (a missing DNS record), TLS fails (a certificate that does
+not cover the name), it answers but is not ready, or it answers healthily **as a
+different build** — the hardest one to see from inside, because everything works
+and the links go somewhere else. Operator-only, on demand from System control
+rather than on a timer: it is a deployment fact, and polling it would have the
+deployment knocking on its own front door every time somebody opened a screen.
+
+**The mobile-money FX rate had an invented default.** `KODA_USD_PER_GBP` fell
+back to `1.27` — a plausible figure, from no source, on no date, which nobody had
+agreed and which the payments screen printed as fact. A deployment that keyed the
+rail and never set a rate converted real settlements at it, and the boot check
+stayed quiet because a positive number is a positive number. There is no default
+now: unset reads as zero, the boot check names it, `convertToBillingMinor`
+refuses, and the screen says "not set" with what to do about it. A rate nobody
+chose must not credit a wallet.

@@ -6,7 +6,7 @@ import { createGateway } from '../src/api/gateway.ts';
 import { resetIdempotency } from '../src/api/middleware.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
-import { ACUWallet } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
 import { resetWebhookHealth, type StripeEvent } from '../src/billing/stripe.ts';
 import { config } from '../src/config.ts';
 import { DomainError } from '../src/core/errors.ts';
@@ -106,7 +106,7 @@ describe('AT-25 — a refund is an explicit reversing entry, and consumed fundin
     // £50 of AI, named by what it bills; the raw cost is worked back from the
     // rate so the arithmetic below does not silently change with the price.
     const spendBilled = 5_000;
-    const spendRaw = spendBilled / config.billing.markupMultiplier;
+    const spendRaw = spendBilled / effectiveMultiplier(0, false);
     const hold = wallet().reserve({ aiRequestId: 'spend', estimatedRawCostMinor: spendRaw });
     wallet().settle(hold.holdId, spendRaw, 'OPENAI');
     const afterSpend = wallet().snapshot().availableMinor;
@@ -136,7 +136,7 @@ describe('AT-25 — a refund is an explicit reversing entry, and consumed fundin
     // refunded (a running total: £60 already reversed, £140 new). Only what is
     // still available goes back; the rest is consumed funding — an exception.
     const available = wallet().snapshot().availableMinor;
-    const drainRaw = Math.floor((available - 3_000) / config.billing.markupMultiplier);
+    const drainRaw = Math.floor((available - 3_000) / effectiveMultiplier(0, false));
     const drain = wallet().reserve({ aiRequestId: 'drain', estimatedRawCostMinor: drainRaw });
     wallet().settle(drain.holdId, drainRaw, 'OPENAI');
     const left = wallet().snapshot().availableMinor;
@@ -265,7 +265,7 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     const unresolved = orchestrator.unresolved();
     assert.equal(unresolved.length, 1);
     assert.equal(unresolved[0]!.status, 'UNRESOLVED');
-    const estimateHeld = 100 * config.billing.markupMultiplier;
+    const estimateHeld = 100 * effectiveMultiplier(0, false);
     assert.equal(aiWallet.snapshot().heldMinor, estimateHeld, 'the estimate stays held at the platform rate');
     assert.equal(aiWallet.snapshot().availableMinor, 10_000 - estimateHeld);
     assert.equal(aiWallet.snapshot().unresolvedHolds, 1);
@@ -276,7 +276,7 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     assert.throws(() => orchestrator.reconcile(executionId, { kind: 'CHARGE', actualRawCostMinor: 80 }, { note: '', by: 'ops' }), (error: { code?: string }) => error.code === 'EVIDENCE_REQUIRED');
     const charged = orchestrator.reconcile(executionId, { kind: 'CHARGE', actualRawCostMinor: 80 }, { note: 'Provider dashboard shows the completion at 12:01', by: 'ops' });
     assert.equal(charged.status, 'SUCCEEDED');
-    const chargedMinor = 80 * config.billing.markupMultiplier;
+    const chargedMinor = 80 * effectiveMultiplier(0, false);
     assert.equal(charged.acuConsumed, chargedMinor, '80 raw at the platform rate');
     assert.equal(aiWallet.snapshot().heldMinor, 0);
     assert.equal(aiWallet.snapshot().availableMinor, 10_000 - chargedMinor);
@@ -298,7 +298,11 @@ describe('AT-22 — a provider call with unknown completion is held for reconcil
     // above proved the parking; this proves the release gives everything back.
     const hold = funded.reserve({ aiRequestId: 'manual-park', estimatedRawCostMinor: 100 });
     funded.parkHold(hold.holdId, 'Provider did not answer');
-    assert.equal(funded.snapshot().availableMinor, before - 100 * config.billing.markupMultiplier);
+    // Against the hold's own figure rather than a rate recomputed here: this
+    // wallet has already settled in earlier tests, so it has walked down the
+    // price ladder and is no longer at the top of the range.
+    assert.equal(hold.heldMinor, 100 * effectiveMultiplier(funded.monthRawSpendMinor(), false));
+    assert.equal(funded.snapshot().availableMinor, before - hold.heldMinor);
     funded.reconcileHold(hold.holdId, { kind: 'RELEASE', note: 'Nothing on the provider account' });
     assert.equal(funded.snapshot().availableMinor, before, 'a released unknown outcome gives the reservation back in full');
     assert.throws(() => funded.reconcileHold(hold.holdId, { kind: 'RELEASE', note: 'again' }), (error: { code?: string }) => error.code === 'ACU_HOLD_NOT_UNRESOLVED');

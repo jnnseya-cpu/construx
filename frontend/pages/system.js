@@ -204,6 +204,24 @@ export async function system(root) {
             </div>
           </div>`}
 
+      <div class="card" style="margin-bottom:14px">
+        <h2>The address customers are sent to</h2>
+        <div class="metric-sub" style="margin:8px 0 14px">
+          Every invitation, password reset and notification this platform emails carries a link built on
+          <span class="mono">PUBLIC_BASE_URL</span>, and so does every webhook endpoint quoted to a payment provider. The
+          readiness map above says whether that value is <i>set</i>. It cannot say whether the host resolves, whether the
+          certificate covers that exact name, or whether it reaches <i>this</i> deployment rather than a previous one — and a
+          link that fails on any of those reaches a customer before it reaches you. This opens it and reports what came back.
+        </div>
+        <div class="split-list">
+          <div class="row"><span class="lbl">Configured address</span><span class="val mono" style="font-size:11px">${ready.variables?.find((v) => v.name === 'PUBLIC_BASE_URL')?.present ? 'set' : badge('not set', 'bad')}</span></div>
+        </div>
+        <div id="reach-result"></div>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn quiet sm" id="check-reach">Open the public address now</button>
+        </div>
+      </div>
+
       ${egress.error
         ? ''
         : html`<div class="card" style="margin-bottom:14px">
@@ -290,6 +308,37 @@ export async function system(root) {
   await press('run-repair', 'Run a repair pass now', 'Repairing…', async () => {
     const report = await api.post('/v1/admin/repair', {});
     toast('Repair pass complete', `${(report.actions ?? []).length} action${(report.actions ?? []).length === 1 ? '' : 's'} taken`, 'ok');
+  });
+
+  // Not through `press`: that re-renders the whole screen on success, which
+  // would throw away the answer the operator pressed the button to read. The
+  // result is written into the card and left there.
+  document.getElementById('check-reach')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = 'Opening…';
+    const target = document.getElementById('reach-result');
+    try {
+      const reach = await api.post('/v1/admin/reachability', {});
+      render(
+        target,
+        html`<div class="notice ${raw(reach.ok ? 'ok' : 'bad')}" style="margin-top:12px">
+          <div>
+            <b>${reach.baseUrl}</b> — ${reach.because}
+            ${reach.remedy ? html`<br /><b>Next:</b> ${reach.remedy}` : ''}
+            ${reach.answeredBy && reach.answeredBy !== reach.thisBuild
+              ? html`<br />It answered as build <span class="mono">${reach.answeredBy}</span>; this process is
+                  <span class="mono">${reach.thisBuild}</span>.`
+              : ''}
+          </div>
+        </div>`,
+      );
+      toast(reach.ok ? 'The public address reaches this deployment' : 'The public address does not work', reach.because, reach.ok ? 'ok' : 'err');
+    } catch (error) {
+      toast('Could not check', error.message, 'err');
+    }
+    button.disabled = false;
+    button.textContent = 'Open the public address now';
   });
 
   await press('flush-telemetry', 'Ship what is queued now', 'Shipping…', async () => {

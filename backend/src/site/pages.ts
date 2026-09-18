@@ -1013,9 +1013,14 @@ export function getStarted(): string {
     <h3>The arithmetic, since the Terms refer to it</h3>
     <p>
       One ACU is one penny of credit. An AI action costs what the provider
-      charged for it multiplied by <b>${config.billing.markupMultiplier}</b>, and that multiplier is the same on every
-      package and every bundle — a larger bundle is fewer transactions and one purchase order, not a lower rate, and
-      nothing in the product should imply otherwise. Each paid package credits
+      charged for it multiplied by between <b>${config.billing.markupMultiplier}</b> and
+      <b>${config.billing.maxMarkupMultiplier}</b>, and where in that range depends on one thing only: how much AI the
+      account has used this calendar month. The smallest consumers pay the top of it, because a run whose provider cost
+      is a fraction of a penny still takes the same routing, reservation, ledger append and settlement as a large one;
+      the rate steps down as monthly usage grows, and the bottom of the range is a floor that nothing goes below. The
+      rate is the same on every package and every bundle — a larger bundle is fewer transactions and one purchase order,
+      not a lower rate, and nothing in the product should imply otherwise. The multiplier each charge was raised at is
+      recorded on its own ledger entry, so what you actually paid is a read rather than an inference. Each paid package credits
       <b>${config.billing.subscriptionAcuAllocationPercent}%</b> of its monthly price as allowance when that month's
       payment settles.
     </p>

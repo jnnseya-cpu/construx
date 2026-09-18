@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
-import { ACUWallet } from '../src/billing/acu.ts';
+import { ACUWallet, effectiveMultiplier } from '../src/billing/acu.ts';
 import { config } from '../src/config.ts';
 
 /**
@@ -80,7 +80,7 @@ describe('the rule is on, and says so in one place', () => {
 });
 
 describe('money: the balance binds, and a cap does not', () => {
-  const rate = config.billing.markupMultiplier;
+  const rate = effectiveMultiplier(0, false);
 
   it('refuses an empty balance for AI exactly as for anything else', () => {
     // Prepaid means prepaid. No ACUs means no AI, and the AI path is not an
@@ -144,8 +144,8 @@ describe('money: the balance binds, and a cap does not', () => {
     wallet.topUp(1_000_000);
     const hold = wallet.reserve({ aiRequestId: 'reason', estimatedRawCostMinor: 250, runToCompletion: true });
     const entry = wallet.settle(hold.holdId, 250, 'OPENAI');
-    assert.equal(entry.effectiveMultiplier, config.billing.markupMultiplier);
-    assert.equal(entry.billedMinor, 250 * config.billing.markupMultiplier);
+    assert.equal(entry.effectiveMultiplier, effectiveMultiplier(0, false));
+    assert.equal(entry.billedMinor, 250 * effectiveMultiplier(0, false));
   });
 });
 
