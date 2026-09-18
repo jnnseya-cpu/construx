@@ -49,7 +49,11 @@ export async function tenants(root) {
     api.get('/v1/signup/account-types').catch(() => null),
     api.get('/v1/admin/modules').catch(() => null),
     api.get('/v1/admin/refunds').catch(() => null),
-    api.get('/v1/admin/groups').catch(() => null),
+    // Not swallowed to null. A failed read here used to render as "No group
+    // yet. Create one" — the opposite of what had happened — and an operator
+    // following that advice was answered GROUP_EXISTS by a group the screen had
+    // just told them did not exist.
+    api.get('/v1/admin/groups').catch((error) => ({ error })),
     api.get('/v1/admin/transfer-cases').catch(() => null),
     api.get('/v1/admin/payments/exceptions').catch(() => null),
     api.get('/v1/admin/tenants/position').catch((error) => ({ error })),
@@ -468,7 +472,9 @@ export async function tenants(root) {
           One licence agreement and one statement over several companies. A company is a tenancy — its own people,
           records, wallet and identity — and joins a group with a cost centre. Up to five companies to a group.
         </div>
-        ${(groupsHeld?.groups ?? []).length === 0
+        ${groupsHeld?.error
+          ? html`<div style="padding:0 17px 15px">${refusal('The groups on this platform', groupsHeld.error)}</div>`
+          : (groupsHeld?.groups ?? []).length === 0
           ? html`<div class="metric-sub" style="padding:0 17px 15px">No group yet. Create one, then bring tenancies in as its companies.</div>`
           : (groupsHeld.groups ?? []).map(
               (g) => html`<div style="padding:8px 17px 14px;border-top:1px solid var(--line)">

@@ -24221,3 +24221,30 @@ The open-ended-grant warning added alongside it is deliberately not raised on a
 demonstration tenancy. A demonstration is free by construction and forever by
 design; warning about it every time an operator opens the estate is how a badge
 stops being read.
+
+### A failed read reported as an empty estate
+
+An operator was told by the Groups card that no group existed, pressed "Create a
+group" as it advised, and was refused `GROUP_EXISTS` by a group they could not
+see. Two things made that loop possible and both are worth fixing whether or not
+they were the cause on any particular day.
+
+`api.get('/v1/admin/groups').catch(() => null)` turned **any** failure — a
+refusal, a 500, a network drop — into the same value as a successful empty read,
+and the card renders that as *"No group yet. Create one."* A read that failed is
+not an estate with nothing in it, and the difference is the difference between
+"create one" and "find out why this cannot be read". It now surfaces the refusal
+through the same `refusal()` panel every other failed read on that screen uses.
+
+And the route could genuinely fail: it resolved each cost centre with
+`platform.tenant`, which throws on an id it does not hold, so one company whose
+tenancy was gone took the whole listing with it. A cost centre that will not
+resolve is now named on its row — a billing allocation that quietly disappeared
+is worse than one shown as broken — and the other groups still render. The same
+guard is applied to the `group` field added to the tenant listing, where a
+dangling `groupId` would otherwise have hidden every tenancy on the platform to
+explain one.
+
+`GROUP_EXISTS` itself was a dead end: true, and it named neither which group,
+nor who was in it, nor what to do instead. It now names the group, says how many
+companies it holds, and points at "Bring a company in".

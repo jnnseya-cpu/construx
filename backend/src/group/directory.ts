@@ -155,7 +155,28 @@ export function createGroup(
   if (!displayName) throw new DomainError('GROUP_NAME_REQUIRED', 'A group needs a name');
   const slug = slugify(input.slug?.trim() || displayName);
   if (!slug) throw new DomainError('GROUP_SLUG_INVALID', 'The slug needs at least one letter or digit');
-  if (groupBySlug(platform, slug)) throw new DomainError('GROUP_EXISTS', `A group with the slug ${slug} already exists`, 409);
+  /*
+   * Named, and with the next step, rather than left as a dead end.
+   *
+   * "A group with the slug jnn-global-ltd already exists" is true and useless:
+   * it does not say which group, who is in it, or what to do instead — and the
+   * operator who saw it had been sent to this door by a screen that had just
+   * reported the estate as having no groups at all, because the read behind it
+   * had failed and been swallowed. Both halves are fixed; this is the half that
+   * gets somebody moving again.
+   */
+  const clash = groupBySlug(platform, slug);
+  if (clash) {
+    const held = clash.costCentres.length;
+    throw new DomainError(
+      'GROUP_EXISTS',
+      `"${clash.displayName}" already holds the identifier ${slug}, with ` +
+        `${held === 0 ? 'no companies in it yet' : `${held} compan${held === 1 ? 'y' : 'ies'} in it`}. ` +
+        'Nothing further needs creating: find it in Groups on this screen and use "Bring a company in" to attach each ' +
+        'tenancy to it. To create a second, separate group instead, give this one a different slug.',
+      409,
+    );
+  }
   if (!/^[A-Z]{3}$/.test(input.currency)) throw new DomainError('CURRENCY_INVALID', 'The billing currency is a three-letter code');
   const group: Group = {
     id: ulid(),

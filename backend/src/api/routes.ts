@@ -2442,8 +2442,16 @@ export const ROUTES: Route[] = [
              * is not the question an operator has, "in which one" is.
              */
             group: (() => {
-              const group = groupOfTenant(platform, tenant.id);
-              return group ? { id: group.id, displayName: group.displayName } : null;
+              try {
+                const group = groupOfTenant(platform, tenant.id);
+                return group ? { id: group.id, displayName: group.displayName } : null;
+              } catch {
+                // A `groupId` pointing at a group that is not on the record.
+                // Reported as unknown rather than thrown: this is one badge on
+                // one row, and failing the whole estate listing over it would
+                // hide every tenancy on the platform to explain one.
+                return { id: null, displayName: 'a group that is missing from the record' };
+              }
             })(),
             // Given away by the operator: no monthly charge is raised for it.
             grantedFree: subscription.grantedFree === true,
@@ -8009,11 +8017,28 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => {
       if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator lists groups', 'PLATFORM_ADMIN_REQUIRED');
       return {
+        /*
+         * One unresolvable company must not take the listing with it.
+         *
+         * `platform.tenant` throws on an id it does not hold, so a single cost
+         * centre pointing at a tenancy that is gone threw the whole route — and
+         * the console read the failure as "no groups exist", offered "Create
+         * one", and the operator was answered GROUP_EXISTS by the group they
+         * could not see. A read that fails must not be reported as an empty
+         * estate.
+         */
         groups: groups(platform).map((group) => ({
           ...group,
           companies: group.costCentres.map((centre) => {
-            const tenant = platform.tenant(centre.tenantId);
-            return { ...centre, name: tenant.legalName, jurisdiction: tenant.jurisdiction, closed: Boolean(tenant.closedAt) };
+            try {
+              const tenant = platform.tenant(centre.tenantId);
+              return { ...centre, name: tenant.legalName, jurisdiction: tenant.jurisdiction, closed: Boolean(tenant.closedAt) };
+            } catch {
+              // Named as unresolvable rather than omitted. A cost centre that
+              // quietly disappeared from a group is a billing allocation
+              // nobody is told has stopped.
+              return { ...centre, name: `${centre.code} — no tenancy on the record`, jurisdiction: '', closed: true, unresolved: true };
+            }
           }),
         })),
       };
