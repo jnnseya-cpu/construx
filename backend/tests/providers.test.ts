@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { config } from '../src/config.ts';
-import { ENDPOINTS, PROVIDER_NAMES, RemoteProviderAdapter, isProvider } from '../src/ai/providers/remote.ts';
+import { ENDPOINTS, PROVIDER_NAMES, RemoteProviderAdapter, geminiSchema, isProvider } from '../src/ai/providers/remote.ts';
+import { outputStandardSchema } from '../src/ai/outputstandard.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import type { AIProvider } from '../src/goldenthread/types.ts';
@@ -200,5 +201,82 @@ describe('failover across three vendors', () => {
     } finally {
       aiConfig.anthropicKey = previous;
     }
+  });
+});
+
+// ── What the providers actually accept and return ──────────────────────────
+
+describe('the schemas the engines write are the schemas each provider takes', () => {
+  /*
+   * Reported from a deployment with live keys on all three: every reading came
+   * back "Not read".
+   *
+   *   GEMINI returned 400: Invalid JSON payload received. Unknown name "type"
+   *   at 'generation_config.response_schema.properties[0].value':
+   *   Proto field is not repeating, cannot start list
+   *
+   *   OPENAI returned no text at all. Nothing was read from this input.
+   *
+   * Two unrelated faults with one symptom, and neither could fail a test
+   * before: the mock provider takes any schema and returns text in the simple
+   * shape, so the suite was green while no real provider could answer.
+   */
+
+  it('gives Gemini a single type, never a list', () => {
+    // The exact failure. `responseSchema` is a proto on the OpenAPI subset and
+    // its `type` is one enum value; the platform writes correct JSON Schema
+    // unions, which the proto rejects before the model sees anything.
+    const converted = geminiSchema(outputStandardSchema()) as Record<string, unknown>;
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) { node.forEach((entry, i) => walk(entry, `${path}[${i}]`)); return; }
+      if (node === null || typeof node !== 'object') return;
+      const record = node as Record<string, unknown>;
+      assert.ok(!Array.isArray(record.type), `${path}.type is still a list — Gemini refuses the whole request`);
+      for (const key of ['minLength', 'minimum', 'maximum', 'additionalProperties']) {
+        assert.equal(record[key], undefined, `${path}.${key} has no field on the proto`);
+      }
+      if (Array.isArray(record.enum)) {
+        assert.ok(!record.enum.includes(null), `${path}.enum carries null, which the proto's string enum cannot hold`);
+      }
+      for (const [key, value] of Object.entries(record)) walk(value, `${path}.${key}`);
+    };
+    walk(converted, 'schema');
+  });
+
+  it('keeps nullability rather than silently losing it', () => {
+    // Dropping the null would make every optional figure required, and the
+    // model would invent one rather than say it could not find it.
+    const converted = geminiSchema({
+      type: 'object',
+      properties: { amountMinor: { type: ['number', 'null'] } },
+    }) as { properties: { amountMinor: Record<string, unknown> } };
+    assert.equal(converted.properties.amountMinor.type, 'number');
+    assert.equal(converted.properties.amountMinor.nullable, true);
+  });
+
+  it('leaves a schema Gemini already accepts alone', () => {
+    const plain = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
+    assert.deepEqual(geminiSchema(plain), plain);
+  });
+
+  it('reads OpenAI text from wherever in the output it is', () => {
+    /*
+     * The Responses API returns a list. For a reasoning model the first entry
+     * is a `reasoning` item with no content at all and the message follows it,
+     * so reading `output[0].content[0].text` found nothing and the platform
+     * reported "no text at all" for a call that had been answered and charged.
+     */
+    const extract = (body: unknown) => ENDPOINTS.OPENAI.extract(body);
+    assert.equal(extract({ output_text: 'straight from the convenience field' }).text, 'straight from the convenience field');
+    assert.equal(
+      extract({
+        output: [
+          { type: 'reasoning' },
+          { type: 'message', content: [{ type: 'output_text', text: '{"summary":"found it"}' }] },
+        ],
+      }).text,
+      '{"summary":"found it"}',
+    );
+    assert.equal(extract({ output: [{ type: 'reasoning' }] }).text, '', 'an output with no message must still read as empty');
   });
 });

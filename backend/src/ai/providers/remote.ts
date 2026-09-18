@@ -84,6 +84,76 @@ type Endpoint = {
   extract: (response: unknown) => ModelReply;
 };
 
+/**
+ * The engine schemas, in the shape Gemini's `responseSchema` will accept.
+ *
+ * ## What happened
+ *
+ * Every Gemini call failed with:
+ *
+ *     400 Invalid JSON payload received. Unknown name "type" at
+ *     'generation_config.response_schema.properties[0].value':
+ *     Proto field is not repeating, cannot start list
+ *
+ * `responseSchema` is a proto built on the OpenAPI 3 subset, not JSON Schema.
+ * Its `type` is a single enum value. The platform's schemas express "a number
+ * or nothing" the JSON Schema way — `type: ['number', 'null']` — and a list
+ * where the proto wants a scalar is rejected before the model sees anything.
+ * The first such property in `outputStandardSchema` is `amountMinor`, which is
+ * `properties[0].value` in the message above.
+ *
+ * Nothing about the schemas was wrong. They are correct JSON Schema, OpenAI and
+ * Anthropic take them as they are, and this is the one provider that needs them
+ * translated — so the translation lives here, in its adapter, rather than
+ * narrowing every engine's schema to the least capable provider.
+ *
+ * ## What it does
+ *
+ * - `type: ['x', 'null']` becomes `type: 'x'` with `nullable: true`.
+ * - An `enum` containing `null` drops the null and becomes nullable, because
+ *   the proto's enum is a list of strings.
+ * - Validation keywords the proto has no field for — `minLength`, `minimum`,
+ *   `maximum`, `pattern`, `additionalProperties`, `const` — are dropped. They
+ *   are bounds, not structure: losing them means a value this platform would
+ *   have rejected can come back, and `conformToOutputStandard` rejects it on
+ *   arrival exactly as it does for any other provider. Keeping them would mean
+ *   no answer at all.
+ */
+export function geminiSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map((entry) => geminiSchema(entry));
+  if (schema === null || typeof schema !== 'object') return schema;
+
+  const DROPPED = new Set(['minLength', 'maxLength', 'minimum', 'maximum', 'pattern', 'additionalProperties', 'const', '$schema']);
+  const source = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  let nullable = false;
+
+  for (const [key, value] of Object.entries(source)) {
+    if (DROPPED.has(key)) continue;
+
+    if (key === 'type' && Array.isArray(value)) {
+      const named = value.filter((entry) => entry !== 'null');
+      if (named.length !== value.length) nullable = true;
+      // A union of two real types has no proto equivalent; the first is the one
+      // the engines mean, and the rest were only ever there to allow absence.
+      out.type = named[0] ?? 'string';
+      continue;
+    }
+
+    if (key === 'enum' && Array.isArray(value)) {
+      const named = value.filter((entry) => entry !== null && entry !== undefined);
+      if (named.length !== value.length) nullable = true;
+      out.enum = named;
+      continue;
+    }
+
+    out[key] = geminiSchema(value);
+  }
+
+  if (nullable) out.nullable = true;
+  return out;
+}
+
 const OPENAI_ENDPOINT: Endpoint = {
   url: 'https://api.openai.com/v1/responses',
   headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }),
@@ -122,7 +192,26 @@ const OPENAI_ENDPOINT: Endpoint = {
       incomplete_details?: { reason?: string };
       usage?: { input_tokens?: number; output_tokens?: number };
     };
-    const text = body.output_text ?? body.output?.[0]?.content?.[0]?.text ?? '';
+    /*
+     * Every output item, not the first one.
+     *
+     * This read `output[0].content[0].text`. The Responses API returns a list,
+     * and for a reasoning model the first item is a `reasoning` entry carrying
+     * no `content` at all — the message comes after it. So the text was never
+     * found, `''` came back, and the platform reported "OPENAI returned no text
+     * at all. Nothing was read from this input" for a call the provider had
+     * answered perfectly well and charged for.
+     *
+     * `output_text` is the convenience field and is used when present; the walk
+     * is the fallback for every shape that does not carry it.
+     */
+    const text =
+      body.output_text ??
+      (body.output ?? [])
+        .flatMap((item) => item.content ?? [])
+        .map((part) => part.text ?? '')
+        .find((candidate) => candidate.trim() !== '') ??
+      '';
     // This API says so at the top level rather than per-choice: `status:
     // "incomplete"` with a reason. Reading the text without reading this is how
     // a half-finished answer becomes a whole record.
@@ -156,7 +245,7 @@ const GEMINI_ENDPOINT: Endpoint = {
     ],
     generationConfig: {
       responseMimeType: 'application/json',
-      ...(request.responseSchema ? { responseSchema: request.responseSchema } : {}),
+      ...(request.responseSchema ? { responseSchema: geminiSchema(request.responseSchema) } : {}),
     },
   }),
   extract: (response) => {
@@ -222,6 +311,11 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
             // enforcement was also the only one not told what shape to answer
             // in. Every field name the engine will read is now in front of the
             // model.
+            //
+            // The schema as written, not the narrowed one Gemini's proto needs.
+            // Nothing here is parsed by a proto — it is read by the model — so
+            // the bounds Gemini has no field for (`minLength`, `minimum`) are
+            // worth keeping: they are instructions to it.
             text: JSON.stringify({
               task: request.task,
               payload: request.payload,
