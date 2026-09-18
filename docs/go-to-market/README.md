@@ -3,9 +3,19 @@
 The commercial plan for CONSTRUX: Greater Manchester launch, a 90-day gated
 programme, and the route to the first 100 customers.
 
-`GO-TO-MARKET.md` is the readable source of record. `go-to-market.html` is the
-same document as a styled page, and is what the Word and PDF editions are
-generated from.
+**`go-to-market.html` is the source. Everything else is generated from it.**
+
+`GO-TO-MARKET.md` is built from the HTML by `tools/gtm/build-markdown.mjs`, and
+the Word and PDF editions are built from the HTML too. Edit the HTML and
+regenerate; an edit made to the Markdown is overwritten the next time anybody
+runs the build.
+
+This used to read "GO-TO-MARKET.md is the readable source of record" while the
+build command underneath said `HTML → GO-TO-MARKET.md`, and the two drifted in
+opposite directions: the HTML was corrected to a 4× markup and the Markdown was
+never regenerated, so it went on quoting 5× and a superseded set of bundle
+figures. `gtm.test.ts` now regenerates the Markdown and fails if the committed
+file differs, so the two cannot disagree again.
 
 ## Why it lives in the repository
 
@@ -13,6 +23,11 @@ The plan quotes the platform's own pricing, packaging and capability claims.
 Those come from `backend/src/billing/seats.ts` and `docs/STATE.md`, and they change. A
 plan kept somewhere else drifts away from the product silently; kept here, a
 pricing change and the document that quotes it are one commit.
+
+Kept here *and checked*: `gtm.test.ts` reads every package price, bundle credit
+and markup figure out of this document and asserts each one against
+`billing/seats.ts` and `config.ts`. The code is the source of truth for what a
+thing costs; this document is allowed to quote it and not to disagree with it.
 
 ## Regenerating the editions
 

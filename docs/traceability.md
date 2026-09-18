@@ -186,9 +186,9 @@ Every row below has been brought back to what the code actually does.
 | Automatic halt when credits expire | Built | `aiHalted`, tested |
 | Per-engine cost attribution | Built | `attributionByModule()` |
 | Attribution by tenant, project, user, feature | Built | ACU entry fields |
-| Monthly / per-project / per-module caps | Built | `setCaps()`, tested |
+| Monthly / per-project / per-module / per-person caps | Built | `setCaps()`, tested. What a cap does differs by what is being metered: for **AI** it signals and is named on the entry rather than stopping a run half way; for non-AI metered work it refuses. The hard stop for AI is the balance |
 | Alerts at 50 / 80 / 100 percent | Built | Once per threshold per month, tested |
-| Volume incentive bands | Built | `effectiveMultiplier()`, tested |
+| Volume bands, flat by decision | Built | `effectiveMultiplier()`, tested. The table is retained and audited so a band could be reintroduced, and every band is currently the headline rate — there is **no discount anywhere in the platform**, so a bundle is a convenience and not a saving |
 | Free trial: non-AI features plus a fixed AI grant, no auto top-up | Built | `grantTrialCredit()` |
 | Subscription tiers with named identity seats | Built | `backend/src/billing/subscription.ts`, tested |
 | One human = one identity, seats revocable and reusable | Built | `assignIdentity()` / `revokeIdentity()`, tested |
@@ -228,7 +228,7 @@ Every row below has been brought back to what the code actually does.
 |---|---|---|
 | Phase transitions are governed events | Built | `transitionPhase()` requires evidence and justification |
 | Exit criteria evaluated from materialised state | Built | `evaluatePhaseGate()` |
-| Cannot skip phases | Built | Tested by the demo traversal |
+| Cannot pass a phase unseen | Built | `assertTransitionAllowed`, `startingphase.test.ts`. Not "one step at a time": a phase the project has **already occupied** may be stepped over, which is what lets a converted design-and-build job go from DESIGN to site without a false regression through TENDER. A phase it has never reached may not |
 | Regression permitted but recorded as such | Built | `direction: 'REGRESSION'` |
 | Design maturity gates the pricing basis | Built | `assessDesignMaturity()`; a lump sum against immature design is refused |
 | Estimate frozen before bid submission | Built | `compileBidPack()` refuses an unfrozen estimate |
@@ -342,7 +342,7 @@ Every row below has been brought back to what the code actually does.
 | Health and readiness endpoints | Built | `/healthz`, `/readyz` |
 | Zero-trust response headers | Built | `sendJson()` |
 | Kong / Redis / Terraform deployment topology | Design only | Specified in the source documents; this build runs as a single Node process |
-| Webhooks | Built | `developer/webhooks.ts` — endpoints, signed delivery, retry and a delivery log, beside the API key register |
+| Webhooks | Built | `developer/webhooks.ts` — endpoints, signed delivery, retry and a delivery log — and `developer/delivery.ts`, which posts what the queue owes. The second module is the one that was missing: the outbox had a queue, a signature, backoff and abandonment, and nothing ever filled it or drained it |
 | Kafka topics and AsyncAPI contracts | Design only | The ledger publishes to subscribers in-process; no broker wired |
 
 ## 12. Brand and application
@@ -442,9 +442,9 @@ against intent.
 | Requirement | Status | Where |
 |---|---|---|
 | 14.1 API conventions | **Built** | `api/middleware.ts` — RFC 7807 problem+json, `x-correlation-id` on every response, `buildTrace`/`logRequest` |
-| 14.1b Representative endpoints | **Built** | 642 routes registered in `api/routes.ts`, covered by real HTTP tests |
+| 14.1b Representative endpoints | **Built** | Every route is registered in `api/routes.ts` and covered by real HTTP tests. The count is not restated here — it moves every increment, and `docs/STATE.md` carries it |
 | 14.2 Golden Thread event envelope | **Built** | `goldenthread/types.ts` — actor, source, entity, action, before/after hash, diff, evidence refs, AI block, policy block, correlation and causation ids, chain hash |
-| 14.3 Event processing guarantees | **Partial** | Append-only with a hash chain, a durable journal and replay verification are built. Operation-id idempotency exists for field sync. The notification **outbox** is built (`notifications/outbox.ts`): the intent is committed to the ledger before anything is transmitted, so delivery is at-least-once with retry and a stated give-up, and a process that dies mid-send leaves a notice the platform still owes. It is an outbox, not a distributed transaction — the domain event and the queue entry are two journal appends, and that window is stated in the module rather than papered over |
+| 14.3 Event processing guarantees | **Partial** | Append-only with a hash chain, a durable journal and replay verification are built. Operation-id idempotency exists for field sync. Two **outboxes** are built and they are different things. The notification outbox (`notifications/outbox.ts`) delivers to people; the integrator outbox (`developer/webhooks.ts` for the queue, `developer/delivery.ts` for the drain) publishes ledger events to subscribed URLs, and until the drain was written it was queued by nothing and posted by nothing. Of the first: the intent is committed to the ledger before anything is transmitted, so delivery is at-least-once with retry and a stated give-up, and a process that dies mid-send leaves a notice the platform still owes. It is an outbox, not a distributed transaction — the domain event and the queue entry are two journal appends, and that window is stated in the module rather than papered over |
 | 14.4 Integration adapters | **Design only** | Modelled as inputs the engines accept; no adapter is connected to a real external system |
 
 ### 15 — AI control plane
@@ -455,7 +455,7 @@ against intent.
 | 15.2 AI execution sequence | **Partial** | Authorisation, input resolution, ACU estimate and hold, provider routing with fallback, ledger write, prompt version and human disposition are all built (`ai/orchestrator.ts`, `engines/context.runAI`, `domain/aidisposition.ts`). The step that is **not** built: no retrieval snapshot is stored |
 | 15.3 Risk tiers A–D and automation ceiling | **Partial** | The ceiling is enforced, but through a different mechanism than the specification's four tiers: `aiAllowed` on each event type in the closed catalogue, defaulting to false. Tier D — "AI cannot execute or impersonate signatory" — is met by construction, because every approval, completion, competence and regulatory event carries `aiAllowed: false`. The A/B/C gradations are not modelled as named tiers |
 | 15.4 Mandatory AI output schema | **Built** | The AI event block carries provider, model class, ACU held and consumed, input refs, confidence, policy id, decision, **assumptions**, **known gaps**, **alternatives considered** and **prompt version**; the human disposition is a separate event because it is a later act by a different party. Clause five of every stage gate assesses all of them. `[]` and absent are distinguished throughout: "it declared none" and "nobody asked" are different facts |
-| 15.5 Confidence and failure policy | **Built** | Provider timeout and fallback, cross-provider identification, and a wallet with no balance refusing the call. Confidence thresholds are configurable globally (`AI_CONFIDENCE_THRESHOLD`) and per task (`AI_CONFIDENCE_THRESHOLDS`). The evaluation harness is `ai/evaluation.ts` — see 17.1 for what it does and does not claim |
+| 15.5 Confidence and failure policy | **Built** | Cross-provider fallback and identification, and a wallet with no balance refusing the call. A provider **deadline** is opt-in and off by default (`AI_PROVIDER_DEADLINE_MS=0`): AI work is not cut short by a clock, and the hardcoded two minutes it replaced was aborting legitimate long-running calls after the vendor had already billed them. Confidence thresholds are configurable globally (`AI_CONFIDENCE_THRESHOLD`) and per task (`AI_CONFIDENCE_THRESHOLDS`). The evaluation harness is `ai/evaluation.ts` — see 17.1 for what it does and does not claim |
 
 ### 16 — Non-functional, security and offline
 

@@ -10776,9 +10776,9 @@ Re-opening these is what caused churn before.
    has not been paid, and only the free package carries the trial grant. No AI
    work runs without available ACUs.
 
-   The 5x is confirmed and deliberate. Several specification documents state
-   3x and the rate ran at 4x for a period; the instruction given directly is
-   **5x — every £1 the platform spends with a provider must produce £5**. It is
+   The 4x is confirmed and deliberate. Several specification documents state
+   3x and the rate ran at 5x for a period; the instruction given directly is
+   **4x — every £1 the platform spends with a provider must produce £4**. It is
    one value, `ACU_MARKUP_MULTIPLIER`, and every test fixture derives its
    arithmetic from it, so the suite follows whichever number is set.
 

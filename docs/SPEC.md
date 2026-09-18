@@ -167,8 +167,10 @@ dashboard refresh becomes an escalation.
 > reports, and subcontractor instructions.
 
 The enforcement mechanism is **BUILT** and is structural: `aiAllowed` defaults to
-`false` in the closed event catalogue, so 153 of 201 event types are human-only by
-construction rather than by a rule somebody applied. All twelve agents hold
+`false` in the closed event catalogue, so the large majority of event types are
+human-only by construction rather than by a rule somebody applied. The exact
+split moves with every event added and is not restated here; `identity.test.ts`
+asserts it and `docs/STATE.md` carries the current figure. All twelve agents hold
 `OBSERVE` or `PROPOSE`; **none holds `ACT`**, so no agent can execute anything
 without a named human approving it.
 
@@ -339,8 +341,9 @@ That is a settled decision recorded in `STATE.md`, and it is why the platform
 boots with no `node_modules` present.
 
 Adopting A3 as written means replacing that foundation — NestJS, Prisma,
-Postgres, Kafka, Redis, OpenSearch, NGINX, OPA — across roughly 55,000 lines that
-currently work and are covered by 1,600 tests. That is a rebuild, not a change,
+Postgres, Kafka, Redis, OpenSearch, NGINX, OPA — across a codebase that currently
+works and is covered by the suite `docs/STATE.md` counts. That is a rebuild rather
+than a change,
 and doing it quietly would be reckless.
 
 **What is worth separating: the behaviour A3 asks for is largely already met by
@@ -603,28 +606,37 @@ the design bootstrap and the memory learner are **NOT BUILT**.
 
 The API shapes differ (`/v1/...` rather than `/api/v1/...`, and command-named
 rather than resource-named in places), which is a convention difference and not a
-gap. The one substantive note: **`POST /api/v1/gates/G1:approve` requires
-authority ≥ Executive, and there is no Executive role.** See the authority note
-below.
+gap. The one substantive note was that **`POST /api/v1/gates/G1:approve` requires
+authority ≥ Executive, and there was no Executive role.** It is a role now; the
+authority note below records how that was resolved.
 
 ### A note that spans Parts A, B and C: the authority vocabulary
 
-The specification repeatedly names authority levels the platform's fifteen roles
-do not express:
+**This section records a gap and its closure. The table is the finding, in the
+state the platform was in when it was written; the decision under it is what the
+platform does now.** It is kept because the reasoning is the reason the roles
+have the shape they have — not because any line of it still describes the code.
 
-| Named in the spec | Where | CONSTRUX |
+The specification named five authority levels the role set of the day did not
+express:
+
+| Named in the spec | Where | CONSTRUX, at the time of the finding |
 |---|---|---|
-| **Executive** | B4 — G1 gate approval | No role. Gate approval is held by `ENTERPRISE_ADMIN` and `OWNER` |
-| **Project Director** | A2 — reverse transitions | No role. Same two hold it |
+| **Executive** | B4 — G1 gate approval | No role. Gate approval was held by `ENTERPRISE_ADMIN` and `OWNER` |
+| **Project Director** | A2 — reverse transitions | No role. Same two held it |
 | **Development Manager** | B1 — business case HITL | No role |
-| **Principal Designer (CDM 2015)** | Part C personas | Exists as a *supply-chain accreditation code* (`CDM_PRINCIPAL_DESIGNER`), not as a platform role with duties. The CDM work built the Principal **Contractor** duty set; the Principal **Designer** duty set is a separate statutory role and is not built |
-| **Commercial Manager** | A1 Rule 2 — chain-break escalation | No role. `QS` is the nearest |
+| **Principal Designer (CDM 2015)** | Part C personas | Existed as a *supply-chain accreditation code* (`CDM_PRINCIPAL_DESIGNER`), not as a platform role with duties. The CDM work had built the Principal **Contractor** duty set; the Principal **Designer** duty set is a separate statutory role and was not built |
+| **Commercial Manager** | A1 Rule 2 — chain-break escalation | No role. `QS` was the nearest |
 
-**Settled: all five are roles in the permission matrix**, rather than a separate
-authority-level concept layered over the existing fifteen. A second concept would
-have meant two things to check on every decision and two places for them to
+**Settled, and built: all five are roles in the permission matrix**, rather than
+a separate authority-level concept layered over the role set. A second concept
+would have meant two things to check on every decision and two places for them to
 disagree; the matrix already resolves authority everywhere in the platform, and a
-role is what `assertAccess` understands.
+role is what `assertAccess` understands. All five are in
+`backend/src/identity/roles.ts` with permissions and an account layer, and the
+role count is asserted against that file by `backend/tests/docfacts.test.ts`
+rather than written here, because a count written in prose is a count that goes
+stale.
 
 | Role | Shape | Seat |
 |---|---|---|
@@ -632,7 +644,15 @@ role is what `assertAccess` understands.
 | `DEVELOPMENT_MANAGER` | Authors the concept, approves nothing. The mirror of the Executive, which is why both exist rather than one | Executive, £120 |
 | `PROJECT_DIRECTOR` | Contractor-side seniority; holds the `PROJECT_SETUP` approve a reverse transition is gated on. Creates almost nothing — not a second PM | Construction Manager, £180 |
 | `COMMERCIAL_MANAGER` | Approves the four commercial areas the QS authors, and authors in none of them | Commercial Manager, £150 |
-| `PRINCIPAL_DESIGNER` | CDM 2015 statutory duty holder. Approves design, owns design-risk elimination in the register and the RAMS, compiles the health and safety file. Holds no site authority — that is the Principal Contractor, a different duty holder | Principal Designer, £130 (new) |
+| `PRINCIPAL_DESIGNER` | CDM 2015 statutory duty holder. Approves design, owns design-risk elimination in the register and the RAMS, compiles the health and safety file. Holds no site authority — that is the Principal Contractor, a different duty holder | Principal Designer, £130 |
+
+The seat prices in that last column are the only prices restated anywhere in
+this file, because a role nobody can be assigned to a seat for is a role nobody
+can hold, and the mapping is the point of the table. They are read out of this
+table and asserted against `backend/src/billing/seats.ts` by
+`backend/tests/docfacts.test.ts`, so the restatement cannot drift from the
+catalogue. Every other price in the platform is quoted in
+`docs/go-to-market/` and checked by `backend/tests/gtm.test.ts`.
 
 **One open question this surfaced, for the product owner rather than for
 engineering.** `DESIGNER` already held approve on design information, on the
@@ -645,11 +665,16 @@ decision and has not been made here.
 
 **A correction to an earlier reading in this file.** An earlier draft implied the
 permission matrix is the platform's separation-of-duties mechanism. It is not:
-twenty-six existing roles hold both create and approve in the same area,
+most of the roles in it hold both create and approve in the same capability area,
 deliberately, because separation is a rule about *two acts by one person* and a
 capability area cannot express it. It is enforced per act — `lifecycle/stages.ts`
 refuses a gate decision from whoever submitted it. The asymmetry in the three new
 roles above models the specification's two-person split; it does not enforce it.
+
+(An earlier version of this paragraph counted those roles. The count was wrong —
+it named more roles than the platform has — which is the whole argument for not
+putting derived numbers in prose. `backend/tests/docfacts.test.ts` asserts that
+the overlap is real and widespread, against the matrix itself.)
 
 ---
 
@@ -906,37 +931,42 @@ into the named five-panel layout per persona.
 
 ### H1 — Commercial model
 
-The three MUSTs — **£1 = 100 ACU · 100% minimum profit · ×4 provider markup** —
-all hold, and are configured rather than written into code:
-`ACU_MARKUP_MULTIPLIER=4`, `ACU_MINIMUM_PROFIT_PERCENT=100`, and one ACU is one
-minor unit by construction.
+The three MUSTs — **£1 = 100 ACU · a minimum profit floor · a flat provider
+markup** — all hold, and are configured rather than written into code. The
+figures are `ACU_MARKUP_MULTIPLIER` and `ACU_MINIMUM_PROFIT_PERCENT` in
+`.env.example`, with the floor *derived* from the profit rule
+(`1 + pct/100`) rather than set beside it, so the two cannot drift apart. One
+ACU is one minor unit by construction.
 
-Every seat price in the table matches: Construction Manager £180, Commercial
-Manager / QS £150, Project Manager £140, Director / Executive £120, Planner £110,
-Design / Document Controller £90, Site Manager / Supervisor £70, Subcontractor
-£25. So does every package: Core Project £950 / 10 seats, Professional Delivery
-£2,200 / 25 seats, Enterprise £6,500 / unlimited under fair use. So does every
-bundle price: £300, £1,000, £2,500.
+**The numbers are deliberately not restated here.** They have changed three
+times — ×3, then ×4, then ×5, then back to ×4 — and every document that quoted
+them went stale on a different schedule. `backend/src/billing/seats.ts` owns the
+seat, package and bundle catalogue and `backend/src/config.ts` owns the rate;
+`docs/go-to-market/` quotes them and is checked against the code by
+`backend/tests/gtm.test.ts`. Read the price from one of those.
 
-**One addition beyond the table**, for the product owner to confirm or remove: a
-ninth seat, **Principal Designer (CDM 2015) at £130**, added when the statutory
-duty holder became a role. The specification names the persona in Part C and does
-not price it, and a role with no seat is a role nobody can be assigned.
+**One addition beyond the specification's table**, for the product owner to
+confirm or remove: a ninth seat, **Principal Designer (CDM 2015)**, added when
+the statutory duty holder became a role. The specification names the persona in
+Part C and does not price it, and a role with no seat is a role nobody can be
+assigned.
 
-**One conflict inside the specification itself, and it is a real one.** The
-bundle table states ~10,000 / ~40,000 / ~110,000 usable ACUs. Those are the
-figures a **×3** markup produces. At the ×4 the same document requires, £300 buys
-7,500 ACUs, £1,000 buys 25,000 and £2,500 buys 62,500 — every bundle a third
-smaller than advertised.
+**A conflict inside the specification, since resolved.** The bundle table states
+~10,000 / ~40,000 / ~110,000 usable ACUs, which are the figures a ×3 markup
+produces on a price-÷-markup basis. The platform resolved it twice over.
 
-The platform resolves it in favour of ×4 and **derives** the yield from the
-multiplier rather than storing it, so the two can never disagree again. Nothing
-is misposted either way — a top-up credits the price and spend is billed at the
-effective multiplier, so the stale figure would only ever have appeared on a
-pricing page. But it is a promise a customer would find out about when the bundle
-ran out a third early, so the published figures are the derived ones. **If the
-~10,000 / ~40,000 / ~110,000 numbers are the commitment, the markup has to come
-down to ×3 and that is a pricing decision, not an engineering one.**
+First the rate: it is whatever `ACU_MARKUP_MULTIPLIER` says, and every published
+figure derives from that rather than being stored, so the two can never disagree
+again.
+
+Then the *basis*, which was the deeper error and the one worth recording. A
+bundle credits **its price** — a £300 bundle credits 30,000 ACUs, on the same
+footing as a package's monthly allowance — and what that credit funds in provider
+work is a different and smaller number, carried separately as
+`providerCostMinor`. Both used to be called ACUs, so a bundle understated itself
+against the package sitting beside it on the same page. `seats.ts` records the
+correction; nothing is misposted either way, because a top-up credits the price
+and spend is billed at the effective multiplier.
 
 | Clause | State |
 |---|---|
@@ -945,9 +975,9 @@ down to ×3 and that is a pricing decision, not an engineering one.**
 | No AI activity = no ACU consumption | **BUILT** |
 | Per-task transparency for auditors: agent, model, tokens, tier, multiplier, £-equivalent | **BUILT** — every AI request writes a metered entry |
 | Balance checks precede execution | **BUILT** — held, then consumed or released |
-| Enterprise budget caps and alerts per project | **PARTIAL** — caps and 50/80/100% alerts are per wallet, not per project |
-| **Four ACU tiers (LOW / MED / HIGH / PREMIUM) by task intensity** | **PARTIAL** — cost varies by task and model; the four named tiers are not a declared vocabulary, and the agent tables in Parts D–G reference them |
-| Markup ×3–×10 by task intensity | **DELIBERATELY NOT BUILT** — flat ×4. Recorded as a decision: a variable markup and a 100% profit floor are two rules that can contradict each other, and the flat rate is the one that cannot be got wrong. Raising it per tier is a config change, not a rebuild |
+| Enterprise budget caps and alerts per project | **BUILT** — `ACUCaps` carries monthly, per-project, per-module and per-person ceilings, with 50/80/100% alerts. Note what a cap now does: for **AI** it signals and is named on the entry rather than stopping a run half way, because a reasoning task stopped at a ceiling has spent the money and produced nothing usable. It still stops non-AI metered work. The hard stop for AI is the balance |
+| **Four ACU tiers (LOW / MED / HIGH / PREMIUM) by task intensity** | **BUILT** — `AcuTier` in `agents/types.ts` is the declared vocabulary, priced by `tierCost()` in `billing/acu.ts` at the platform markup, and the runtime overwrites what an agent wrote rather than defaulting it so no agent quotes an approver a figure of its own choosing |
+| Markup ×3–×10 by task intensity | **DELIBERATELY NOT BUILT** — one flat rate. Recorded as a decision: a variable markup and a profit floor are two rules that can contradict each other, and the flat rate is the one that cannot be got wrong. Intensity is priced through the *tier's raw cost* instead, which varies by a factor of forty-five from LOW to PREMIUM, so an expensive class of thinking costs more without a second pricing model. Raising the markup per tier is a config change, not a rebuild |
 
 ### H2 — Security, governance and tenancy
 
@@ -1843,8 +1873,12 @@ audit event, the agent contract or the lifecycle gate.
 15. **Declare the ten construction agents against the existing runtime**, with
     their triggers, HITL mode and ACU tier. The runtime is built; the declaration
     is not. This depends on Rule 4's output contract, which is item 2.
-16. **The four ACU tiers (LOW / MED / HIGH / PREMIUM)** as a declared vocabulary,
-    since every agent table in Parts D to G references them.
+16. ~~**The four ACU tiers (LOW / MED / HIGH / PREMIUM)** as a declared
+    vocabulary.~~ **Done.** `AcuTier` in `agents/types.ts` is the vocabulary and
+    `tierCost()` in `billing/acu.ts` prices it at the platform markup, so a tier
+    cannot become a second pricing model. The runtime overwrites what an agent
+    wrote rather than defaulting it — an agent that could fill the field in
+    would be quoting an approver a number of its own choosing.
 17. **Handover clocks** — acceptance starts the Defects Liability Period and the
     retention release schedule. Both figures are already on the contract and
     nothing starts from them. Five events are missing: `DLP_STARTED`,
@@ -1861,8 +1895,9 @@ audit event, the agent contract or the lifecycle gate.
     cycle fan-out on contract creation** — three E2/E4 items that are small
     individually and each remove a re-entry point.
 
-**One pricing decision for the product owner, blocking nothing but worth
-settling**: the ACU bundle table advertises figures a ×3 markup produces, and the
-same document requires ×4. The platform derives the yield from the multiplier, so
-it publishes the ×4 figures. If the advertised numbers are the commitment, the
-multiplier has to move.
+**The bundle pricing question is settled** — see Part H1 for the whole of it.
+The short version: a bundle credits its price, what that credit funds in provider
+work is a separate and smaller figure, and both used to be called ACUs. The
+catalogue in `billing/seats.ts` is the source of truth for every published
+figure, and `backend/tests/gtm.test.ts` fails if a document quotes a different
+one.

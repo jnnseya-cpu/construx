@@ -987,8 +987,14 @@ export function getStarted(): string {
     <p>
       <b>When the ACUs run out, AI stops.</b> Not a warning, not an overdraft, not a surprise line on next month's
       invoice — the work is refused and the platform says why. Every AI action is priced before you press the button,
-      from what that action has actually cost on your account rather than from a list price, and you can set a monthly
-      cap per account or per project that halts spend at a number you chose.
+      from what that action has actually cost on your account rather than from a list price.
+    </p>
+    <p>
+      You can set a monthly cap per account, per project or per person. A cap is a <b>reporting ceiling</b>, and we
+      would rather say so plainly than let you find out: when an AI task passes one it finishes, and the spend is
+      named on the entry and on the invoice line. That is deliberate — a piece of reasoning stopped half way has
+      already cost the money and produced nothing you can use, which is the worst of both. Everyone who needs to know
+      is told the moment a cap is reached. The hard stop is the balance, and that one is absolute.
     </p>
     <p>
       Top up whenever you want more. Unused allowance is exactly what it looks like: credit on the account, recorded

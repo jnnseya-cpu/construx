@@ -6,7 +6,7 @@ An AI-agent Construction Operating System covering the full asset lifecycle:
 Concept → Design → Tender → Construction → Commissioning → Handover → 30+ year O&M
 ```
 
-One data spine, seven AI engines, one set of governance rules — for building
+One data spine, eight AI engines, one set of governance rules — for building
 construction, civil infrastructure and specialised works alike. No sector
 verticals, no duplicated logic.
 
@@ -77,7 +77,7 @@ together or not at all.
   that applies what the primary ships, answers every read and refuses every
   write. See `docs/RUNBOOK.md`, "The ledger store".
 
-### Seven AI engines
+### Eight AI engines
 
 | Engine | Covers | Deterministic maths it owns |
 |---|---|---|
@@ -88,6 +88,7 @@ together or not at all.
 | BIM & Digital Twin | Drawings, models, clashes, site reality, as-built | Revision supersession, clash triage by rework cost |
 | Contracts, Change & Claims | Contracts, variations, delay events, claims, notices | Delay attribution with concurrency, entitlement scoring |
 | Handover & O&M | Commissioning, handover, assets, defects, maintenance | Reliability-adjusted lifecycle forecasting |
+| Executive | Portfolio scenario modelling and the weekly board position | Ranked actions with reasons, portfolio exposure |
 
 The split between computed and inferred is deliberate and visible. Critical
 paths, earned value, bid scores, contingency and delay attribution are
@@ -108,9 +109,16 @@ the hold is released and nothing is charged. If persistence fails, the debit
 does not happen — there is no billing without a ledger write, and no ledger
 write without a funded execution.
 
-- Prepaid only, no negative balances, automatic halt at zero
-- Fixed markup over raw provider cost, with volume incentive bands
-- Monthly, per-project and per-module caps; alerts at 50/80/100%
+- Prepaid only, no negative balances, automatic halt at zero. **No ACUs means
+  no AI** — nothing runs a provider on credit
+- One flat markup over raw provider cost. The band table is retained and
+  audited so a discount could be reintroduced, and every band is currently the
+  headline rate, so a bundle is a convenience and not a saving
+- Monthly, per-project, per-module and per-person caps; alerts at 50/80/100%.
+  A cap is a **reporting ceiling for AI**: an AI run that passes one finishes and
+  the breach is named on the entry, because a reasoning task stopped half way has
+  spent the money and produced nothing usable. It still stops non-AI metered
+  work, which is priced up front. The hard stop for AI is the balance above
 - Cost attributed to tenant, project, user, engine and feature
 - Subscription (access, identity, governance, non-AI workflows) is billed
   separately from AI usage, which is metered strictly by consumption
@@ -139,9 +147,18 @@ and accepts handover.
 
 A project advances only when the current phase's exit criteria are satisfied by
 materialised state — an approved baseline, a frozen estimate, an executed
-contract, accepted commissioning results. Gates are evaluated from the ledger,
-never asserted. Regression to an earlier phase is permitted, because projects
-genuinely re-tender, but it is recorded explicitly as a regression.
+contract, accepted commissioning results. The criteria themselves live in
+`PHASE_GATES` in `backend/src/lifecycle/phases.ts` and are published by the API;
+this file names the shape of them, not the list, so there is one place to read
+what a gate requires. Gates are evaluated from the ledger, never asserted.
+
+Two movements other than the ordinary next step are allowed, and both are
+recorded for what they are. **Regression** to an earlier phase is permitted,
+because projects genuinely re-tender. **A forward step over a phase** is
+permitted only where the project has already traversed the phase being passed —
+a design-and-build job converted at award has been through design, and refusing
+it the site would strand it. A skip of a phase the project never entered is
+refused, and the refusal names what would have been passed over.
 
 ## Layout
 
@@ -157,9 +174,11 @@ backend/                 the service — one Node process, no dependencies
     identity/            roles, permission matrix, RBAC/ABAC/scopes, tokens and MFA
     billing/             ACU wallet, subscription tiers, invoicing
     ai/                  orchestrator, provider adapters, conversational copilot
-    engines/             the seven engines and the maths they own
-    domain/              governance structure, lifecycle phases, procurement
-    lifecycle/           phase definitions and gate evaluation
+    engines/             the reasoning engines and the maths they own
+    domain/              governance structure, procurement, award conversion,
+                         information inheritance, project relationships
+    lifecycle/           phase definitions, gate evaluation, concurrent workstreams
+    developer/           API keys, webhook subscriptions and the delivery drain
     export/              document model, HTML and the hand-written PDF writer
     api/                 gateway, middleware, routing table
     cli/                 demo

@@ -13,7 +13,7 @@
                               │
         ┌─────────────────────┼─────────────────────┐
         │                     │                     │
-   Domain commands      Seven AI engines      Audit & replay
+   Domain commands      Eight AI engines      Audit & replay
         │                     │                     │
         └──────────┬──────────┴──────────┬──────────┘
                    │                     │
@@ -82,9 +82,14 @@ the platform cannot spend money it will not recover. Debiting last means a
 failed persistence leaves the customer uncharged. The hold sits between the two
 so a concurrent call cannot spend the same balance twice.
 
-The one asymmetry: if an execution overruns its estimate, the charge is capped
-at the amount reserved. The platform absorbs the difference rather than issuing
-a bill the customer was never shown.
+The one asymmetry, and it moved: an execution that overruns its estimate used to
+be capped at the amount reserved, with the platform absorbing the difference.
+The loss floor is now set *at* the price — every £1 of provider cost must produce
+the full multiple, with no case producing less — so the cap can never win and the
+overrun is charged. What replaces the cap is disclosure rather than silence: the
+entry names the overrun and the invoice line carries it, so a customer is never
+billed above what they were shown *without being told why*. Lowering the floor
+below the price restores the cap without a code change.
 
 ## Why access control is ordered
 
@@ -179,6 +184,16 @@ predicate, so the gate cannot be asserted — only met.
 
 Backwards transitions are allowed, because projects genuinely do re-tender or
 re-enter design, but they are recorded as regressions with a justification.
+
+Forwards, the rule is not "one step at a time" — it is that **nothing may be
+passed over unseen**. A phase the project has already occupied may be stepped
+over; one it has never reached may not. That distinction is load-bearing: a
+design-and-build contractor registers at Tender, wins, and the conversion opens
+delivery at Design, which sits *earlier* in the asset's order. Going to site then
+steps over the Tender it has already been through, and reading that as a skip
+left every converted project stuck at Design with no way forward but a
+"regression" it was not making — a false statement in the record, entered to
+satisfy a check.
 
 ## Why offline sync resolves conflicts the way it does
 

@@ -77,12 +77,12 @@ describe('ACU wallet', () => {
   });
 
   it('charges an overrun in full, and says so on the entry', () => {
-    // Estimate 100 raw, held at 5× = 500. Actual 150 raw bills 750, and 750 is
-    // what is charged: the profit floor is the price, so the cap at the
-    // disclosed hold can never win.
+    // Estimate 100 raw, held at the platform rate. Actual 150 raw bills more
+    // than that, and the larger figure is what is charged: the profit floor is
+    // the price, so the cap at the disclosed hold can never win.
     //
     // This asserted the opposite until the floor moved. The rule is that £1 of
-    // provider cost produces £5 with no exceptions, so the customer pays for
+    // provider cost produces the full multiple with no exceptions, so the customer pays for
     // what the run actually cost rather than what it was estimated at — and
     // the whole exposure that creates rests on the entry saying so, which is
     // why the note is asserted rather than treated as decoration.

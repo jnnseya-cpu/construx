@@ -14,13 +14,21 @@ import { badge, html, money, pct, raw, render, table } from '../lib/ui.js';
  * Three numbers on this screen are routinely misread, so each carries its
  * explanation rather than a tooltip:
  *
- * **Absorbed** is not a leak. A charge is capped at the amount that was reserved
- * and disclosed, so when an execution costs more than the estimate the customer
- * is not billed the difference — the platform is. It is an estimation-quality
- * signal.
+ * **Absorbed** reads zero at the current settings, and that is a fact about the
+ * pricing rule rather than a fact about estimation. A charge used to be capped
+ * at the amount reserved and disclosed, so an execution that cost more than its
+ * estimate was carried by the platform. The loss floor is now set *at* the
+ * price — every £1 of provider cost must produce the full multiple, with no
+ * case producing less — so the cap can never win and this is always zero. The
+ * exposure it used to absorb is handled by disclosure instead: an overrun is
+ * named on the ledger entry and carried onto the invoice line.
+ *
+ * The mechanism is kept rather than deleted. Lowering the floor below the price
+ * restores the cap without a code change, and this number starts moving again.
  *
  * **The realised multiplier** is computed from what was actually charged, not
- * from the configured one. They differ every time an execution is capped.
+ * from the configured one. While the floor sits at the price the two agree; they
+ * diverge the moment a band or a floor below the price is reintroduced.
  *
  * **Concentration** is the share from the single heaviest tenancy, and it is the
  * number that says how much one customer's behaviour moves the whole line.
@@ -113,9 +121,11 @@ export async function economy(root) {
             }</span></div>
           </div>
           <div class="metric-sub" style="margin-top:12px">
-            <b>Absorbed is not a leak.</b> A charge is capped at the amount reserved and disclosed before the work ran,
-            so a customer is never billed above what they agreed to. When an execution costs more than the estimate,
-            the platform carries it — which makes this an estimation-quality number, not a revenue one.
+            <b>Absorbed reads zero, by design.</b> The loss floor is set at the price — every £1 of provider cost
+            produces the full multiple, with no case producing less — so the estimate cap can never win and nothing
+            is carried by the platform. An execution that costs more than its estimate is charged for what it cost,
+            named on the ledger entry and on the invoice line rather than absorbed quietly. Lower the floor below
+            the price and this number starts moving again.
           </div>
         </div>
       </div>

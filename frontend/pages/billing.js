@@ -61,7 +61,7 @@ export async function billing(root) {
       <div class="view-head">
         <div>
           <h1>ACU &amp; Billing</h1>
-          <p>Prepaid AI credit with hard caps. No provider is contacted on an empty wallet, and nothing is charged until the output is committed.</p>
+          <p>Prepaid AI credit. No provider is contacted on an empty wallet, and nothing is charged until the output is committed. A cap reports AI spend rather than stopping a run half way.</p>
         </div>
         <div class="actions">
           ${can('BILLING_ACU', 'U') && !wallet.sharedFrom ? html`<button class="btn ghost" id="topup">Top up</button>` : ''}
@@ -615,12 +615,16 @@ export async function billing(root) {
     const result = await command({
       title: 'Set AI spend caps',
       intent:
-        'A hard ceiling on AI spend, enforced before any provider is contacted. Recorded against you, with the reason, because a budget ceiling that moves with no record is not a control.',
+        'A ceiling on AI spend. It is measured before any provider is contacted and everybody who needs to know is ' +
+        'told the moment it is reached — and an AI run that passes it still finishes, because a reasoning task ' +
+        'stopped half way has spent the money and produced nothing you can use. What it does stop is a document ' +
+        'render or a spatial compute, which are fixed jobs priced up front. The real stop is the balance: no ACUs, ' +
+        'no AI. Recorded against you, with the reason, because a budget ceiling that moves with no record is not a control.',
       path: '/v1/billing/caps',
       submitLabel: 'Set caps',
       fields: [
         { name: 'monthlyMinor', label: 'Monthly ceiling', type: 'number', money: true,
-          hint: 'Across the whole tenancy. Reached, AI execution halts rather than overspending.' },
+          hint: 'Across the whole tenancy. Reached, you are told and the spend is named on the invoice line; an AI run in progress is not cut short by it.' },
         { name: 'personId', label: 'A personal budget for', type: 'select', required: false,
           options: [{ value: '', label: '— nobody in particular —' }, ...(people.users ?? []).map((u) => ({ value: u.id, label: u.name }))],
           hint: 'One person’s own monthly ceiling, on top of the tenancy’s. Other people’s budgets are kept.' },

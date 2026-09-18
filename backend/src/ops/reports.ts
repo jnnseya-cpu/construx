@@ -259,7 +259,7 @@ function economicsReport(platform: Platform): { sections: ReportSection[]; exclu
           {
             label: 'Absorbed',
             value: money(burn.absorbedMinor), figure: burn.absorbedMinor, unit: 'MONEY',
-            note: 'An estimation-quality signal, not a leak: a charge is capped at the amount reserved, so nobody is billed above what was disclosed.',
+            note: 'Reads zero while the loss floor sits at the price: the estimate cap can never win, so nothing is carried by the platform. An overrun is charged and named on the entry instead.',
           },
           {
             label: 'Concentration',

@@ -160,11 +160,15 @@ An audit that only lists faults is as useless as one that only lists features.
   a Construction Phase Plan with gaps. No signature in a name that is not
   competent — six CDM documents sit complete and unsigned rather than carrying a
   forged approver. No AI spend on an empty wallet. No agent above `PROPOSE`.
-- **Accessibility was measured, not asserted.** WCAG 2.2 AA run against the
-  rendered console with per-layer compositing; the first pass reported fifteen
-  failures of which nine were the script's own arithmetic, and changing a token
-  on that measurement would have made the product worse while appearing to make
-  it accessible.
+- **Accessibility was measured, not asserted — and only the half a script can
+  measure.** WCAG 2.2 AA's *colour-contrast* criteria, run against the rendered
+  console with per-layer compositing; the first pass reported fifteen failures of
+  which nine were the script's own arithmetic, and changing a token on that
+  measurement would have made the product worse while appearing to make it
+  accessible. Keyboard traps, screen-reader announcement order, reflow at 320 CSS
+  pixels and the cognitive criteria are **not** covered, so this is not a
+  compliance claim. `docs/STATE.md`, "The accessibility audit, actually run",
+  carries the full scope and its limits.
 
 ---
 
@@ -210,7 +214,8 @@ launch.
 
 ---
 
-*Method: 16 attacks against a running server; 5,303 automated tests; mutation
+*Method: 16 attacks against a running server; the full automated suite as it
+stood on the day (`docs/STATE.md` carries the current count); mutation
 testing across every module built in the last four items. Every figure in this
 document came from a command that was run, and the one finding that was
 initially graded as a breach is recorded above along with why it was not.*

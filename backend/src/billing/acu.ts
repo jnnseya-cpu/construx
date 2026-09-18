@@ -642,8 +642,9 @@ export class ACUWallet {
     // and capping there meant paying a provider more than the customer paid.
     //
     // **The floor is now the price, so this cap no longer binds and that is
-    // deliberate.** The business rule is that £1 of provider cost produces £5,
-    // with no case in which it produces less, and `minimumProfitPercent` states
+    // deliberate.** The business rule is that £1 of provider cost produces the
+    // full multiple, with no case in which it produces less, and
+    // `minimumProfitPercent` states
     // it — so `floorMinor === billedMinor` on every settlement and the `min`
     // against the hold can never win. The arithmetic is left exactly as it is
     // rather than simplified to `billedMinor`: the shape is what shows that a

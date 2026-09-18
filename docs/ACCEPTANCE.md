@@ -117,20 +117,44 @@ With `AI_MODE=production`, run an engine from the console.
 
 - **Pass** — the wallet balance falls, and the ACU ledger shows a hold followed
   by a debit
-- **Check the arithmetic**: the amount charged should be roughly four times the
-  provider's raw cost. The entry records both, so this is checkable rather than
-  a matter of trust
+- **Check the arithmetic**: the entry records the raw provider cost, the amount
+  charged and the multiplier it was charged at, so the three must agree. Do not
+  check against a figure remembered from a document — the rate is
+  `ACU_MARKUP_MULTIPLIER` and the entry's own `effectiveMultiplier` is what it
+  was actually charged at
 - **`AI_UNAVAILABLE`** — no provider is healthy. Check the keys
 - **`ACU_EXHAUSTED`** — the wallet ran out, which is the control working
 
 ### B4 · An empty wallet stops AI rather than running it free
 
-Spend the balance down, or set a low cap, then run an engine.
+Spend the balance down — **not** by setting a low cap — then run an engine.
 
 - **Pass** — refused before any provider is contacted. **No provider call, no
   charge, no output**
 - **Fail** — if the engine runs, real compute is being bought against credit
   that does not exist
+
+### B4a · A cap reports AI spend rather than stopping it
+
+Set a monthly cap below the cost of one run, then run an engine.
+
+This is the opposite test to B4 and it catches the opposite mistake. A cap is a
+ceiling the customer set; the money behind a run past one is funded, so what the
+cap decides is not whether the platform can afford the work but whether it is
+allowed to *finish* it — and a reasoning task stopped at a ceiling has spent the
+tokens and produced nothing usable.
+
+- **Pass** — the engine runs and produces its output; the ACU entry carries a
+  note naming the cap it passed; the administrators and group finance are told
+  that the cap was reached
+- **Fail** — if the engine is refused with `ACU_EXHAUSTED`, a customer's budget
+  ceiling is silently truncating their work
+- **Fail** — if it runs and the entry says nothing about the cap, the spend is
+  unexplainable on the invoice
+- **Also check** — with the same cap in place, a document export
+  (`POST /v1/projects/:projectId/exports/report.pdf`) **is** refused. A render is
+  a fixed job priced up front, with no "keep going until it is right" in it, so
+  it stays prepaid
 
 ---
 

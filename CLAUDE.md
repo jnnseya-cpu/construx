@@ -153,7 +153,7 @@ mechanism rather than inventing a parallel one.
 | Rule | The mechanism already in place |
 |---|---|
 | Single source of truth | `docs/STATE.md` for project state; `backend/src/goldenthread/eventTypes.ts` for the closed event catalogue; `backend/src/identity/roles.ts` for the permission matrix; `backend/src/identity/entityAccess.ts` for entity classification |
-| No hardcoded business values | `backend/src/billing/seats.ts` (seats, packages, bundles), `backend/src/config.ts` (every env flag), `backend/src/billing/acu.ts` (markup, unit value) |
+| No hardcoded business values | `backend/src/billing/seats.ts` (seats, packages, bundles), `backend/src/config.ts` (the markup, the profit floor, the unit value and every env flag), `backend/src/billing/acu.ts` (`VOLUME_BANDS`, the one table still written in code, and `minimumMultiplier()` which derives the floor from the profit rule) |
 | Business logic is server-side | The browser holds no rule the API does not publish. `frontend/app.js` fetches the permission matrix and phase gates rather than duplicating them |
 | Tenant isolation | Enforced in `backend/src/identity/` and applied on every read, including the generic entity route and the audit feed |
 | Financial idempotency | Domain-level: the payment cycle refuses over-certification, double certification and overpayment (`tests/payments.test.ts`). Field sync uses operation-id idempotency |
@@ -181,9 +181,14 @@ Stated so it is not mistaken for compliance. These follow from
   topology exists.
 - **Caching and performance tuning** — no measured bottleneck exists to tune
   against, and rule 7 says not to build for one.
-- **Accessibility and responsive behaviour** — semantic HTML and keyboard
-  focus are in place; neither has been audited against a standard, and no such
-  audit should be claimed.
+- **Accessibility and responsive behaviour** — semantic HTML and keyboard focus
+  are in place, and the **colour-contrast** half of WCAG 2.2 AA has been measured
+  in a real browser, with per-layer compositing, and the failures it found fixed.
+  What has *not* been audited is everything an automated contrast check cannot
+  see: keyboard traps, screen-reader announcement order, reflow at 320 CSS
+  pixels, motion actuation, and 2.2 AA's cognitive criteria. **"WCAG 2.2 AA
+  compliant" is not a claim this platform may make**; "the failures an automated
+  check can find have been found and fixed" is.
 
 Verify these against `docs/STATE.md` before acting on them; that file is
 current, this list is a summary of it.
