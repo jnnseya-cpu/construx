@@ -1098,40 +1098,7 @@ async function issuerPanels(host) {
     button.addEventListener('click', async () => {
       const action = button.dataset.issuerAction;
       if (action === 'issuer') {
-        const a = profile.issuer;
-        const result = await command({
-          title: 'The registered issuer',
-          intent: 'What contractual documents carry. The registered name appears on them; the brand may use the trading name.',
-          path: '/v1/company/issuer',
-          method: 'PUT',
-          submitLabel: 'Save as a new version',
-          fields: [
-            { name: 'registeredName', label: 'Registered name', value: a.registeredName },
-            { name: 'tradingName', label: 'Trading name', value: a.tradingName, required: false },
-            { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent' },
-            { name: 'vatNumber', label: 'VAT number', value: a.vatNumber, required: false },
-            { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false },
-            { name: 'city', label: 'City', value: a.registeredAddress.city, required: false },
-            { name: 'postcode', label: 'Postcode', value: a.registeredAddress.postcode, required: false },
-            { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR…' },
-            { name: 'phone', label: 'Phone', value: a.contact.phone, required: false },
-            { name: 'email', label: 'Email', value: a.contact.email, required: false },
-            { name: 'web', label: 'Web', value: a.contact.web, required: false },
-            { name: 'footerLegalText', label: 'Footer legal text', type: 'textarea', value: a.footerLegalText, required: false, hint: 'e.g. ETABLIX LTD, registered in England & Wales No. 12345678' },
-          ],
-          transform: (v) => ({
-            issuer: {
-              registeredName: v.registeredName,
-              tradingName: v.tradingName ?? '',
-              registrationNo: v.registrationNo ?? '',
-              vatNumber: v.vatNumber ?? '',
-              registeredAddress: { line1: v.line1 ?? '', line2: a.registeredAddress.line2 ?? '', city: v.city ?? '', postcode: v.postcode ?? '', country: v.country ?? '' },
-              contact: { phone: v.phone ?? '', email: v.email ?? '', web: v.web ?? '' },
-              footerLegalText: v.footerLegalText ?? '',
-            },
-          }),
-        });
-        if (result) again();
+        if (await editRegisteredDetails(profile.issuer)) again();
       }
       if (action === 'rule') {
         const result = await command({
@@ -1492,4 +1459,77 @@ function documentCharts(all, evidence) {
         : ''
     }
   `;
+}
+
+/**
+ * The company's registered details — its legal name, numbers and address.
+ *
+ * ## Why this is exported rather than written where it is used
+ *
+ * It was reachable from exactly one place: Site Documents, under the heading
+ * "The registered issuer", framed as what contractual documents carry. That is
+ * a true description of one of its uses and a bad description of what it is.
+ * Reported as an account having no way to add an address at enterprise level —
+ * which was accurate, because nobody looking for their company's address goes
+ * to a documents screen to find it.
+ *
+ * So the same command is opened from Enterprise & Portfolio as well, and this
+ * is the one definition both use. Not copied: a second form writing the same
+ * `PUT /v1/company/issuer` is a second field list to keep in step, and the
+ * field that goes missing is the one nobody notices — see `line2` below.
+ *
+ * The route authorises `ENTERPRISE_STRUCTURE:U`, which is the enterprise
+ * structure area rather than a documents one; the screen it was on was the odd
+ * one out all along.
+ *
+ * Returns what the command returned, so a caller can redraw.
+ */
+export async function editRegisteredDetails(issuer) {
+  const a = issuer;
+  return command({
+    title: 'Registered company details',
+    intent:
+      'The company as it is registered: its legal name, its numbers and its registered address. Contractual documents ' +
+      'carry the registered name; the brand may use the trading name.',
+    path: '/v1/company/issuer',
+    method: 'PUT',
+    submitLabel: 'Save as a new version',
+    fields: [
+      { name: 'registeredName', label: 'Registered name', value: a.registeredName },
+      { name: 'tradingName', label: 'Trading name', value: a.tradingName, required: false },
+      { name: 'registrationNo', label: 'Company number', value: a.registrationNo, required: false, hint: 'Companies House, RCCM or equivalent' },
+      { name: 'vatNumber', label: 'VAT number', value: a.vatNumber, required: false },
+      { name: 'line1', label: 'Registered address', value: a.registeredAddress.line1, required: false },
+      // The second line had no input at all. It was in the model, read out of
+      // the existing profile and written straight back on every save, so the
+      // only way a company could ever have one was for something other than
+      // this form to have put it there — and nothing else writes it. A field
+      // that cannot be filled in is a field that does not exist.
+      { name: 'line2', label: 'Address line 2', value: a.registeredAddress.line2 ?? '', required: false },
+      { name: 'city', label: 'City', value: a.registeredAddress.city, required: false },
+      { name: 'postcode', label: 'Postcode', value: a.registeredAddress.postcode, required: false },
+      { name: 'country', label: 'Country code', value: a.registeredAddress.country, required: false, hint: 'GB, CD, FR…' },
+      { name: 'phone', label: 'Phone', value: a.contact.phone, required: false },
+      { name: 'email', label: 'Email', value: a.contact.email, required: false },
+      { name: 'web', label: 'Web', value: a.contact.web, required: false },
+      { name: 'footerLegalText', label: 'Footer legal text', type: 'textarea', value: a.footerLegalText, required: false, hint: 'e.g. ETABLIX LTD, registered in England & Wales No. 12345678' },
+    ],
+    transform: (v) => ({
+      issuer: {
+        registeredName: v.registeredName,
+        tradingName: v.tradingName ?? '',
+        registrationNo: v.registrationNo ?? '',
+        vatNumber: v.vatNumber ?? '',
+        registeredAddress: {
+          line1: v.line1 ?? '',
+          line2: v.line2 ?? '',
+          city: v.city ?? '',
+          postcode: v.postcode ?? '',
+          country: v.country ?? '',
+        },
+        contact: { phone: v.phone ?? '', email: v.email ?? '', web: v.web ?? '' },
+        footerLegalText: v.footerLegalText ?? '',
+      },
+    }),
+  });
 }

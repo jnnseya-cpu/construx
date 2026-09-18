@@ -132,6 +132,37 @@ export type Subscription = {
    * `raiseCharge` read the list price at every renewal. Absent means paid.
    */
   grantedFree?: boolean;
+  /**
+   * When the free grant ends. Absent means it does not — the grant is
+   * open-ended, which is what every existing grant is.
+   *
+   * ## Why a date, and not a second flag somebody remembers to clear
+   *
+   * A grant had no end. "Exempt for twelve months" could only be recorded as
+   * "free forever, and somebody diarise it", and what that produces is a group
+   * of companies still exempt in year three because the person who agreed the
+   * term has moved on. It was reported the other way round — a group that had
+   * been given twelve months was still being asked for money — which is the
+   * same gap seen from the customer's side: with no way to say *until when*,
+   * the operator either grants nothing and the customer is billed, or grants
+   * forever and the platform is.
+   *
+   * The date is an instant, not a duration, because a duration has to be
+   * anchored to something and the anchor is the argument nobody wins. Twelve
+   * months from the agreement is computed once, by whoever agreed it, and
+   * stored as the day it ends.
+   *
+   * ## Where it is applied
+   *
+   * Once, in `Platform.subscription`, which is the single accessor every reader
+   * goes through. An expired grant is reported as `grantedFree: false` and the
+   * twenty-seven places that ask whether a package is free get the right answer
+   * without knowing this field exists. The record keeps both — what was granted
+   * and until when — because "was this month paid for" is a question a revenue
+   * reconciliation asks about the past, and an expiry that erased the grant
+   * would make it unanswerable.
+   */
+  grantedFreeUntil?: string;
 };
 
 /**

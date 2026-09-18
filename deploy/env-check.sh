@@ -224,6 +224,43 @@ if is_set AI_MODE && [[ "$(grep -E '^[[:space:]]*AI_MODE[[:space:]]*=' "$ENV_FIL
 fi
 
 echo
+echo "The origin people are emailed"
+# The check that would have caught a dead sign-in link before it was sent.
+#
+# Every invitation, every one-time code and every "you have been added to" email
+# carries PUBLIC_BASE_URL. The gateway serves the hostnames it has a site block
+# for and nothing else — the apex from CONSTRUX_DOMAIN, and its www form, which
+# redirects. A PUBLIC_BASE_URL pointing anywhere else is a link to a name the
+# gateway holds no certificate for, and the browser reports that as
+# ERR_SSL_PROTOCOL_ERROR: not "misconfigured", just broken, on somebody's first
+# contact with the platform.
+if is_set CONSTRUX_DOMAIN; then
+  domain="$(value_of CONSTRUX_DOMAIN | tr -d '[:space:]')"
+  if [[ "$domain" == www.* ]]; then
+    # The Caddyfile builds the redirect host as www.{$CONSTRUX_DOMAIN}. An apex
+    # already carrying www would ask for a certificate for www.www.<domain>,
+    # which fails issuance and takes the whole gateway down with it.
+    echo "  WARNING  CONSTRUX_DOMAIN is \"$domain\" — set the apex (${domain#www.}); the gateway serves www and redirects it"
+    missing_critical=$((missing_critical + 1))
+  fi
+  if is_set PUBLIC_BASE_URL; then
+    base="$(value_of PUBLIC_BASE_URL | tr -d '[:space:]')"
+    host="${base#*://}"
+    host="${host%%/*}"
+    host="${host%%:*}"
+    apex="${domain#www.}"
+    if [[ "$host" != "$apex" && "$host" != "www.$apex" ]]; then
+      echo "  WARNING  PUBLIC_BASE_URL points at \"$host\" and the gateway serves \"$apex\" — every emailed sign-in link goes to a host with no certificate"
+      missing_critical=$((missing_critical + 1))
+    elif [[ "$host" == "www.$apex" ]]; then
+      echo "  ok       PUBLIC_BASE_URL uses the www host, which the gateway redirects to $apex"
+    else
+      echo "  ok       PUBLIC_BASE_URL matches the domain the gateway serves"
+    fi
+  fi
+fi
+
+echo
 echo "Duplicated keys"
 # The trap this whole script exists to prevent somebody walking into. Appending
 # `AI_MODE=production` under an existing `AI_MODE=local` is the natural way to

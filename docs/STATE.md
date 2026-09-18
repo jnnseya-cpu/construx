@@ -23734,3 +23734,101 @@ which reads the identity marker the seed writes and no route can set or clear.
 `backend/tests/collection.test.ts` holds all three statements, plus a guard on
 the guard: a real customer is still charged for their first month, so a predicate
 that returned true everywhere could not pass.
+
+---
+
+## The exemption that could not be given, and the link that could not be opened
+
+Three things reported together, from someone using the platform rather than
+reading it. All three were real and none of them had ever failed a test.
+
+### A group could be promised twelve months free and still be billed
+
+Reported as: a group and its enterprises were still being asked for money while
+they were exempt for twelve months.
+
+**A free grant had no end.** `grantFree` was a boolean. "Exempt for twelve
+months" could only be recorded as "free forever, and somebody diarise it" —
+which is how a tenancy is still exempt in year three, and equally why an
+operator wary of that grants nothing at all and the customer is billed through a
+term they were promised. `Subscription.grantedFreeUntil` records the day it
+ends, and the operator's form has a **Free until** date beside the checkbox.
+
+The expiry is applied **once**, in `Platform.subscription`, which every reader
+goes through — `raiseCharge`, `raiseOpeningCharge`, the activation position the
+console reads, the group billing directory, the subscription item on an invoice,
+the shared-wallet decision. There are twenty-seven places that ask whether a
+package is free, and an exemption that expired everywhere except one of them
+leaks money in the direction nothing fails in: nobody reports not being charged.
+The stored record keeps both what was granted and until when, because "was this
+month paid for" is a question a reconciliation asks about the past.
+
+**A free grant was per company, with nothing above it.** A group of eight
+companies was eight separate operator acts, and an exemption agreed with the
+group held only for whichever ones somebody remembered. Missing one is invisible
+— the symptom is a single company being charged correctly according to its own
+record. `POST /v1/admin/groups/:groupId/exempt` applies one decision to every
+company in the group, with **Exempt from charges** on the group's row in the
+operator console. Each company still gets its own `setSubscriptionPackage` call:
+the subscription is where the charge cycle reads, and a second place to say
+"free" is a second place for the two to disagree. What is group-level is the
+decision, not the record of it.
+
+An exemption with no end date is reported in those words, because it is a
+commercial commitment somebody should be able to see they made.
+
+### An enterprise had nowhere to put its address
+
+Accurate as reported. The company's registered details — legal name, company
+number, VAT number and registered address — were reachable from exactly one
+place: Site Documents, under "the registered issuer", framed as what contractual
+documents carry. That describes one of its uses and not what it is, and nobody
+looking for their company's address goes to a documents screen to find it. The
+route authorises `ENTERPRISE_STRUCTURE:U`, so the screen it sat on was the odd
+one out all along.
+
+**Registered details** is now a command on Enterprise & Portfolio. It is the
+same form, exported and opened from both screens rather than copied — a second
+twelve-field form writing the same `PUT /v1/company/issuer` is a second field
+list to keep in step, and the field that goes missing is the one nobody notices.
+
+Which is exactly what had happened: **the second address line had no input at
+all.** It was in the model, read out of the existing profile on open and written
+straight back on save, so the only way a company could ever have one was for
+something other than this form to have set it — and nothing else writes it. A
+field that cannot be filled in is a field that does not exist.
+
+### Every invited person was emailed a link that could not open
+
+Reported as `ERR_SSL_PROTOCOL_ERROR` on the sign-in link in an invitation.
+
+`deploy/Caddyfile` had one site block, `{$CONSTRUX_DOMAIN}`, and Caddy obtains a
+certificate for the hostnames it has a site block for. Anything arriving at the
+`www.` form — which DNS pointed at the same address — reached a server holding no
+certificate for the name being asked for, so the handshake failed before a byte
+of HTTP was exchanged. A browser reports that as a protocol error, which reads
+like a broken server rather than a name nobody configured.
+
+`PUBLIC_BASE_URL` was set to the www form, and it is what every invitation, every
+one-time code and every "you have been added to" email carries. So the only
+people who ever saw it were the ones who could least afford a dead end: somebody
+on their first contact with the platform, with no account yet and no other way
+in.
+
+The gateway now serves `www.{$CONSTRUX_DOMAIN}` and redirects it permanently to
+the apex with the path intact. A redirect rather than a second copy of the site,
+because two hostnames both serving the application means two origins for
+cookies, two for the CSP, two in a bookmark, and a session started on one is not
+a session on the other.
+
+`deploy/env-check.sh` now refuses to pass a `PUBLIC_BASE_URL` whose host is
+neither the domain the gateway serves nor its www form, and a `CONSTRUX_DOMAIN`
+that already begins with `www.` — which would build the redirect host as
+`www.www.<domain>`, fail issuance, and take the whole gateway down. Verified
+against all three configurations.
+
+**What this does not fix.** Nothing here changes DNS. The redirect works only
+where `www.<domain>` resolves to the gateway; if that record does not exist, the
+name fails to resolve rather than failing to handshake, and no amount of
+configuration in this repository will answer it. That is the one part of this
+that is outside the code.

@@ -2211,6 +2211,17 @@ export const ROUTES: Route[] = [
          * at renewal, which is the safer way round to be wrong.
          */
         grantFree: { type: 'boolean' },
+        /**
+         * The day the grant ends, as an ISO instant.
+         *
+         * Omitted means it does not end. A term was previously unsayable: an
+         * operator agreeing twelve months free could only grant it open-ended
+         * and remember, which is how a group ends up still exempt in year
+         * three — and, seen from the other side, why a group that had been
+         * given a year was still being asked for money, because the safe thing
+         * to do with an unbounded grant is not to make it.
+         */
+        grantFreeUntil: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -2224,7 +2235,7 @@ export const ROUTES: Route[] = [
         throw new ForbiddenError('Only the platform operator may change a package', 'PLATFORM_ADMIN_REQUIRED');
       }
 
-      const input = body<{ package: PackageTier; reason: string; grantFree?: boolean }>(ctx);
+      const input = body<{ package: PackageTier; reason: string; grantFree?: boolean; grantFreeUntil?: string }>(ctx);
       const tenantId = ctx.params.tenantId!;
       const before = platform.subscription(tenantId);
       // Read before and after so the response can state what actually moved,
@@ -2238,6 +2249,7 @@ export const ROUTES: Route[] = [
         reason: input.reason,
         decidedBy: actor.actorId,
         grantFree: input.grantFree === true,
+        ...(input.grantFreeUntil ? { grantFreeUntil: input.grantFreeUntil } : {}),
       });
 
       const definition = PACKAGES[updated.package];
@@ -2247,6 +2259,7 @@ export const ROUTES: Route[] = [
         package: updated.package,
         // Read back from the subscription, which is what the charge cycle reads.
         grantedFree: updated.grantedFree === true,
+        ...(updated.grantedFreeUntil ? { grantedFreeUntil: updated.grantedFreeUntil } : {}),
         status: updated.status,
         monthlyPriceMinor: updated.grantedFree === true ? 0 : definition.monthlyPriceMinor,
         listPriceMinor: definition.monthlyPriceMinor,
@@ -2415,6 +2428,12 @@ export const ROUTES: Route[] = [
             packageLabel: pkg.label,
             // Given away by the operator: no monthly charge is raised for it.
             grantedFree: subscription.grantedFree === true,
+            // The term, where one was set. Read from the stored record rather
+            // than inferred: `grantedFree` above is already expired against
+            // today, so on the day after the term ends this row reads "not
+            // free, until the date it ran out", which is the pair an operator
+            // needs to see to know why a charge has reappeared.
+            ...(subscription.grantedFreeUntil ? { grantedFreeUntil: subscription.grantedFreeUntil } : {}),
             status: subscription.status,
             renewsAt: subscription.renewsAt,
             // What the tenancy owes for the platform itself. A paid package
@@ -7953,6 +7972,97 @@ export const ROUTES: Route[] = [
       const actor = auth(ctx);
       if (!actor.roles.includes('PLATFORM_ADMIN')) throw new ForbiddenError('Only the platform operator changes a group', 'PLATFORM_ADMIN_REQUIRED');
       return setCostCentre(platform, actor, ctx.params.groupId as string, ctx.params.tenantId as string, body<{ code?: string; chargeMode?: ChargeMode; rateCard?: RateCard }>(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/groups/:groupId/exempt',
+    description: 'Grant every company in a group its package free of charge, optionally until a date (platform operator only)',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string', minLength: 1, maxLength: 500 },
+        /**
+         * The day the exemption ends, as an ISO instant. Omitted means it does
+         * not end, which the response says in as many words so nobody grants
+         * a group free access forever by leaving a field blank.
+         */
+        until: { type: 'string' },
+        /** False withdraws the exemption from every company instead. */
+        exempt: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      /*
+       * One decision, applied to every company in the group.
+       *
+       * Reported as a group and its enterprises still being asked for money
+       * while they were exempt for twelve months, and there were two reasons
+       * for it. A grant had no end date, so a term could not be recorded at
+       * all — that is fixed on the subscription. And a grant was per company,
+       * with nothing above it: a group of eight companies was eight separate
+       * operator acts, and an exemption agreed with the group holds only for
+       * whichever companies somebody remembered. Missing one is invisible,
+       * because the symptom is a single company being charged correctly
+       * according to its own record.
+       *
+       * Every company gets its own `setSubscriptionPackage` call rather than a
+       * group-level flag, because the subscription is where the charge cycle
+       * reads and a second place to say "free" is a second place for the two to
+       * disagree. The package each company holds is left alone — this is about
+       * what is charged for it, not about moving anybody's plan.
+       *
+       * Idempotent: `setSubscriptionPackage` returns unchanged where nothing
+       * moves, so running it twice reports the same companies and writes no
+       * second event for them.
+       */
+      const actor = auth(ctx);
+      operatorOnly(ctx, 'exempt a group');
+      const input = body<{ reason: string; until?: string; exempt?: boolean }>(ctx);
+      const group = groupOf(platform, ctx.params.groupId as string);
+      const exempt = input.exempt !== false;
+
+      const applied: Array<{ tenantId: string; legalName: string; package: string; grantedFree: boolean; changed: boolean }> = [];
+      for (const centre of group.costCentres) {
+        const tenant = platform.tenant(centre.tenantId);
+        // A closed company is not billed and is not exempted either; touching
+        // it would write a decision onto a record that is meant to be read-only.
+        if (tenant.closedAt || tenant.deletedAt) continue;
+        const before = platform.subscription(centre.tenantId);
+        const updated = platform.setSubscriptionPackage({
+          tenantId: centre.tenantId,
+          package: before.package,
+          reason: input.reason,
+          decidedBy: actor.actorId,
+          grantFree: exempt,
+          ...(exempt && input.until ? { grantFreeUntil: input.until } : {}),
+        });
+        applied.push({
+          tenantId: centre.tenantId,
+          legalName: tenant.legalName,
+          package: updated.package,
+          grantedFree: updated.grantedFree === true,
+          changed: updated !== before,
+        });
+      }
+
+      return {
+        groupId: group.id,
+        group: group.displayName,
+        exempt,
+        until: exempt && input.until ? input.until : null,
+        // Said rather than implied. An exemption with no end is a commercial
+        // commitment somebody has to be able to see they made.
+        term: !exempt
+          ? 'The exemption is withdrawn; every company is charged for its package from its next renewal.'
+          : input.until
+            ? `Free of charge until ${input.until.slice(0, 10)}, then charged for the package each company holds.`
+            : 'Free of charge with no end date. Nothing will start charging these companies until somebody withdraws it.',
+        companies: applied,
+        changed: applied.filter((company) => company.changed).length,
+      };
     },
   },
   {
@@ -22620,6 +22730,7 @@ export const ROUTES: Route[] = [
           monthlyPriceMinor: subscription.grantedFree ? 0 : PACKAGES[subscription.package].monthlyPriceMinor,
           listPriceMinor: PACKAGES[subscription.package].monthlyPriceMinor,
           grantedFree: subscription.grantedFree === true,
+          ...(subscription.grantedFreeUntil ? { grantedFreeUntil: subscription.grantedFreeUntil } : {}),
           startedAt: subscription.startedAt,
           renewsAt: subscription.renewsAt,
         },

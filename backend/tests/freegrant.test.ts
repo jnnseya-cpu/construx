@@ -174,3 +174,153 @@ describe('granting the package free of charge', () => {
     assert.equal(raised!.charge.amountMinor, PACKAGES.CORE_PROJECT.monthlyPriceMinor);
   });
 });
+
+// ── A grant with a term ─────────────────────────────────────────────────────
+
+describe('a free grant can be given for a fixed period', () => {
+  /*
+   * ## What happened
+   *
+   * Reported as: a group and its enterprises were still being asked for money
+   * while they were exempt for twelve months.
+   *
+   * Two things were missing and neither failed anything.
+   *
+   * **A grant had no end.** `grantFree` was a boolean. "Exempt for twelve
+   * months" could only be recorded as "free forever, and somebody diarise it",
+   * which is how a tenancy is still exempt in year three — and, from the other
+   * side, why an operator wary of that grants nothing at all and the customer
+   * is billed through a term they were promised.
+   *
+   * **A grant was per company, with nothing above it.** A group of eight
+   * companies was eight separate operator acts, and an exemption agreed with
+   * the group held only for whichever ones somebody remembered. Missing one is
+   * invisible: the symptom is a single company being charged correctly
+   * according to its own record.
+   *
+   * ## Where the term is applied
+   *
+   * Once, in `Platform.subscription`, which every reader goes through —
+   * `raiseCharge`, `raiseOpeningCharge`, the activation position, the group
+   * billing directory, the invoice item, the shared-wallet decision. An
+   * exemption that expired everywhere except one of them leaks money in the
+   * direction nothing fails in, because nobody reports not being charged.
+   */
+  const YEAR = 365 * DAY;
+
+  function exempt(until?: Date) {
+    const platform = new Platform();
+    const operator = platform.createOperator({ name: 'Ruth', email: 'ops@construx.example' });
+    const { tenant } = platform.createTenant({
+      legalName: 'Exempt Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'TEAM',
+      package: 'CORE_PROJECT',
+      enterpriseName: 'Exempt',
+      deferOpeningCharge: true,
+    });
+    platform.setSubscriptionPackage({
+      tenantId: tenant.id,
+      package: 'CORE_PROJECT',
+      reason: 'Twelve months free, as agreed',
+      decidedBy: operator.id,
+      grantFree: true,
+      ...(until ? { grantFreeUntil: until.toISOString() } : {}),
+    });
+    return { platform, tenantId: tenant.id };
+  }
+
+  it('charges nothing while the term runs', () => {
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const subscription = platform.subscription(tenantId);
+    assert.equal(subscription.grantedFree, true, 'the grant is not in force during its own term');
+    assert.equal(monthlySubscriptionCharge(subscription), 0, 'a tenancy inside its exempt term was priced at the list rate');
+    assert.equal(
+      collection.raiseOpeningCharge(platform, tenantId, new Date()),
+      undefined,
+      'a first month was raised against a tenancy that is exempt',
+    );
+  });
+
+  it('charges again the day the term ends, with nobody having to remember', () => {
+    // The behaviour the whole field exists for. Read at a date past the term:
+    // the same stored record, a different answer.
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const afterTheTerm = new Date(Date.now() + YEAR + DAY);
+
+    const during = platform.subscription(tenantId);
+    const after = platform.subscription(tenantId, afterTheTerm);
+
+    assert.equal(during.grantedFree, true);
+    assert.equal(after.grantedFree, false, 'the exemption outlived its own end date');
+    assert.equal(
+      monthlySubscriptionCharge(after),
+      PACKAGES.CORE_PROJECT.monthlyPriceMinor,
+      'a tenancy past its exempt term is still priced at nothing',
+    );
+  });
+
+  it('keeps the term on the record after it expires, so the past stays answerable', () => {
+    // "Was this month paid for" is a question a revenue reconciliation asks
+    // about a month that has gone. An expiry that erased the grant would make
+    // it unanswerable.
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const after = platform.subscription(tenantId, new Date(Date.now() + YEAR + DAY));
+    assert.ok(after.grantedFreeUntil, 'the term was erased when it expired');
+  });
+
+  it('leaves an open-ended grant open-ended', () => {
+    // Every grant made before the term existed has no date, and must go on
+    // behaving exactly as it did.
+    const { platform, tenantId } = exempt();
+    const inTenYears = new Date(Date.now() + 10 * YEAR);
+    assert.equal(platform.subscription(tenantId, inTenYears).grantedFree, true, 'an open-ended grant expired on its own');
+  });
+
+  it('refuses a term that has already run out', () => {
+    // An operator typing last year's date would otherwise see "granted free of
+    // charge" in the response and a full charge on the next renewal.
+    const platform = new Platform();
+    const operator = platform.createOperator({ name: 'Ruth', email: 'ops@construx.example' });
+    const { tenant } = platform.createTenant({
+      legalName: 'Backdated Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP',
+      tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Backdated', deferOpeningCharge: true,
+    });
+    assert.throws(
+      () => platform.setSubscriptionPackage({
+        tenantId: tenant.id, package: 'CORE_PROJECT', reason: 'Backdated by mistake',
+        decidedBy: operator.id, grantFree: true, grantFreeUntil: new Date(Date.now() - DAY).toISOString(),
+      }),
+      /already passed/,
+    );
+  });
+
+  it('refuses a term on a package that is not being granted free', () => {
+    const platform = new Platform();
+    const operator = platform.createOperator({ name: 'Ruth', email: 'ops@construx.example' });
+    const { tenant } = platform.createTenant({
+      legalName: 'Paying Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP',
+      tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Paying', deferOpeningCharge: true,
+    });
+    assert.throws(
+      () => platform.setSubscriptionPackage({
+        tenantId: tenant.id, package: 'CORE_PROJECT', reason: 'A term with no grant',
+        decidedBy: operator.id, grantFree: false, grantFreeUntil: new Date(Date.now() + YEAR).toISOString(),
+      }),
+      /not being granted free/,
+    );
+  });
+
+  it('clears the term when the grant is withdrawn', () => {
+    // Otherwise a paid package carries a date that reads as an exemption.
+    const { platform, tenantId } = exempt(new Date(Date.now() + YEAR));
+    const operator = platform.operators()[0]!;
+    const withdrawn = platform.setSubscriptionPackage({
+      tenantId, package: 'CORE_PROJECT', reason: 'Withdrawn early by agreement',
+      decidedBy: operator.id, grantFree: false,
+    });
+    assert.equal(withdrawn.grantedFree, false);
+    assert.equal(withdrawn.grantedFreeUntil, undefined, 'a paid package still carries a free-until date');
+  });
+});

@@ -1,8 +1,9 @@
 import { api, session } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { barChart, lineChart, pieChart, gauge } from '../lib/charts.js';
-import { blockedReason, can, openProject, state, tenantGrantableRoles } from '../app.js';
+import { blockedReason, can, draw, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
+import { editRegisteredDetails } from './documents.js';
 import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
 
 /**
@@ -202,7 +203,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -234,6 +235,15 @@ export async function enterprise(root) {
     // Who this organisation has asked to pay for a guest's AI, and what it
     // has agreed to pay itself.
     api.read('/v1/acu-sponsorships', 'BILLING_ACU').catch(() => null),
+    // The company's own registered details, so this screen can show its address
+    // and open the form that sets it. Reported as an account having no way to
+    // add an address at enterprise level — which was accurate: the only door to
+    // it was on Site Documents, under "the registered issuer", where nobody
+    // looking for their company's address would think to go. The route
+    // authorises ENTERPRISE_STRUCTURE, so this screen was the odd one out.
+    // Caught rather than thrown: a role that may read this screen and not the
+    // company block still gets the screen.
+    api.get('/v1/company/issuer').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -309,6 +319,20 @@ export async function enterprise(root) {
               // and the platform refuses the one kind that does.
               permitted: can('PROJECT_SETUP', 'R'),
               reason: blockedReason('PROJECT_SETUP', 'R'),
+            },
+            {
+              // The company's own registered details, including its address.
+              // The route authorises ENTERPRISE_STRUCTURE:U, which is this
+              // screen's area — it had a door only on Site Documents, framed
+              // as document issuance, which is why an account appeared to have
+              // no way to add an address at all.
+              id: 'registered',
+              label: 'Registered details',
+              tone: '',
+              permitted: can('ENTERPRISE_STRUCTURE', 'U') && company !== null,
+              reason: company === null
+                ? 'The company record could not be read on this screen.'
+                : blockedReason('ENTERPRISE_STRUCTURE', 'U'),
             },
             {
               id: 'check',
@@ -1281,6 +1305,16 @@ export async function enterprise(root) {
   root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
+    // Not a `COMMANDS` entry: the form is defined once, on the screen that has
+    // always carried it, and opened from both. A second copy of a twelve-field
+    // form writing the same route is a second field list to keep in step, and
+    // the field that goes missing is the one nobody notices — `line2` had no
+    // input at all for exactly that reason.
+    if (button.dataset.command === 'registered') {
+      if (company?.profile?.issuer && (await editRegisteredDetails(company.profile.issuer))) await draw();
+      return;
+    }
+
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
     const result = await command(spec);

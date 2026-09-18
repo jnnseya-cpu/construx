@@ -445,6 +445,7 @@ export async function tenants(root) {
                     <button class="btn quiet sm" data-group-action="billing" data-group="${g.id}" data-name="${g.displayName}">Billing terms</button>
                     <button class="btn quiet sm" data-group-action="agreement" data-group="${g.id}" data-name="${g.displayName}" data-currency="${g.billing.currency}">Agreement</button>
                     <button class="btn quiet sm" data-group-action="credit" data-group="${g.id}" data-name="${g.displayName}" data-currency="${g.billing.currency}">Credit the group</button>
+                    <button class="btn quiet sm" data-group-action="exempt" data-group="${g.id}" data-name="${g.displayName}">Exempt from charges</button>
                     <button class="btn quiet sm" data-group-action="role" data-group="${g.id}" data-name="${g.displayName}">Group role</button>
                   </span>
                 </div>
@@ -754,6 +755,57 @@ export async function tenants(root) {
           }),
         });
         if (result) toast(result.alreadyRecorded ? 'Already recorded' : 'Group purchase recorded', result.wallets.map((w) => `${w.code} now ${money(w.availableMinor)}`).join(' · '), result.alreadyRecorded ? 'warn' : 'ok');
+      }
+      if (groupAction === 'exempt') {
+        /*
+         * One decision for the whole group.
+         *
+         * Reported as a group and its enterprises being asked for money while
+         * they were exempt for twelve months. Two things were missing and this
+         * is the second: a grant was per company with nothing above it, so an
+         * exemption agreed with a group of eight was eight separate acts and
+         * held only for whichever ones somebody remembered. Missing one is
+         * invisible, because the symptom is a single company being charged
+         * correctly according to its own record.
+         *
+         * The first thing missing was the term, and it is the field below.
+         */
+        result = await command({
+          title: `${name} — exempt from charges`,
+          intent:
+            'Grants every company in the group its current package free of charge. Nobody moves plan; what changes is whether the monthly charge is raised. Leave the date empty and the exemption never ends — with one, the charge resumes by itself the day after and nobody has to remember.',
+          path: `/v1/admin/groups/${groupId}/exempt`,
+          submitLabel: 'Apply to every company',
+          fields: [
+            {
+              name: 'until',
+              label: 'Free until',
+              type: 'date',
+              required: false,
+              hint: 'Twelve months from the agreement, typically. Empty means no end date, which is a commitment rather than a default.',
+            },
+            {
+              name: 'exempt',
+              label: 'Exempt',
+              type: 'checkbox',
+              value: true,
+              hint: 'Untick to withdraw the exemption from every company; each is charged for its package from its next renewal.',
+            },
+            { name: 'reason', label: 'Reason', hint: 'Recorded as evidence against the decision on every company' },
+          ],
+          transform: (v) => ({
+            reason: v.reason,
+            exempt: v.exempt !== false,
+            ...(v.until ? { until: new Date(`${v.until}T00:00:00.000Z`).toISOString() } : {}),
+          }),
+        });
+        if (result) {
+          toast(
+            `${result.group} — ${result.changed} of ${result.companies.length} changed`,
+            result.term,
+            'ok',
+          );
+        }
       }
       if (groupAction === 'readiness') {
         const host = root.querySelector('#support-panel');
@@ -1165,6 +1217,19 @@ export async function tenants(root) {
             value: tenant?.grantedFree === true,
             hint: 'No monthly charge is raised for this package — not the first month, not a renewal. Any period already raised and unpaid is written off, and a tenancy waiting for its first payment opens. Untick to charge again from the next renewal.',
           },
+          {
+            name: 'grantFreeUntil',
+            label: 'Free until',
+            type: 'date',
+            required: false,
+            value: tenant?.grantedFreeUntil ? String(tenant.grantedFreeUntil).slice(0, 10) : '',
+            // A term had no way of being recorded, so "twelve months free" was
+            // granted open-ended and diarised by somebody — which is how a
+            // tenancy is still exempt in year three, and equally why an
+            // operator wary of that grants nothing and the customer is billed
+            // through a term they were promised.
+            hint: 'Leave empty for an exemption with no end. With a date, the charge resumes by itself the day after — nobody has to remember.',
+          },
           { name: 'reason', label: 'Reason', hint: 'Recorded as evidence against this decision' },
         ],
       });
@@ -1172,7 +1237,7 @@ export async function tenants(root) {
       if (result) {
         toast(
           `${tenant?.legalName ?? 'Tenancy'} — ${result.package}`,
-          `${result.grantedFree ? `Granted free of charge${result.status === 'ACTIVE' ? ', open' : ''}. ` : `${money(result.monthlyPriceMinor)} a month. `}` +
+          `${result.grantedFree ? `Granted free of charge${result.grantedFreeUntil ? ` until ${String(result.grantedFreeUntil).slice(0, 10)}` : ' with no end date'}${result.status === 'ACTIVE' ? ', open' : ''}. ` : `${money(result.monthlyPriceMinor)} a month. `}` +
             `${result.includedSeats === null ? 'Unlimited' : result.includedSeats} seats, ${result.storageGb} GB. ` +
             'The wallet is untouched — this tenancy still funds its own AI spend.',
           'ok',

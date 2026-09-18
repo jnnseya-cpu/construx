@@ -679,3 +679,109 @@ describe('§16.3 — transferring a company between groups (AT-37, AT-38)', () =
     assert.notEqual(rebuilt.tenant(jn.tenantId).groupId, groupId);
   });
 });
+
+// ── Exempting a whole group ─────────────────────────────────────────────────
+
+describe('a group is exempted in one act, and the term ends on its own', () => {
+  /*
+   * Reported as: a group and its enterprises still being asked for money while
+   * they were exempt for twelve months.
+   *
+   * A free grant was per company with nothing above it, so an exemption agreed
+   * with a group of several companies was several separate operator acts and
+   * held only for whichever ones somebody remembered. Missing one is invisible:
+   * the symptom is a single company being charged correctly according to its
+   * own record, and nobody reports a company that was *not* charged.
+   *
+   * Every company still gets its own `setSubscriptionPackage` call rather than
+   * a group-level flag, because the subscription is where the charge cycle
+   * reads and a second place to say "free" is a second place for the two to
+   * disagree. What is group-level is the decision, not the record of it.
+   */
+  let multiCompanyGroup = '';
+  let secondCompany = '';
+
+  it('finds a group holding more than one company, so a cascade has something to cascade over', async () => {
+    // Asked for rather than assumed. Earlier blocks in this file build several
+    // groups and a fixture that hard-coded one of them would silently become a
+    // single-company test the first time the order changed — which would pass
+    // while proving nothing about a cascade.
+    const listed = await send('GET', '/v1/admin/groups', tokenFor(operator));
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const groups = listed.body.groups as Array<{ id: string; companies: Array<{ tenantId: string }> }>;
+    const found = groups.find((group) => group.companies.length >= 2);
+    assert.ok(found, `no group on the platform holds two companies; groups: ${groups.map((g) => g.companies.length).join(',')}`);
+    multiCompanyGroup = found.id;
+    secondCompany = found.companies[1]!.tenantId;
+  });
+
+  it('exempts every company in the group from one decision', async () => {
+    const until = new Date(Date.now() + 365 * 86_400_000).toISOString();
+    const response = await send('POST', `/v1/admin/groups/${multiCompanyGroup}/exempt`, tokenFor(operator), {
+      reason: 'Twelve months free, as agreed at onboarding',
+      until,
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+
+    const companies = response.body.companies as Array<{ tenantId: string; grantedFree: boolean }>;
+    assert.ok(companies.length >= 2, `only ${companies.length} companies were touched; this is not a group`);
+    for (const company of companies) {
+      assert.equal(company.grantedFree, true, `${company.tenantId} was left paying`);
+      // The thing that matters, read where the charge cycle reads it rather
+      // than from the response that claimed to have set it.
+      assert.equal(platform.subscription(company.tenantId).grantedFree, true);
+    }
+    assert.match(String(response.body.term), /until/, 'the response does not say when the exemption ends');
+  });
+
+  it('says plainly when an exemption has no end, because that is a commitment', async () => {
+    const response = await send('POST', `/v1/admin/groups/${multiCompanyGroup}/exempt`, tokenFor(operator), {
+      reason: 'Open-ended by agreement',
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.until, null);
+    assert.match(String(response.body.term), /no end date/i, 'an unbounded exemption was reported as if it were ordinary');
+  });
+
+  it('charges every company again once the term has run out', () => {
+    // The whole point of the date. Same stored records, read at a later one.
+    const untilSoon = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    for (const tenantId of [secondCompany]) {
+      platform.setSubscriptionPackage({
+        tenantId,
+        package: platform.subscription(tenantId).package,
+        reason: 'Short term, for the test',
+        decidedBy: operator.id,
+        grantFree: true,
+        grantFreeUntil: untilSoon,
+      });
+    }
+    const afterwards = new Date(Date.now() + 3 * 86_400_000);
+    assert.equal(platform.subscription(secondCompany).grantedFree, true, 'the grant is not in force during its term');
+    assert.equal(
+      platform.subscription(secondCompany, afterwards).grantedFree,
+      false,
+      'the exemption outlived its own end date',
+    );
+  });
+
+  it('withdraws the exemption from every company in one act', async () => {
+    const response = await send('POST', `/v1/admin/groups/${multiCompanyGroup}/exempt`, tokenFor(operator), {
+      reason: 'Term ended; commercial agreement concluded',
+      exempt: false,
+    });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    for (const company of response.body.companies as Array<{ tenantId: string; grantedFree: boolean }>) {
+      assert.equal(company.grantedFree, false, `${company.tenantId} is still exempt after the withdrawal`);
+      assert.equal(platform.subscription(company.tenantId).grantedFreeUntil, undefined, 'a paying company still carries a free-until date');
+    }
+  });
+
+  it('refuses anybody but the platform operator', async () => {
+    // A company's own administrator, who would very much like to be exempt.
+    const refused = await send('POST', `/v1/admin/groups/${multiCompanyGroup}/exempt`, tokenFor(etablix.admin), {
+      reason: 'Exempting my own group',
+    });
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+  });
+});

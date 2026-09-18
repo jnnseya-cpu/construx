@@ -17,6 +17,35 @@
 	}
 }
 
+# The www host, which exists so that a link to it works.
+#
+# ## What happened
+#
+# Caddy obtains a certificate for the hostnames it has a site block for, and
+# there was one block for one name. Anything arriving at `www.` — which DNS
+# happily pointed at the same address — reached a server with no certificate for
+# the name being asked for, so the handshake failed before a single byte of HTTP
+# was exchanged. The browser reports that as `ERR_SSL_PROTOCOL_ERROR`, which
+# reads like a broken server rather than a name nobody configured.
+#
+# It surfaced through invitations. `PUBLIC_BASE_URL` was set to the www form, so
+# every person invited to the platform was emailed "sign in at
+# https://www.…/app" — a link to the one hostname the gateway could not serve.
+# The people who could least afford a dead end, on their first contact with the
+# product, were the only ones who ever saw it.
+#
+# ## Why a redirect rather than a second copy of the site
+#
+# One canonical origin. Two hostnames both serving the application means two
+# origins for cookies, two for the CSP, two in a bookmark and two in a support
+# call — and a session started on one is not a session on the other. The apex is
+# canonical, this sends everything to it with the path intact, and
+# `deploy/env-check.sh` refuses a `CONSTRUX_DOMAIN` that already begins with
+# `www.` so this block can never become `www.www.`.
+www.{$CONSTRUX_DOMAIN} {
+	redir https://{$CONSTRUX_DOMAIN}{uri} permanent
+}
+
 {$CONSTRUX_DOMAIN} {
 	# One upstream, by container name. Not an IP: a container's address changes
 	# on every recreate, and a deploy that silently 502s afterwards is the

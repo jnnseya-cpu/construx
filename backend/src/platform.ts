@@ -2682,15 +2682,43 @@ export class Platform {
      * "was this paid for" is the question a revenue reconciliation asks.
      */
     grantFree: boolean;
+    /**
+     * The day the free grant ends, as an ISO instant. Omitted means it does not
+     * end, which is what every grant made before this existed is.
+     *
+     * "Exempt for twelve months" had no way of being said: the operator could
+     * grant free or not, and nothing carried a term. See `grantedFreeUntil` on
+     * the subscription for why this is a date rather than a duration.
+     */
+    grantFreeUntil?: string;
   }): Subscription {
     if (!input.reason.trim()) {
       throw new DomainError('SUBSCRIPTION_REASON_REQUIRED', 'Changing a package requires a reason');
+    }
+    if (input.grantFreeUntil !== undefined) {
+      if (!input.grantFree) {
+        throw new DomainError('GRANT_END_WITHOUT_GRANT', 'A date for the grant to end was given, and the package is not being granted free');
+      }
+      const ends = Date.parse(input.grantFreeUntil);
+      if (Number.isNaN(ends)) {
+        throw new DomainError('GRANT_END_INVALID', `"${input.grantFreeUntil}" is not a date the grant can end on`);
+      }
+      // A term that has already run out is not a term — it is a grant that
+      // would be recorded as given and read as expired on the same call, and an
+      // operator who typed last year's date would see "granted free of charge"
+      // in the response and a full charge on the next renewal.
+      if (ends <= Date.now()) {
+        throw new DomainError('GRANT_END_IN_THE_PAST', `The grant would end on ${input.grantFreeUntil}, which has already passed. To end a grant now, withdraw it instead.`);
+      }
     }
 
     const subscription = this.subscription(input.tenantId);
     // Nothing to do only when neither the package nor its price moves. The same
     // package granted free, or a free grant withdrawn, is a change.
-    if (subscription.package === input.package && (subscription.grantedFree === true) === input.grantFree) return subscription;
+    // The term is part of the change: the same package, still free, but free
+    // until a different date is a decision somebody made and has to be recorded.
+    const termUnchanged = (subscription.grantedFreeUntil ?? '') === (input.grantFreeUntil ?? '');
+    if (subscription.package === input.package && (subscription.grantedFree === true) === input.grantFree && termUnchanged) return subscription;
 
     const target = PACKAGES[input.package];
     const assigned = subscription.assignedIdentities.length;
@@ -2716,7 +2744,15 @@ export class Platform {
     // seat and price lookups read `package` anyway.
     // The grant lives on the subscription, so the charge cycle reads it at
     // every renewal. A package change nobody said was free is paid for.
-    const updated: Subscription = { ...subscription, package: input.package, grantedFree: input.grantFree };
+    // `grantedFreeUntil` is cleared when the grant is withdrawn, so a package
+    // that is paid for never carries a term that would read as one.
+    const updated: Subscription = {
+      ...subscription,
+      package: input.package,
+      grantedFree: input.grantFree,
+      ...(input.grantFree && input.grantFreeUntil !== undefined ? { grantedFreeUntil: input.grantFreeUntil } : {}),
+    };
+    if (!input.grantFree || input.grantFreeUntil === undefined) delete updated.grantedFreeUntil;
     this.#subscriptions.set(input.tenantId, updated);
 
     const evidenceId = ulid();
@@ -2746,12 +2782,13 @@ export class Platform {
             from: subscription.package,
             to: input.package,
             grantFree: input.grantFree,
+            grantFreeUntil: input.grantFreeUntil ?? null,
             decidedAt,
           }),
         ),
         description:
           `Package ${subscription.package} → ${input.package}` +
-          `${input.grantFree ? ', granted free of charge' : ''}: ${input.reason}`,
+          `${input.grantFree ? `, granted free of charge${input.grantFreeUntil ? ` until ${input.grantFreeUntil.slice(0, 10)}` : ''}` : ''}: ${input.reason}`,
         linkedEntities: [],
         capturedAt: decidedAt,
         capturedBy: input.decidedBy,
@@ -3315,7 +3352,11 @@ export class Platform {
   spendingWallet(tenantId: string): { wallet: ACUWallet; sharedFrom: { tenantId: string; name: string } | null } {
     const own = this.wallet(tenantId);
     const tenant = this.#tenants.get(tenantId);
-    const subscription = this.#subscriptions.get(tenantId);
+    // Through the same expiry as every other read: a company whose exemption
+    // has ended spends its own wallet again, which is the whole point of the
+    // grant having ended.
+    const stored = this.#subscriptions.get(tenantId);
+    const subscription = stored ? this.#asAt(stored, new Date()) : undefined;
     if (!tenant?.groupId || subscription?.grantedFree !== true) return { wallet: own, sharedFrom: null };
     let primary: Tenant | undefined;
     try {
@@ -3334,10 +3375,35 @@ export class Platform {
     return { wallet: shared, sharedFrom: { tenantId: primary.id, name: primary.legalName } };
   }
 
-  subscription(tenantId: string): Subscription {
+  /**
+   * A free grant that has run out is not a free grant.
+   *
+   * Applied here, at the one accessor every reader goes through, rather than at
+   * the twenty-seven places that ask whether a package is free. Those include
+   * `raiseCharge`, `raiseOpeningCharge`, the activation position the console
+   * reads, the group's billing directory, the subscription item on an invoice
+   * and the shared-wallet decision — and an exemption that expired everywhere
+   * except one of them is an exemption that leaks money in a direction nobody
+   * notices, because nothing fails when a customer is not charged.
+   *
+   * The stored record is not changed. It keeps what was granted and until when,
+   * so "was this month paid for" stays answerable about the past; only what is
+   * handed to a reader is adjusted to the date.
+   *
+   * `undefined` means open-ended, which is what every grant made before this
+   * field existed is — so this returns the subscription untouched for all of
+   * them and changes nothing that worked.
+   */
+  #asAt(subscription: Subscription, now: Date): Subscription {
+    if (subscription.grantedFree !== true || subscription.grantedFreeUntil === undefined) return subscription;
+    if (now.toISOString() < subscription.grantedFreeUntil) return subscription;
+    return { ...subscription, grantedFree: false };
+  }
+
+  subscription(tenantId: string, now = new Date()): Subscription {
     const subscription = this.#subscriptions.get(tenantId);
     if (!subscription) throw new NotFoundError(`No subscription for tenant ${tenantId}`);
-    return subscription;
+    return this.#asAt(subscription, now);
   }
 
   // --- Billing ---------------------------------------------------------------
