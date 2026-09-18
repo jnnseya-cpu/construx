@@ -22456,3 +22456,74 @@ read: the note contained the word "page's", and the scanner treated that
 apostrophe as the start of a string literal and ran to the next one hundreds of
 lines away. It skips comments before quotes now — a comment's prose is not code
 and must not be read as any.
+
+### The four chart tools that were still a claim
+
+Compare mode, saved views, PNG and PDF export were named in section 3.2 and
+listed as not built. All four are built now, and three of them turned out to be
+the same mechanism the cross-filter already used.
+
+**PNG is a rasterised clone, not a screenshot.** An SVG serialised straight out
+of the document paints nothing: every colour on these charts comes from a CSS
+custom property, and a detached SVG has no cascade to resolve it against. So the
+clone is walked beside the original and each painted property — fill, stroke,
+dash, opacity, the font metrics — is read off `getComputedStyle` and written back
+as an attribute. It is drawn at 2x onto an opaque ground read from the body,
+because a 1x raster of a 720px chart is soft on paper and a transparent PNG
+dropped into a white document shows this interface's light text on white.
+
+Two browser details are load-bearing rather than defensive: the markup goes
+through a `data:` URI because a blob URL taints the canvas in Safari and
+`toBlob` then refuses an image nobody fetched from anywhere; and `afterprint`
+has a 6-second backstop because Safari does not always fire it, and without one
+a cancelled print dialogue would leave the console hidden behind a print
+stylesheet.
+
+**PDF is the browser's own print dialogue**, which is settled decision 2 rather
+than a shortcut. "Save as PDF" produces real vectors, selectable text and the
+reader's own paper size — better than any generator that could be hand-rolled
+here. What it needed was for the printed page to be the chart rather than the
+console: `data-printing` on the root, `data-print-target` on the panel, and a
+print stylesheet that works by `visibility` rather than `display` so the panel
+keeps its geometry instead of reflowing into a different chart.
+
+**Compare mode is a switch, not a second dataset.** Three charts already hold
+both sides of a comparison because the engines publish both — the Gantt's
+baseline beside its current dates, the S-curve's early beside its late, the cash
+curve's measurement beside its forecast. What was missing was the control, since
+a comparison that is always drawn is not a compare mode, it is a busier chart.
+A page with no second side does not show the toggle at all: the programme screen
+gates it on `activities.some(a => a.baselineStart || a.baselineFinish)`.
+
+It is deliberately *not* "current versus previous period". That needs the
+previous period's figures, and most of these engines publish a position as it
+stands rather than a series of past positions. Offering the control and quietly
+comparing against something else would be worse than not offering it.
+
+**Saved views are stored URLs.** The whole address after the origin, so the
+page, the filter and the compare switch come back together, and a saved view
+cannot fall out of step with what the console can actually render. The bar shows
+only the views saved for the page being looked at — a list of every view across
+the console would be a navigation menu wearing a filter's clothes.
+
+They live in `localStorage`: this device, this browser, this person. The
+standard asks for "saved views by role and user"; **per-user is met and per-role
+is not**, and a view saved on a laptop is not on the phone. Server-side storage
+is a real feature with a real permission question attached, and a device store
+presented as that would be worse than saying where they actually live. Every
+read and write is wrapped, because a private window can refuse storage outright
+and a feature that throws there would take the screen down with it.
+
+### Variation control
+
+Section 6's variation module had nothing beyond the register table. Four charts,
+each answering a question the table makes somebody compute by hand:
+
+- **Instructed → movement → agreed**, as a waterfall, because the question in
+  front of a variation register is never the total but where the total moved.
+- **Cause, as a treemap sized by value** — the change that matters commercially
+  is rarely the one with the most entries, and a count-ranked list hides that.
+- **Value against time to agree**, as a scatter, which is where a pattern of
+  large variations sitting unagreed becomes visible as a shape rather than a
+  sort.
+- **Notice ageing**, as a histogram, against the contract's own notice periods.

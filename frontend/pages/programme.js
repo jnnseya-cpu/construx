@@ -1,4 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
+import { compareToggle, comparing, savedViewBar } from '../lib/views.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, days, html, humanise, metric, modal, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
 import { areaChart, ganttChart, heatmap, histogram, lineChart } from '../lib/charts.js';
@@ -119,17 +120,40 @@ function datedPanel(view, links = []) {
               <!-- The chart is as wide as the programme needs at this
                    granularity; the container scrolls it rather than squeezing
                    six hundred gridlines into a panel. -->
+              <div style="padding:0 0 10px">
+                ${
+                  // Offered only where there is a second side to compare
+                  // against. The engine publishes a baseline date per activity
+                  // where one was captured with the baseline; a programme
+                  // baselined by duration alone has none, and a toggle that
+                  // changes the title and draws nothing is worse than no
+                  // toggle — the reader concludes the two are identical.
+                  activities.some((activity) => activity.baselineStart || activity.baselineFinish)
+                    ? compareToggle('Show the approved baseline against the current dates')
+                    : html`<span class="metric-sub">
+                        No activity carries a baseline date, so there is nothing to compare the current dates against.
+                        A baseline captured with per-activity dates puts the comparison here.
+                      </span>`
+                }
+              </div>
               <div class="gantt-scroll">
               ${ganttChart({
-                title: 'Programme against baseline',
+                title:
+                  comparing() && activities.some((activity) => activity.baselineStart)
+                    ? 'Programme against baseline'
+                    : 'Programme',
                 scale: ganttScale,
                 tasks: (ganttAll ? activities : activities.slice(0, 60)).map((activity) => ({
                   id: activity.id,
                   name: `${activity.activityCode} ${activity.name}`,
                   start: activity.earlyStart,
                   finish: activity.earlyFinish,
-                  baselineStart: activity.baselineStart,
-                  baselineFinish: activity.baselineFinish,
+                  // Only under compare mode. A baseline bar drawn under every
+                  // activity all the time is not a comparison, it is a busier
+                  // chart — and on a programme whose baseline has not moved it
+                  // is a grey line under every bar saying nothing.
+                  baselineStart: comparing() ? activity.baselineStart : undefined,
+                  baselineFinish: comparing() ? activity.baselineFinish : undefined,
                   milestone: activity.type === 'START_MILESTONE' || activity.type === 'FINISH_MILESTONE',
                   longestPath: activity.longestPath,
                   critical: activity.critical,
@@ -703,6 +727,8 @@ export async function programme(root) {
             : html`<div class="notice err">${calc.error.message}</div>`
           : ''
       }
+
+      ${savedViewBar()}
 
       ${datedPanel(
         dated,

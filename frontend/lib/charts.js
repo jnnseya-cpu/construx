@@ -413,6 +413,8 @@ function frame({ title, desc, body, box = BOX, legend, footnote, className = '',
             </button>
             <button type="button" class="chart-tool" data-chart-csv="${raw(id)}">CSV</button>`
         : ''}
+      <button type="button" class="chart-tool" data-chart-png="${raw(id)}" title="Save as a picture">PNG</button>
+      <button type="button" class="chart-tool" data-chart-pdf="${raw(id)}" title="Print, or save as a PDF">PDF</button>
       <button type="button" class="chart-tool" data-chart-full="${raw(id)}" title="Full screen">Expand</button>
       <button type="button" class="chart-tool" data-chart-link="${raw(id)}" title="Copy a link to this chart">Link</button>
     </div>

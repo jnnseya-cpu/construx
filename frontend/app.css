@@ -1833,3 +1833,114 @@ input:focus, select:focus, textarea:focus {
   /* The tools stay visible on touch: there is no hover to reveal them with. */
   .chart-tools { opacity: 1; }
 }
+
+/* =========================================================================
+   Printing a single panel.
+
+   The standard asks for PDF export, and a browser's own "Save as PDF" makes a
+   better document than any generator this codebase could carry without a
+   dependency: real vectors, selectable text, the reader's own paper size.
+
+   What it needs is for the printed page to be the chart rather than the whole
+   console. `data-printing` is set on the root for the duration of the dialogue
+   and the panel being exported is marked; everything else is taken out of the
+   flow.
+
+   `visibility` rather than `display: none` on the ancestors: hiding an ancestor
+   hides its descendants too, so the panel would disappear with the shell around
+   it. Hiding everything and then making the panel visible again is the one
+   arrangement that leaves a nested element on the page.
+   ========================================================================= */
+@media print {
+  html[data-printing],
+  html[data-printing] body {
+    background: #fff;
+    height: auto;
+    overflow: visible;
+  }
+  html[data-printing] body * { visibility: hidden; }
+  html[data-printing] [data-print-target],
+  html[data-printing] [data-print-target] * { visibility: visible; }
+  html[data-printing] [data-print-target] {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  /* The tools are a screen affordance and mean nothing on paper. */
+  html[data-printing] .chart-tools { display: none; }
+  /* The data panel prints where it is open, because a chart in a report is more
+     useful with its numbers under it than without. */
+  html[data-printing] .chart-data { max-height: none; overflow: visible; }
+
+  /* Ink on paper. The console is a dark interface and a dark chart printed on
+     white is both unreadable and a cartridge nobody thanks you for. */
+  html[data-printing] .chart-foot,
+  html[data-printing] .chart-metric,
+  html[data-printing] .chart-data caption { color: #333; }
+  html[data-printing] .chart-data th,
+  html[data-printing] .chart-data td { color: #111; border-color: #ccc; }
+  html[data-printing] .chart-data thead th { background: #f2f2f2; }
+}
+
+/* ------------------------------------------------- compare mode, saved views
+ * Two controls that change what the screen is showing without changing what it
+ * is about, so they sit together above the content and look like switches
+ * rather than like commands — a saved view is a bookmark, not a write.
+ */
+.saved-views {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--grey);
+  color: var(--text-2);
+  font: 500 11.5px var(--sans);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.view-toggle:hover { color: var(--text); border-color: var(--brand-blue); }
+.view-toggle:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: 2px; }
+.view-toggle.is-on {
+  color: var(--text);
+  border-color: var(--brand-blue);
+  background: color-mix(in srgb, var(--brand-blue) 14%, transparent);
+}
+.saved-view {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.saved-view.is-current { border-color: var(--brand-blue); }
+.saved-view-open {
+  border: 0;
+  background: var(--grey);
+  color: var(--text-2);
+  font: 500 11.5px var(--sans);
+  padding: 6px 4px 6px 12px;
+  cursor: pointer;
+}
+.saved-view.is-current .saved-view-open { color: var(--text); }
+.saved-view-open:hover { color: var(--text); }
+.saved-view-forget {
+  border: 0;
+  background: var(--grey);
+  color: var(--text-3);
+  font: 500 13px var(--sans);
+  padding: 6px 10px 6px 6px;
+  cursor: pointer;
+}
+.saved-view-forget:hover { color: var(--critical); }
+.saved-view-open:focus-visible,
+.saved-view-forget:focus-visible { outline: 2px solid var(--brand-blue); outline-offset: -2px; }

@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { barChart, funnelChart, pieChart, sankeyDiagram } from '../lib/charts.js';
+import { barChart, funnelChart, histogram, pieChart, sankeyDiagram, scatterPlot, treemap, waterfallChart } from '../lib/charts.js';
 import { command, commandBar, confirmCost } from '../lib/command.js';
 import { CHANGE_ORIGIN, DELAY_CAUSE, NOTICE_TYPE, today } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, money, pct, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
@@ -344,6 +344,8 @@ export async function contracts(root) {
       </div>
 
       ${contractCharts(register, calendar, disputes)}
+
+      ${variationControl(register, b.Notice ?? [])}
 
       <div id="contracts-insight" style="margin-bottom:14px"></div>
 
@@ -1412,6 +1414,142 @@ function contractCharts(register, calendar, disputes) {
             format: (value) => `${value} days`,
             empty: 'No variation claims a time impact.',
             footnote: 'Days claimed, not days awarded — an extension of time is granted against the programme, not against this list.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Variation control — the four questions a change register is actually asked.
+ *
+ * ## The waterfall, because a variation is a movement
+ *
+ * "Instructed £34.5M, agreed £36.9M" is two figures a reader has to subtract.
+ * The movement between them is the thing under negotiation, and it is what a
+ * waterfall is for: the bar that matters is the one in the middle, and it is
+ * the only one nobody drew.
+ *
+ * ## Cause, because the register is sorted by value and managed by cause
+ *
+ * Five variations from ground conditions and one from a client instruction are
+ * a different project from the reverse, and a list ordered by money says
+ * nothing about which. Sized by value rather than counted, because one
+ * £26M ground claim outranks four small instructions and a count would hide it.
+ *
+ * ## Value against time, because they are not the same exposure
+ *
+ * A £22M claim with no time impact is a cost argument. A £1M claim carrying
+ * fourteen days is a programme argument that will become a prolongation claim.
+ * Plotted apart they are two lists; plotted together the second kind stands out
+ * of the top-left where nobody looks for it.
+ */
+function variationControl(register, notices) {
+  const lines = register?.lines ?? [];
+  if (lines.length === 0) return '';
+
+  const sum = (key) => lines.reduce((total, line) => total + Number(line[key] ?? 0), 0);
+  const instructed = sum('instructedMinor');
+  const agreed = sum('agreedMinor');
+
+  // Instructed, then the movement negotiation produced, closing on agreed.
+  // Only where something has actually been instructed — a waterfall from
+  // nothing to nothing is the build-up the kit refuses, and rightly.
+  const build =
+    instructed > 0 || agreed > 0
+      ? [
+          { label: 'Instructed', value: instructed },
+          { label: 'Movement on assessment', value: agreed - instructed, tone: agreed >= instructed ? 'ok' : 'bad' },
+          { label: 'Agreed', value: agreed, total: true },
+        ]
+      : [];
+
+  const byOrigin = [...new Set(lines.map((line) => String(line.origin ?? 'UNKNOWN')))]
+    .map((origin) => ({
+      label: humanise(origin),
+      value: lines
+        .filter((line) => String(line.origin ?? 'UNKNOWN') === origin)
+        .reduce((total, line) => total + Math.max(Number(line.agreedMinor ?? 0), Number(line.downstreamCapturedMinor ?? 0)), 0),
+    }))
+    .filter((row) => row.value > 0);
+
+  const points = lines
+    .map((line) => ({
+      x: Number(line.timeImpactDays ?? 0),
+      y: Math.max(Number(line.agreedMinor ?? 0), Number(line.downstreamCapturedMinor ?? 0)),
+      label: `${line.reference} ${String(line.description ?? '').slice(0, 40)}`,
+      tone: line.mismatch ? 'bad' : String(line.status) === 'VALUED' ? 'ok' : 'warn',
+    }))
+    .filter((point) => point.y > 0);
+
+  // Days between a notice's trigger and the notice going out. The Construction
+  // Act does not care how good the reason was.
+  const noticeAges = (notices ?? [])
+    .filter((notice) => notice.triggerAt && notice.servedAt)
+    .map((notice) => Math.max(0, Math.round((Date.parse(notice.servedAt) - Date.parse(notice.triggerAt)) / 86_400_000)));
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>What negotiation did to the instructed sum</h2>
+        ${raw(
+          waterfallChart({
+            title: 'Instructed to agreed',
+            steps: build,
+            format: (value) => money(value),
+            empty: 'Nothing has been instructed or agreed, so there is no movement to show.',
+            footnote:
+              'The middle bar is the negotiation. A register showing instructed and agreed as two figures leaves the ' +
+              'reader to subtract them, and the difference is the only part anybody argued about.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where the change is coming from</h2>
+        ${raw(
+          treemap({
+            title: 'Value by origin',
+            items: byOrigin,
+            format: (value) => money(value),
+            empty: 'No variation carries an origin and a value.',
+            footnote:
+              'Sized by value, not counted: one large ground claim outranks four small instructions, and a count would ' +
+              'put them the other way round. Managing change means managing its cause, and the register is sorted by money.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Which changes are a cost argument and which are a programme one</h2>
+        ${raw(
+          scatterPlot({
+            title: 'Value against time impact',
+            points,
+            xLabel: 'Time impact (days)',
+            yLabel: 'Value',
+            formatX: (value) => `${value}d`,
+            formatY: (value) => money(value),
+            empty: 'No variation carries both a value and a time impact.',
+            footnote:
+              'Top-left is money with no delay — a cost argument. Right-hand side is delay, which becomes a ' +
+              'prolongation claim whatever the value on it. Two lists cannot show a change that is both.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>How long notices take to go out</h2>
+        ${raw(
+          histogram({
+            title: 'Days from trigger to notice',
+            values: noticeAges,
+            format: (value) => `${Math.round(value)}d`,
+            empty: 'No notice carries both a trigger date and a date it was served.',
+            footnote:
+              'The contract’s time bar is a number of days, and it does not care how good the reason for the delay ' +
+              'was. A distribution creeping right is an entitlement being lost slowly rather than in one event.',
           }),
         )}
       </div>
