@@ -564,7 +564,7 @@ function matrixDetail(analysis, waivers, addenda) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices, claimRegister] = await Promise.all([
+  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -581,6 +581,10 @@ export async function pipeline(root) {
     // company fact rather than a project one — the same insurance schedule
     // evidences a claim on every bid the business makes.
     api.read('/v1/evidence/claims', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    // The tenancy's live projects, so a pursuit can name the job it is for
+    // rather than asking somebody to type a project they already have into a
+    // second record nothing connects to the first.
+    api.get('/v1/projects').catch(() => ({ projects: [] })),
   ]);
 
   // The reader is project-scoped: a reading is filed against the project the
@@ -1493,6 +1497,33 @@ export async function pipeline(root) {
       path: '/v1/pipeline/opportunities',
       submitLabel: 'Register it',
       fields: [
+        {
+          /*
+           * The job this pursuit is for, where it already exists.
+           *
+           * A business that joins an asset's lifecycle at tender opens the
+           * project first — that is where its involvement begins — and then has
+           * a tender to bid. With nothing to say so, the pipeline could not see
+           * the project, and somebody with a live tender on the record was
+           * asked to type its name, client, sector and value in again. What
+           * that produces is two records of one job that nothing connects.
+           *
+           * Choosing one fills the rest of this form from it, so the two say
+           * the same thing rather than nearly the same thing.
+           */
+          name: 'projectId',
+          label: 'Is this for a project you already have?',
+          type: 'select',
+          required: false,
+          options: [
+            { value: '', label: '— No, this is a new pursuit —' },
+            ...(projectList?.projects ?? []).map((project) => ({
+              value: project.id,
+              label: `${project.name} · ${humanise(String(project.phase ?? ''))}`,
+            })),
+          ],
+          hint: 'A project opened at Tender is the usual case. Leave it as "no" for a job that is not on the record yet.',
+        },
         { name: 'title', label: 'What the job is', hint: 'As the buyer names it, so it can be matched to their documents later.' },
         { name: 'clientName', label: 'Client' },
         {
@@ -1509,6 +1540,7 @@ export async function pipeline(root) {
         { name: 'notes', label: 'Anything worth knowing', type: 'textarea', required: false },
       ],
       transform: (v) => ({
+        ...(v.projectId ? { projectId: v.projectId } : {}),
         title: v.title,
         clientName: v.clientName,
         sectorType: v.sectorType,

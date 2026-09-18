@@ -3766,6 +3766,9 @@ export const ROUTES: Route[] = [
         countryCode: stringField,
         city: stringField,
         notes: { type: 'string' },
+        // The project this pursuit is for, where one already exists. See
+        // `registerOpportunity` for why the link had to run this way too.
+        projectId: stringField,
       },
       additionalProperties: false,
     },

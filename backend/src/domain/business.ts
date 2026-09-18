@@ -310,12 +310,51 @@ export function registerOpportunity(
     countryCode?: string;
     city?: string;
     notes?: string;
+    /**
+     * The project this pursuit is for, where one already exists.
+     *
+     * The link ran one way only. `createProject` takes `originOpportunityId`,
+     * which covers a pursuit that is won and becomes a job — but a business
+     * that joins an asset's lifecycle at tender does the opposite: it opens the
+     * project at `TENDER` first, because that is where its involvement begins,
+     * and then has a tender to bid.
+     *
+     * With no way to say so, the pipeline could not see the project. Somebody
+     * with a live tender on the record was asked to type its name, client,
+     * sector and value in again as a new pursuit, and ended up with two records
+     * of one job that nothing connected — the estate reporting a project and
+     * the pipeline reporting an opportunity, neither knowing about the other.
+     */
+    projectId?: string;
   },
 ): { opportunityId: string } {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'C');
 
   if (input.estimatedValueMinor < 0) {
     throw new DomainError('VALUE_NEGATIVE', 'An opportunity cannot have a negative value');
+  }
+
+  if (input.projectId !== undefined) {
+    const project = ctx.ledger.get({ refType: 'Project', refId: input.projectId });
+    // Tenant isolation, on the same terms as every other read: a project id
+    // from another tenancy is not found rather than refused, because saying
+    // "refused" would confirm it exists.
+    if (!project || project.tenantId !== ctx.tenantId || project.state.status === 'DELETED') {
+      throw new DomainError('PROJECT_NOT_FOUND', `No project ${input.projectId} on this tenancy`, 404);
+    }
+    // One pursuit per project. Two opportunities against one job would each
+    // score it, each decide it, and the calibration would read one tender as
+    // two — which is the measurement this whole screen exists to keep honest.
+    const already = ctx.ledger
+      .listByTenant(ctx.tenantId, 'Opportunity')
+      .find((record) => record.state.projectId === input.projectId);
+    if (already) {
+      throw new DomainError(
+        'PROJECT_ALREADY_PURSUED',
+        `${String(project.state.name)} is already the subject of "${String(already.state.title)}". A job is pursued once.`,
+        409,
+      );
+    }
   }
 
   const opportunityId = ulid();
@@ -335,6 +374,8 @@ export function registerOpportunity(
       countryCode: input.countryCode,
       city: input.city,
       notes: input.notes,
+      // The job this pursuit is for, where it already exists as one.
+      ...(input.projectId ? { projectId: input.projectId } : {}),
       stage: 'IDENTIFIED' satisfies OpportunityStage,
       registeredAt: new Date().toISOString(),
       registeredBy: ctx.auth.actorId,

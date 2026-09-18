@@ -1468,3 +1468,89 @@ describe('8b · Framework agreements are sized, gated and rotated', () => {
     assert.equal(lookupEventType('FRAMEWORK_AWARD_RECORDED')!.requiresEvidence, true);
   });
 });
+
+// ── A pursuit for a job already on the record ───────────────────────────────
+
+describe('an opportunity can name the project it is for', () => {
+  /*
+   * ## What happened
+   *
+   * The link ran one way. `createProject` takes `originOpportunityId`, which
+   * covers a pursuit that is won and becomes a job. A business that joins an
+   * asset's lifecycle at tender does the opposite: it opens the project at
+   * TENDER first, because that is where its involvement begins, and then has a
+   * tender to bid.
+   *
+   * With nothing to say so, the pipeline could not see the project. Somebody
+   * with a live tender on the record was asked to type its name, client, sector
+   * and value in again as a new pursuit — producing two records of one job that
+   * nothing connected, the estate reporting a project and the pipeline
+   * reporting an opportunity, neither knowing about the other.
+   */
+  let platform2: Platform;
+  let seed2: SeedResult;
+  let projectAtTender = '';
+
+  const gov = () => platform2.context(seed2.users.owner!.auth, `${seed2.tenantId}-governance`, { source: 'WEB' });
+
+  before(async () => {
+    platform2 = new Platform();
+    seed2 = await seedDemoProject(platform2);
+    const portfolios = platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio');
+    projectAtTender = structure.createProject(gov(), {
+      portfolioId: String(portfolios[0]!.state.id),
+      name: 'Carlton Parish Church retaining wall',
+      sectorType: 'COMMERCIAL',
+      assetType: 'Retaining wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Carlton' },
+      contractValueMinor: 2_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-10-01',
+      plannedCompletion: '2027-03-31',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Pricing a design somebody else produced',
+    }).projectId;
+  });
+
+  const pursuit = (projectId?: string) =>
+    business.registerOpportunity(gov(), {
+      title: 'Carlton Parish Church retaining wall',
+      clientName: 'Carlton Parochial Church Council',
+      sectorType: 'COMMERCIAL',
+      estimatedValueMinor: 2_000_000,
+      source: 'Invitation by email',
+      ...(projectId ? { projectId } : {}),
+    });
+
+  it('carries the project onto the opportunity, so the two are one job', () => {
+    const { opportunityId } = pursuit(projectAtTender);
+    const record = platform2.ledger.require({ refType: 'Opportunity', refId: opportunityId });
+    assert.equal(record.state.projectId, projectAtTender, 'the pursuit does not name the job it is for');
+  });
+
+  it('pursues a job once', () => {
+    // Two opportunities against one project would each score it, each decide
+    // it, and the calibration would read one tender as two — which is the
+    // measurement the whole pipeline screen exists to keep honest.
+    throwsCode(() => pursuit(projectAtTender), 'PROJECT_ALREADY_PURSUED');
+  });
+
+  it('still registers a pursuit for a job that is not on the record yet', () => {
+    // The ordinary case, unchanged: most opportunities have no project behind
+    // them, which is the point of a pipeline.
+    const { opportunityId } = business.registerOpportunity(gov(), {
+      title: 'Somewhere nobody has opened a project for',
+      clientName: 'A new client',
+      sectorType: 'COMMERCIAL',
+      estimatedValueMinor: 500_000,
+      source: 'Portal',
+    });
+    assert.equal(platform2.ledger.require({ refType: 'Opportunity', refId: opportunityId }).state.projectId, undefined);
+  });
+
+  it('refuses a project from another tenancy without confirming it exists', () => {
+    // Not found rather than refused: saying "refused" would confirm the id
+    // names something real on a tenancy this caller cannot see.
+    throwsCode(() => pursuit('01ABCDEFGHJKMNPQRSTVWXYZ00'), 'PROJECT_NOT_FOUND');
+  });
+});
