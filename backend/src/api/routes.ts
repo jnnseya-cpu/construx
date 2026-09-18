@@ -34,7 +34,7 @@ import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
 import * as consistencySweep from '../ops/consistencysweep.ts';
 import { blueprintPosition } from '../ops/blueprint.ts';
-import { checkSelfReach } from '../ops/selfreach.ts';
+import { checkSelfReach, lastSelfReach, rememberSelfReach } from '../ops/selfreach.ts';
 import { eventStorePosition, platformEventStream } from '../ops/eventstore.ts';
 import * as reports from '../ops/reports.ts';
 import { forecastPosition } from '../ops/forecast.ts';
@@ -2720,7 +2720,15 @@ export const ROUTES: Route[] = [
       // Which key everything is signed under, which are still accepted, and
       // whether anything presented since boot still relied on an old one —
       // the answer to "can the previous secret be dropped yet".
-      return { ...readiness(), running: platform.operationalHealth(), signing: signingPosition() };
+      // What boot found when it opened the public address, so the screen shows
+      // it without opening the front door again on every load. Absent until
+      // the check has run once.
+      return {
+        ...readiness(),
+        running: platform.operationalHealth(),
+        signing: signingPosition(),
+        publicAddress: lastSelfReach() ?? null,
+      };
     },
   },
   {
@@ -6726,7 +6734,11 @@ export const ROUTES: Route[] = [
        * its own front door every time somebody looked at it.
        */
       operatorOnly(ctx, 'check whether this deployment is reachable at its public address');
-      return await checkSelfReach();
+      // Replaces what boot found, so the screen and the log never disagree
+      // about the current state of the same one fact.
+      const reach = await checkSelfReach();
+      rememberSelfReach(reach);
+      return reach;
     },
   },
   {

@@ -24093,16 +24093,31 @@ asserts every path it names is one the route table actually serves.
 
 **`PUBLIC_BASE_URL` was never opened.** The same host is where every invitation,
 password reset and notification link points, and an invitation had already come
-back *"This site can't provide a secure connection, ERR_SSL_PROTOCOL_ERROR"* — a
-`www.` subdomain with no DNS record. Being set is not the same as working, and
-nothing checked. `ops/selfreach.ts` opens `${PUBLIC_BASE_URL}/readyz` from inside
-the process and separates the four faults that have four different remedies: the
-host answers nothing (a missing DNS record), TLS fails (a certificate that does
-not cover the name), it answers but is not ready, or it answers healthily **as a
-different build** — the hardest one to see from inside, because everything works
-and the links go somewhere else. Operator-only, on demand from System control
-rather than on a timer: it is a deployment fact, and polling it would have the
-deployment knocking on its own front door every time somebody opened a screen.
+back *"This site can't provide a secure connection, ERR_SSL_PROTOCOL_ERROR"*.
+Being set is not the same as working, and nothing checked. `ops/selfreach.ts`
+resolves the name and then opens `${PUBLIC_BASE_URL}/readyz` from inside the
+process, separating the faults that have different remedies: no address record
+at all, a name that resolves with nothing answering, TLS failing because the
+certificate does not cover the name, an origin that is served but not ready, and
+one that answers healthily **as a different build** — the hardest to see from
+inside, because everything works and the links go somewhere else.
+
+**It resolves first, and the reason is a defect in the first version of it.**
+That version inferred the cause from the fetch's error code and then named the
+likely reason in the remedy — "a `www.` host that was never given a DNS record".
+On the deployment that prompted the whole check, that was false:
+`www.construxvg.com` is a CNAME to a domain holding both A and AAAA records, and
+the fault was a certificate that did not cover the `www` name. The remedy would
+have sent somebody to the DNS panel for an afternoon. A product must not assert
+a cause it has not established, so the lookup happens first and the resolved
+addresses travel on the result.
+
+It runs **once at boot**, after the listener is up, and prints what it found —
+nobody should have to know an operator screen exists to learn that every link
+the platform emails is dead. The finding is cached and shown on System control,
+where a button re-checks it, because DNS, a proxy and a certificate all change
+without a restart. Not fatal and not retried: none of the three is this
+process's to fix.
 
 **The mobile-money FX rate had an invented default.** `KODA_USD_PER_GBP` fell
 back to `1.27` — a plausible figure, from no source, on no date, which nobody had

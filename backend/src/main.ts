@@ -27,6 +27,7 @@ import { startAssurance } from './ops/assurance.ts';
 import { startConsistencySweep, stopConsistencySweep } from './ops/consistencysweep.ts';
 import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
+import { checkSelfReach, rememberSelfReach, type SelfReach } from './ops/selfreach.ts';
 import { startWatch } from './ops/watch.ts';
 import { startHeartbeat } from './ops/heartbeat.ts';
 import { backupsEnabled, startBackupSchedule } from './ops/backup.ts';
@@ -508,6 +509,42 @@ if (config.demo.enabled) {
 }
 
 const server = await startGateway(platform, config.port);
+
+/*
+ * Whether the address in every email this process sends actually reaches it.
+ *
+ * Reported twice as two unrelated-looking faults: an invitation link that would
+ * not open (`ERR_SSL_PROTOCOL_ERROR`), and payments guidance quoting a webhook
+ * origin nothing answered. Both are `PUBLIC_BASE_URL`, and nothing had ever
+ * opened it — a link is only a string until a customer clicks it, and the
+ * customer is the one who finds out.
+ *
+ * Run once, here, rather than left to an operator pressing a button on a screen
+ * they may never open. Only meaningful after the listener is up, because a
+ * deployment whose proxy points at this process cannot answer before it does.
+ *
+ * Deliberately not fatal and deliberately not retried. It reaches out through
+ * DNS, a proxy and a certificate — none of them this process's to fix, all of
+ * them changeable without a restart — so the finding is printed for whoever
+ * reads boot logs and cached for the operator's screen, and the process serves
+ * traffic either way. A deployment behind a proxy that is still starting will
+ * report unreachable here and pass when the operator checks; the screen's
+ * button is what answers "is it still true".
+ */
+void checkSelfReach()
+  .then((reach: SelfReach) => {
+    rememberSelfReach(reach);
+    if (reach.ok) {
+      process.stdout.write(`[public address] ${reach.baseUrl} — ${reach.because}\n`);
+      return;
+    }
+    process.stderr.write(`[public address] ${reach.state}: ${reach.because}\n`);
+    if (reach.remedy) process.stderr.write(`[public address] next: ${reach.remedy}\n`);
+  })
+  .catch((error: unknown) => {
+    // A check that throws must not be louder than the thing it checks.
+    process.stderr.write(`[public address] the check itself failed: ${String(error)}\n`);
+  });
 
 // Anything a previous process queued and died before sending. This is the
 // whole reason the outbox exists, and boot is when it matters: on a restored

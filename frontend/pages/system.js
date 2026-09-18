@@ -214,9 +214,34 @@ export async function system(root) {
           link that fails on any of those reaches a customer before it reaches you. This opens it and reports what came back.
         </div>
         <div class="split-list">
-          <div class="row"><span class="lbl">Configured address</span><span class="val mono" style="font-size:11px">${ready.variables?.find((v) => v.name === 'PUBLIC_BASE_URL')?.present ? 'set' : badge('not set', 'bad')}</span></div>
+          <div class="row"><span class="lbl">Configured address</span><span class="val mono" style="font-size:11px">${ready.publicAddress?.baseUrl ?? (ready.variables?.find((v) => v.name === 'PUBLIC_BASE_URL')?.present ? 'set' : badge('not set', 'bad'))}</span></div>
+          ${
+            ready.publicAddress?.addresses?.length
+              ? html`<div class="row"><span class="lbl">Resolves to</span><span class="val mono" style="font-size:11px">${ready.publicAddress.addresses.join(', ')}</span></div>`
+              : ''
+          }
         </div>
-        <div id="reach-result"></div>
+        <div id="reach-result">
+          ${
+            // What boot found, rather than an empty card until somebody presses
+            // the button. The check runs once at start-up precisely so nobody
+            // has to know this screen exists to learn the links are dead.
+            ready.publicAddress
+              ? html`<div class="notice ${raw(ready.publicAddress.ok ? 'ok' : 'bad')}" style="margin-top:12px">
+                  <div>
+                    <b>${ready.publicAddress.baseUrl}</b> — ${ready.publicAddress.because}
+                    ${ready.publicAddress.remedy ? html`<br /><b>Next:</b> ${ready.publicAddress.remedy}` : ''}
+                    ${ready.publicAddress.answeredBy && ready.publicAddress.answeredBy !== ready.publicAddress.thisBuild
+                      ? html`<br />It answered as build <span class="mono">${ready.publicAddress.answeredBy}</span>; this process is
+                          <span class="mono">${ready.publicAddress.thisBuild}</span>.`
+                      : ''}
+                    <br /><span class="metric-sub">Checked ${time(ready.publicAddress.checkedAt)}. DNS, a proxy and a certificate
+                      all change without a restart, so press below for the position now.</span>
+                  </div>
+                </div>`
+              : ''
+          }
+        </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn quiet sm" id="check-reach">Open the public address now</button>
         </div>
@@ -329,6 +354,9 @@ export async function system(root) {
             ${reach.answeredBy && reach.answeredBy !== reach.thisBuild
               ? html`<br />It answered as build <span class="mono">${reach.answeredBy}</span>; this process is
                   <span class="mono">${reach.thisBuild}</span>.`
+              : ''}
+            ${(reach.addresses ?? []).length
+              ? html`<br /><span class="metric-sub">Resolves to ${reach.addresses.join(', ')}.</span>`
               : ''}
           </div>
         </div>`,
