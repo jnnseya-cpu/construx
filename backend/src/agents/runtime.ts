@@ -1,7 +1,7 @@
 import { ulid } from '../core/ids.ts';
 import { DomainError, ForbiddenError } from '../core/errors.ts';
 import { authorise, currentPhase, write, type EngineContext } from '../engines/context.ts';
-import { rolesAllow } from '../identity/roles.ts';
+import { OPERATOR_ONLY_ROLES, rolesAllow } from '../identity/roles.ts';
 import { tierCost } from '../billing/acu.ts';
 import { liveEnvelope, mayActUnattended } from './mandate.ts';
 import { executeAct } from './acts.ts';
@@ -828,6 +828,7 @@ export type QueuedProposal = AgentProposal & {
 export function pendingProposals(ctx: EngineContext): QueuedProposal[] {
   const order = { URGENT: 0, ATTENTION: 1, INFO: 2 } as const;
   const roles = new Set(ctx.auth.roles);
+  const operator = OPERATOR_ONLY_ROLES.some((role) => roles.has(role));
 
   return openProposals(ctx)
     .map((proposal) => {
@@ -838,6 +839,35 @@ export function pendingProposals(ctx: EngineContext): QueuedProposal[] {
         mine: approvers.some((role) => roles.has(role)),
       };
     })
+    /*
+     * The operator's own findings are not a customer's to read.
+     *
+     * The platform watches itself — the health and vulnerability agents check
+     * this deployment's configuration against what it claims about itself, and
+     * raise a finding for each unsafe setting. They run in whatever context the
+     * fleet runs in, which for a customer is the customer's project, and
+     * Autopilot asks for the queue with no area filter, so it received the lot.
+     *
+     * What a customer saw on their own Autopilot screen was four urgent items
+     * they could do nothing with, every one of them a sentence about this
+     * deployment's internals: which environment variables are unset, whether
+     * the demonstration tenancy is open, whether rate limits are shared across
+     * replicas. Useless to them — the screen said so itself, "Nothing here is
+     * yours to decide" — and it is a description of the platform's own
+     * infrastructure handed to somebody outside it. That is disclosure, not
+     * noise, which is why it is dropped here rather than hidden by the screen.
+     *
+     * Dropped by *who could decide it*, which the mandate already states, and
+     * not by area: an agent's read mandate is not what a finding is about, and
+     * `PLATFORM_ADMINISTRATION` is not the only area an operator-only agent
+     * reads. A finding nobody but the operator can act on belongs to the
+     * operator, wherever it was raised.
+     *
+     * An operator reading a customer's project — support access, with the
+     * tenancy's consent and on the record — still sees them, which is the case
+     * these findings exist for.
+     */
+    .filter((proposal) => operator || proposal.approvers.length === 0 || !proposal.approvers.every((role) => (OPERATOR_ONLY_ROLES as string[]).includes(role)))
     .sort(
       (a, b) =>
         // Mine first, then severity, then oldest. Severity ahead of ownership

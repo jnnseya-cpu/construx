@@ -387,7 +387,20 @@ export async function programme(root, { kind, title, intent, redraw }) {
     }
   };
 
-  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+  /*
+   * Every command bar on the screen, not the first one.
+   *
+   * `querySelector` returns one element. A screen with more than one command
+   * bar — and most of them have several, one per panel — wired the first and
+   * left the rest inert: the buttons drew, they were not locked, they carried
+   * their `data-command`, and pressing them did nothing at all. Reported as
+   * "none of these work" on Pipeline & Bids, which renders six.
+   *
+   * Safe to bind every bar because the handler returns on an id this page does
+   * not own, which is the pattern the evidence doors on this page already used
+   * with `querySelectorAll` — one bar can carry buttons for two dispatchers.
+   */
+  for (const bar of root.querySelectorAll('.cmd-bar')) bar.addEventListener('click', async (event) => {
     if (!event.target.closest('[data-command="enrol"]')) return;
     await enrol();
   });

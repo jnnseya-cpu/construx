@@ -3,6 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
+import { SECTOR_GROUPED } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
@@ -1180,6 +1181,32 @@ export async function pipeline(root) {
         })}
       </div>
 
+      <div class="card pad0" style="margin-bottom:14px">
+        <div style="padding:15px 17px">
+          <h2>The company's own facts</h2>
+          <div class="metric-sub" style="margin-bottom:11px">
+            Every screen above reads these. The radar will not screen an opportunity, and a bid cannot be scored,
+            until the business has said what it is: what it turns over, where it works, what it is accredited for
+            and how many jobs it can run at once. The platform asserts none of it on the company's behalf.
+          </div>
+          <div data-company-facts>
+          ${raw(commandBar([
+            {
+              // The door that did not exist. `PUT /v1/company/profile` is what
+              // the whole bid pipeline reads from, and there was no way to call
+              // it from anywhere in the console — so the panel below reported
+              // "This could not be read" to every company that had not somehow
+              // set it through the API, with nothing on the screen to press.
+              id: 'company-facts',
+              label: profile?.error ? 'Record the company’s facts' : 'Update the company’s facts',
+              permitted: can('BUSINESS_DEVELOPMENT', 'U'),
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'U'),
+            },
+          ]))}
+          </div>
+        </div>
+      </div>
+
       ${positionReport({
         title: 'What this company can claim',
         intent:
@@ -1830,7 +1857,92 @@ export async function pipeline(root) {
     onChange: draw,
   });
 
-  root.querySelector('.cmd-bar')?.addEventListener('click', async (event) => {
+
+  /*
+   * The company's own facts, and the door that was missing entirely.
+   *
+   * `PUT /v1/company/profile` is what the radar screens against, what a bid is
+   * scored against and what the claim register checks a submission's promises
+   * against. Nothing in the console called it. A company that had never set it
+   * — which is every company, since there is no other way to — opened Pipeline
+   * & Bids and read "What this company can claim: **This could not be read**",
+   * a red error panel with nothing on it to press, above a screen of empty
+   * tables each explaining that it becomes populated as the project progresses.
+   * It does not: it becomes populated when this is recorded.
+   *
+   * Bound separately because the page's dispatcher binds one `.cmd-bar` and
+   * this is a second one, on its own card.
+   */
+  root.querySelector('[data-company-facts]')?.addEventListener('click', async (event) => {
+    if (!event.target.closest('[data-command="company-facts"]')) return;
+    const held = profile?.error ? null : profile;
+    const asList = (value) => (Array.isArray(value) ? value.join(', ') : '');
+    const result = await command({
+      title: 'The company’s own facts',
+      intent:
+        'What this business is, in the terms a buyer prequalifies on. The radar screens against it and asserts none of ' +
+        'it on the company’s behalf — an opportunity filtered out for a fact nobody recorded is the commonest reason a ' +
+        'pipeline looks empty. Turnover is most recent year first.',
+      path: '/v1/company/profile',
+      method: 'PUT',
+      submitLabel: held ? 'Update the facts' : 'Record the facts',
+      fields: [
+        { name: 'legalName', label: 'Registered name', value: held?.legalName ?? '' },
+        { name: 'turnover', label: 'Turnover by year (£, most recent first)', value: (held?.turnoverMinorByYear ?? []).map((m) => m / 100).join(', '), hint: 'Comma separated. At least one year — the radar sizes what the business can carry from it.' },
+        { name: 'netAssets', label: 'Net assets (£)', type: 'number', required: false, value: held ? held.netAssetsMinor / 100 : '' },
+        { name: 'workingCapital', label: 'Working capital (£)', type: 'number', required: false, value: held ? held.workingCapitalMinor / 100 : '' },
+        { name: 'regions', label: 'Regions worked', value: asList(held?.regions), hint: 'Towns, cities or counties the business actually operates in.' },
+        { name: 'sectors', label: 'Sectors', type: 'multiselect', value: held?.sectors ?? [], options: SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })) },
+        { name: 'valueMin', label: 'Smallest job worth bidding (£)', type: 'number', value: held ? held.valueBandMinor.min / 100 : '' },
+        { name: 'valueMax', label: 'Largest job the business can carry (£)', type: 'number', value: held ? held.valueBandMinor.max / 100 : '' },
+        { name: 'accreditations', label: 'Accreditations', required: false, value: asList(held?.accreditations), hint: 'CHAS, SafeContractor, ISO 9001 — comma separated.' },
+        { name: 'trades', label: 'Trades delivered in-house', required: false, value: asList(held?.selfDeliveredTrades) },
+        { name: 'concurrent', label: 'Sites the business can run at once', type: 'number', value: held?.capacity?.concurrentProjects ?? '' },
+        { name: 'committed', label: 'Of those, already committed', type: 'number', value: held?.capacity?.committedProjects ?? '' },
+        { name: 'marginMin', label: 'Target margin, minimum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.min ?? '' },
+        { name: 'marginMax', label: 'Target margin, maximum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.max ?? '' },
+      ],
+      transform: (v) => {
+        const money = (x) => Math.round(Number(x || 0) * 100);
+        const list = (x) => String(x || '').split(',').map((part) => part.trim()).filter(Boolean);
+        return {
+          legalName: v.legalName,
+          turnoverMinorByYear: list(v.turnover).map((y) => Math.round(Number(y) * 100)),
+          netAssetsMinor: money(v.netAssets),
+          workingCapitalMinor: money(v.workingCapital),
+          regions: list(v.regions),
+          sectors: Array.isArray(v.sectors) ? v.sectors : [v.sectors].filter(Boolean),
+          cpvCodes: held?.cpvCodes ?? [],
+          valueBandMinor: { min: money(v.valueMin), max: money(v.valueMax) },
+          insurances: held?.insurances ?? [],
+          accreditations: list(v.accreditations),
+          references: held?.references ?? [],
+          selfDeliveredTrades: list(v.trades),
+          targetMarginPercent: { min: Number(v.marginMin || 0), max: Number(v.marginMax || 0) },
+          capacity: { concurrentProjects: Number(v.concurrent || 0), committedProjects: Number(v.committed || 0) },
+        };
+      },
+    });
+    if (result) {
+      toast('Recorded', 'The radar can screen against these now.', 'ok');
+      await draw();
+    }
+  });
+
+  /*
+   * Every command bar on the screen, not the first one.
+   *
+   * `querySelector` returns one element. A screen with more than one command
+   * bar — and most of them have several, one per panel — wired the first and
+   * left the rest inert: the buttons drew, they were not locked, they carried
+   * their `data-command`, and pressing them did nothing at all. Reported as
+   * "none of these work" on Pipeline & Bids, which renders six.
+   *
+   * Safe to bind every bar because the handler returns on an id this page does
+   * not own, which is the pattern the evidence doors on this page already used
+   * with `querySelectorAll` — one bar can carry buttons for two dispatchers.
+   */
+  for (const bar of root.querySelectorAll('.cmd-bar')) bar.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-command]');
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];
