@@ -189,7 +189,7 @@ export const TOPICS: readonly Topic[] = [
           'insurer, a certifier — can check it against what was issued, with no account and no relationship to ' +
           'anybody involved.',
         'The API is documented for anyone who would rather read the event catalogue than a brochure, and it sets out ' +
-          'the seven engines and the stage gates they sit behind.',
+          'the eight engines and the stage gates they sit behind.',
         'Platform status is a public page rather than a support ticket, which is the same argument in a smaller frame: ' +
           'a claim anybody can check is worth more than a claim anybody has to accept.',
         'If the design of the ledger interests you more than the pitch does, the engineering notes on this site are ' +

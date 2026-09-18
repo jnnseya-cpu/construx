@@ -574,7 +574,14 @@ export async function enterprise(root) {
                 // default, which is right — a person's name is data, not markup.
                 first === undefined
                   ? badge('No seat', 'bad')
-                  : html`${first.name} <span class="metric-sub">${first.role}</span>`,
+                  // The owner holds every capability in their own tenancy, so
+                  // without this every row would read as covered and the table
+                  // would never again say a seat was unfilled. The owner can
+                  // approve and is named; the badge says the cover is the
+                  // backstop rather than the specialist.
+                  : a.ownerOnly
+                    ? html`${badge('Owner only', 'warn')} ${first.name}`
+                    : html`${first.name} <span class="metric-sub">${first.role}</span>`,
                 behind.length === 0 ? '—' : behind.map((o) => o.name).join(' → '),
                 a.create.length === 0 ? '—' : `${a.create[0].name}${a.create.length > 1 ? ` +${a.create.length - 1}` : ''}`,
               ];
@@ -585,6 +592,8 @@ export async function enterprise(root) {
           Named from the permission matrix, most specialised first — the planner owns a baseline, the project
           manager is the escalation, the client is behind both. <b>No seat</b> means roles approve in that area
           and nobody in this tenancy holds one, so the queue cannot drain until a seat is filled.
+          <b>Owner only</b> means the owner is the sole cover: they hold every capability in the business, so
+          the work is not blocked — but nobody is doing that job, and the seat is still unfilled.
         </div>
       </div>
 

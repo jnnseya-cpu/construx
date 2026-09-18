@@ -170,7 +170,7 @@ export async function overview(root) {
                 briefing.market.recommended.length > 0
                   ? html`<div class="split-list" style="margin-bottom:13px">
                       ${briefing.market.recommended.map(
-                        (b) => html`<div class="row">
+                        (b) => html`<div class="row" data-goto="pipeline" style="cursor:pointer">
                           <span class="lbl">${b.title} — ${b.region} — ${b.daysToDeadline}d left</span>
                           <span class="val">${money(b.valueMinor)} · ${b.score}%</span>
                         </div>`,
@@ -183,20 +183,52 @@ export async function overview(root) {
                 briefing.actions.length === 0
                   ? html`<div class="empty"><b>Nothing needs a decision today</b>That is a real answer, not an empty screen.</div>`
                   : table({
+                      /*
+                       * Every row is a control, not a sentence.
+                       *
+                       * This table is the first thing anybody sees and it is the
+                       * platform's claim on somebody's morning: four things that
+                       * will cost money if nobody touches them. It rendered the
+                       * action as plain text — no link, no button, nothing to
+                       * press — so a reader was told what was urgent and left to
+                       * find each one through the menu. The type behind it says,
+                       * in its own contract, "Everything is actionable or it is
+                       * not here."
+                       *
+                       * `goTo` comes from the server, which is what decided the
+                       * row exists and therefore knows where it is answered. The
+                       * shell switches project on the way if the action is about
+                       * a different one.
+                       */
                       headers: ['', 'Do this', 'Because', 'By'],
                       align: ['', '', '', ''],
                       rows: briefing.actions.map((a) => [
                         badge(a.severity, a.severity === 'URGENT' ? 'bad' : a.severity === 'ATTENTION' ? 'warn' : ''),
-                        a.action,
+                        html`<button
+                          class="btn quiet sm"
+                          data-goto="${raw(a.goTo.page)}"
+                          ${raw(a.goTo.projectId ? `data-goto-project="${a.goTo.projectId}"` : '')}
+                        >
+                          ${a.action}
+                        </button>`,
                         html`<span style="font-size:12px;color:var(--text-3)">${a.because}</span>`,
                         a.dueBy ? date(a.dueBy) : '—',
                       ]),
                     })
               }
 
+              <!--
+                The fleet, and the division counts open to the findings.
+
+                This read as an inventory — "Delivery engine · 26 agents" — with
+                nothing to press, which is the shape of a feature list rather
+                than a product. The findings those agents raise are decided on
+                Autopilot, so that is where a division goes; the count beside it
+                is the reason to go.
+              -->
               <div class="split-list" style="margin-top:11px">
                 ${briefing.fleet.map(
-                  (f) => html`<div class="row">
+                  (f) => html`<div class="row" data-goto="autopilot" style="cursor:pointer">
                     <span class="lbl">${f.label}</span>
                     <span class="val">${f.agents} agent${f.agents === 1 ? '' : 's'}${f.openFindings > 0 ? ` · ${f.openFindings} open` : ''}</span>
                   </div>`,

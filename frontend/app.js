@@ -1,4 +1,4 @@
-import { api, ApiError, resetWithheld, session, setAreaReadGuard, setEnrolmentGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
+import { api, ApiError, resetWithheld, ROLE_DENIAL_PREFIX, session, setAreaReadGuard, setEnrolmentGuard, setEntityReadGuard, withheldRecords } from './lib/api.js';
 import { esc, html, humanise, initials, money, raw, render, toast } from './lib/ui.js';
 import { wireCharts } from './lib/charttools.js';
 import { wireDrill } from './lib/drill.js';
@@ -516,7 +516,7 @@ const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
 export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
   const roles = state.session?.user?.roles ?? [];
   if (matrix && !roles.some((role) => (matrix[role]?.[area] ?? []).includes(code))) {
-    return `No role of ${roles.join('/')} holds "${code}" on ${area}`;
+    return `${ROLE_DENIAL_PREFIX}${roles.join('/')} holds "${code}" on ${area}`;
   }
 
   // A tenant-scoped command runs against the tenant's governance scope, which
@@ -618,6 +618,15 @@ document.addEventListener('click', (event) => {
   if (!link) return;
   event.preventDefault();
   navigate(link.dataset.nav);
+});
+
+// `data-goto` is `data-nav` that can also change project. Bound once for the
+// whole application, beside it, for the reason given on `goTo`.
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-goto]');
+  if (!target) return;
+  event.preventDefault();
+  goTo(target.dataset.goto, target.dataset.gotoProject || undefined);
 });
 
 // Every KPI opens to the events behind it. Wired once for the whole
@@ -1314,14 +1323,49 @@ async function loadContext() {
  * noticed: the materialised project, the phase gate and the wallet all belong
  * to the one being left.
  */
-export async function openProject(projectId) {
-  if (!projectId || projectId === state.session?.projectId) return;
+/**
+ * Point the session at another project without drawing.
+ *
+ * Extracted because there are now two callers and only one of them wants a
+ * redraw here: the picker changes project and stays put, a briefing row changes
+ * project *and* screen, and doing both through `openProject` painted the old
+ * screen against the new project before navigating away from it.
+ *
+ * Returns whether anything moved.
+ */
+function selectProject(projectId) {
+  if (!projectId || projectId === state.session?.projectId) return false;
   session.set({ ...session.get(), projectId });
   state.session = session.get();
   state.project = null;
   state.gate = null;
   state.wallet = null;
+  return true;
+}
+
+export async function openProject(projectId) {
+  if (!selectProject(projectId)) return;
   await draw();
+}
+
+/**
+ * Take the reader to where a decision is made, switching project if the
+ * decision is about a different one.
+ *
+ * The daily briefing reads across every live project while the console is
+ * looking at one, so "Explain the margin movement on Rossendale" is only an
+ * action if pressing it arrives on Rossendale's cost screen. One mechanism, in
+ * the shell, so every screen that can name a destination gets the same
+ * behaviour rather than each wiring its own.
+ *
+ * It navigates; it does not authorise. The destination refuses the reader on
+ * arrival exactly as it does from the menu, and that refusal names who holds
+ * the permission — which is a better answer than a sentence with nothing to
+ * press.
+ */
+export function goTo(page, projectId) {
+  selectProject(projectId);
+  navigate(page);
 }
 
 async function draw() {

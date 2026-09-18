@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { ENGINE_CONTRACTS } from '../src/ai/orchestrator.ts';
+import { ENGINES } from '../src/site/landing.ts';
 import { SEATS } from '../src/billing/seats.ts';
 import { PERMISSION_MATRIX, ROLE_ACCOUNT_LAYER, type Role } from '../src/identity/roles.ts';
 import { LIFECYCLE_ORDER } from '../src/lifecycle/phases.ts';
@@ -126,18 +127,74 @@ describe('the counts the documents state are the counts the code has', () => {
     }
   });
 
+  it('counts them the same way in front of a customer', () => {
+    /*
+     * The gap the first version of this file left, and it was the expensive
+     * half. Every check above reads a document in `docs/`. Meanwhile the sign-in
+     * page said "seven AI engines" to every visitor, the marketing footer linked
+     * "The seven engines", the weekly newsletter said seven, and the copilot
+     * told people it could not match their question "to one of the seven
+     * engines" — while `ENGINE_CONTRACTS` held eight and the Executive engine
+     * appeared in none of the copy.
+     *
+     * Documentation going stale is untidy. Product copy going stale is the
+     * first thing a prospective customer reads.
+     *
+     * The console, the public site, the messaging and the copilot are all
+     * scanned. Comments are stripped first: a comment recording *why* something
+     * was once seven is history, not a claim, and it is allowed to stay.
+     */
+    const engines = Object.keys(ENGINE_CONTRACTS).length;
+    const surfaces: Array<[string, string]> = [
+      ['frontend/pages/login.js', read('frontend', 'pages', 'login.js')],
+      ['backend/src/site/visibility.ts', read('backend', 'src', 'site', 'visibility.ts')],
+      ['backend/src/site/landing.ts', read('backend', 'src', 'site', 'landing.ts')],
+      ['backend/src/messaging/content.ts', read('backend', 'src', 'messaging', 'content.ts')],
+      ['backend/src/messaging/newsletter.ts', read('backend', 'src', 'messaging', 'newsletter.ts')],
+      ['backend/src/ai/conversation.ts', read('backend', 'src', 'ai', 'conversation.ts')],
+    ];
+
+    let scanned = 0;
+    for (const [name, source] of surfaces) {
+      const prose = source
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+      for (const value of statedCounts(prose, /(?:AI )?engines\b/i)) {
+        scanned += 1;
+        assert.equal(value, engines, `${name} tells a customer there are ${value} engines; there are ${engines}`);
+      }
+    }
+    assert.ok(scanned > 0, 'no customer-facing engine count was found at all — this check matched nothing');
+  });
+
   it('lists every engine it counts, so the count and the table cannot disagree', () => {
-    // The failure this exists for: the count said seven, the table listed seven,
-    // and the Executive engine existed in code and appeared in neither.
+    /*
+     * The failure this exists for: the count said seven, the table listed seven,
+     * and the Executive engine existed in code and appeared in neither.
+     *
+     * The public landing page is held to the same rule and had the same hole —
+     * it advertised "Seven engines" over a hand-written grid of seven while the
+     * platform ran eight, so the engine that reports the portfolio position to a
+     * board was sold to nobody.
+     */
     for (const engine of Object.keys(ENGINE_CONTRACTS)) {
-      const human = engine.replace(/_/g, ' ').toLowerCase();
-      const first = human.split(' ')[0]!;
+      const first = engine.replace(/_/g, ' ').toLowerCase().split(' ')[0]!;
       assert.match(
-        readme.toLowerCase(),
-        new RegExp(`\\b${first}\\b`),
+        readme,
+        new RegExp(`\\b${first}\\b`, 'i'),
         `README.md never mentions the ${engine} engine, which ENGINE_CONTRACTS holds`,
       );
     }
+
+    // The landing page names them in the customer's words — "Commercial", not
+    // `RESOURCE_COST` — so the check there is one card per engine, not one
+    // matching word. That is the property that failed: eight engines, seven
+    // cards, and the heading counting the cards.
+    assert.equal(
+      ENGINES.length,
+      Object.keys(ENGINE_CONTRACTS).length,
+      'the landing page advertises a different number of engines than the platform runs',
+    );
   });
 
   it('counts lifecycle phases the way `LIFECYCLE_ORDER` does', () => {

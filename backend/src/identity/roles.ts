@@ -741,28 +741,51 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
  * package or running a take-off on their own platform is not a role model, it
  * is a support ticket.
  *
- * Defined as the union of every tenant role's codes in every area, rather than
- * as "every code everywhere", for two reasons. Nothing appears that no role
- * has: an area no role approves in (the audit feed is read, not approved)
- * stays unapprovable, so the ownership map still tells an administrator the
- * truth about seat gaps. And the operator's layer is excluded by construction:
- * PLATFORM_ADMIN and REGULATOR are not tenant roles, so nothing of theirs is
- * inherited, and account-layer separation is enforced at the gateway besides.
- * Separation of duties on a record — the proposer is not the approver — is
- * enforced per record by the engines and is untouched by what a role may do
- * in general.
+ * ## Every code, in every area of their own business
+ *
+ * This was previously the *union of every tenant role's codes*, which is a
+ * different and smaller thing: it grants the owner what somebody in the company
+ * can do, not what can be done. The difference is only visible in the codes no
+ * single role happens to hold in a given area — and it turned out to be the
+ * codes an owner most obviously ought to have. The owner of the business could
+ * not export their own project's cost data (`I` on `BUDGET_COST`), could not
+ * run an AI task in most areas (`X`), and could not change a policy in any area
+ * but the org chart (`G`). An owner locked out of exporting their own accounts
+ * is the same support ticket this row was rewritten to prevent, one level down.
+ *
+ * So it is every code, in every area the tenancy has.
+ *
+ * ## What that deliberately does not include
+ *
+ * **The operator's layer.** `PLATFORM_ADMINISTRATION` governs tenancies,
+ * billing and global configuration *across every customer*, and an enterprise
+ * owner is a customer. It is excluded by construction here — the areas granted
+ * are the ones tenant roles use, and no tenant role touches it — and account
+ * layer separation is enforced at the gateway besides. "Everything" means
+ * everything in their own enterprise; it cannot mean other companies' records.
+ *
+ * **Separation of duties.** Untouched, because the matrix was never what
+ * enforced it. A capability area cannot express "two acts by one person"; the
+ * engines enforce it per record, and `lifecycle/stages.ts` still refuses a gate
+ * decision from whoever submitted it — including the owner's. Holding both
+ * create and approve in an area has always been normal in this matrix and is
+ * not the same as approving your own submission.
+ *
+ * **The ledger.** `U` is "change existing records", which in this platform is
+ * an append to a hash-chained stream, not a mutation. No permission code can
+ * rewrite history, so granting every one of them to the owner does not weaken
+ * the record.
  */
 function everythingInTheTenancy(): Matrix {
-  const union: Matrix = {};
+  const every = Object.keys(PERMISSION_CODE_MEANING) as PermissionCode[];
+  const granted: Matrix = {};
   for (const role of ALL_ROLES) {
     if (OPERATOR_ONLY_ROLES.includes(role) || role === 'OWNER') continue;
-    for (const [area, codes] of Object.entries(PERMISSION_MATRIX[role]) as Array<[CapabilityArea, PermissionCode[]]>) {
-      const held = union[area] ?? [];
-      for (const code of codes) if (!held.includes(code)) held.push(code);
-      union[area] = held;
+    for (const area of Object.keys(PERMISSION_MATRIX[role]) as CapabilityArea[]) {
+      granted[area] = [...every];
     }
   }
-  return union;
+  return granted;
 }
 
 PERMISSION_MATRIX.OWNER = everythingInTheTenancy();

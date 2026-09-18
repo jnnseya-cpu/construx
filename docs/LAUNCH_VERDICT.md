@@ -227,7 +227,7 @@ promoted to PASS anywhere in this document.
 **Summary.** A single Node process serving one origin: a gateway
 (`backend/src/api/gateway.ts`) in front of 901 routes, an append-only
 hash-chained ledger (`backend/src/goldenthread/`), an identity and permission
-layer (`backend/src/identity/`), seven AI engines behind an orchestrator, and a
+layer (`backend/src/identity/`), eight AI engines behind an orchestrator, and a
 static frontend of plain ES modules with no build step. 347 source files,
 212,270 lines. **Zero runtime dependencies** — a settled decision that removes
 the entire transitive-vulnerability surface and the supply-chain attack with it.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ownersFor, ownershipMap, type Identity } from '../src/identity/ownership.ts';
-import { PERMISSION_MATRIX, roleAllows } from '../src/identity/roles.ts';
+import { CAPABILITY_AREA_LIST, PERMISSION_CODE_LIST, PERMISSION_MATRIX, roleAllows } from '../src/identity/roles.ts';
 
 /**
  * Who owns the decision.
@@ -138,16 +138,76 @@ describe('the ownership map', () => {
   });
 
   it('does not call an unapprovable area a gap', () => {
-    // Nothing in the audit feed is approved — it is read. Reporting it as a
-    // missing seat would send an administrator looking for a role that does not
-    // exist, which is worse than saying nothing.
+    /*
+     * Nothing in the audit feed is approved — it is read. Reporting it as a
+     * missing seat would send an administrator looking for a role that does not
+     * exist, which is worse than saying nothing.
+     *
+     * The tenancy under test has an owner, and an owner holds every capability
+     * in their own business — so the question "is anything approved here?" can
+     * no longer be asked of the whole matrix, because the owner's blanket row
+     * answers yes everywhere. It is asked of the roles that describe a job,
+     * which is what `ownershipMap` now does.
+     */
     const rows = ownershipMap(TEAM);
     for (const area of ['EVIDENCE_AUDIT', 'AI_EXECUTION', 'SUPPLIER_SUBMISSION'] as const) {
+      const row = rows.find((entry) => entry.area === area)!;
       assert.equal(
-        rows.find((row) => row.area === area)!.noApprover,
-        'NOT_APPROVABLE',
-        `${area} was reported as a seat gap; no role approves there by design`,
+        row.noApprover,
+        undefined,
+        `${area} reported no approver; the owner approves everywhere in their own tenancy`,
       );
+      assert.deepEqual(
+        row.approve.map((owner) => owner.role),
+        ['OWNER'],
+        `${area} is approved by somebody other than the owner; no specialist role approves there`,
+      );
+      assert.equal(row.ownerOnly, undefined, `${area} is not a seat anybody can be put in, so it is not an owner-only gap`);
+    }
+  });
+
+  it('says when the owner is the only cover, so a seat gap is still visible', () => {
+    /*
+     * The regression this exists to stop. An owner holds every capability in
+     * the tenancy, so once one exists no area can report `SEAT_GAP` — the owner
+     * covers it — and the table that tells an administrator nobody is doing a
+     * job would have gone quiet for good.
+     *
+     * A quantity surveying seat does not stop being unfilled because the
+     * managing director could sign it themselves.
+     */
+    const justTheOwner: Identity[] = [{ id: 'o', name: 'Founder', email: 'o@example', roles: ['OWNER'] }];
+    const rows = ownershipMap(justTheOwner);
+
+    const flagged = rows.filter((row) => row.ownerOnly);
+    assert.ok(flagged.length > 0, 'a tenancy of one owner reported a staffed seat for every area');
+    for (const row of flagged) {
+      assert.deepEqual(row.approve.map((owner) => owner.role), ['OWNER']);
+      assert.equal(row.noApprover, undefined, 'the owner can approve, so this is not "no approver"');
+    }
+
+    // Specific and checkable, and the same area the seat-gap test uses.
+    assert.equal(rows.find((row) => row.area === 'PROGRAMME_BASELINES')!.ownerOnly, true);
+
+    // Staffed areas are not flagged: the owner is cover, not the only cover.
+    assert.equal(rows.find((row) => row.area === 'EVIDENCE_AUDIT')!.ownerOnly, undefined);
+    assert.equal(ownershipMap(TEAM).find((row) => row.area === 'PROGRAMME_BASELINES')!.ownerOnly, undefined);
+  });
+
+  it('gives the owner every capability in their own tenancy, and none outside it', () => {
+    // The instruction this implements, asserted where it can be read: absolute
+    // access to the business they own, and nothing at all on the operator's
+    // cross-tenant area, which governs every other customer as well.
+    const owner = PERMISSION_MATRIX.OWNER;
+    const codes = PERMISSION_CODE_LIST;
+    for (const area of CAPABILITY_AREA_LIST) {
+      if (area === 'PLATFORM_ADMINISTRATION') {
+        assert.equal(owner[area], undefined, 'the owner of one tenancy holds the operator area over all of them');
+        continue;
+      }
+      for (const code of codes) {
+        assert.ok(owner[area]?.includes(code), `the owner does not hold "${code}" on ${area}`);
+      }
     }
   });
 

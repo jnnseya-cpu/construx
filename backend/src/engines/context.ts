@@ -712,7 +712,7 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
         entity: spec.entity,
         // Stamped here rather than at each engine's call site.
         //
-        // Eighteen `toWrites` callbacks across seven engines put a provider's
+        // Eighteen `toWrites` callbacks across the engines put a provider's
         // prose into ledger state — `narrative`, `reviewNotes`,
         // `entitlementNarrative`, `maintenanceNarrative` and the rest — and
         // none of them recorded which model produced it. The event already

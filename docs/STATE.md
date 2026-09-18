@@ -23555,3 +23555,125 @@ did. Verified live: an AI take-off ran past a monthly cap of 1 and consumed 60
 ACUs with the balance still positive; the same cap refused a document render
 with `402 ACU_EXHAUSTED`; and a trial wallet with 40 ACUs left refused the next
 AI run with *"Insufficient ACU balance: 52 required, 40 available."*
+
+---
+
+## What a reader found, and what it cost to fix
+
+Somebody walked the demonstration and reported it as "a prototype, not a
+commercial product": nothing could be saved, the AI recommendations were short
+and informative with nowhere to act, the review buttons did nothing, and there
+were "many randomly locked functions". The question attached was whether the
+demonstration was unfinished or the whole platform was a toy.
+
+It was driven end to end before anything was changed, because three of those
+four observations had more than one possible cause and guessing at them would
+have produced the wrong fix.
+
+**Saving was never broken.** Signed in as the construction manager on the
+Construction project, "Draft a toolbox talk" was filled in and submitted: `201`,
+and the record was on screen immediately. The API rejected malformed attempts
+with per-field problem+json exactly as it is supposed to. What the reader met
+was the *demonstration's* entry point — the console signs an anonymous visitor
+in as the project manager on Ashworth, which is in Operations. Measured across
+twelve screens, that identity met 126 padlocked controls.
+
+**The padlocks were not random, and the permission model was not wrong.** Of
+those 126, ninety-one were role refusals and every one of them was correct
+construction practice: a project manager *approves* the lookahead and the
+programme baseline, and the planner and the site supervisor author them; the
+quantity surveyor authors cost and the commercial manager approves it. Changing
+the matrix would have made the product less credible, not more.
+
+**What was wrong was that all three kinds of refusal were drawn identically.**
+A permanent one ("your role never holds this"), a temporary one ("not during
+this phase") and a useful one ("nothing is drafted and waiting — draft one
+first") all rendered as the same grey padlock with the reason hidden in a
+`title` nobody hovers. The sidebar had already reached this conclusion and acted
+on it — `navigation()` carries the argument in full, and removed its own
+padlocks in favour of one count linking to the Permissions screen — and the
+screens had never had the same treatment applied. They do now, in `commandBar`:
+role refusals are counted in one line that goes to the answer, everything else
+keeps its padlock and its tooltip because those say what to do first. The same
+project manager on the same twelve screens now meets **35 padlocks instead of
+126**, with fifteen summary lines in place of the ninety-one that were removed.
+The Programme screen went from a wall of locks to eight live actions.
+
+**The review buttons were the real defect.** `BriefingAction` says in its own
+type contract "Everything is actionable or it is not here", and the Project
+Command Centre — the first screen anybody sees — rendered every row of it as a
+bare string. Four things the platform said would cost money today, and nothing
+to press on any of them. Every action now carries a `goTo` decided by the
+server, which is what decided the row exists and therefore knows where it is
+answered; the shell switches project on the way, because the briefing reads
+across every live job while the console looks at one. The recommended bids and
+the agent fleet counts are reachable for the same reason.
+
+**The copilot was giving a routing receipt.** Asked why margin had eroded, it
+returned the engine it routed to, the lifecycle phase, one withheld register and
+then `cost:publishCVR · denied` — a database command id and a refusal, in a
+`span` with no handler. A permitted suggestion is now a button to the screen it
+is run on; a refused one is named in the engine's published words with the
+reason on the screen rather than in a tooltip. The page header had claimed
+"you can't do that, and here is who can" for a long time without ever saying it.
+
+**Two counts were wrong in front of customers.** The sign-in page, the public
+landing page, the marketing footer, the weekly newsletter and the copilot's own
+fallback sentence all said seven AI engines while `ENGINE_CONTRACTS` held eight
+— and the landing page's grid listed seven, so the Executive engine was built,
+contracted, running and advertised nowhere. The grid now has its eighth card and
+the heading counts the cards.
+
+### The enterprise owner holds everything in their own business
+
+`OWNER` was the union of every tenant role's codes, which is a smaller thing
+than it sounds: it grants what somebody in the company can do rather than what
+can be done. The owner could not export their own project's cost data, could not
+run an AI task in most areas, and could not change a policy anywhere but the org
+chart. It is now every code in every area of the tenancy.
+
+`PLATFORM_ADMINISTRATION` is the one exclusion and is not negotiable: it governs
+tenancies, billing and configuration *across every customer*, and an enterprise
+owner is a customer. Everything means everything in their own enterprise.
+
+Separation of duties is untouched, because the matrix was never what enforced
+it — the engines enforce it per record and `lifecycle/stages.ts` still refuses a
+gate decision from whoever submitted it, the owner included. The ledger is
+untouched too: `U` is an append to a hash-chained stream, not a mutation, so no
+permission code can rewrite history.
+
+One consequence had to be handled rather than accepted. A tenancy with an owner
+can never report a seat gap again, because the owner covers every area by
+construction — so the table that tells an administrator nobody is doing a job
+would have gone quiet permanently. `ownershipMap` now reports `ownerOnly`: the
+owner is named as the approver, and the row says the cover is the backstop
+rather than the specialist. An unfilled quantity surveying seat does not stop
+being unfilled because the managing director could sign it themselves.
+
+### What holds it shut
+
+- `backend/tests/briefing.test.ts` — every briefing action has a destination,
+  it is a screen the console registry actually has, a project-scoped action
+  carries the project to switch to, and the screen still draws it as something
+  pressable. Plus: every capability area maps to a screen, so a new area is a
+  failing test rather than a suggestion with nowhere to go.
+- `backend/tests/docfacts.test.ts` — extended from the documents to the product.
+  The console, the public site, the messaging and the copilot are scanned for
+  engine counts, comments stripped first so history stays sayable, and the
+  landing grid must carry one card per engine.
+- `backend/tests/ownership.test.ts` — the owner holds every code in every area
+  and nothing on the operator's, and an owner-only tenancy still reports its
+  unfilled seats.
+
+### What this did not fix
+
+The demonstration still signs a visitor in as the project manager on the
+Operations project, which remains the narrowest combination of the four projects
+and thirteen identities seeded. That is a demonstration configuration question
+rather than a platform one, and it is recorded here rather than changed quietly.
+
+`AI_MODE` is `local` on any deployment with no provider configured, so the
+copilot answers from deterministic engine state with no language model involved.
+The startup banner says so plainly — "AI mode: local (deterministic engines, no
+provider spend)" — and the console does not. A reader meeting a thin answer has
+no way to tell that no model was asked. Not built.

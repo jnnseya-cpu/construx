@@ -507,3 +507,116 @@ export const PRICING_BASIS = opts([
   ['TARGET_COST', 'Target cost'],
   ['COST_REIMBURSABLE', 'Cost reimbursable'],
 ]);
+
+/**
+ * The console screens a decision can be sent to.
+ *
+ * ## Why this is here rather than only in the sidebar
+ *
+ * The daily briefing tells a person what will cost money if nobody touches it
+ * today — "Return the Liverpool inlet works or decide not to", "Explain the
+ * margin movement". It is the first screen anybody sees, and every row of it
+ * was rendered as a sentence: no link, no button, nothing to press. The type
+ * behind it says, in its own contract, "Everything is actionable or it is not
+ * here." It was not. A reader was told four things were urgent and left to find
+ * each one through a menu.
+ *
+ * Making a row actionable means the server has to name where the row is
+ * answered, because the server is what decided the row exists. That name is a
+ * console screen id, which both sides now read from here — the same reason the
+ * sector list is here rather than declared twice and kept in step by hand.
+ *
+ * ## What this is not
+ *
+ * It is not a permission and it is not a route. It says where a decision is
+ * taken, not whether the reader may take it: the screen authorises itself on
+ * arrival exactly as it does when reached from the menu, and a reader without
+ * the permission gets the refusal it already gives. A destination is a
+ * signpost, and a signpost to a locked door is still better than no signpost —
+ * the locked door at least names who holds the key.
+ *
+ * The ids are the sidebar's own, and `backend/tests/briefing.test.ts` asserts
+ * every one of them is a screen `frontend/app.js` actually has.
+ */
+export const CONSOLE_PAGE = opts([
+  ['overview', 'Project Command Centre'],
+  ['centre', 'Command Centre'],
+  ['pipeline', 'Pipeline & Bids'],
+  ['commercial', 'Cost & Value'],
+  ['procurement', 'Tender & Procurement'],
+  ['contracts', 'Change & Claims'],
+  ['programme', 'Programme'],
+  ['control', 'Project Control'],
+  ['risk', 'Risk & Safety'],
+  ['field', 'Field Execution'],
+  ['construction', 'Construction'],
+  ['design', 'Design & BIM'],
+  ['concept', 'Concept'],
+  ['handover', 'Handover & O&M'],
+  ['documents', 'Site Documents'],
+  ['billing', 'ACU & Billing'],
+  ['autopilot', 'Autopilot'],
+  ['copilot', 'Copilot'],
+  ['audit', 'Golden Thread'],
+  ['work', 'Field Modules'],
+  ['team', 'Team & Access'],
+  ['enterprise', 'Enterprise & Portfolio'],
+  ['portfolio', 'Portfolio Dashboard'],
+  ['permissions', 'What your role can do'],
+]);
+
+/**
+ * Which screen a capability area is exercised on.
+ *
+ * ## Why the platform needs to know this
+ *
+ * The copilot proposes what to do next and then had nowhere to send anybody: it
+ * rendered each suggestion as `cost:publishCVR · denied` — a database command id
+ * and a refusal — in a span with no handler. A reader asking "why has margin
+ * eroded and what should I do this week" got a routing receipt and two dead
+ * chips. Making a suggestion actionable means naming the screen it is taken on,
+ * and the capability area is what the suggestion already carries.
+ *
+ * ## Why it is one map rather than one per caller
+ *
+ * Because the second caller is already here. `agents/briefing.ts` names a
+ * destination per record type and this names one per capability area; those are
+ * different keys onto the same set of screens, and the set is `CONSOLE_PAGE`
+ * above. A third table of screen names would be the drift this file exists to
+ * prevent.
+ *
+ * Every area the permission matrix grants has an entry, and
+ * `backend/tests/docfacts.test.ts` fails if one is added without one — an
+ * unmapped area is a suggestion with nowhere to go, which is the defect this
+ * closes.
+ *
+ * `PLATFORM_ADMINISTRATION` is absent deliberately: it is the operator's
+ * cross-tenant area and has no screen in the customer's console at all.
+ */
+export const AREA_CONSOLE_PAGE = {
+  AI_EXECUTION: 'autopilot',
+  BILLING_ACU: 'billing',
+  BIM_TWIN: 'design',
+  BOQ_TAKEOFF: 'commercial',
+  BUDGET_COST: 'commercial',
+  BUSINESS_DEVELOPMENT: 'pipeline',
+  CHANGE_VARIATION: 'contracts',
+  CONTRACTS_CLAIMS: 'contracts',
+  DESIGN_INFORMATION: 'design',
+  ENTERPRISE_STRUCTURE: 'team',
+  ESTIMATE_TENDER: 'procurement',
+  EVIDENCE_AUDIT: 'audit',
+  FIELD_EXECUTION: 'field',
+  HANDOVER_OM: 'handover',
+  LOOKAHEAD_CONSTRAINTS: 'programme',
+  PAYMENT_APPLICATIONS: 'commercial',
+  PROCUREMENT_AWARD: 'procurement',
+  PROGRAMME_BASELINES: 'programme',
+  PROJECT_SETUP: 'concept',
+  QUALITY_COMMISSIONING: 'construction',
+  RISK_REGISTER: 'risk',
+  SAFETY_RAMS: 'risk',
+  SITE_SERVICES: 'work',
+  SUPPLIER_SUBMISSION: 'procurement',
+  WORKPACKAGES_TASKS: 'programme',
+};

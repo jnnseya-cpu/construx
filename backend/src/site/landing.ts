@@ -42,7 +42,15 @@ import { STANDARDS, lifecycleWithStages } from '../domain/standards.ts';
  * that makes somebody ill is not a trade worth making.
  */
 
-const ENGINES = [
+/**
+ * The engine grid's copy, one entry per engine the platform runs.
+ *
+ * Exported so `docfacts.test.ts` can hold the count to `ENGINE_CONTRACTS`. The
+ * names here are deliberately the customer's words rather than the contract's —
+ * a quantity surveyor reads "Commercial", not `RESOURCE_COST` — so what is
+ * asserted is that there is one card per engine, not that the words match.
+ */
+export const ENGINES = [
   ['Programme', 'Critical path, float and PERT probability. Monte Carlo completion, corrected for merge bias.'],
   ['Commercial', 'Earned value with three EAC scenarios, CVR with margin erosion, S-curve cashflow.'],
   ['Contracts', 'The Construction Act position — which notice established the notified sum and what a missed one cost.'],
@@ -50,7 +58,24 @@ const ENGINES = [
   ['Quality', 'Inspection and test plans with acceptance criteria, hold points witnessed rather than asserted.'],
   ['Design', 'Revisions, clash closeout with evidence, and clause extraction from the specification as supplied.'],
   ['Operations', 'Reliability-adjusted maintenance forecasting against the asset the record actually describes.'],
+  // The eighth, and it was missing from this page for as long as it existed —
+  // built, contracted, running, and advertised nowhere. `docfacts.test.ts` now
+  // asserts every engine `ENGINE_CONTRACTS` holds is named here.
+  ['Executive', 'What across the portfolio needs a decision this week, ranked with the reason and the exposure behind it.'],
 ];
+
+/**
+ * How many there are, in words, for the heading above the grid.
+ *
+ * Derived rather than typed. The heading said "Seven engines, real arithmetic"
+ * over a grid of seven while the platform ran eight — the page was not only
+ * advertising the wrong number, it was hiding a whole engine — and the same
+ * page three sections down already makes the argument for deriving everything:
+ * "none of this is typed here... if a gate is removed the page stops claiming
+ * it the same day".
+ */
+const COUNT_WORDS = ['no', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+const engineCount = (): string => COUNT_WORDS[ENGINES.length] ?? String(ENGINES.length);
 
 /**
  * Landing imagery, rendered only where the file is really there.
@@ -554,7 +579,7 @@ ${figure('command-centre')}
 
 <section class="engines">
   <div class="wrap">
-    <h2 class="section-h">Seven engines, real arithmetic</h2>
+    <h2 class="section-h">${engineCount()} engines, real arithmetic</h2>
     <p class="section-lede">
       Not summarisation over your documents. Forward and backward pass, expected value, statutory date reckoning —
       computed, deterministic, and the same answer twice.

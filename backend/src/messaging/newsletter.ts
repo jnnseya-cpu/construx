@@ -126,7 +126,7 @@ export function copyForWeek(week: string, posts: CampaignCopy['posts'] = []): Ca
     subject: `${lead.title} — CONSTRUX`,
     headline: lead.title,
     intro:
-      'One data spine from concept to thirty years of operation: seven engines doing real arithmetic on your project, ' +
+      'One data spine from concept to thirty years of operation: eight engines doing real arithmetic on your project, ' +
       'an append-only record that detects its own tampering, and agents that propose while people decide.',
     posts,
   };

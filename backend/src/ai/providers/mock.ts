@@ -113,7 +113,7 @@ class MockAdapter implements AIProviderAdapter {
  * `wasSynthetic` in `engines/context.ts` answers from it. This constant exists
  * so the wording lives in one place, and it is deliberately not a predicate —
  * matching on prose was the brittle version of that question and there are
- * seven engines phrasing it differently.
+ * several engines phrasing it differently.
  */
 export const LOCAL_STAND_IN = 'Deterministic local analysis';
 

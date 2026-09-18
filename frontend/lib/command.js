@@ -1,4 +1,4 @@
-import { api, ApiError, hashFile } from './api.js';
+import { api, ApiError, hashFile, isRoleDenial } from './api.js';
 import { recordVoice, voiceSupport } from './voice.js';
 import { forEvidence } from './capture.js';
 import { queueFile } from './outbox.js';
@@ -739,23 +739,63 @@ export function confirmCost({ title, intent, path, runLabel = 'Run' }) {
 /**
  * A row of command buttons. Each entry declares the capability it needs, so a
  * role that cannot run the command sees why rather than a button that fails.
+ *
+ * ## The three refusals, drawn as two things
+ *
+ * Every greyed control used to look identical: padlock, tooltip. That put a
+ * permanent refusal — a project manager will never raise a lookahead
+ * constraint, because the planner raises it and the PM approves it — beside a
+ * temporary one that tells you what to do first, in the same grey, with the
+ * same padlock. Counted across the demonstration identities, one person met
+ * about ninety of the permanent kind and thirty of the useful kind, and a
+ * reader's verdict on the result was "many randomly locked functions".
+ *
+ * They are not random. They are correct, and correctly enforced — and drawing
+ * them all made the screen unreadable and the product look broken.
+ *
+ * So the two kinds are now drawn differently, which is the decision the sidebar
+ * already reached and recorded for exactly the same reason (`navigation()` in
+ * `app.js`): a padlock on something you can never hold is grey furniture, and a
+ * count that links to the answer is worth more than a lock that shouts an enum.
+ *
+ * - **Role refusals** are not drawn as buttons. They are counted in one line
+ *   that goes to the Permissions screen, which explains every capability area
+ *   in full and names who does hold it.
+ * - **Everything else** — the phase gate, and a state refusal like "Nothing is
+ *   drafted and waiting" — keeps its padlocked button and its tooltip, because
+ *   those tell the reader what has to happen first, which is worth reading.
+ *
+ * Nothing is hidden in the sense that matters: the refusal is still stated, in
+ * one place, with somewhere to go. What is removed is the repetition.
  */
 export function commandBar(entries) {
   const live = entries.filter((entry) => entry);
-  const buttons = live
+  const shown = live.filter((entry) => entry.permitted || !isRoleDenial(entry.reason));
+  const roleLocked = live.filter((entry) => !entry.permitted && isRoleDenial(entry.reason));
+
+  const buttons = shown
     .map((entry) =>
       entry.permitted
         ? `<button class="btn ${esc(entry.tone ?? 'quiet')}" data-command="${esc(entry.id)}">${esc(entry.label)}</button>`
         : `<button class="btn quiet locked" disabled title="${esc(entry.reason ?? 'Not permitted for your role')}">${esc(entry.label)} 🔒</button>`,
     )
     .join('');
-  // A bar where every door is locked reads as a broken screen. The reason was
-  // only ever in a tooltip nobody hovers, so a person saw sixty locks and no
-  // sentence. When nothing at all is permitted, say once why and where it is
-  // changed — the same words the tooltip carries, on the screen.
-  const locked = live.length >= 3 && live.every((entry) => !entry.permitted);
-  const why = locked ? live.find((entry) => entry.reason)?.reason ?? 'Not permitted for your role' : '';
-  return locked
-    ? `${buttons}<div class="metric-sub cmd-bar-locked" style="flex-basis:100%">Every action here is outside your role — ${esc(why)}. Roles are changed on Team &amp; Access by an administrator or the owner; the person who founded the company holds both.</div>`
-    : buttons;
+
+  if (roleLocked.length === 0) return buttons;
+
+  // The whole bar, or part of it. Both say the same thing; the first says it
+  // about a screen the reader can do nothing on, so it says it more fully.
+  const everything = shown.length === 0;
+  const count = roleLocked.length;
+  const line = everything
+    ? `Nothing on this bar is yours to run — ${esc(roleLocked[0].reason ?? 'it belongs to another role')}. ` +
+      'Roles are changed on Team &amp; Access by an administrator or the owner; the person who founded the company holds both.'
+    : `${count} further action${count === 1 ? '' : 's'} here belong${count === 1 ? 's' : ''} to another role.`;
+
+  return (
+    `${buttons}<button class="btn quiet sm cmd-bar-locked" data-nav="permissions" ` +
+    `style="flex-basis:100%;text-align:left;white-space:normal" ` +
+    `title="${esc(roleLocked.map((entry) => `${entry.label} — ${entry.reason ?? ''}`).join('\n'))}">` +
+    `${line} See what your role can do →</button>`
+  );
 }

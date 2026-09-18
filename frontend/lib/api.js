@@ -441,3 +441,39 @@ export async function entityBundle(projectId, refTypes) {
   );
   return Object.fromEntries(refTypes.map((t, i) => [t, results[i]]));
 }
+
+/**
+ * The wording of a refusal that is about who you are, rather than about where
+ * the project has got to or what has been recorded yet.
+ *
+ * ## Why this is a shared constant and not a string in two places
+ *
+ * The console has three quite different reasons for greying a control, and
+ * until now drew all three the same way — a padlock and a tooltip:
+ *
+ * - **Your role never holds this.** A project manager approves the lookahead;
+ *   the planner and the site supervisor raise it. The padlock is permanent and
+ *   there is nothing the reader can do about it today.
+ * - **The project is not at that point.** Procurement during operations.
+ *   Temporary, and the tooltip says what has to change.
+ * - **Nothing is waiting.** "Nothing is drafted and waiting. Draft one from an
+ *   approved method statement first." That is a next step, not a refusal.
+ *
+ * Measured across the demonstration identities, a single person met around
+ * ninety of the first kind and around thirty of the other two. The first kind
+ * was drowning the other two, and a reader's summary of the result was "many
+ * randomly locked functions" — which is what a wall of permanent padlocks looks
+ * like when the useful ones are mixed in with them.
+ *
+ * `app.js` builds the sentence and `lib/command.js` has to recognise it, and
+ * those are two modules that cannot import each other — the shell imports the
+ * pages and the pages import the command bar. So the wording lives here, which
+ * both already import, beside the read guards the shell publishes for the same
+ * reason.
+ */
+export const ROLE_DENIAL_PREFIX = 'No role of ';
+
+/** Whether a refusal is the permanent kind. See `ROLE_DENIAL_PREFIX`. */
+export function isRoleDenial(reason) {
+  return typeof reason === 'string' && reason.startsWith(ROLE_DENIAL_PREFIX);
+}

@@ -799,7 +799,21 @@ td.mono { font-size: 11px; color: var(--text-3); }
   font-size: 11px; padding: 4px 10px; border-radius: 999px;
   background: var(--orange-wash); color: var(--orange); border: 1px solid var(--orange-line);
 }
-.chip.denied { background: rgba(232,78,78,.11); color: var(--critical); border-color: rgba(232,78,78,.3); }
+/*
+ * A refused suggestion carries its reason, so it is a sentence rather than a
+ * word and must be allowed to wrap. It also stops being red: the copilot
+ * refusing to run a commercial engine for a site manager is the permission
+ * model working correctly, not an error, and the critical tone is the one the
+ * platform uses for things that have gone wrong.
+ */
+.chip.denied {
+  background: var(--slate); color: var(--text-3); border-color: var(--line-strong);
+  white-space: normal; text-align: left;
+}
+
+/* A runnable suggestion is a button; it inherits nothing from `button`. */
+button.chip { font: inherit; font-size: 11px; cursor: pointer; }
+button.chip:hover { background: var(--orange); color: #12100e; }
 .composer { display: flex; gap: 9px; margin-bottom: 18px; max-width: 860px; }
 
 /*
@@ -914,6 +928,19 @@ input:focus, select:focus, textarea:focus {
 }
 .cmd-error { margin: 0 0 14px; }
 .btn.locked { opacity: .42; cursor: not-allowed; }
+
+/*
+ * The one line that stands in for the actions a role can never run.
+ *
+ * Drawn as a button because it is one — it goes to the Permissions screen — but
+ * it must not compete with the real actions beside it, so it drops the slab
+ * face and the border and sits on the quietest text tone. Existing tokens only.
+ */
+.btn.cmd-bar-locked {
+  background: transparent; border: 1px solid transparent; box-shadow: none;
+  color: var(--text-3); font-weight: 400; padding-left: 0;
+}
+.btn.cmd-bar-locked:hover { background: transparent; color: var(--text-2); filter: none; }
 
 /* cost quote — what an AI action costs, shown before it runs */
 .cost-slot:empty { display: none; }

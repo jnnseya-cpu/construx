@@ -196,16 +196,44 @@ export function ownershipMap(identities: readonly Identity[]): Array<{
    * `undefined` — there is an approver.
    */
   noApprover?: 'SEAT_GAP' | 'NOT_APPROVABLE';
+  /**
+   * The only person who can approve here is the owner of the business.
+   *
+   * The owner holds every capability in their own tenancy — deliberately, and
+   * the reasoning is on `everythingInTheTenancy` in `roles.ts`. The consequence
+   * for this map is that a tenancy with an owner can never report a seat gap
+   * again, because the owner covers every area by construction, and the
+   * administrator loses the one signal this table exists to give: *nobody is
+   * doing this job*.
+   *
+   * So it is reported rather than hidden. The owner genuinely can approve, and
+   * is listed; this says that the cover is the backstop rather than the
+   * specialist, which is what an administrator about to buy a seat needs to
+   * know. An unfilled quantity surveying seat does not stop being unfilled
+   * because the managing director could sign it themselves.
+   */
+  ownerOnly?: true;
 }> {
   const areas = new Set<CapabilityArea>();
   for (const matrix of Object.values(PERMISSION_MATRIX)) {
     for (const area of Object.keys(matrix)) areas.add(area as CapabilityArea);
   }
 
-  /** Does any role at all approve here, whether or not anybody holds that role? */
+  /**
+   * Does any role at all approve here, whether or not anybody holds that role?
+   *
+   * `OWNER` is excluded from the answer along with the operator, and for a
+   * sharper reason. The owner's row is not a description of a job — it is a
+   * blanket "everything in this tenancy", assigned in `roles.ts` rather than
+   * written out. Reading it as evidence that an area is approvable makes every
+   * area approvable by definition, and the distinction this function exists to
+   * draw — a seat nobody has bought, versus an area the platform has no
+   * approval step for — disappears. The audit feed is read and exported, never
+   * approved; that has to stay sayable.
+   */
   const approvableAreas = new Set<string>();
   for (const [role, matrix] of Object.entries(PERMISSION_MATRIX)) {
-    if (ROLE_ACCOUNT_LAYER[role as Role] === 'PLATFORM_ADMIN') continue;
+    if (ROLE_ACCOUNT_LAYER[role as Role] === 'PLATFORM_ADMIN' || role === 'OWNER') continue;
     for (const [area, codes] of Object.entries(matrix)) {
       if (codes.includes('A')) approvableAreas.add(area);
     }
@@ -213,10 +241,16 @@ export function ownershipMap(identities: readonly Identity[]): Array<{
 
   return [...areas].sort().map((area) => {
     const approve = ownersFor(identities, area, 'A');
+    const ownerOnly = approve.length > 0 && approve.every((owner) => owner.role === 'OWNER');
     return {
       area,
       create: ownersFor(identities, area, 'C'),
       approve,
+      // Only where the area is one a specialist role approves in. An area
+      // nothing approves — the audit feed — is not a seat anybody can fill,
+      // and flagging the owner's blanket cover there would send an
+      // administrator shopping for a seat that does not exist.
+      ...(ownerOnly && approvableAreas.has(area) ? { ownerOnly: true as const } : {}),
       ...(approve.length > 0
         ? {}
         : { noApprover: approvableAreas.has(area) ? ('SEAT_GAP' as const) : ('NOT_APPROVABLE' as const) }),

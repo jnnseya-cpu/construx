@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { before, describe, it } from 'node:test';
+import { AREA_CONSOLE_PAGE, CONSOLE_PAGE, values } from '../../shared/vocabulary.js';
+import { CAPABILITY_AREA_LIST, type CapabilityArea } from '../src/identity/roles.ts';
 import { rejectsCode } from './helpers.ts';
 import { morningBriefing } from '../src/agents/briefing.ts';
 import { AGENTS } from '../src/agents/registry.ts';
@@ -260,5 +265,134 @@ describe('The morning briefing', () => {
       async () => morningBriefing(platform.context(supplier.auth, `${seed.tenantId}-governance`, { source: 'WEB' })),
       'ACCESS_DENIED',
     );
+  });
+});
+
+
+// ── Every row is somewhere to go ────────────────────────────────────────────
+
+describe('The briefing is actionable, in the sense the word usually means', () => {
+  /*
+   * ## What happened
+   *
+   * `BriefingAction`'s own contract says "Everything is actionable or it is not
+   * here", and for as long as the briefing existed the console rendered the
+   * action as a bare string: no link, no button, no handler on the row. The
+   * first screen anybody sees told them four things would cost money today and
+   * gave them nothing to press. A reviewer's words for it were "review button
+   * very useless, nowhere to act or action anything under your
+   * responsibility", and they were describing the product accurately.
+   *
+   * The fix is a destination on the action, decided by the server — which is
+   * what decided the row exists and therefore knows where it is answered.
+   *
+   * ## What this holds shut
+   *
+   * A new action with no destination, and a destination pointing at a screen
+   * the console does not have. Both are silent failures otherwise: the first
+   * renders a button that goes nowhere, the second a button that navigates to
+   * a blank route.
+   */
+
+  const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const shell = readFileSync(join(REPO, 'frontend', 'app.js'), 'utf8');
+  /*
+   * The registry, not the menu.
+   *
+   * The first version of this check looked for `id: '<page>'` in the sidebar's
+   * `NAV`, and it was wrong in a way worth keeping a note about: not every
+   * screen is a menu item. "What your role can do" is reached from the sidebar
+   * footer and from a command bar, never from the menu itself, so a correct
+   * destination failed the check. `frontend/pages/index.js` is what `navigate`
+   * actually resolves against, which makes it the thing to ask.
+   */
+  const registry = readFileSync(join(REPO, 'frontend', 'pages', 'index.js'), 'utf8');
+  const routed = (page: string): boolean =>
+    new RegExp(`^\\s*${page},\\s*$|^\\s*${page}:`, 'm').test(registry);
+
+  it('sends every action to a screen the console actually has', () => {
+    const b = brief();
+    assert.ok(b.actions.length > 0, 'the briefing produced no actions — this check matched nothing');
+
+    const known = new Set(values(CONSOLE_PAGE));
+    for (const action of b.actions) {
+      assert.ok(action.goTo, `"${action.action}" has nowhere to go`);
+      assert.ok(
+        known.has(action.goTo.page),
+        `"${action.action}" points at "${action.goTo.page}", which is not in CONSOLE_PAGE`,
+      );
+      // The vocabulary is only worth something if it is the console's own ids.
+      assert.ok(
+        routed(action.goTo.page),
+        `CONSOLE_PAGE offers "${action.goTo.page}" but the console has no such screen`,
+      );
+    }
+  });
+
+  it('names the project an action is about, wherever it is about one', () => {
+    // The briefing reads across every live project while the console looks at
+    // one. Without the project id, "Explain the margin movement on Rossendale"
+    // lands on whichever job happened to be open — which is worse than not
+    // moving, because it looks like it worked.
+    const b = brief();
+    const perProject = b.actions.filter((a) => /\bon\b .+/.test(a.action) && a.goTo.page !== 'pipeline');
+    assert.ok(perProject.length > 0, 'no project-scoped actions were produced — this check matched nothing');
+    for (const action of perProject) {
+      assert.ok(action.goTo.projectId, `"${action.action}" is about a project but carries no project to switch to`);
+    }
+  });
+
+  it('draws each one as something that can be pressed', () => {
+    // The guard on the guard: the server can carry a perfect destination and
+    // the screen can still print it as prose, which is exactly the state this
+    // was found in.
+    const overview = readFileSync(join(REPO, 'frontend', 'pages', 'overview.js'), 'utf8');
+    assert.match(overview, /data-goto="\$\{raw\(a\.goTo\.page\)\}"/, 'the briefing table no longer renders a destination');
+    assert.match(shell, /\[data-goto\]/, 'the shell no longer listens for a destination');
+    assert.match(shell, /export function goTo\(/, 'the shell no longer exposes the navigation a destination needs');
+  });
+
+  it('every screen CONSOLE_PAGE offers is one the console has', () => {
+    // CONSOLE_PAGE is a shared vocabulary, so a stale entry in it is a
+    // destination waiting to be used. Checked as a whole, not only the ids this
+    // fixture happened to produce.
+    for (const page of values(CONSOLE_PAGE)) {
+      assert.ok(routed(page), `CONSOLE_PAGE offers "${page}"; the console has no such screen`);
+    }
+  });
+});
+
+
+// ── Where a capability area is exercised ────────────────────────────────────
+
+describe('every capability area has a screen it is exercised on', () => {
+  /*
+   * `AREA_CONSOLE_PAGE` is what makes a copilot suggestion actionable: the
+   * suggestion carries the capability area it needs, and this says which screen
+   * that is taken on. An area with no entry is a suggestion with nowhere to go,
+   * which is the defect the whole map was added to close — so a new capability
+   * area fails here rather than silently falling back to the command centre.
+   */
+  const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const registry = readFileSync(join(REPO, 'frontend', 'pages', 'index.js'), 'utf8');
+  const known = new Set(values(CONSOLE_PAGE));
+  // Partial by construction — the operator's area has no customer screen — and
+  // the type says so, which is why the lookup is widened rather than asserted.
+  const pageFor = AREA_CONSOLE_PAGE as Partial<Record<CapabilityArea, string>>;
+
+  it('maps every area the matrix grants, bar the one the operator owns', () => {
+    for (const area of CAPABILITY_AREA_LIST) {
+      if (area === 'PLATFORM_ADMINISTRATION') {
+        // The operator's cross-tenant area. A customer's console has no screen
+        // for it, deliberately, and mapping it to one would be the first step
+        // towards drawing a door to it.
+        assert.equal(pageFor[area], undefined, 'the operator area was given a screen in the customer console');
+        continue;
+      }
+      const page = pageFor[area];
+      assert.ok(page, `${area} has no screen; a copilot suggestion needing it would have nowhere to go`);
+      assert.ok(known.has(page), `${area} maps to "${page}", which is not in CONSOLE_PAGE`);
+      assert.match(registry, new RegExp(`^\\s*${page},\\s*$|^\\s*${page}:`, 'm'), `${area} maps to a screen the console does not have`);
+    }
   });
 });

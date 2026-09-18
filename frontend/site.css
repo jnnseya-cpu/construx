@@ -931,7 +931,7 @@ img, svg { max-width: 100%; }
 /* Except inside the engine grid, where the float is inert.
  *
  * `float` does not apply to a grid item — the spec says so and the browser
- * silently obeys — so the figure beside the seven engines was never a floated
+ * silently obeys — so the figure beside the engine grid was never a floated
  * column with cards flowing past it. It was an ordinary grid item, forced to
  * 320px inside a track the `minmax(240px, 1fr)` had made about 250px wide,
  * lying a good 30px underneath the card next to it. Reported from the live

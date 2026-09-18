@@ -158,6 +158,12 @@ export const LINK_GLOSSARY: ReadonlyArray<{ term: string; path: string }> = [
   { term: 'demonstration environment', path: '/demo' },
   { term: 'demo environment', path: '/demo' },
   { term: 'golden thread', path: '/how-it-works' },
+  // Both counts. This is a list of phrases a reader may have written, not a
+  // claim the platform makes: the engine count went from seven to eight, and a
+  // post published under the old wording should still link rather than
+  // silently stop linking because the platform grew an engine.
+  { term: 'eight engines', path: '/how-it-works' },
+  { term: 'eight ai engines', path: '/how-it-works' },
   { term: 'seven engines', path: '/how-it-works' },
   { term: 'seven ai engines', path: '/how-it-works' },
   { term: 'how it works', path: '/how-it-works' },

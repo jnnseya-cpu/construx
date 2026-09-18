@@ -35,6 +35,26 @@ import { liveProjects } from '../domain/structure.ts';
 
 export type BriefingSeverity = 'URGENT' | 'ATTENTION' | 'INFO';
 
+/**
+ * Where a briefing action is answered.
+ *
+ * The screen id is the console's own, from `CONSOLE_PAGE` in
+ * `shared/vocabulary.js`, and `projectId` is carried because the briefing spans
+ * every live project while the console is looking at one: being told to explain
+ * the margin on a job you are not currently in is only actionable if pressing
+ * it takes you there.
+ *
+ * This is a signpost, not a grant. The destination screen authorises itself on
+ * arrival exactly as it does from the menu, and a reader without the permission
+ * gets the refusal it already gives — which names who does hold it, and is a
+ * better answer than a sentence with nothing to press.
+ */
+export type BriefingDestination = {
+  page: string;
+  /** The project the action is about, where it is about one. */
+  projectId?: string;
+};
+
 export type BriefingAction = {
   severity: BriefingSeverity;
   /** What to do, in the imperative. */
@@ -43,6 +63,13 @@ export type BriefingAction = {
   because: string;
   /** Where it came from, so it can be checked. */
   source: { refType: string; refId: string };
+  /**
+   * Where it is done. Required, and required for the reason in the header: a
+   * briefing of things nobody can act on trains its reader to skim. Every row
+   * this file emits has somewhere to go, and `briefing.test.ts` refuses a
+   * destination that is not a screen the console has.
+   */
+  goTo: BriefingDestination;
   /** When it stops being possible, where that is known. */
   dueBy?: string;
   valueMinor?: number;
@@ -172,6 +199,7 @@ export function morningBriefing(
       action: `Return ${bid.title} or decide not to`,
       because: `${money(bid.valueMinor)}, scored ${bid.score}, ${bid.daysToDeadline} day${bid.daysToDeadline === 1 ? '' : 's'} left`,
       source: { refType: 'RadarRun', refId: run!.refId },
+      goTo: { page: 'pipeline' },
       dueBy: undefined,
       valueMinor: bid.valueMinor,
     });
@@ -188,6 +216,7 @@ export function morningBriefing(
       action: `Decide bid or no bid on ${String(opportunity.state.title)}`,
       because: `Scored ${qualification.score}, recommendation ${qualification.recommendation.replace('_', ' ').toLowerCase()}. The qualifying is already paid for.`,
       source: { refType: 'Opportunity', refId: opportunity.refId },
+      goTo: { page: 'pipeline' },
       dueBy: due,
       valueMinor: Number(opportunity.state.estimatedValueMinor ?? 0),
     });
@@ -220,6 +249,7 @@ export function morningBriefing(
         action: `Review the recovery position on ${name}`,
         because: `Forecasting ${expectedDays} days of delay, ${p80Days} at P80`,
         source: { refType: 'DelayRiskSnapshot', refId: delay.refId },
+        goTo: { page: 'programme', projectId },
       });
     }
 
@@ -240,6 +270,7 @@ export function morningBriefing(
           action: `Explain the margin movement on ${name}`,
           because: `${money(erosion)} of margin has gone since the tender — ${Math.abs(erosionPercent).toFixed(2)}% of contract value`,
           source: { refType: 'CVR', refId: cvr.refId },
+          goTo: { page: 'commercial', projectId },
           valueMinor: erosion,
         });
       }
@@ -270,6 +301,7 @@ export function morningBriefing(
           ? `Due ${next.applicationDate}, ${days} day${days === 1 ? '' : 's'} away. A missed application is a month of cash.`
           : `Due ${next.applicationDate}. A missed pay-less notice means paying the notified sum in full.`,
         source: { refType: 'PaymentCycle', refId: cycle.refId },
+        goTo: { page: 'commercial', projectId },
         dueBy: next.applicationDate,
       });
     }
@@ -291,6 +323,7 @@ export function morningBriefing(
             ? `${money(position.totalExposureMinor)} is payable above the certified valuation because a notice was missed, late or given without its basis.`
             : `${money(position.totalExposureMinor)} is payable above what was certified because a notice was missed, late or given without its basis.`,
           source: { refType: 'PaymentCycle', refId: cycle.refId },
+          goTo: { page: 'commercial', projectId },
           valueMinor: position.totalExposureMinor,
         });
       }
@@ -302,6 +335,7 @@ export function morningBriefing(
           because:
             'The notified sum was not paid by the final date for payment. Statutory interest runs and the right to suspend is available on seven days’ notice.',
           source: { refType: 'PaymentCycle', refId: cycle.refId },
+          goTo: { page: 'commercial', projectId },
           valueMinor: position.totalOverdueMinor,
         });
       }
@@ -320,6 +354,7 @@ export function morningBriefing(
             ? `Was due ${entry.dueDate}, ${Math.abs(entry.daysRemaining)} day${Math.abs(entry.daysRemaining) === 1 ? '' : 's'} ago. ${entry.owner} owns it.`
             : `Due ${entry.dueDate}, ${entry.daysRemaining} day${entry.daysRemaining === 1 ? '' : 's'} away. ${entry.owner} owns it.`,
         source: entry.entityRef ?? { refType: 'Contract', refId: projectId },
+        goTo: { page: 'contracts', projectId },
         dueBy: entry.dueDate,
       });
     }
@@ -330,6 +365,7 @@ export function morningBriefing(
         action: `Serve notice on ${running.trigger.slice(0, 60)} for ${name}`,
         because: `${running.daysRemaining} day${running.daysRemaining === 1 ? '' : 's'} of a ${running.timeBarDays}-day time bar left. A time bar that runs cannot be recovered by argument.`,
         source: { refType: 'Contract', refId: projectId },
+        goTo: { page: 'contracts', projectId },
       });
     }
 
@@ -344,6 +380,7 @@ export function morningBriefing(
         action: `Chase the ${String(rfq.state.reference ?? 'enquiry')} returns on ${name}`,
         because: `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue. A package that cannot be compared cannot be let.`,
         source: { refType: 'RFQ', refId: rfq.refId },
+        goTo: { page: 'procurement', projectId },
         dueBy: returnBy,
       });
     }
@@ -360,6 +397,7 @@ export function morningBriefing(
           action: `Renegotiate terms or decline — ${String(project.name)} is ${String(model.state.verdict).toLowerCase()}`,
           because: `Peak funding ${money(Number(model.state.peakFundingRequirementMinor ?? 0))} against available working capital`,
           source: { refType: 'FundingModel', refId: model.refId },
+          goTo: { page: 'procurement', projectId: String(project.id) },
           valueMinor: Number(model.state.peakFundingRequirementMinor ?? 0),
         });
       }

@@ -8,9 +8,16 @@ import { state } from '../app.js';
  *
  * Answers are read from project state, and the copilot says the record is empty
  * rather than answering from general construction knowledge. It proposes
- * commands; it never runs them. Suggested actions the current role cannot
- * perform are shown greyed with the authorisation reason, because "you can't do
- * that, and here is who can" is more useful than a hidden button.
+ * commands; it never runs them — a suggestion takes the reader to the screen
+ * the command is run on, where the same authorisation applies as everywhere
+ * else.
+ *
+ * Suggested actions the current role cannot perform are shown with the
+ * authorisation reason on the screen rather than in a tooltip, because "you
+ * can't do that, and here is who can" is more useful than a hidden button —
+ * but only if it is actually said. For a long time this page printed the
+ * command's internal id and put the reason in a `title` attribute, which
+ * delivered the clutter of that principle and none of the help.
  */
 
 // Six questions from a desk and three from the workface. The second group is
@@ -139,12 +146,40 @@ export async function copilot(root) {
         })
         .join('');
 
-      const chips = (answer.suggestedActions ?? [])
-        .map(
+      /*
+       * What to do next, as something that can be done.
+       *
+       * This rendered `cost:publishCVR · denied` in a span with no handler —
+       * a database command id, a refusal, and no way to act on either. A reader
+       * asking why margin had eroded got a routing receipt and two dead chips,
+       * which is a fair description of a prototype.
+       *
+       * Three changes, and the header's stated principle — "you can't do that,
+       * and here is who can" — is finally what happens:
+       *
+       * - A permitted suggestion is a button that goes to the screen it is run
+       *   on. `goTo` comes from the server, from the capability area the
+       *   suggestion already carried.
+       * - Everything is named in the engine's published words rather than its
+       *   command id.
+       * - A refusal is on the screen instead of in a `title` nobody hovers.
+       */
+      const actions = answer.suggestedActions ?? [];
+      const runnable = actions.filter((a) => a.permitted);
+      const refused = actions.filter((a) => !a.permitted);
+
+      const chips = [
+        ...runnable.map(
           (a) =>
-            `<span class="chip ${a.permitted ? '' : 'denied'}" title="${escapeHtml(a.permitted ? a.description : a.reason ?? '')}">${escapeHtml(a.command)}${a.permitted ? '' : ' · denied'}</span>`,
-        )
-        .join('');
+            `<button class="chip" data-goto="${escapeHtml(a.goTo)}" title="${escapeHtml(a.description)}">${escapeHtml(a.label ?? a.command)} →</button>`,
+        ),
+        ...refused.map(
+          (a) =>
+            `<span class="chip denied">${escapeHtml(a.label ?? a.command)} — ${escapeHtml(
+              (a.reason ?? 'not available to your role').replace(/\.$/, ''),
+            )}</span>`,
+        ),
+      ].join('');
 
       // Named, not coded. `RESOURCE_COST` is a database column; "Commercial
       // analyst" is a thing a quantity surveyor can decide whether to trust.

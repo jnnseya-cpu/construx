@@ -1,3 +1,5 @@
+import { AREA_CONSOLE_PAGE } from '../../../shared/vocabulary.js';
+import { ENGINE_CONTRACTS } from './orchestrator.ts';
 import { config } from '../config.ts';
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
@@ -297,8 +299,22 @@ export type ConversationAnswer = {
   confidence?: number;
   /** Facts drawn from project state that ground the answer. */
   grounding: GroundingFact[];
-  /** Actions the user can take next. The copilot proposes; it does not execute. */
-  suggestedActions: Array<{ command: string; description: string; permitted: boolean; reason?: string }>;
+  /**
+   * Actions the user can take next. The copilot proposes; it does not execute.
+   *
+   * `label` is what a person reads and `goTo` is the screen it is taken on.
+   * Both were missing, and the console rendered `command` — `cost:publishCVR`,
+   * a database identifier — in a span with no handler, so a suggestion was a
+   * piece of jargon that could not be acted on whether or not it was permitted.
+   */
+  suggestedActions: Array<{
+    command: string;
+    label: string;
+    description: string;
+    goTo: string;
+    permitted: boolean;
+    reason?: string;
+  }>;
   /** Tools available to this user in this context — the context-aware tool router. */
   availableTools: string[];
   acuConsumed: number;
@@ -329,9 +345,19 @@ export function ask(ctx: EngineContext, question: string): ConversationAnswer {
         { tenantId: ctx.tenantId, projectId: ctx.projectId, lifecyclePhase: phase },
         { rbacEnabled: config.authz.rbac, scopesEnabled: config.authz.scopes, abacEnabled: config.authz.abac },
       );
+      const contract = ENGINE_CONTRACTS[candidate.engine];
       return {
         command: candidate.suggestedCommand as string,
+        // The engine's published name and the task in words. "Commercial
+        // analyst — publish CVR", not "cost:publishCVR": the second is what the
+        // platform calls it and the first is what a quantity surveyor calls it.
+        label: `${contract?.name ?? candidate.engine} — ${candidate.taskType.replace(/_/g, ' ').toLowerCase()}`,
         description: `${candidate.engine} engine — ${candidate.taskType.replace(/_/g, ' ')}`,
+        // Typed as partial because it is: `PLATFORM_ADMINISTRATION` is the
+        // operator's cross-tenant area and has no screen in a customer's
+        // console. No intent classifies to it, and the fallback is the command
+        // centre rather than a broken link if one ever does.
+        goTo: (AREA_CONSOLE_PAGE as Partial<Record<CapabilityArea, string>>)[candidate.capabilityArea] ?? 'centre',
         permitted: decision.decision === 'ALLOW',
         reason: decision.decision === 'ALLOW' ? undefined : decision.reason,
       };
@@ -690,7 +716,7 @@ function compose(
 ): string {
   if (!intent) {
     return (
-      `I could not match "${question}" to one of the seven engines. ` +
+      `I could not match "${question}" to one of the ${Object.keys(ENGINE_CONTRACTS).length} engines. ` +
       `Try naming what you need — programme, cost, risk, safety, bid comparison, variation, claim, model, or handover. ` +
       `The project is currently in the ${phase ?? 'unknown'} phase.`
     );

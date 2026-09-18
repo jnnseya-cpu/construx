@@ -327,15 +327,35 @@ describe('who could decide this', () => {
     platform.users(seed.tenantId).map((user) => ({ id: user.id, name: user.name, email: user.email, roles: user.roles }));
 
   it('answers for an observation, where there is no capability to intersect with', () => {
-    // The defect this replaced: an observation has no command, the route asked
-    // `ownersFor` for an invented area, and the invented one — approve on
-    // EVIDENCE_AUDIT — is held by no role in the matrix. Every observation
-    // reported that it could not be assigned to anybody.
+    /*
+     * The defect this replaced: an observation has no command, so the route
+     * asked `ownersFor` for an invented area — approve on EVIDENCE_AUDIT — and
+     * no specialist role holds it, because nothing in an audit feed is
+     * approved. Every observation reported that it could not be assigned.
+     *
+     * The owner now holds every capability in their own tenancy, so that
+     * lookup no longer comes back empty: it comes back with the owner, every
+     * time, for every observation. That is a worse answer rather than a better
+     * one — "assign it to the managing director" is not who should look at a
+     * site observation — and it is the same reason the fallback was replaced.
+     *
+     * So what is asserted is the thing that has always mattered: nobody whose
+     * job it is approves there, and the route answers by role instead.
+     */
     const byRole = ownersByRole(identities(), ['QS', 'PM', 'OWNER']);
     const byCapability = ownersFor(identities(), 'EVIDENCE_AUDIT', 'A');
 
     assert.ok(byRole.length > 0, 'no holder of QS, PM or OWNER was found');
-    assert.equal(byCapability.length, 0, 'the old fallback found somebody, so this test proves nothing');
+    assert.deepEqual(
+      byCapability.map((owner) => owner.role),
+      ['OWNER'],
+      'a specialist role approves the audit feed, so the fallback this replaced was not the defect described',
+    );
+    assert.notDeepEqual(
+      byRole.map((owner) => owner.userId),
+      byCapability.map((owner) => owner.userId),
+      'answering by role and answering by the invented capability give the same people, so this test proves nothing',
+    );
   });
 
   it('names the specialist first and the wider remit as the escalation', () => {

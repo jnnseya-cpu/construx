@@ -52,7 +52,7 @@ export async function login(root) {
         </a>
         <h1>The operating system for built assets.</h1>
         <p>
-          One immutable data spine and seven AI engines governing the entire lifecycle.
+          One immutable data spine and eight AI engines governing the entire lifecycle.
           Every decision hash-chained, every forecast computed rather than guessed.
         </p>
         <div class="rail">${PHASES.map((p) => html`<div>${p}</div>`)}</div>

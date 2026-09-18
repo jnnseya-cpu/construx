@@ -184,7 +184,7 @@ export function featuresFor(roles: Role[], limit = 6): Feature[] {
 export const STANDING_LINKS: Array<{ label: string; path: string }> = [
   { label: 'Sign in', path: '/app' },
   { label: 'Project command centre', path: '/app/overview' },
-  { label: 'The seven engines', path: '/#engines' },
+  { label: 'The eight engines', path: '/#engines' },
   { label: 'How the Golden Thread works', path: '/#thread' },
   { label: 'What it costs', path: '/#pricing' },
   { label: 'See the demo', path: '/#demo' },
