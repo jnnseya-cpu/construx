@@ -1,5 +1,5 @@
 import { api, hashFile } from '../lib/api.js';
-import { badge, html, notice, positionReport, raw, reference, render, resolveHtml, shortHash, table, time, toast } from '../lib/ui.js';
+import { badge, esc, html, notice, positionReport, raw, reference, render, resolveHtml, shortHash, table, time, toast } from '../lib/ui.js';
 import { donutChart, gauge, kpiCard } from '../lib/charts.js';
 import { can, state } from '../app.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
@@ -739,6 +739,13 @@ function feedPanel(changes) {
 }
 
 /** Text into an HTML-safe string, for the list items built as raw markup. */
-function escapeFeedText(value) {
-  return String(value).replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
-}
+/*
+ * The console's one escaper.
+ *
+ * This was a private copy handling `&`, `<`, `>` and `"` but not the
+ * apostrophe. Safe where it is used — every attribute here is double-quoted —
+ * and one single-quoted attribute away from not being. A launch audit found a
+ * fourth copy in `copilot.js` that handled neither quote, so the pattern is
+ * the finding rather than any one instance.
+ */
+const escapeFeedText = esc;

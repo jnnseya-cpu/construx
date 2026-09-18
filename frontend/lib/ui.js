@@ -7,12 +7,33 @@
  * visible in review.
  */
 
+/**
+ * Escape a value for HTML.
+ *
+ * ## The apostrophe is escaped, and it was not
+ *
+ * `&`, `<`, `>` and `"` were enough for every attribute in this console,
+ * because every attribute in this console is double-quoted — except one.
+ * `copilot.js` writes `data-drill='${...}'` in single quotes, and an
+ * apostrophe reaching that value would close the attribute and start a new
+ * one.
+ *
+ * Nothing can put an apostrophe there today: the value is `JSON.stringify` of
+ * an entity type from the closed catalogue and a ULID, and neither can contain
+ * one. That is a property of the *data*, though, not of this function — and a
+ * safety property that depends on nobody ever introducing an identifier with a
+ * quote in it is a safety property with a date on it.
+ *
+ * `&#39;` rather than `&apos;`, which is not defined in HTML 4 and is the kind
+ * of detail that works everywhere until it does not.
+ */
 export function esc(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const RAW = Symbol('raw');

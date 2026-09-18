@@ -6,6 +6,9 @@ import { join, resolve } from 'node:path';
 // tested here, so it can be imported directly rather than through a browser.
 import { badge, ellipsis, esc, html, raw, reference, resolveHtml, table } from '../../frontend/lib/ui.js';
 
+/** The console's source, for the check that no file declares a weaker escaper. */
+const FRONTEND_DIR = resolve(import.meta.dirname, '..', '..', 'frontend');
+
 /**
  * The escaping layer.
  *
@@ -170,4 +173,88 @@ describe('a markup fragment survives being stringified', () => {
     assert.equal(raw(once), once);
   });
 
+});
+
+describe('the escaper closes every attribute context', () => {
+  /**
+   * Found in a launch audit, by feeding the escaper an apostrophe.
+   *
+   * `esc` escaped `&`, `<`, `>` and `"`, which is enough for every attribute in
+   * this console *except one*: `copilot.js` writes `data-drill='…'` in single
+   * quotes. An apostrophe reaching that value closes the attribute and starts a
+   * new one, which is attribute-injection XSS.
+   *
+   * Nothing could reach it — the value is `JSON.stringify` of a closed-catalogue
+   * entity type and a ULID. But that is a fact about data in two other files,
+   * and a safety property that holds only while nobody adds an identifier with a
+   * quote in it is one with a date on it.
+   *
+   * The same audit found `copilot.js` declaring its own escaper that handled
+   * neither `"` nor `'`, while using it inside two double-quoted attributes.
+   * That one is deleted; this asserts the survivor is strong enough to be the
+   * only one.
+   */
+  it('escapes all five characters that can break out of markup', () => {
+    for (const [input, expected] of [
+      ['&', '&amp;'],
+      ['<', '&lt;'],
+      ['>', '&gt;'],
+      ['"', '&quot;'],
+      ["'", '&#39;'],
+    ] as const) {
+      assert.equal(esc(input), expected, `${input} is not escaped`);
+    }
+  });
+
+  it('cannot be broken out of a single-quoted attribute', () => {
+    const payload = "x' onmouseover='alert(1)";
+    const markup = resolveHtml(html`<span data-drill='${payload}'></span>`);
+    // The word survives as text — that is fine and expected. What must not
+    // survive is the quote that would end the attribute and begin a new one.
+    assert.doesNotMatch(markup, /'\s*onmouseover/, 'the payload closed the attribute');
+    assert.match(markup, /&#39;/, 'the apostrophe was not encoded');
+    // Exactly two apostrophes in the output: the ones this template wrote.
+    assert.equal((markup.match(/'/g) ?? []).length, 2, 'an unescaped apostrophe reached the markup');
+  });
+
+  it('cannot be broken out of a double-quoted attribute', () => {
+    const payload = 'x" onmouseover="alert(1)';
+    const markup = resolveHtml(html`<span title="${payload}"></span>`);
+    assert.doesNotMatch(markup, /"\s*onmouseover/, 'the payload closed the attribute');
+    assert.equal((markup.match(/"/g) ?? []).length, 2, 'an unescaped double quote reached the markup');
+  });
+
+  it('leaves no private escaper in the console weaker than this one', () => {
+    /*
+     * The pattern, not the instance. A file that declares its own escaper is a
+     * file where somebody has to get escaping right a second time, and the one
+     * found in this audit got it wrong in exactly the way that matters.
+     *
+     * Escaping `'` is the test: anything that handles the apostrophe is at
+     * least as strong as `esc`, and anything that does not is a downgrade
+     * waiting for an attribute to be written in single quotes.
+     */
+    const weak: string[] = [];
+    const walk = (directory: string): void => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const full = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          if (!['icons', 'shots', 'media'].includes(entry.name)) walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith('.js')) continue;
+        const source = readFileSync(full, 'utf8');
+        for (const match of source.matchAll(/function (escape\w*)\s*\(value\)\s*\{([\s\S]{0,400}?)\n\}/g)) {
+          const body = match[2] as string;
+          // A handler named `escape` for the Escape key is not an escaper.
+          if (!body.includes('replace')) continue;
+          if (!/&#39;|&apos;|'\\''|\[&<>"']/.test(body) && !body.includes("'/g")) {
+            weak.push(`${full.slice(full.indexOf('frontend'))} — ${match[1]} does not escape the apostrophe`);
+          }
+        }
+      }
+    };
+    walk(FRONTEND_DIR);
+    assert.deepEqual(weak, [], `\n${weak.join('\n')}\n`);
+  });
 });

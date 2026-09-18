@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { heatmap, pieChart } from '../lib/charts.js';
-import { badge, html, humanise, raw, render, table, toast } from '../lib/ui.js';
+import { badge, esc, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -197,9 +197,25 @@ export async function copilot(root) {
   await ask(SUGGESTIONS[0]);
 }
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+/*
+ * The console's one escaper, not a second weaker one.
+ *
+ * This file used to declare its own `escapeHtml` escaping `&`, `<` and `>` and
+ * **not** `"` or `'` — while using it inside two double-quoted attributes
+ * (`data-drill-label="…"`, `title="…"`) and one single-quoted one
+ * (`data-drill='…'`). A quote reaching any of them closes the attribute and
+ * starts a new one.
+ *
+ * Nothing can reach them today: the grounding labels are literals in
+ * `ai/conversation.ts` and the denial reasons are literals in `identity/abac.ts`.
+ * But that is a property of data somewhere else, and a safety property that
+ * holds only while nobody introduces a label with a quote in it is a safety
+ * property with a date on it.
+ *
+ * `esc` from the design system escapes all five. One escaper, so there is one
+ * thing to get right.
+ */
+const escapeHtml = esc;
 
 /**
  * Which engine answers, and where a charged run would be refused.

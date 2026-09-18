@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command } from '../lib/command.js';
-import { badge, html, money, notice, raw, reference, render, table, toast } from '../lib/ui.js';
+import { badge, esc, html, money, notice, raw, reference, render, table, toast } from '../lib/ui.js';
 import { barChart, gauge, kpiCard } from '../lib/charts.js';
 
 /**
@@ -304,8 +304,15 @@ function plainMoney(minor, currency) {
 }
 
 /** Text into an HTML-safe string, for the list items built as raw markup. */
-function escapeText(value) {
-  return String(value).replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
-}
+/*
+ * The console's one escaper.
+ *
+ * This was a private copy handling `&`, `<`, `>` and `"` but not the
+ * apostrophe. Safe where it is used — every attribute here is double-quoted —
+ * and one single-quoted attribute away from not being. A launch audit found a
+ * fourth copy in `copilot.js` that handled neither quote, so the pattern is
+ * the finding rather than any one instance.
+ */
+const escapeText = esc;
 
 export const _internals = { positionView, revenueView, benchmarkView, plainMoney };

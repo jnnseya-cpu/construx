@@ -23099,3 +23099,64 @@ them immediately and the visitor adjusts a figure they disagree with rather than
 filling a form from empty. Nothing is invented by doing this: every number still
 comes from the five inputs, and the inputs stay visible and editable above the
 answer.
+
+## A launch audit, and the escaper it found
+
+Run adversarially against a running server rather than by reading code. Most of
+it passed; two things did not, and one of them is worth the space.
+
+### The console had four escapers and three were weaker than the shared one
+
+`esc` in `frontend/lib/ui.js` escaped `&`, `<`, `>` and `"` — **not the
+apostrophe**. That is enough for every attribute in this console except one:
+`copilot.js` writes `data-drill='…'` in single quotes, and an apostrophe
+reaching that value closes the attribute and starts a new one.
+
+Worse, `copilot.js` declared **its own** escaper handling `&`, `<` and `>` and
+neither quote, then used it inside two double-quoted attributes
+(`data-drill-label="…"` and `title="…"`). Two more copies lived in `audit.js`,
+`security.js` and `platformcommercial.js`.
+
+**None of it is exploitable today**, and that is the point rather than the
+defence: the grounding labels are literals in `ai/conversation.ts`, the denial
+reasons are literals in `identity/abac.ts`, and a `refId` is a ULID. The safety
+of four escapers therefore rested on facts about data in other files, and a
+safety property that holds only while nobody introduces a label with a quote in
+it is one with a date on it.
+
+`esc` now escapes all five characters and is the only escaper; the other four
+are aliases of it. `ui.test.ts` asserts the five characters, asserts a payload
+cannot close a single- or double-quoted attribute, and — the part that matters —
+**fails on any console file that declares an escaper not handling the
+apostrophe**, so the pattern cannot come back one file at a time.
+
+### What the audit could not test
+
+Recorded as BLOCKED rather than assumed:
+
+- **Operator-to-customer boundary, live.** The operator account requires TOTP
+  enrolment, so the HTTP probe got `MFA_ENROLMENT_REQUIRED` rather than the
+  account-layer refusal. It is covered by `accountlayer.test.ts` (6 tests, all
+  passing) against the engine — but not proven over HTTP in this run, and a 403
+  for the wrong reason is not evidence for the right one.
+- **Backup restoration, disaster recovery, CI/CD and rollback.** No cloud
+  console, no CI access and no production environment were available.
+- **Payments end to end.** `SUBSCRIPTION_COLLECTION_ENABLED` is off by default
+  and no provider sandbox was reachable.
+
+### What it confirmed
+
+- **Production boot refuses a default secret.** `NODE_ENV=production` with the
+  published development `GATEWAY_JWT_SECRET` exits rather than serving.
+- **Account enumeration is defended in production.** Identical status, identical
+  response keys and no timing difference between a real address and a decoy. The
+  `devCode` that distinguishes them outside production is absent there.
+- **Idempotency holds under concurrency.** Eight simultaneous conversions
+  carrying one key produced one `conversionId` and ten reconciliation lines, not
+  eighty. Ten simultaneous identical lifecycle transitions produced one history
+  entry.
+- **Latency**, single node, in-process ledger: p95 24ms at 20 concurrent on the
+  project list, 29ms on the heaviest project read, ~1,200–1,500 req/s. No errors.
+- Rate limiting, RFC 7807 errors with no internals leaked, correlation id on
+  every response, mass assignment refused by schema, and IDOR probes answered
+  404.
