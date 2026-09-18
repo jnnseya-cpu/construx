@@ -321,13 +321,24 @@ describe('a won tender converts the same project — it does not create a second
 
     const price = position.items.find((item) => item.id === 'PRICE')!;
     assert.equal(price.measurable, true);
-    assert.equal(price.movement, String(AWARD.contractSumMinor - 100_000_000));
+    // A number and its unit, not a formatted sentence. A domain returning
+    // "£4.50M" would be choosing a currency, a locale and a precision on behalf
+    // of every reader of every project — and the screen printed the bare
+    // integer beside a correctly rendered "209 days" until the unit travelled
+    // with it.
+    assert.equal(price.movement, AWARD.contractSumMinor - 100_000_000);
+    assert.equal(price.unit, 'MONEY');
+
+    const programme = position.items.find((item) => item.id === 'PROGRAMME')!;
+    assert.equal(programme.unit, 'DAYS');
+    assert.equal(typeof programme.movement, 'number');
 
     // Scope is deliberately not measured. A machine-generated "no difference"
     // against a scope nobody read is the most dangerous row this table carries.
     const scope = position.items.find((item) => item.id === 'SCOPE')!;
     assert.equal(scope.measurable, false);
     assert.equal(scope.movement, undefined);
+    assert.equal(scope.unit, null, 'an unmeasured line carries a unit, which implies a number that is not there');
     assert.equal(scope.owner, null);
 
     void projectId;

@@ -565,9 +565,19 @@ const RECONCILIATION_LINES: ReadonlyArray<{
   contract: string;
   /** Whether the platform can compute the difference or only ask for it. */
   measurable: boolean;
+  /**
+   * What the measured movement is counted in.
+   *
+   * Carried rather than inferred by the reader. The price line's movement is
+   * minor units and the programme line's is days, and a screen that formatted
+   * both the same way printed a £4.5M movement as the bare integer
+   * `450000000` beside a correctly rendered "209 days" — a number nobody could
+   * read, next to one they could, in the same column.
+   */
+  unit?: 'MONEY' | 'DAYS';
 }> = [
-  { id: 'PRICE', tender: 'Tender price', contract: 'Contract sum', measurable: true },
-  { id: 'PROGRAMME', tender: 'Tender programme', contract: 'Contract programme', measurable: true },
+  { id: 'PRICE', tender: 'Tender price', contract: 'Contract sum', measurable: true, unit: 'MONEY' },
+  { id: 'PROGRAMME', tender: 'Tender programme', contract: 'Contract programme', measurable: true, unit: 'DAYS' },
   { id: 'SCOPE', tender: 'Tender scope', contract: 'Contracted scope', measurable: false },
   { id: 'ASSUMPTIONS', tender: 'Tender assumptions', contract: 'Contractual obligations', measurable: false },
   { id: 'EXCLUSIONS', tender: 'Tender exclusions', contract: 'Accepted or removed exclusions', measurable: false },
@@ -613,19 +623,14 @@ function openReconciliation(
     // than as a verdict: whether a 3% difference is acceptable is a commercial
     // judgement, and a chart that called it "within tolerance" would be making
     // one on somebody's behalf.
-    let measured: { tenderSide?: string; contractSide?: string; movement?: string } = {};
+    // Numbers, not sentences. The unit travels with them and the screen
+    // formats — a domain that returned "£4.50M" would be deciding a currency,
+    // a locale and a precision on behalf of every reader of every project.
+    let measured: { tenderSide?: number; contractSide?: number; movement?: number } = {};
     if (line.id === 'PRICE') {
-      measured = {
-        tenderSide: String(tenderValue),
-        contractSide: String(contractSum),
-        movement: String(contractSum - tenderValue),
-      };
+      measured = { tenderSide: tenderValue, contractSide: contractSum, movement: contractSum - tenderValue };
     } else if (line.id === 'PROGRAMME' && tenderDays !== undefined && contractDays !== undefined) {
-      measured = {
-        tenderSide: `${tenderDays} days`,
-        contractSide: `${contractDays} days`,
-        movement: `${contractDays - tenderDays} days`,
-      };
+      measured = { tenderSide: tenderDays, contractSide: contractDays, movement: contractDays - tenderDays };
     }
 
     return {
@@ -633,6 +638,7 @@ function openReconciliation(
       tender: line.tender,
       contract: line.contract,
       measurable: line.measurable,
+      unit: line.unit ?? null,
       ...measured,
       status: 'OPEN' as const,
       owner: null,

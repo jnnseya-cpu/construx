@@ -169,7 +169,22 @@ function lifecyclePosition(project, reconciliation) {
               rows: (reconciliation.items ?? []).map((item) => [
                 item.tender,
                 item.contract,
-                item.movement ?? (item.measurable ? '—' : 'not measured'),
+                /*
+                 * Formatted by the unit the line carries, not by one rule for
+                 * the column. The price movement is minor units and the
+                 * programme movement is days; formatting both the same way
+                 * printed £4.5M as the bare integer 450000000 beside a
+                 * correctly rendered "209 days".
+                 */
+                item.movement === undefined || item.movement === null
+                  ? item.measurable
+                    ? '—'
+                    : html`<span class="metric-sub">not measured</span>`
+                  : item.unit === 'MONEY'
+                    ? money(item.movement)
+                    : item.unit === 'DAYS'
+                      ? `${item.movement} day${Math.abs(item.movement) === 1 ? '' : 's'}`
+                      : String(item.movement),
                 item.owner ?? html`<span class="metric-sub">unowned</span>`,
                 item.dueDate ?? '—',
                 badge(humanise(item.status), item.status === 'OPEN' ? 'warn' : item.status === 'DISPUTED' ? 'err' : 'ok'),
