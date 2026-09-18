@@ -278,3 +278,60 @@ describe('the visual intelligence palette', () => {
     }
   });
 });
+
+/**
+ * Every custom property the stylesheet reads is one the stylesheet defines.
+ *
+ * ## The failure this catches is silent by specification
+ *
+ * `color-mix(in srgb, var(--brand-amber) 26%, var(--panel))` where `--panel` is
+ * not a token is not a parse error. The substitution produces an invalid value,
+ * the *whole declaration* is dropped at computed-value time, and the property
+ * falls back to its initial — which for `background` is transparent. The rule
+ * is still in the stylesheet, the element still has the class, and nothing
+ * anywhere says the colour was thrown away.
+ *
+ * That is exactly what happened to the offline bar. It shipped with a
+ * background nobody could see, two screenshots were looked at without catching
+ * it, and it was found only by reading `getComputedStyle().backgroundColor` in
+ * a browser and getting `rgba(0, 0, 0, 0)` back.
+ *
+ * A misspelled token inside `color-mix` is the worst case because the fallback
+ * is invisible rather than merely wrong, but the same substitution rule applies
+ * to a plain `var()` with no fallback. So the check is over every reference.
+ *
+ * Properties read with a fallback — `var(--x, 12px)` — are allowed to be
+ * undefined, because a fallback is somebody saying so on purpose.
+ */
+describe('every custom property the stylesheet reads is one it defines', () => {
+  it('has no var() naming a token that does not exist', () => {
+    // Defined anywhere, not only in `:root`: the dark-mode blocks and the
+    // `[data-theme]` blocks redefine tokens, and a token first defined inside
+    // one of those is still defined.
+    const defined = new Set([...CSS.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1] as string));
+
+    const missing = new Map<string, number>();
+    for (const match of CSS.matchAll(/var\(\s*(--[\w-]+)\s*([,)])/g)) {
+      const name = match[1] as string;
+      // A comma means a fallback was given, which is a deliberate optional.
+      if (match[2] === ',') continue;
+      if (!defined.has(name)) missing.set(name, (missing.get(name) ?? 0) + 1);
+    }
+
+    assert.deepEqual(
+      [...missing.entries()].map(([name, count]) => `${name} is read ${count} time(s) and never defined`),
+      [],
+      '\nAn undefined custom property makes its whole declaration invalid at computed-value time, ' +
+        'so the property silently falls back to its initial value — transparent, for a background.\n',
+    );
+  });
+
+  it('reads at least the tokens this file already checks, so the scan is working', () => {
+    // A regex that matched nothing would pass the assertion above for ever.
+    const read = new Set([...CSS.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1] as string));
+    for (const name of ['--text', '--brand-blue', '--brand-amber', '--line']) {
+      assert.ok(read.has(name), `the scan did not find ${name}, which the stylesheet certainly reads`);
+    }
+    assert.ok(read.size > 30, `only ${read.size} custom properties read — the scan stopped reading app.css`);
+  });
+});

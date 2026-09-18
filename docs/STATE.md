@@ -22711,3 +22711,32 @@ approved anything, and no test, comment or commit can substitute for one.
 The register also fails when a new chart type is added to the kit without being
 added to it — an uncovered chart is one that can ship with no empty state, no
 tooltip and no export.
+
+### A stylesheet reference to a token that does not exist
+
+Found by reading `getComputedStyle().backgroundColor` on the new offline bar in
+a browser and getting `rgba(0, 0, 0, 0)` back. The rule named `var(--panel)`,
+which is not a token on this platform.
+
+**This failure is silent by specification.** An undefined custom property inside
+`color-mix()` produces an invalid value, the *whole declaration* is dropped at
+computed-value time, and the property falls back to its initial — transparent,
+for a background. The rule is still in the stylesheet, the element still carries
+the class, and nothing anywhere says the colour was thrown away. Two screenshots
+had already been looked at without catching it.
+
+`palette.test.ts` now scans every `var()` in `app.css` against every token the
+file defines, ignoring the ones given a fallback because a fallback is somebody
+saying so on purpose. It immediately found two more, both pre-existing:
+
+- **`--text-1`, read three times and never defined.** Meant `--text`. The
+  consequences were a Gantt's driving-activity labels emphasised in weight but
+  not in colour, and a citation link whose hover state did not change colour.
+- **`--core`, read twice and never defined.** Meant `--core-black`. Every form
+  input and the AI cost quote were losing their intended deep surface and
+  rendering transparent against whatever was behind them.
+
+All five now name the token they meant. The tint itself was also wrong once
+fixed — 16% of a signal colour over a near-black surface is a background nobody
+can tell from the page — so the bar is 26% with a 4px rule of the full colour
+down its left edge, measured at 8.0:1 for its text.

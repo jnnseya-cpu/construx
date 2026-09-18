@@ -46,6 +46,16 @@ import * as outbox from './outbox.js';
 
 const BAR_ID = 'offline-bar';
 
+/**
+ * Whether this session has actually been out of signal.
+ *
+ * So "back in signal" is said only to somebody who lost it. A handset that
+ * queued a record while online never went offline, and greeting them with a
+ * recovery they did not have is the kind of small untruth that makes the next
+ * sentence less believed.
+ */
+let wasOffline = false;
+
 /** How many operations and files this device is still holding. */
 async function waiting() {
   const [operations, files] = await Promise.all([
@@ -76,7 +86,7 @@ function sentence(online, held) {
   // Online with a queue is the interesting case: the flush is either running or
   // has failed, and either way the operative should not be told "synced".
   return parts.length > 0
-    ? `${parts.join(' · ')}. Sending now — nothing is lost if this device goes offline again before it finishes.`
+    ? `${parts.join(' · ')}. Filing now — nothing is lost if this device goes offline again before it finishes.`
     : '';
 }
 
@@ -103,7 +113,11 @@ async function paint() {
   bar.textContent = '';
 
   const strong = document.createElement('b');
-  strong.textContent = online ? 'Back in signal.' : 'This device is offline.';
+  // "Back in signal" only when it was out of it. A handset that queued a record
+  // while online never lost signal, and telling somebody it came back is the
+  // kind of small untruth that makes the next sentence less believed.
+  strong.textContent = online ? (wasOffline ? 'Back in signal.' : 'Not yet filed.') : 'This device is offline.';
+  wasOffline = !online;
   bar.append(strong, ` ${text}`);
 }
 
