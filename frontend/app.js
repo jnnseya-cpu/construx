@@ -595,7 +595,24 @@ export function navigate(page, params = []) {
   // Every route but Security's is refused for this session, and a screen that
   // asks anyway paints its whole complement of refusals before the guard in
   // `api.js` can bounce it. Sent to the one place it can act instead.
-  if (heldToEnrolment && page !== 'security') page = 'security';
+  //
+  // **And told why.** The redirect itself was silent: an operator pressed
+  // "Tenants & Users", landed on Security, and reported that the screen they
+  // wanted was not there — which is exactly what it looks like from the
+  // outside. Security does say the session can do nothing else until a second
+  // factor is enrolled, but somebody who did not ask to be on Security reads
+  // that as a page about Security rather than as the answer to what they
+  // pressed. Naming the screen they asked for is what connects the two.
+  if (heldToEnrolment && page !== 'security') {
+    const wanted = navigation().flatMap((section) => section.items).find((item) => item.id === page);
+    toast(
+      `${wanted?.label ?? 'That screen'} needs a second factor first`,
+      'This account is protected by an emailed code alone, and your organisation requires an authenticator app. ' +
+        'Enrol one below and everything this account may do opens at once — it takes about a minute.',
+      'warn',
+    );
+    page = 'security';
+  }
   const path = ['/app', page, ...params].join('/').replace(/\/+$/, '');
   history.pushState({}, '', path);
   void draw();

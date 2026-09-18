@@ -1208,8 +1208,9 @@ export async function tenants(root) {
           '"grant free of charge" and no monthly charge is raised at renewal. The reason is required and is recorded ' +
           'as evidence, because a free package handed to a named company with no stated basis is indistinguishable ' +
           'from a mistake when somebody reviews the discount list a year later. ' +
-          'This does not credit the wallet and never will: the package is what they may do, the wallet is money they ' +
-          'have put in to spend on AI, and this tenancy still tops up its own account before an engine will run.',
+          'A free package means free AI with it: nothing is taken from this tenancy\'s wallet for an engine run while ' +
+          'the grant is in force. The providers are still paid and what they cost stays on the record, borne by this ' +
+          'platform and reported as absorbed on the estate view. Both halves end on the same date.',
         path: `/v1/admin/tenants/${tenantId}/package`,
         submitLabel: 'Move package',
         fields: [
@@ -1255,7 +1256,7 @@ export async function tenants(root) {
           `${tenant?.legalName ?? 'Tenancy'} — ${result.package}`,
           `${result.grantedFree ? `Granted free of charge${result.grantedFreeUntil ? ` until ${String(result.grantedFreeUntil).slice(0, 10)}` : ' with no end date'}${result.status === 'ACTIVE' ? ', open' : ''}. ` : `${money(result.monthlyPriceMinor)} a month. `}` +
             `${result.includedSeats === null ? 'Unlimited' : result.includedSeats} seats, ${result.storageGb} GB. ` +
-            'The wallet is untouched — this tenancy still funds its own AI spend.',
+            `${result.grantedFree ? 'AI is not charged either while the grant runs.' : 'AI is bought separately — this tenancy funds its own spend.'}`,
           'ok',
         );
         await again();

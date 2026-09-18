@@ -24127,3 +24127,38 @@ stayed quiet because a positive number is a positive number. There is no default
 now: unset reads as zero, the boot check names it, `convertToBillingMinor`
 refuses, and the screen says "not set" with what to do about it. A rate nobody
 chose must not credit a wallet.
+
+### The operator could not reach the screen they were sent to
+
+Reported as *"I cannot see these"* against a route given as Tenancies → the
+group → Exempt from charges. Three things were in the way, and only one of them
+was a defect.
+
+**The nav item is "Tenants & Users"**, under Customers, and it is operator-only
+(`PLATFORM_ADMINISTRATION`). An enterprise administrator does not have it and
+should not: `/v1/admin/groups/:groupId/exempt` is `operatorOnly`, because a
+company granting itself free service is self-dealing.
+
+**An operator without a second factor is held on Security.** That is deliberate
+and stays — an account that can exempt any tenancy on the estate from charging,
+protected by a code sent to an inbox, is the account worth taking. What was
+wrong is that the redirect was **silent**. Somebody pressed "Tenants & Users",
+landed on Security, and correctly reported that the screen they wanted was not
+there. Security does say the session can do nothing else until an authenticator
+is enrolled, but a person who did not ask to be on Security reads that as a page
+about Security rather than as the answer to what they pressed. `navigate` now
+names the screen that was asked for and why it was withheld, then sends them to
+the one place they can act.
+
+**And the group-level exemption needs a group.** The "Exempt from charges"
+button is rendered per group, so a customer whose companies are separate
+tenancies rather than a registered group has no such button anywhere — the
+Groups card reads "No group yet" and there is nothing to press. The per-tenancy
+door does the same job one company at a time: **Tenants & Users → the tenancy →
+Package**, with "Grant free of charge", "Free until" and a required reason.
+Both write the same subscription grant, and both now carry the AI with it.
+
+Verified in a browser against a running process as the operator, past the MFA
+gate: the Package door opens with `package`, `grantFree`, `grantFreeUntil` and
+`reason`, and its copy no longer claims the wallet is untouched — which it
+asserted until this commit, and which the free-AI change had made false.
