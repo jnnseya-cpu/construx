@@ -194,7 +194,20 @@ export function landing(): string {
 
         The emphasis is now typographic, which is what typography is for.
       -->
-      <h1>The record of how your asset came to exist.</h1>
+      <!--
+        The headline sells the loss, not the artefact.
+
+        It used to read "The record of how your asset came to exist." Every
+        other line on this page is sharper than that was, and it is the first
+        thing anybody reads: a record is an artefact, an artefact is a cost
+        centre, and nobody has ever lain awake worrying about their audit trail.
+
+        What they lie awake about is finding out late. The lede underneath
+        already names three specific ways that costs money, so the headline's
+        job is to make the reader recognise the pattern before they get there.
+        Two short sentences, because the gap between them is the product.
+      -->
+      <h1>You find out in month nine.<br>It started in month five.</h1>
       <p class="lede">
         A missed pay less notice makes the application payable in full. An extension of time you cannot substantiate is
         an extension you do not get. Margin erodes in the four weeks between the thing happening and the review that

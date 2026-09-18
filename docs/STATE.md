@@ -23043,3 +23043,21 @@ foundation — and part of increment 2. Still open, and none of it is claimed:
 - **§3.1 / FR-009 workstreams.** One primary stage, no concurrent workstreams.
 - **§7 the remaining five baselines**, §10 `project_relationship` and child
   projects, §11's outbox and event envelope, §13.2 step-up authentication.
+
+### The landing page headline sold the artefact
+
+`The record of how your asset came to exist.` was the first thing every visitor
+read, and it was the weakest line on the page — every sentence below it was
+sharper. A record is an artefact, an artefact is a cost centre, and nobody has
+ever lain awake worrying about their audit trail.
+
+What they lie awake about is finding out late, which is what the lede underneath
+already said in three specific ways: a missed pay less notice, an extension of
+time nobody can substantiate, margin eroding in the four weeks before the review
+finds it. The headline's job is to make a reader recognise the pattern before
+they reach the detail, so it is now **"You find out in month nine. It started in
+month five."** — two short sentences, because the gap between them is the
+product.
+
+Measured at 1500px and 390px: no horizontal overflow at either, and the
+sentences break where the `<br>` puts them rather than wherever the column ends.
