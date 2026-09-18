@@ -6,10 +6,12 @@ import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import * as stages from '../lifecycle/stages.ts';
 import {
+  assertStartingPhase,
   assertTransitionAllowed,
   evaluatePhaseGate,
   LIFECYCLE_ORDER,
   nextPhase,
+  phaseIndex,
   type GateEvaluation,
   type LifecyclePhase,
 } from '../lifecycle/phases.ts';
@@ -217,6 +219,31 @@ export function createProject(
      * to the decision to chase the job at all.
      */
     originOpportunityId?: string;
+    /**
+     * The lifecycle phase this project opens at. `CONCEPT` unless said
+     * otherwise, which is where an asset's own life starts.
+     *
+     * A business joins an asset's lifecycle wherever its involvement begins. A
+     * contractor pricing somebody else's design opens at `TENDER`; an operator
+     * taking over a finished building opens at `OPERATIONS`. Forcing either to
+     * start at `CONCEPT` means inventing a scope package and a design maturity
+     * assessment whose only purpose is to clear a gate — the platform teaching
+     * people to put fabricated records into the Golden Thread on day one.
+     */
+    startingPhase?: LifecyclePhase;
+    /**
+     * Why it starts there. Required for anything past `CONCEPT`, because the
+     * gates in front of it were never evaluated here and the reason is the only
+     * thing that tells a reader that from a mis-selected dropdown.
+     */
+    startingPhaseReason?: string;
+    /**
+     * The tender project this one was won from, where it was.
+     *
+     * Set by `awardTender` rather than by a caller: it is the link that lets
+     * the delivery job's contract be read against the bid that priced it.
+     */
+    originProjectId?: string;
   },
 ): { projectId: string; phase: LifecyclePhase } {
   authorise(ctx, 'PROJECT_SETUP', 'C');
@@ -273,6 +300,12 @@ export function createProject(
     );
   }
 
+  // Where this project joins the lifecycle, and what that means it skipped.
+  // Refused without a reason for anything past CONCEPT — see `phases.ts`.
+  const startingPhase = input.startingPhase ?? 'CONCEPT';
+  const { skipped } = assertStartingPhase(startingPhase, input.startingPhaseReason);
+  const openedAt = new Date().toISOString();
+
   const projectId = input.projectId ?? ulid();
   write(ctx, {
     projectId,
@@ -292,12 +325,35 @@ export function createProject(
       plannedStart: input.plannedStart,
       plannedCompletion: input.plannedCompletion,
       originOpportunityId: input.originOpportunityId,
-      // Every project starts at the beginning of the lifecycle and moves
-      // forward only through governed gates.
-      phase: 'CONCEPT',
-      phaseHistory: [{ phase: 'CONCEPT', enteredAt: new Date().toISOString(), by: ctx.auth.actorId }],
+      originProjectId: input.originProjectId,
+      // Where the project joins the lifecycle. Past the first phase it moves
+      // forward only through governed gates — what changed is where it starts,
+      // not how it advances.
+      phase: startingPhase,
+      /**
+       * The phases this project never entered, and the reason it did not.
+       *
+       * Recorded as state rather than left to be inferred from a short
+       * `phaseHistory`, because the inference is the thing that goes wrong. A
+       * project in CONSTRUCTION whose history holds one entry could have
+       * started there or could be missing its earlier records, and those are
+       * opposite readings. Named, they are one reading.
+       */
+      startedAtPhase: startingPhase,
+      phasesNotTraversed: skipped,
+      startingPhaseReason: input.startingPhaseReason,
+      phaseHistory: [
+        {
+          phase: startingPhase,
+          enteredAt: openedAt,
+          by: ctx.auth.actorId,
+          ...(skipped.length > 0
+            ? { openedHere: true, notTraversed: skipped, reason: input.startingPhaseReason }
+            : {}),
+        },
+      ],
       status: 'ACTIVE',
-      createdAt: new Date().toISOString(),
+      createdAt: openedAt,
     },
   });
 
@@ -313,10 +369,706 @@ export function createProject(
   // stage against that one.
   stages.openStage(
     { ...ctx, projectId },
-    { phase: 'CONCEPT', reason: `Project created: ${input.name}` },
+    {
+      phase: startingPhase,
+      reason:
+        skipped.length === 0
+          ? `Project created: ${input.name}`
+          : `Project created at ${startingPhase}, not traversing ${skipped.join(', ')}: ${input.startingPhaseReason}`,
+    },
   );
 
-  return { projectId, phase: 'CONCEPT' };
+  return { projectId, phase: startingPhase };
+}
+
+// --------------------------------------------- the tender outcome gate
+
+/**
+ * How a tender ends.
+ *
+ * Six outcomes, because a bid register with two states is a register that
+ * cannot be read. "Won" and "lost" leave everything genuinely in between —
+ * still negotiating, on hold, withdrawn, sitting on a framework awaiting a
+ * call-off — indistinguishable from "still being priced", and a business
+ * looking at its pipeline then cannot tell live work from dead paper.
+ */
+export type TenderOutcome =
+  | 'WON'
+  | 'LOST'
+  | 'WITHDRAWN'
+  | 'ON_HOLD'
+  | 'NEGOTIATION'
+  | 'FRAMEWORK_APPOINTMENT';
+
+/** What each outcome means for the project, and whether it is the end of it. */
+export const TENDER_OUTCOMES: Record<
+  TenderOutcome,
+  { label: string; closes: boolean; converts: boolean; needs: string }
+> = {
+  WON: {
+    label: 'Won',
+    closes: false,
+    converts: true,
+    needs: 'The award information, captured at the conversion gate.',
+  },
+  LOST: {
+    label: 'Lost',
+    closes: true,
+    converts: false,
+    needs: 'Why it was not won, long enough for an estimating review to learn from.',
+  },
+  WITHDRAWN: {
+    label: 'Withdrawn',
+    closes: true,
+    converts: false,
+    needs: 'Why the bid was pulled, and who approved pulling it.',
+  },
+  ON_HOLD: {
+    label: 'On hold',
+    closes: false,
+    converts: false,
+    needs: 'What the bid is waiting on. Workflows suspend; the state is preserved exactly.',
+  },
+  NEGOTIATION: {
+    label: 'In negotiation',
+    closes: false,
+    converts: false,
+    needs: 'What is being negotiated. The tender workspace stays open.',
+  },
+  FRAMEWORK_APPOINTMENT: {
+    label: 'Framework appointment',
+    closes: false,
+    converts: false,
+    needs: 'The framework appointed to. Call-offs become child projects of this one.',
+  },
+};
+
+/**
+ * Record how the tender ended, without converting anything.
+ *
+ * Every outcome except `WON` comes through here. Winning is a different act
+ * with a different gate — `convertToDelivery` — because it changes what the
+ * project *is*, and an award buried in a dropdown beside "on hold" would be a
+ * contract award nobody reviewed.
+ *
+ * An outcome is not final. A bid `ON_HOLD` becomes `NEGOTIATION` becomes `WON`,
+ * and each is a recorded act with its own reason; what is refused is recording
+ * an outcome on a project that has already been converted, because the bid is
+ * then over.
+ */
+export function recordTenderOutcome(
+  ctx: EngineContext,
+  input: {
+    outcome: Exclude<TenderOutcome, 'WON'>;
+    reason: string;
+    /** Who won it, where it is known and the outcome is a loss. */
+    wonBy?: string;
+    winningValueMinor?: number;
+    /** The framework appointed to, where that is the outcome. */
+    frameworkReference?: string;
+    evidenceHash?: string;
+  },
+): { projectId: string; outcome: TenderOutcome } {
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const phase = project.state.phase as LifecyclePhase;
+
+  if (project.state.commercialStatus === 'AWARDED') {
+    throw new DomainError(
+      'TENDER_ALREADY_CONVERTED',
+      'This project has been converted to delivery. Its tender is over, and a tender outcome recorded now would ' +
+        'contradict the contract it is being built under.',
+      409,
+    );
+  }
+  if (phase !== 'TENDER') {
+    throw new DomainError(
+      'PROJECT_NOT_AT_TENDER',
+      `A tender outcome is recorded from TENDER and this project is at ${phase}.`,
+      409,
+    );
+  }
+  if (input.reason.trim().length < 10) {
+    throw new DomainError(
+      'OUTCOME_REASON_REQUIRED',
+      `Say why: ${TENDER_OUTCOMES[input.outcome].needs}`,
+      422,
+      [{ field: 'reason', message: 'Required, and long enough to be read' }],
+    );
+  }
+
+  const evidence = registerEvidence(ctx, {
+    type: 'TENDER_OUTCOME',
+    hash: input.evidenceHash ?? hashEvidence(JSON.stringify({ project: ctx.projectId, outcome: input.outcome, reason: input.reason })),
+    description: `${String(project.state.name)} — ${TENDER_OUTCOMES[input.outcome].label}: ${input.reason.slice(0, 80)}`,
+  });
+
+  const history = (project.state.outcomeHistory as Array<Record<string, unknown>>) ?? [];
+  const now = new Date().toISOString();
+
+  write(ctx, {
+    eventType: 'TENDER_OUTCOME_RECORDED',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: {
+      ...project.state,
+      tenderOutcome: input.outcome,
+      outcomeAt: now,
+      outcomeBy: ctx.auth.actorId,
+      outcomeReason: input.reason,
+      lostTo: input.wonBy,
+      winningValueMinor: input.winningValueMinor,
+      frameworkReference: input.frameworkReference,
+      /*
+       * Every outcome this bid has had, in order.
+       *
+       * A bid that went on hold in March, back into negotiation in May and was
+       * lost in July has a story, and a single overwritten field tells none of
+       * it. The estimating review that asks "how long were we carrying this"
+       * reads the list.
+       */
+      outcomeHistory: [
+        ...history,
+        { outcome: input.outcome, at: now, by: ctx.auth.actorId, reason: input.reason },
+      ],
+      // Closed outcomes stop the project being live work. The others leave it
+      // exactly where it was, which is the point of having six.
+      status: TENDER_OUTCOMES[input.outcome].closes ? input.outcome : project.state.status,
+      commercialStatus: TENDER_OUTCOMES[input.outcome].closes ? 'CLOSED' : 'PRE_AWARD',
+    },
+    evidenceRefs: [evidence],
+  });
+
+  return { projectId: ctx.projectId, outcome: input.outcome };
+}
+
+
+/**
+ * The ten comparisons between what was tendered and what was contracted.
+ *
+ * A fixed table rather than a free list, for the reason every fixed table on
+ * this platform exists: a reconciliation that quietly grew or lost a line
+ * between two projects cannot be compared across them, and "we reconciled the
+ * award" would mean something different each time.
+ *
+ * Each becomes an item with an owner, a due date, a status and an approval. The
+ * platform fills in the two it can measure — price and programme, because it
+ * holds both numbers — and opens the rest as questions somebody has to answer.
+ * **It does not pretend to have compared scope.** Comparing a tendered scope
+ * with a contracted one is a reading of two documents, and a machine-generated
+ * "no difference" against a scope nobody read is the single most dangerous row
+ * this table could carry.
+ */
+const RECONCILIATION_LINES: ReadonlyArray<{
+  id: string;
+  tender: string;
+  contract: string;
+  /** Whether the platform can compute the difference or only ask for it. */
+  measurable: boolean;
+}> = [
+  { id: 'PRICE', tender: 'Tender price', contract: 'Contract sum', measurable: true },
+  { id: 'PROGRAMME', tender: 'Tender programme', contract: 'Contract programme', measurable: true },
+  { id: 'SCOPE', tender: 'Tender scope', contract: 'Contracted scope', measurable: false },
+  { id: 'ASSUMPTIONS', tender: 'Tender assumptions', contract: 'Contractual obligations', measurable: false },
+  { id: 'EXCLUSIONS', tender: 'Tender exclusions', contract: 'Accepted or removed exclusions', measurable: false },
+  { id: 'RISKS', tender: 'Tender risks', contract: 'Transferred, retained or closed risks', measurable: false },
+  { id: 'DESIGN', tender: 'Tender design', contract: 'Contract design requirements', measurable: false },
+  { id: 'RESOURCES', tender: 'Proposed resources', contract: 'Approved mobilisation resources', measurable: false },
+  { id: 'CASHFLOW', tender: 'Tender cashflow', contract: 'Contract cashflow', measurable: false },
+  { id: 'PROCUREMENT', tender: 'Supplier quotations', contract: 'Award-ready procurement packages', measurable: false },
+];
+
+/** Days from award before a reconciliation item is overdue. */
+const RECONCILIATION_DUE_DAYS = 28;
+
+/**
+ * Open the reconciliation.
+ *
+ * Every line starts `OPEN` and unowned. An item the platform assigned to
+ * somebody who has not agreed to it is an item nobody does, and a due date it
+ * invented is a date nobody meets — so the due date is a default a person can
+ * move and the owner is a blank a person fills.
+ */
+function openReconciliation(
+  ctx: EngineContext,
+  input: {
+    tenderBaselineId: string;
+    awardBaselineId: string;
+    project: Record<string, unknown>;
+    award: AwardParticulars;
+    at: string;
+  },
+): string {
+  const reconciliationId = ulid();
+  const due = new Date(Date.parse(input.at) + RECONCILIATION_DUE_DAYS * 86_400_000).toISOString().slice(0, 10);
+
+  const tenderValue = Number(input.project.contractValueMinor ?? 0);
+  const contractSum = Number(input.award.contractSumMinor ?? 0);
+
+  const tenderDays = daysBetween(String(input.project.plannedStart ?? ''), String(input.project.plannedCompletion ?? ''));
+  const contractDays = daysBetween(input.award.contractStartDate, input.award.contractCompletionDate);
+
+  const items = RECONCILIATION_LINES.map((line) => {
+    // The two the platform holds both sides of. Stated as a movement rather
+    // than as a verdict: whether a 3% difference is acceptable is a commercial
+    // judgement, and a chart that called it "within tolerance" would be making
+    // one on somebody's behalf.
+    let measured: { tenderSide?: string; contractSide?: string; movement?: string } = {};
+    if (line.id === 'PRICE') {
+      measured = {
+        tenderSide: String(tenderValue),
+        contractSide: String(contractSum),
+        movement: String(contractSum - tenderValue),
+      };
+    } else if (line.id === 'PROGRAMME' && tenderDays !== undefined && contractDays !== undefined) {
+      measured = {
+        tenderSide: `${tenderDays} days`,
+        contractSide: `${contractDays} days`,
+        movement: `${contractDays - tenderDays} days`,
+      };
+    }
+
+    return {
+      id: line.id,
+      tender: line.tender,
+      contract: line.contract,
+      measurable: line.measurable,
+      ...measured,
+      status: 'OPEN' as const,
+      owner: null,
+      dueDate: due,
+      note: null,
+      approvedBy: null,
+      approvedAt: null,
+    };
+  });
+
+  write(ctx, {
+    eventType: 'RECONCILIATION_OPENED',
+    entity: { refType: 'AwardReconciliation', refId: reconciliationId },
+    nextState: {
+      id: reconciliationId,
+      projectId: ctx.projectId,
+      tenderBaselineId: input.tenderBaselineId,
+      awardBaselineId: input.awardBaselineId,
+      openedAt: input.at,
+      openedBy: ctx.auth.actorId,
+      items,
+    },
+  });
+
+  return reconciliationId;
+}
+
+/** Whole days between two ISO dates, or undefined where either is not one. */
+function daysBetween(from: string, to: string): number | undefined {
+  const a = Date.parse(from);
+  const b = Date.parse(to);
+  if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Settle one reconciliation line.
+ *
+ * Four things move together — the status, the owner, the note and the approval
+ * — because a line marked `AGREED` with nobody's name against it is a line that
+ * will be asked about and cannot be answered. Closing one requires a note: the
+ * whole value of this table is in the sentence explaining what the difference
+ * turned out to be.
+ */
+export function settleReconciliationItem(
+  ctx: EngineContext,
+  input: {
+    reconciliationId: string;
+    itemId: string;
+    status: 'OPEN' | 'IN_PROGRESS' | 'AGREED' | 'ACCEPTED_AS_RISK' | 'DISPUTED';
+    owner?: string;
+    dueDate?: string;
+    note?: string;
+  },
+): { reconciliationId: string; itemId: string; status: string } {
+  authorise(ctx, 'PROJECT_SETUP', 'U');
+
+  const record = ctx.ledger.require({ refType: 'AwardReconciliation', refId: input.reconciliationId });
+  const items = (record.state.items as Array<Record<string, unknown>>) ?? [];
+  const item = items.find((entry) => entry.id === input.itemId);
+  if (!item) {
+    throw new DomainError('RECONCILIATION_ITEM_UNKNOWN', `No reconciliation line "${input.itemId}" on this award`, 404);
+  }
+
+  const closing = input.status === 'AGREED' || input.status === 'ACCEPTED_AS_RISK' || input.status === 'DISPUTED';
+  if (closing && !(input.note ?? '').trim()) {
+    throw new DomainError(
+      'RECONCILIATION_NOTE_REQUIRED',
+      `Closing "${String(item.tender)} against ${String(item.contract)}" needs the sentence saying what the ` +
+        'difference turned out to be. That sentence is the whole value of this table.',
+      422,
+      [{ field: 'note', message: 'Required when settling a line' }],
+    );
+  }
+
+  const now = new Date().toISOString();
+
+  write(ctx, {
+    eventType: 'RECONCILIATION_ITEM_SETTLED',
+    entity: { refType: 'AwardReconciliation', refId: input.reconciliationId },
+    nextState: {
+      ...record.state,
+      items: items.map((entry) =>
+        entry.id === input.itemId
+          ? {
+              ...entry,
+              status: input.status,
+              owner: input.owner ?? entry.owner,
+              dueDate: input.dueDate ?? entry.dueDate,
+              note: input.note ?? entry.note,
+              // Stamped only on a close. An "approved" date on an open line is
+              // the field that makes a register look finished.
+              approvedBy: closing ? ctx.auth.actorId : null,
+              approvedAt: closing ? now : null,
+            }
+          : entry,
+      ),
+    },
+  });
+
+  return { reconciliationId: input.reconciliationId, itemId: input.itemId, status: input.status };
+}
+
+/**
+ * The award reconciliation as a position, with what is overdue named.
+ *
+ * Percentage complete is over closed lines, and the two the platform measured
+ * are **not** counted as closed — it computed a movement, which is the input to
+ * the judgement rather than the judgement. A reconciliation that reported 20%
+ * complete the moment it opened would be reporting its own arithmetic as work.
+ */
+export function awardReconciliation(
+  ctx: EngineContext,
+  asAt = new Date().toISOString().slice(0, 10),
+): {
+  reconciliationId?: string;
+  items: Array<Record<string, unknown>>;
+  openCount: number;
+  overdue: Array<Record<string, unknown>>;
+  completePercent: number | null;
+  summary: string;
+} | null {
+  authorise(ctx, 'PROJECT_SETUP', 'R');
+
+  const record = ctx.ledger.list(ctx.projectId, 'AwardReconciliation').at(-1);
+  if (!record) return null;
+
+  const items = (record.state.items as Array<Record<string, unknown>>) ?? [];
+  const closed = items.filter((item) => item.status !== 'OPEN' && item.status !== 'IN_PROGRESS');
+  const open = items.filter((item) => item.status === 'OPEN' || item.status === 'IN_PROGRESS');
+  const overdue = open.filter((item) => String(item.dueDate ?? '') < asAt);
+
+  return {
+    reconciliationId: record.refId,
+    items,
+    openCount: open.length,
+    overdue,
+    completePercent: items.length === 0 ? null : Math.round((closed.length / items.length) * 1000) / 10,
+    summary:
+      `${closed.length} of ${items.length} lines settled` +
+      (overdue.length > 0 ? `, ${overdue.length} past its date` : '') +
+      '.',
+  };
+}
+
+
+// ------------------------------------------- converting a bid into the job
+
+/**
+ * The delivery stage a converted project opens at.
+ *
+ * `DESIGN` for a contractor who has design responsibility and has to develop
+ * what they priced; `CONSTRUCTION` where the design is complete and novated and
+ * the job starts on site. Both are ordinary, and which one it is changes what
+ * the project's next gate is — so it is asked rather than assumed.
+ */
+export type DeliveryEntry = 'DESIGN' | 'CONSTRUCTION';
+
+/**
+ * What the awarded contract says, captured at the gate.
+ *
+ * Not a copy of the tender. Every one of these is a term somebody agreed, and
+ * the gap between them and what was priced is the reconciliation this project
+ * spends its first month closing.
+ */
+export type AwardParticulars = {
+  contractAwardDate: string;
+  contractSumMinor: number;
+  contractForm: string;
+  /** Amendments to the standard form. The Z-clauses are where the risk moved. */
+  amendments?: string;
+  contractedScope: string;
+  employersRequirements?: string;
+  contractorsProposals?: string;
+  /** Qualifications and exclusions that survived into the contract. */
+  acceptedExclusions?: string[];
+  /** Ones the client struck out, which are now this business's risk. */
+  removedExclusions?: string[];
+  contractStartDate: string;
+  contractCompletionDate: string;
+  paymentTermsDays?: number;
+  retentionPercent?: number;
+  liquidatedDamagesPerDayMinor?: number;
+  bondsAndGuarantees?: string;
+  insurances?: string;
+  designResponsibility?: string;
+  novationArrangements?: string;
+  mobilisationDate?: string;
+  noticeToProceedDate?: string;
+  planningConditions?: string[];
+  regulatoryObligations?: string[];
+  contractParties?: Array<{ role: string; name: string }>;
+  keySubcontractors?: string[];
+};
+
+/**
+ * Contract award: the same project becomes the job.
+ *
+ * ## One project identity, start to finish
+ *
+ * The project id, reference, enterprise ownership, client record, evidence
+ * vault, Golden Thread and audit history are created once, at tender
+ * registration, and **never change**. A won bid does not become a second
+ * project; it changes its lifecycle status.
+ *
+ * This was built the other way first — award created a successor project and
+ * linked the two — and it was wrong. Two records for one job means the Golden
+ * Thread has a seam in it exactly where the most-argued question lives: a
+ * variation in year three has to trace back through a join to the tender
+ * assumption that priced it, and a join is a thing that breaks. It also meant
+ * re-entering information the platform already held, which is the failure the
+ * platform exists to remove.
+ *
+ * ## The tender record becomes immutable, not invisible
+ *
+ * At conversion the tender position is frozen as a named baseline. The ledger is
+ * append-only so nothing could have been rewritten anyway, but a baseline is the
+ * difference between "the records are still there somewhere" and "this is what
+ * we tendered, as one thing, and here is what we contracted". Everything after
+ * award is measured against it.
+ *
+ * ## Which delivery stage it opens at
+ *
+ * `DESIGN` or `CONSTRUCTION`, chosen by the person converting. A contractor with
+ * design responsibility develops what they priced; one taking a novated design
+ * starts on site.
+ *
+ * `DESIGN` is *earlier* in this lifecycle than `TENDER`, because the lifecycle
+ * order is the asset's and the asset's order is the client's: design it, then
+ * tender it. The contractor's order is the reverse. That is why this is a
+ * `CONVERSION` rather than a regression — the project has not gone back a stage,
+ * it has started delivering — and why `entryStage` is kept beside `phase`
+ * permanently, so the screen can say "entered at Tender, currently in Design"
+ * rather than implying the project slipped.
+ */
+export function convertToDelivery(
+  ctx: EngineContext,
+  input: {
+    award: AwardParticulars;
+    deliveryEntry: DeliveryEntry;
+    /** Why this is being converted now, and on whose authority. */
+    justification: string;
+    evidenceHash?: string;
+  },
+): {
+  projectId: string;
+  entryStage: LifecyclePhase;
+  phase: LifecyclePhase;
+  reconciliationId: string;
+  tenderBaselineId: string;
+} {
+  /*
+   * `A` on PROJECT_SETUP — an approval, not a create.
+   *
+   * The specification asks for an Enterprise Administrator or an authorised
+   * bid/commercial director, and that is what this grant already means on this
+   * platform: `roles.ts` gives `PROJECT_SETUP:A` to the administrator and the
+   * commercial authority and to nobody else. A second role check written here
+   * would be a second permission model, and the first thing to drift.
+   */
+  authorise(ctx, 'PROJECT_SETUP', 'A');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const from = project.state.phase as LifecyclePhase;
+
+  if (project.state.commercialStatus === 'AWARDED') {
+    throw new DomainError(
+      'ALREADY_CONVERTED',
+      `This project was converted to delivery on ${String(project.state.awardedAt ?? '').slice(0, 10)}. ` +
+        'A second award on one project is a supplemental agreement, which is a contract record rather than a conversion.',
+      409,
+    );
+  }
+  if (from !== 'TENDER') {
+    throw new DomainError(
+      'PROJECT_NOT_AT_TENDER',
+      `A contract award converts a project at TENDER and this one is at ${from}.` +
+        (phaseIndex(from) > phaseIndex('TENDER') ? ' This project is already in delivery.' : ''),
+      409,
+    );
+  }
+  if (input.justification.trim().length < 10) {
+    throw new DomainError('CONVERSION_UNJUSTIFIED', 'Say what is being awarded and on whose authority.', 422, [
+      { field: 'justification', message: 'Required, and long enough to be read' },
+    ]);
+  }
+
+  assertOrder(input.award.contractStartDate, input.award.contractCompletionDate, 'contractStartDate', 'contractCompletionDate');
+
+  const now = new Date().toISOString();
+
+  /*
+   * The tender position, frozen as one thing.
+   *
+   * Read from the project's own records rather than taken from the caller: a
+   * baseline somebody typed is a baseline that says whatever they wanted it to.
+   * The estimate is the frozen one if there is one — an unfrozen estimate is a
+   * working figure and freezing it here would stamp a number nobody signed.
+   */
+  const frozenEstimate = ctx.ledger
+    .list(ctx.projectId, 'Estimate')
+    .filter((record) => record.state.status === 'FROZEN')
+    .at(-1);
+
+  const tenderBaselineId = ulid();
+  const tenderBaseline = {
+    id: tenderBaselineId,
+    projectId: ctx.projectId,
+    kind: 'TENDER' as const,
+    frozenAt: now,
+    frozenBy: ctx.auth.actorId,
+    reason: 'Frozen at contract award. Everything after this is measured against it.',
+    tenderValueMinor: Number(project.state.contractValueMinor ?? 0),
+    estimateId: frozenEstimate?.refId,
+    estimateTotalMinor: frozenEstimate ? Number(frozenEstimate.state.totalMinor ?? 0) : undefined,
+    plannedStart: project.state.plannedStart,
+    plannedCompletion: project.state.plannedCompletion,
+    // What the ledger held at the moment of award, by type and count. Not the
+    // records themselves — they are in the chain and unchanged — but the shape
+    // of what was there, so a later reader can tell whether something appeared
+    // before or after award without walking every event.
+    heldAtAward: Object.fromEntries(
+      ['Estimate', 'RFQ', 'SupplierSubmission', 'RiskRegisterItem', 'ScopePackage', 'Drawing', 'BoQItem'].map((refType) => [
+        refType,
+        ctx.ledger.list(ctx.projectId, refType).length,
+      ]),
+    ),
+  };
+
+  const baselineEvidence = registerEvidence(ctx, {
+    type: 'TENDER_BASELINE',
+    hash: hashEvidence(JSON.stringify(tenderBaseline)),
+    description: `Tender baseline frozen at award of ${String(project.state.name)}`,
+  });
+
+  write(ctx, {
+    eventType: 'BASELINE_FROZEN',
+    entity: { refType: 'ProjectBaseline', refId: tenderBaselineId },
+    nextState: tenderBaseline,
+    evidenceRefs: [baselineEvidence],
+  });
+
+  // And the contract award baseline beside it, so "what we tendered" and "what
+  // we contracted" are two records rather than one record and a memory.
+  const awardBaselineId = ulid();
+  write(ctx, {
+    eventType: 'BASELINE_FROZEN',
+    entity: { refType: 'ProjectBaseline', refId: awardBaselineId },
+    nextState: {
+      id: awardBaselineId,
+      projectId: ctx.projectId,
+      kind: 'CONTRACT_AWARD' as const,
+      frozenAt: now,
+      frozenBy: ctx.auth.actorId,
+      reason: `Contract awarded: ${input.justification}`,
+      supersedesBaselineId: null,
+      comparedToBaselineId: tenderBaselineId,
+      contractSumMinor: input.award.contractSumMinor,
+      contractStartDate: input.award.contractStartDate,
+      contractCompletionDate: input.award.contractCompletionDate,
+      award: input.award,
+    },
+    evidenceRefs: [baselineEvidence],
+  });
+
+  // Every difference between the two, as items somebody owns.
+  const reconciliationId = openReconciliation(ctx, {
+    tenderBaselineId,
+    awardBaselineId,
+    project: project.state,
+    award: input.award,
+    at: now,
+  });
+
+  const awardEvidence = registerEvidence(ctx, {
+    type: 'CONTRACT_AWARD',
+    hash: input.evidenceHash ?? hashEvidence(JSON.stringify({ project: ctx.projectId, award: input.award })),
+    description: `Contract award: ${input.award.contractForm}, ${input.award.contractAwardDate}`,
+  });
+
+  const outcomeHistory = (project.state.outcomeHistory as Array<Record<string, unknown>>) ?? [];
+
+  write(ctx, {
+    eventType: 'TENDER_WON',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: {
+      ...project.state,
+      tenderOutcome: 'WON' satisfies TenderOutcome,
+      outcomeAt: now,
+      outcomeBy: ctx.auth.actorId,
+      outcomeReason: input.justification,
+      outcomeHistory: [...outcomeHistory, { outcome: 'WON', at: now, by: ctx.auth.actorId, reason: input.justification }],
+      /*
+       * The three statuses a converted project carries, and why they are three.
+       *
+       * `phase` is where the work is. `commercialStatus` is where the contract
+       * is. `deliveryStatus` is what the team is doing. They move
+       * independently: a project is AWARDED and MOBILISING while still in
+       * DESIGN, and collapsing them into one field is how a dashboard ends up
+       * saying "design" to a commercial manager who asked whether it was signed.
+       */
+      commercialStatus: 'AWARDED',
+      deliveryStatus: 'MOBILISING',
+      awardedAt: now,
+      awardedBy: ctx.auth.actorId,
+      award: input.award,
+      // The contract sum replaces the tender value as the project's headline
+      // figure, and the tender value is not lost — it is in the baseline above.
+      contractValueMinor: input.award.contractSumMinor,
+      tenderValueMinor: Number(project.state.contractValueMinor ?? 0),
+      plannedStart: input.award.contractStartDate,
+      plannedCompletion: input.award.contractCompletionDate,
+      tenderBaselineId,
+      awardBaselineId,
+      reconciliationId,
+      status: 'ACTIVE',
+    },
+    evidenceRefs: [awardEvidence],
+  });
+
+  // And the phase moves, through the one writer that moves phases.
+  stages.applyPhaseChange(ctx, {
+    from,
+    to: input.deliveryEntry,
+    direction: 'CONVERSION',
+    justification: `Contract award — converted from pre-award to delivery. ${input.justification}`,
+    gateEvaluation: [],
+  });
+
+  return {
+    projectId: ctx.projectId,
+    entryStage: (project.state.startedAtPhase as LifecyclePhase | undefined) ?? 'TENDER',
+    phase: input.deliveryEntry,
+    reconciliationId,
+    tenderBaselineId,
+  };
 }
 
 /**

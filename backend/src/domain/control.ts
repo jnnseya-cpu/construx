@@ -226,11 +226,50 @@ export function projectControl(ctx: EngineContext): ControlReport {
   const phase = currentPhase(ctx);
   if (!phase || !project) throw new DomainError('PROJECT_NOT_FOUND', `No project ${ctx.projectId}`, 404);
 
-  return evaluateControl(
-    phase,
-    (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state),
-    Number(project.state.contractValueMinor ?? 0) || undefined,
-  );
+  return {
+    ...evaluateControl(
+      phase,
+      (refType) => ctx.ledger.list(ctx.projectId, refType).map((r) => r.state),
+      Number(project.state.contractValueMinor ?? 0) || undefined,
+    ),
+    /*
+     * Where this project joined the lifecycle, and how its bid ended.
+     *
+     * Published rather than left to the browser to work out, for the reason the
+     * whole console works this way: a screen that decided "this is a bid" by
+     * looking at the phase alone would be holding a rule the API had not
+     * stated, and the day a second way of being a bid appears the screen is
+     * wrong and nothing fails.
+     *
+     * `startedAtPhase` and `phasesNotTraversed` travel with it because a
+     * completeness percentage against a project that opened at CONSTRUCTION is
+     * measured over a different set of items than one that walked there, and a
+     * reader comparing the two needs to know which they are looking at.
+     */
+    startedAtPhase: (project.state.startedAtPhase as LifecyclePhase | undefined) ?? phase,
+    phasesNotTraversed: (project.state.phasesNotTraversed as LifecyclePhase[] | undefined) ?? [],
+    startingPhaseReason: project.state.startingPhaseReason as string | undefined,
+    /*
+     * The three statuses, published separately because they move separately.
+     *
+     * `phase` is where the work is. `commercialStatus` is where the contract
+     * is. `deliveryStatus` is what the team is doing. A project is AWARDED and
+     * MOBILISING while still in DESIGN, and collapsing them into one field is
+     * how a dashboard says "design" to a commercial manager who asked whether
+     * the thing was signed.
+     */
+    commercialStatus: (project.state.commercialStatus as string | undefined) ?? 'PRE_AWARD',
+    deliveryStatus: project.state.deliveryStatus as string | undefined,
+    tenderOutcome: project.state.tenderOutcome as string | undefined,
+    outcomeHistory: (project.state.outcomeHistory as Array<Record<string, unknown>> | undefined) ?? [],
+    awardedAt: project.state.awardedAt as string | undefined,
+    /** What was tendered, kept beside the contract sum rather than replaced by it. */
+    tenderValueMinor: project.state.tenderValueMinor as number | undefined,
+    contractValueMinor: project.state.contractValueMinor as number | undefined,
+    tenderBaselineId: project.state.tenderBaselineId as string | undefined,
+    awardBaselineId: project.state.awardBaselineId as string | undefined,
+    reconciliationId: project.state.reconciliationId as string | undefined,
+  };
 }
 
 export type EstateControl = {

@@ -209,7 +209,17 @@ export function applyPhaseChange(
   input: {
     from: LifecyclePhase;
     to: LifecyclePhase;
-    direction: 'FORWARD' | 'REGRESSION';
+    /**
+     * `CONVERSION` is contract award, and it is neither of the other two.
+     *
+     * This lifecycle is the asset's, and its order is the client's: design the
+     * thing, then tender it. A contractor's order is the opposite — tender it,
+     * win it, then design it — so a won bid moving from `TENDER` to `DESIGN`
+     * goes *backwards* by index while going forwards in every sense that
+     * matters. Recording that as a regression would put "the project went
+     * back a stage" on the one event that is the opposite of a setback.
+     */
+    direction: 'FORWARD' | 'REGRESSION' | 'CONVERSION';
     justification: string;
     gateEvaluation: GateEvaluation['criteria'];
     /** Set by a gate decision, so the project's history names the review that authorised it. */
@@ -287,7 +297,10 @@ export function applyPhaseChange(
         ...outgoing,
         status: 'SUPERSEDED' satisfies StageStatus,
         supersededAt: now,
-        supersededReason: `${input.direction === 'REGRESSION' ? 'Regressed' : 'Transitioned'} to ${input.to} without a gate decision: ${input.justification}`,
+        supersededReason:
+          `${
+            input.direction === 'REGRESSION' ? 'Regressed' : input.direction === 'CONVERSION' ? 'Converted' : 'Transitioned'
+          } to ${input.to} without a gate decision: ${input.justification}`,
       },
     });
   }

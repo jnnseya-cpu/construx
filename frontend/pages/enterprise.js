@@ -885,7 +885,10 @@ export async function enterprise(root) {
 
     project: {
       title: 'Create a project',
-      intent: 'The project starts at CONCEPT. Every later phase is reached by meeting a gate, not by being set here.',
+      intent:
+        'Choose where this business joins the asset\u2019s life. A developer starts at concept; a contractor pricing ' +
+        'somebody else\u2019s design starts at tender. Every phase after the one you pick is still reached by meeting ' +
+        'a gate, not by being set here.',
       path: '/v1/projects',
       submitLabel: 'Create project',
       fields: [
@@ -917,11 +920,50 @@ export async function enterprise(root) {
         },
         { name: 'plannedStart', label: 'Planned start', type: 'date', value: today() },
         { name: 'plannedCompletion', label: 'Planned completion', type: 'date' },
+        /*
+         * Where this project joins the lifecycle.
+         *
+         * Offered from `/v1/lifecycle/gates`, which this page already fetches,
+         * rather than from a list typed here. The phases and their purposes are
+         * the platform's and a second copy in the browser is a second answer to
+         * what the lifecycle is — which is the reason the old `LIFECYCLE_PHASE`
+         * vocabulary was deleted from `enums.js` rather than kept.
+         *
+         * Each option carries the gate's own purpose, because "TENDER" on its
+         * own is a word and "Price the work, test the market, adjudicate and
+         * award on evidence" is a thing somebody can recognise their job in.
+         */
+        {
+          name: 'startingPhase',
+          label: 'Starting stage',
+          type: 'select',
+          value: 'CONCEPT',
+          options: (gates.gates ?? []).map((gate) => ({
+            value: gate.phase,
+            label: `${humanise(gate.phase)} — ${gate.purpose}`,
+          })),
+          hint:
+            'Where your involvement begins, not where the asset is. A bid you are pricing starts at Tender; an asset ' +
+            'you have taken over starts at Operations.',
+        },
+        {
+          name: 'startingPhaseReason',
+          label: 'Why it starts there',
+          type: 'text',
+          placeholder: 'Pricing the client\u2019s design against their bill of quantities',
+          hint:
+            'Required for anything past Concept. The stages before it are never gated on this platform, so this ' +
+            'sentence is how a reader years from now tells a project that passed those gates from one that began ' +
+            'after them.',
+        },
       ],
-      transform: ({ continentCode, countryCode, city, contractValueMinor, ...rest }) => ({
+      transform: ({ continentCode, countryCode, city, contractValueMinor, startingPhaseReason, ...rest }) => ({
         ...rest,
         contractValueMinor: Number(contractValueMinor),
         location: { continentCode, countryCode: String(countryCode ?? '').toUpperCase(), city },
+        // Sent only when there is one. An empty string would fail the domain's
+        // length check with "required" on a project that skipped nothing.
+        ...(String(startingPhaseReason ?? '').trim() ? { startingPhaseReason: String(startingPhaseReason).trim() } : {}),
       }),
     },
     person: {

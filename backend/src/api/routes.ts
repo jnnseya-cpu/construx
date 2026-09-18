@@ -9204,6 +9204,11 @@ export const ROUTES: Route[] = [
         currency: { type: 'string', enum: Object.keys(CURRENCIES) },
         plannedStart: stringField,
         plannedCompletion: stringField,
+        // Where this business joins the asset's lifecycle. Absent means
+        // CONCEPT, which is where an asset's own life starts; anything later
+        // needs the reason, and the domain refuses it without one.
+        startingPhase: { type: 'string', enum: LIFECYCLE_ORDER },
+        startingPhaseReason: { type: 'string' },
       },
       additionalProperties: false,
     },
@@ -9269,6 +9274,130 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => structure.transitionPhase(projectContext(platform, ctx), body(ctx)),
+  },
+  // ------------------------------------------------ the tender outcome gate
+  //
+  // A project opened at TENDER is a bid, and the bid ends one of six ways. Five
+  // of them are recorded here and change nothing about what the project is.
+  // The sixth — won — is a contract award, and it converts this same project
+  // into a live delivery project through its own gate below. It is a separate
+  // route because an award buried in a dropdown beside "on hold" is a contract
+  // award nobody reviewed.
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/outcome',
+    description: 'Record how a tender ended — lost, withdrawn, on hold, in negotiation, or appointed to a framework',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'reason'],
+      properties: {
+        outcome: { type: 'string', enum: ['LOST', 'WITHDRAWN', 'ON_HOLD', 'NEGOTIATION', 'FRAMEWORK_APPOINTMENT'] },
+        reason: stringField,
+        wonBy: { type: 'string' },
+        winningValueMinor: { type: 'integer', minimum: 0 },
+        frameworkReference: { type: 'string' },
+        evidenceHash: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => structure.recordTenderOutcome(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/convert',
+    description: 'Contract award: convert this pre-award project into a live delivery project, keeping its identity',
+    schema: {
+      type: 'object',
+      required: ['award', 'deliveryEntry', 'justification'],
+      properties: {
+        // Where delivery starts. DESIGN for a contractor developing what they
+        // priced, CONSTRUCTION where the design is novated and complete.
+        deliveryEntry: { type: 'string', enum: ['DESIGN', 'CONSTRUCTION'] },
+        justification: { type: 'string', minLength: 10 },
+        evidenceHash: { type: 'string' },
+        award: {
+          type: 'object',
+          required: ['contractAwardDate', 'contractSumMinor', 'contractForm', 'contractedScope', 'contractStartDate', 'contractCompletionDate'],
+          properties: {
+            contractAwardDate: stringField,
+            contractSumMinor: { type: 'integer', minimum: 0 },
+            contractForm: stringField,
+            amendments: { type: 'string' },
+            contractedScope: { type: 'string', minLength: 10 },
+            employersRequirements: { type: 'string' },
+            contractorsProposals: { type: 'string' },
+            acceptedExclusions: { type: 'array', items: { type: 'string' } },
+            removedExclusions: { type: 'array', items: { type: 'string' } },
+            contractStartDate: stringField,
+            contractCompletionDate: stringField,
+            paymentTermsDays: { type: 'integer', minimum: 0 },
+            retentionPercent: { type: 'number', minimum: 0 },
+            liquidatedDamagesPerDayMinor: { type: 'integer', minimum: 0 },
+            bondsAndGuarantees: { type: 'string' },
+            insurances: { type: 'string' },
+            designResponsibility: { type: 'string' },
+            novationArrangements: { type: 'string' },
+            mobilisationDate: { type: 'string' },
+            noticeToProceedDate: { type: 'string' },
+            planningConditions: { type: 'array', items: { type: 'string' } },
+            regulatoryObligations: { type: 'array', items: { type: 'string' } },
+            contractParties: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['role', 'name'],
+                properties: { role: stringField, name: stringField },
+                additionalProperties: false,
+              },
+            },
+            keySubcontractors: { type: 'array', items: { type: 'string' } },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => structure.convertToDelivery(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/reconciliation',
+    readOnly: true,
+    description: 'Tender against awarded contract, line by line, with what is overdue',
+    handler: (platform, ctx) =>
+      structure.awardReconciliation(projectContext(platform, ctx), ctx.query.get('asAt') ?? undefined) ?? {
+        reconciliationId: null,
+        items: [],
+        openCount: 0,
+        overdue: [],
+        completePercent: null,
+        // Said rather than returned as an empty list: a project that was never
+        // a tender has nothing to reconcile, and a blank table reads as a
+        // reconciliation somebody forgot to do.
+        summary: 'This project has not been through a contract award, so there is no tender to reconcile against.',
+      },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/reconciliation/:itemId',
+    description: 'Own, date or settle one line of the award reconciliation',
+    schema: {
+      type: 'object',
+      required: ['reconciliationId', 'status'],
+      properties: {
+        reconciliationId: stringField,
+        status: { type: 'string', enum: ['OPEN', 'IN_PROGRESS', 'AGREED', 'ACCEPTED_AS_RISK', 'DISPUTED'] },
+        owner: { type: 'string' },
+        dueDate: { type: 'string' },
+        note: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      structure.settleReconciliationItem(projectContext(platform, ctx), {
+        ...body<{ reconciliationId: string; status: 'OPEN'; owner?: string; dueDate?: string; note?: string }>(ctx),
+        itemId: String(ctx.params.itemId),
+      }),
   },
   // ------------------------------------------- stage instances and gate reviews
   {

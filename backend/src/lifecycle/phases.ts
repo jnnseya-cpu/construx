@@ -199,3 +199,70 @@ export function assertTransitionAllowed(
   }
   return { direction: 'FORWARD' };
 }
+
+// ------------------------------------------------- where a project starts
+
+/**
+ * Why a project may open at a phase other than the first one.
+ *
+ * `CONCEPT -> ... -> OPERATIONS` is the asset's lifecycle, not the business's
+ * involvement in it. A contractor pricing somebody else's design has no concept
+ * phase and no design phase; an operator taking over a finished asset has
+ * neither and no construction phase either. Forcing either of them to start at
+ * `CONCEPT` means fabricating a scope package and a design maturity assessment
+ * whose only purpose is to satisfy a gate — which is the platform teaching
+ * people to put invented records into the Golden Thread on day one.
+ *
+ * So a project may open at any phase. What it may **not** do is pretend it
+ * passed the gates in front of it.
+ *
+ * ## Starting late is a fact about the record, not a shortcut through it
+ *
+ * A project that opened at `TENDER` never had its `CONCEPT.SCOPE_DEFINED` or
+ * `DESIGN.MATURITY_ASSESSED` criteria evaluated here. Three years later a
+ * reader looking at a project in `CONSTRUCTION` must be able to tell one that
+ * came through those gates from one that began after them, and no amount of
+ * reading `phaseHistory` backwards will tell them if the entry looks identical.
+ *
+ * `phasesBefore` is therefore recorded on the project as phases **not
+ * traversed**, a reason is required for any start past `CONCEPT`, and the two
+ * together are what a gate evaluation, an audit or an expert report reads.
+ */
+export function phasesBefore(phase: LifecyclePhase): LifecyclePhase[] {
+  return LIFECYCLE_ORDER.slice(0, phaseIndex(phase));
+}
+
+/**
+ * Check a starting phase, and say what starting there means.
+ *
+ * Returns the phases the project is skipping. Throws when the phase is not one,
+ * or when a start past `CONCEPT` carries no reason — because the reason is the
+ * only thing that distinguishes a deliberate mid-lifecycle start from a
+ * mis-selected dropdown, and it is the sentence somebody reads years later.
+ */
+export function assertStartingPhase(
+  phase: LifecyclePhase,
+  reason: string | undefined,
+): { skipped: LifecyclePhase[] } {
+  if (!LIFECYCLE_ORDER.includes(phase)) {
+    throw new DomainError('PHASE_UNKNOWN', `"${phase}" is not a lifecycle phase`, 422, [
+      { field: 'startingPhase', message: `Expected one of ${LIFECYCLE_ORDER.join(', ')}` },
+    ]);
+  }
+
+  const skipped = phasesBefore(phase);
+  if (skipped.length === 0) return { skipped };
+
+  if (!reason || reason.trim().length < 10) {
+    throw new DomainError(
+      'STARTING_PHASE_UNEXPLAINED',
+      `A project opening at ${phase} never has its ${skipped.join(' and ')} ` +
+        `gate${skipped.length === 1 ? '' : 's'} evaluated here. Say why it starts there — a reader three years from ` +
+        'now has to be able to tell a project that passed those gates from one that began after them.',
+      422,
+      [{ field: 'startingPhaseReason', message: 'Required when the project does not start at CONCEPT' }],
+    );
+  }
+
+  return { skipped };
+}

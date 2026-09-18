@@ -65,6 +65,21 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // person; a capability area cannot express it.
   StageInstance: { area: 'PROJECT_SETUP' },
   GateReview: { area: 'PROJECT_SETUP' },
+  /*
+   * The protected baselines and the tender-to-contract reconciliation.
+   *
+   * `PROJECT_SETUP` for the same reason the stage records use it: these are
+   * written by contract award, which is already a `PROJECT_SETUP:A` act, and a
+   * separate area would mean an entry per role in the permission matrix to
+   * express an authority that already exists.
+   *
+   * Both carry commercial figures — a frozen tender value beside a contract sum,
+   * and the movement between them — so the sensitivity is stated rather than
+   * inherited. A baseline is exactly the record an external party on a project
+   * must not be able to read: it is what the business priced the job at.
+   */
+  ProjectBaseline: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
+  AwardReconciliation: { area: 'PROJECT_SETUP', sensitivity: 'COMMERCIAL_L3' },
   User: { area: 'ENTERPRISE_STRUCTURE' },
   // What a company decided somebody may do. Same area as the people it applies to.
   CustomRole: { area: 'ENTERPRISE_STRUCTURE' },

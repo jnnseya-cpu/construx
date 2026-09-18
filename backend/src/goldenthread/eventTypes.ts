@@ -288,6 +288,48 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // who each manager is, and the answer has to be a person the platform knows
   // rather than a string somebody typed.
   def('PROJECT_MANAGER_ASSIGNED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
+  /*
+   * How a tender ends, on the one project that carries it from first enquiry to
+   * final account.
+   *
+   * `TENDER_WON` is contract award, and it is the event that converts a
+   * pre-award project into a live delivery project **in place**. The project id,
+   * its reference, its evidence vault and its chain are the same ones opened at
+   * tender registration and are never reissued: a second project record for a
+   * won bid puts a seam in the Golden Thread exactly where the most-argued
+   * question lives, because a variation in year three has to trace back through
+   * it to the tender assumption that priced the work.
+   *
+   * Every other ending — lost, withdrawn, on hold, in negotiation, appointed to
+   * a framework — is `TENDER_OUTCOME_RECORDED`. Six endings rather than two,
+   * because a register that knows only won and lost cannot tell live work from
+   * dead paper, and everything genuinely in between reads as "still pricing".
+   *
+   * All of them are decisions taken on information from outside the platform,
+   * so all are `aiAllowed: false` and all carry evidence.
+   */
+  def('TENDER_WON', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  def('TENDER_OUTCOME_RECORDED', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
+  /*
+   * The protected baselines.
+   *
+   * Tender, contract award, design, construction, change, forecast, as-built —
+   * linked, and none of them overwriting the one before. The original tender
+   * must still be readable as one thing after award, after design and after
+   * every change, because "what did we actually price" is the question the whole
+   * commercial record is built to answer.
+   */
+  def('BASELINE_FROZEN', 'ProjectBaseline', 'CREATE', 'PROJECT_CONTROL', { creates: true, requiresEvidence: true }),
+  /*
+   * Tender against contract, line by line.
+   *
+   * Opened by the award and closed by people. The platform measures the two
+   * lines it holds both sides of — price and programme — and opens the other
+   * eight as questions, because a machine-generated "no difference" against a
+   * scope nobody read is the most dangerous row this table could carry.
+   */
+  def('RECONCILIATION_OPENED', 'AwardReconciliation', 'CREATE', 'PROJECT_CONTROL', { creates: true }),
+  def('RECONCILIATION_ITEM_SETTLED', 'AwardReconciliation', 'UPDATE', 'PROJECT_CONTROL'),
   def('PACKAGE_CREATED', 'ScopePackage', 'CREATE', 'PROJECT_CONTROL'),
   def('WORKPACKAGE_CREATED', 'WorkPackage', 'CREATE', 'PROJECT_CONTROL'),
 

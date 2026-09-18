@@ -10,7 +10,7 @@ function localNow() {
 }
 import { command, commandBar } from '../lib/command.js';
 import { barChart, gauge, heatmap } from '../lib/charts.js';
-import { badge, date, days, drillable, html, humanise, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { badge, date, days, drillable, html, humanise, metric, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
@@ -54,6 +54,157 @@ const CHAIN_CHECKS = new Set([
   'Application against a payment cycle',
   'CVR from the contract',
 ]);
+
+
+/**
+ * Where this project is, in the three senses that move independently.
+ *
+ * A project is `AWARDED` and `MOBILISING` while its phase is still `DESIGN`.
+ * One status field cannot say that, and a dashboard reduced to one ends up
+ * answering "design" to a commercial manager who asked whether the thing was
+ * signed. So three, published by the API rather than derived here.
+ *
+ * ## Entry stage is kept beside current stage, permanently
+ *
+ * A contractor's project enters at Tender and then goes to Design — which is
+ * *earlier* in this lifecycle, because the lifecycle order is the asset's and
+ * the asset's order is the client's: design it, then tender it. Showing only
+ * the current stage would make a won job look like one that had slipped
+ * backwards. Showing both says what actually happened.
+ */
+function lifecyclePosition(project, reconciliation) {
+  const entry = project.startedAtPhase;
+  const converted = project.commercialStatus === 'AWARDED';
+  const outcomes = project.outcomeHistory ?? [];
+
+  // Only worth a panel where the project has a history to state. A project that
+  // opened at CONCEPT and is still in CONCEPT has nothing here the heading does
+  // not already say.
+  if (!converted && (!entry || entry === 'CONCEPT') && outcomes.length === 0) return '';
+
+  const money0 = (value) => (value === undefined || value === null ? '—' : money(value));
+
+  return html`<div class="card" style="margin-bottom:14px">
+    <h2>Where this project is</h2>
+    <div class="metric-sub" style="margin-bottom:11px">
+      One project, one identity, from tender registration to operation. ${
+        converted
+          ? html`It was converted from pre-award to delivery on ${date(project.awardedAt)} and kept the same project
+              ID, reference, evidence vault and Golden Thread it has carried since it was registered.`
+          : 'Its lifecycle status changes; it does not become a different project.'
+      }
+    </div>
+    <div class="grid g4">
+      ${raw(metric({ label: 'Entry stage', value: humanise(entry ?? project.phase), sub: 'where this business joined' }))}
+      ${raw(metric({ label: 'Current stage', value: humanise(project.phase), sub: converted ? 'post-award' : 'pre-award' }))}
+      ${raw(
+        metric({
+          label: 'Commercial status',
+          value: humanise(project.commercialStatus ?? 'PRE_AWARD'),
+          tone: project.commercialStatus === 'AWARDED' ? 'good' : project.commercialStatus === 'CLOSED' ? 'bad' : '',
+          sub: project.tenderOutcome ? humanise(project.tenderOutcome) : 'no outcome recorded',
+        }),
+      )}
+      ${raw(
+        metric({
+          label: 'Delivery status',
+          value: project.deliveryStatus ? humanise(project.deliveryStatus) : '—',
+          sub: converted ? 'what the team is doing' : 'nothing to deliver until award',
+        }),
+      )}
+    </div>
+
+    ${
+      (project.phasesNotTraversed ?? []).length === 0
+        ? ''
+        : html`<div class="notice" style="margin-top:12px">
+            <b>${project.phasesNotTraversed.map((phase) => humanise(phase)).join(', ')} ${
+              project.phasesNotTraversed.length === 1 ? 'was' : 'were'
+            } never gated on this project.</b>
+            ${project.startingPhaseReason ?? ''} Stated so a reader cannot mistake a project that began after those
+            gates for one that passed them.
+          </div>`
+    }
+
+    ${
+      !converted
+        ? ''
+        : html`<div style="margin-top:14px">
+            <h3>Tendered against contracted</h3>
+            <div class="metric-sub" style="margin-bottom:9px">
+              The tender baseline is frozen and is never overwritten by the award or by anything after it. That is what
+              makes “what did we actually price” answerable in year three.
+            </div>
+            ${table({
+              headers: ['', 'Tendered', 'Contracted', 'Movement'],
+              align: ['', 'num', 'num', 'num'],
+              rows: [
+                [
+                  'Value',
+                  money0(project.tenderValueMinor),
+                  money0(project.contractValueMinor),
+                  project.tenderValueMinor === undefined
+                    ? '—'
+                    : money0(Number(project.contractValueMinor ?? 0) - Number(project.tenderValueMinor ?? 0)),
+                ],
+              ],
+              empty: 'No award figures recorded.',
+            })}
+          </div>`
+    }
+
+    ${
+      !reconciliation || !reconciliation.reconciliationId
+        ? ''
+        : html`<div style="margin-top:14px">
+            <h3>Tender-to-contract reconciliation — ${reconciliation.summary}</h3>
+            <div class="metric-sub" style="margin-bottom:9px">
+              Ten lines, fixed, so one award can be compared with another. The platform measured the two it holds both
+              sides of and opened the rest as questions —
+              <b>it has not compared scope</b>, because a machine-generated “no difference” against a scope nobody read
+              is the most dangerous row this table could carry.
+            </div>
+            ${table({
+              headers: ['Tendered', 'Contracted', 'Movement', 'Owner', 'Due', 'Status'],
+              rows: (reconciliation.items ?? []).map((item) => [
+                item.tender,
+                item.contract,
+                item.movement ?? (item.measurable ? '—' : 'not measured'),
+                item.owner ?? html`<span class="metric-sub">unowned</span>`,
+                item.dueDate ?? '—',
+                badge(humanise(item.status), item.status === 'OPEN' ? 'warn' : item.status === 'DISPUTED' ? 'err' : 'ok'),
+              ]),
+              empty: 'No reconciliation lines.',
+            })}
+            ${
+              (reconciliation.overdue ?? []).length === 0
+                ? ''
+                : html`<div class="notice warn" style="margin-top:11px">
+                    <b>${reconciliation.overdue.length} line${reconciliation.overdue.length === 1 ? ' is' : 's are'} past
+                    the date.</b> ${reconciliation.overdue.map((item) => item.tender).join(', ')}.
+                  </div>`
+            }
+          </div>`
+    }
+
+    ${
+      outcomes.length === 0
+        ? ''
+        : html`<div style="margin-top:14px">
+            <h3>How the tender went</h3>
+            <div class="metric-sub" style="margin-bottom:9px">
+              Every outcome this bid has had, in order. A bid that went on hold in March, back into negotiation in May
+              and was won in July has a story, and one overwritten field tells none of it.
+            </div>
+            ${table({
+              headers: ['Outcome', 'When', 'Why'],
+              rows: outcomes.map((entry) => [humanise(entry.outcome), date(entry.at), entry.reason]),
+              empty: 'No outcome recorded.',
+            })}
+          </div>`
+    }
+  </div>`;
+}
 
 /**
  * The division of responsibility, between the client and every firm on the job.
@@ -151,7 +302,7 @@ function responsibilityPanel(matrix) {
 export async function control(root) {
   const projectId = state.session.projectId;
 
-  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility] = await Promise.all([
+  const [project, estate, lessons, gate, gateDecisions, standard, platformStandards, stages, decisions, actions, reusable, responsibility, reconciliation] = await Promise.all([
     api.get(`/v1/projects/${projectId}/control`),
     api.get('/v1/control/estate').catch(() => null),
     api.read('/v1/lessons', 'RISK_REGISTER').catch(() => null),
@@ -176,6 +327,10 @@ export async function control(root) {
     // job. On this screen because the two roles that own it — the project
     // manager and the construction manager — already work from here.
     api.read(`/v1/projects/${projectId}/responsibility`, 'WORKPACKAGES_TASKS').catch((error) => ({ error })),
+    // Tender against the awarded contract, line by line. Only a converted
+    // project has one, and the route says so in a sentence rather than
+    // returning a blank table that reads as a reconciliation nobody did.
+    api.get(`/v1/projects/${projectId}/tender/reconciliation`).catch(() => null),
   ]);
 
   // The choosers for the responsibility form. A package named from the project's
@@ -306,6 +461,39 @@ export async function control(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'gate', label: 'Decide the stage gate', tone: '', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
+            /*
+             * Only on a bid, and only once.
+             *
+             * Gated on the phase and on the outcome rather than on the
+             * permission alone, so the control is absent where it could only
+             * ever be refused. A decided bid keeps the buttons visible and
+             * locked with the decision already taken as the reason — which
+             * is the affordance somebody needs when they are looking for where
+             * the answer went, not an empty space.
+             */
+            ...(project.phase === 'TENDER'
+              ? [
+                  {
+                    id: 'tenderConvert',
+                    label: 'Convert to live project',
+                    tone: 'ok',
+                    permitted: can('PROJECT_SETUP', 'A') && project.commercialStatus !== 'CLOSED',
+                    reason:
+                      project.commercialStatus === 'CLOSED'
+                        ? `This bid was closed as ${String(project.tenderOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
+                        : blockedReason('PROJECT_SETUP', 'A'),
+                  },
+                  {
+                    id: 'tenderOutcome',
+                    label: 'Record the outcome',
+                    permitted: can('PROJECT_SETUP', 'A') && project.commercialStatus !== 'CLOSED',
+                    reason:
+                      project.commercialStatus === 'CLOSED'
+                        ? `This bid was closed as ${String(project.tenderOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
+                        : blockedReason('PROJECT_SETUP', 'A'),
+                  },
+                ]
+              : []),
             {
               id: 'responsibility',
               label: 'Record a responsibility',
@@ -336,6 +524,8 @@ export async function control(root) {
           ]))}
         </div>
       </div>
+
+      ${lifecyclePosition(project, reconciliation)}
 
       ${
         !gate
@@ -918,6 +1108,168 @@ export async function control(root) {
   const COMMANDS = {
     responsibility: RESPONSIBILITY_COMMAND,
     gate: GATE_COMMAND,
+    /*
+     * How a tender ends.
+     *
+     * Two commands, not six, and the split is the point. Winning is a contract
+     * award that converts this project into a live delivery project, so it has
+     * its own gate with the contract's own terms on it. The other five change
+     * nothing about what the project is, so they share one form with the
+     * outcome as a field.
+     *
+     * An award buried in a dropdown beside "on hold" is a contract award
+     * nobody reviewed.
+     */
+    tenderConvert: {
+      title: 'Contract award — convert to a live project',
+      intent:
+        'This project keeps its identity: the same project ID, reference, evidence vault and Golden Thread it has ' +
+        'carried since tender registration. Nothing is re-entered and no second project is created. What changes is ' +
+        'its lifecycle status — and the tender position is frozen as a baseline the awarded contract is measured ' +
+        'against, so what was priced stays readable for the life of the job.',
+      path: `/v1/projects/${projectId}/tender/convert`,
+      submitLabel: 'Convert to live project',
+      fields: [
+        {
+          name: 'deliveryEntry',
+          label: 'Delivery starts at',
+          type: 'select',
+          options: [
+            { value: 'DESIGN', label: 'Design — we carry the design and have to develop what we priced' },
+            { value: 'CONSTRUCTION', label: 'Construction — the design is novated and complete; we start on site' },
+          ],
+          hint:
+            'Design sits earlier than Tender in the asset’s lifecycle, because that order is the client’s. ' +
+            'Yours is the reverse, so this is recorded as a conversion rather than as the project going backwards.',
+        },
+        { name: 'contractAwardDate', label: 'Contract award date', type: 'date' },
+        {
+          name: 'contractSumMinor',
+          label: 'Contract sum',
+          type: 'number',
+          hint:
+            'In minor units — pence for GBP. This becomes the project’s headline figure; the tendered figure ' +
+            'is kept in the tender baseline rather than replaced.',
+        },
+        { name: 'contractForm', label: 'Contract form', type: 'text', placeholder: 'NEC4 ECC Option A' },
+        {
+          name: 'amendments',
+          label: 'Amendments',
+          type: 'text',
+          placeholder: 'Z-clauses 1 to 14, client standard',
+          hint: 'Where the risk moved. A standard form with unread amendments is not a standard form.',
+          required: false,
+        },
+        {
+          name: 'contractedScope',
+          label: 'Contracted scope',
+          type: 'text',
+          placeholder: 'As tendered, less the access road',
+          hint: 'What was actually contracted. The difference from what was tendered becomes a reconciliation line.',
+        },
+        { name: 'contractStartDate', label: 'Contract start', type: 'date' },
+        { name: 'contractCompletionDate', label: 'Contract completion', type: 'date' },
+        { name: 'paymentTermsDays', label: 'Payment period (days)', type: 'number', required: false },
+        { name: 'retentionPercent', label: 'Retention %', type: 'number', required: false },
+        {
+          name: 'designResponsibility',
+          label: 'Design responsibility',
+          type: 'text',
+          placeholder: 'Contractor-designed portions: MEP and temporary works',
+          required: false,
+        },
+        {
+          name: 'novationArrangements',
+          label: 'Novation',
+          type: 'text',
+          placeholder: 'Client’s designer novated at award',
+          required: false,
+        },
+        {
+          name: 'justification',
+          label: 'On whose authority',
+          type: 'text',
+          placeholder: 'Awarded under LOI-4471; conversion approved by the commercial director',
+          hint: 'Recorded against the conversion. Only an enterprise administrator or commercial authority may do this.',
+        },
+      ],
+      /*
+       * The form is flat because a person fills in boxes; the command is nested
+       * because that is the shape the ledger stores. Blank optional fields are
+       * dropped rather than sent empty — an empty string in a contract term
+       * is a term somebody will later read as agreed-and-nil.
+       */
+      transform: ({ deliveryEntry, justification, contractSumMinor, paymentTermsDays, retentionPercent, ...award }) => {
+        const optional = (key, value) => (String(value ?? '').trim() ? { [key]: String(value).trim() } : {});
+        return {
+          deliveryEntry,
+          justification,
+          award: {
+            contractAwardDate: award.contractAwardDate,
+            contractSumMinor: Number(contractSumMinor),
+            contractForm: award.contractForm,
+            contractedScope: award.contractedScope,
+            contractStartDate: award.contractStartDate,
+            contractCompletionDate: award.contractCompletionDate,
+            ...(String(paymentTermsDays ?? '').trim() ? { paymentTermsDays: Number(paymentTermsDays) } : {}),
+            ...(String(retentionPercent ?? '').trim() ? { retentionPercent: Number(retentionPercent) } : {}),
+            ...optional('amendments', award.amendments),
+            ...optional('designResponsibility', award.designResponsibility),
+            ...optional('novationArrangements', award.novationArrangements),
+          },
+        };
+      },
+    },
+    tenderOutcome: {
+      title: 'Record how this tender ended',
+      intent:
+        'Everything except winning. Recorded rather than left blank because a bid that went nowhere and a bid still ' +
+        'being priced look identical otherwise — and a hit rate computed from that is the ratio of wins to open ' +
+        'bids, which always flatters. On hold and in negotiation leave the project exactly where it is.',
+      path: `/v1/projects/${projectId}/tender/outcome`,
+      submitLabel: 'Record the outcome',
+      fields: [
+        {
+          name: 'outcome',
+          label: 'Outcome',
+          type: 'select',
+          options: [
+            { value: 'LOST', label: 'Lost — somebody else was awarded it' },
+            { value: 'WITHDRAWN', label: 'Withdrawn — we pulled the bid' },
+            { value: 'ON_HOLD', label: 'On hold — paused, state preserved' },
+            { value: 'NEGOTIATION', label: 'In negotiation — the tender workspace stays open' },
+            { value: 'FRAMEWORK_APPOINTMENT', label: 'Framework appointment — awaiting a call-off' },
+          ],
+        },
+        {
+          name: 'reason',
+          label: 'Why',
+          type: 'text',
+          placeholder: 'Priced 11% above the winner on preliminaries; our programme was four weeks longer',
+          hint:
+            'Long enough to be read. “Price” is the answer a business gives itself when it does not want to ' +
+            'look, and an estimating review has nothing to learn from it.',
+        },
+        { name: 'wonBy', label: 'Won by', type: 'text', hint: 'On a loss, where it is known. Blank is better than guessed.', required: false },
+        { name: 'winningValueMinor', label: 'Winning value', type: 'number', hint: 'In minor units, where the client published it.', required: false },
+        {
+          name: 'frameworkReference',
+          label: 'Framework',
+          type: 'text',
+          placeholder: 'RWF-2026-L3',
+          hint: 'On a framework appointment: what we were appointed to.',
+          required: false,
+        },
+      ],
+      transform: ({ winningValueMinor, wonBy, frameworkReference, ...rest }) => ({
+        ...rest,
+        // Absent rather than zero. A zero would read as "won for nothing",
+        // which is a different and much more interesting claim than "unknown".
+        ...(String(winningValueMinor ?? '').trim() ? { winningValueMinor: Number(winningValueMinor) } : {}),
+        ...(String(wonBy ?? '').trim() ? { wonBy: String(wonBy).trim() } : {}),
+        ...(String(frameworkReference ?? '').trim() ? { frameworkReference: String(frameworkReference).trim() } : {}),
+      }),
+    },
     meeting: {
       title: 'Minute a meeting',
       intent:

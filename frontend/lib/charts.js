@@ -516,7 +516,7 @@ function categoryAxis(area, labels, bandWidth) {
  * "which is biggest" and a stacked one answers "what is the total made of",
  * which are different questions and should not share a default.
  */
-/** @param {{data?: Row[], series?: Series[], stacked?: boolean, horizontal?: boolean, title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{data?: Row[], series?: Series[], stacked?: boolean, horizontal?: boolean, title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function barChart({
   data = [],
   series,
@@ -740,7 +740,7 @@ function horizontalBars({ rows, keys, title, desc, format, footnote, metric }) {
  * interpolation, interpolation is invention, and a reader cannot tell an
  * invented segment from a measured one once it is drawn.
  */
-/** @param {{data?: Row[], series?: Series[], title?: string, desc?: string, format?: Formatter, area?: boolean, empty?: string, markers?: boolean, footnote?: string, reference?: {value: number, label: string, tone?: string}[], forecastFrom?: string, band?: {low: string, high: string}}} options */
+/** @param {{data?: Row[], series?: Series[], title?: string, desc?: string, format?: Formatter, area?: boolean, empty?: string, markers?: boolean, footnote?: string, reference?: {value: number, label: string, tone?: string}[], forecastFrom?: string, band?: {low: string, high: string}, metric?: string}} options */
 export function lineChart({
   data = [],
   series = [{ key: 'value', label: 'Value' }],
@@ -980,7 +980,7 @@ export function areaChart(options) {
  * share a total is the most common chart mistake there is, so a slice whose
  * value is negative is refused outright rather than drawn as a gap.
  */
-/** @param {{data?: Row[], title?: string, desc?: string, donut?: boolean, format?: Formatter, empty?: string, centreLabel?: string, footnote?: string}} options */
+/** @param {{data?: Row[], title?: string, desc?: string, donut?: boolean, format?: Formatter, empty?: string, centreLabel?: string, footnote?: string, metric?: string}} options */
 export function pieChart({
   data = [],
   /**
@@ -1129,7 +1129,7 @@ export const donutChart = (options) => pieChart({ ...options, donut: true });
  * histogram completely, so it is derived from the data rather than left at a
  * default of ten — which is how a bimodal distribution gets drawn as a hump.
  */
-/** @param {{values?: Scalar[], buckets?: Bucket[], title?: string, desc?: string, format?: Formatter, bins?: number, empty?: string, emptyDetail?: string, tone?: string, limit?: number, limitLabel?: string, markLabel?: string, markPast?: 'above'|'below', footnote?: string}} options */
+/** @param {{values?: Scalar[], buckets?: Bucket[], title?: string, desc?: string, format?: Formatter, bins?: number, empty?: string, emptyDetail?: string, tone?: string, limit?: number, limitLabel?: string, markLabel?: string, markPast?: 'above'|'below', footnote?: string, metric?: string}} options */
 export function histogram({
   values = [],
   buckets: given,
@@ -1322,7 +1322,7 @@ function binCount(sorted) {
  * can see how much of the scatter the line actually explains. A trend line with
  * no r² beside it is a claim with its evidence removed.
  */
-/** @param {{points?: Point[], title?: string, desc?: string, xLabel?: string, yLabel?: string, formatX?: Formatter, formatY?: Formatter, fit?: boolean, empty?: string, tone?: string, footnote?: string}} options */
+/** @param {{points?: Point[], title?: string, desc?: string, xLabel?: string, yLabel?: string, formatX?: Formatter, formatY?: Formatter, fit?: boolean, empty?: string, tone?: string, footnote?: string, metric?: string}} options */
 export function scatterPlot({
   points = [],
   title = 'Correlation',
@@ -1431,7 +1431,7 @@ function leastSquares(xs, ys) {
  * twice as large look four times as big, which is the whole reason bubble charts
  * have a bad name.
  */
-/** @param {{points?: Point[], title?: string, desc?: string, xLabel?: string, yLabel?: string, zLabel?: string, formatX?: Formatter, formatY?: Formatter, formatZ?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{points?: Point[], title?: string, desc?: string, xLabel?: string, yLabel?: string, zLabel?: string, formatX?: Formatter, formatY?: Formatter, formatZ?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function bubbleChart({
   points = [],
   title = 'Three measurements',
@@ -1505,7 +1505,7 @@ export function bubbleChart({
  * by the whisker. On this platform an outlier is usually the interesting record:
  * the one valuation, the one week, the one supplier.
  */
-/** @param {{groups?: Group[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{groups?: Group[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function boxPlot({
   groups = [],
   title = 'Spread',
@@ -1625,7 +1625,7 @@ function quartiles(values) {
  * "we are at 72% and the target is 80%" reads as two facts rather than one
  * verdict.
  */
-/** @param {{value?: Scalar, min?: number, max?: number, target?: number, title?: string, desc?: string, format?: Formatter, tone?: string, label?: string, empty?: string, footnote?: string}} options */
+/** @param {{value?: Scalar, min?: number, max?: number, target?: number, title?: string, desc?: string, format?: Formatter, tone?: string, label?: string, empty?: string, footnote?: string, metric?: string}} options */
 export function gauge({
   value,
   min = 0,
@@ -1826,7 +1826,7 @@ export function sparkline({ values = [], tone = 'actual', width = 180, height = 
  * is more than yellow without consulting the key — and it is unreadable to a
  * reader with a colour-vision deficiency, whereas lightness survives both.
  */
-/** @param {{rows?: string[], columns?: string[], values?: Scalar[][], title?: string, desc?: string, format?: Formatter, empty?: string, tone?: string, footnote?: string}} options */
+/** @param {{rows?: string[], columns?: string[], values?: Scalar[][], title?: string, desc?: string, format?: Formatter, empty?: string, tone?: string, footnote?: string, metric?: string}} options */
 export function heatmap({
   rows = [],
   columns = [],
@@ -1950,7 +1950,7 @@ export function heatmap({
  * top, because those are the two questions and a funnel that answers only one of
  * them gets read as answering the other.
  */
-/** @param {{stages?: Row[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{stages?: Row[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function funnelChart({
   stages = [],
   title = 'Funnel',
@@ -2034,7 +2034,7 @@ export function funnelChart({
  * drawn from the running position, which is the distinction the chart exists to
  * make. Pass `total: true` on a step to draw it as a subtotal.
  */
-/** @param {{steps?: Step[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{steps?: Step[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function waterfallChart({
   steps = [],
   title = 'Build-up',
@@ -2171,7 +2171,7 @@ function waterfallLegend(bars) {
  * Squarified rather than sliced: a slice-and-dice treemap produces slivers at
  * any real data, and a sliver cannot be compared with anything or clicked on.
  */
-/** @param {{items?: Row[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string}} options */
+/** @param {{items?: Row[], title?: string, desc?: string, format?: Formatter, empty?: string, footnote?: string, metric?: string}} options */
 export function treemap({
   items = [],
   title = 'Composition by size',
@@ -2330,7 +2330,7 @@ function squarify(values, area, total) {
  * Everything else the chart already did — baseline hairline, data date,
  * per-cent complete, milestones — is kept, because it worked.
  */
-/** @param {{tasks?: GanttTask[], links?: GanttLink[], title?: string, desc?: string, today?: string, dataDate?: string, showFloat?: boolean, showLinks?: boolean, empty?: string, footnote?: string}} options */
+/** @param {{tasks?: GanttTask[], links?: GanttLink[], title?: string, desc?: string, today?: string, dataDate?: string, showFloat?: boolean, showLinks?: boolean, empty?: string, footnote?: string, metric?: string}} options */
 export function ganttChart({
   tasks = [],
   links = [],

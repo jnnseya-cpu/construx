@@ -22690,6 +22690,12 @@ notices which five went missing.
 | 2 | Governed metric definitions and source mapping | Checked here, against `shared/metrics.js` |
 | 3 | Permission and tenancy tests | Checked in `crossorg`, `guests`, `customroles` |
 | 4 | Responsive desktop/tablet/mobile | **Measured, not gated** — 390/768/1440px and 200% zoom, in a browser, on one build |
+
+*Correction: the two commits that introduced this register reported "typecheck
+clean" and were not — see "The verification harness was hiding typecheck
+failures" below. The register's own assertions passed throughout; it was the
+file's TypeScript that did not compile.*
+
 | 5 | Loading, empty, partial-data and error states | Checked here, on the empty path of all 18 chart kinds |
 | 6 | Tooltip, filters, comparison, drill-down | Checked here |
 | 7 | Accessible table and keyboard/screen-reader | Checked here, plus `chartdata.test.ts` |
@@ -22740,3 +22746,216 @@ All five now name the token they meant. The tint itself was also wrong once
 fixed — 16% of a signal colour over a near-black surface is a background nobody
 can tell from the page — so the bar is 26% with a 4px rule of the full colour
 down its left edge, measured at 8.0:1 for its text.
+
+## Where a project joins the lifecycle
+
+`CONCEPT → DESIGN → TENDER → CONSTRUCTION → COMMISSIONING → HANDOVER →
+OPERATIONS` is the **asset's** lifecycle. A business joins it wherever its own
+involvement begins, and until now the platform did not model that: every project
+opened at `CONCEPT`, hardcoded, with the create-project form stating it as a
+rule — *"The project starts at CONCEPT."*
+
+For a developer that is right. For a contractor pricing somebody else's design
+it is wrong in the worst available way. That contractor has no concept phase and
+no design phase, so to reach `TENDER` they had to clear
+`CONCEPT.SCOPE_DEFINED` and `DESIGN.MATURITY_ASSESSED` — which meant creating a
+scope package and a design maturity assessment for work they had not been
+appointed to do. **The platform's first instruction to a new contractor was to
+put two fabricated records into the Golden Thread.**
+
+### A starting phase, and the record of what it skipped
+
+`createProject` takes `startingPhase`, defaulting to `CONCEPT` so every existing
+caller and the whole seed are unchanged. Anything later requires
+`startingPhaseReason`, and the refusal says why it wants one rather than
+"required field".
+
+What matters as much as allowing it is recording it. A project that opened at
+`TENDER` never had the two gates in front of it evaluated *here*, and three
+years later a reader looking at it in `CONSTRUCTION` has to be able to tell it
+from one that came through them. A short `phaseHistory` does not distinguish
+"started here" from "earlier records missing", and those are opposite readings.
+So the project carries `startedAtPhase`, `phasesNotTraversed` and the reason as
+state; the history entry carries `openedHere` and the same list; and the stage
+instance's own reason names the phases it did not traverse. All three are
+asserted, because a field nothing checks is a field that is empty when it
+matters.
+
+The picker offers the phases from `/v1/lifecycle/gates`, which the enterprise
+screen already fetched, each labelled with that gate's own purpose — "Tender —
+Price the work, test the market, adjudicate and award on evidence" rather than
+`TENDER`. The `LIFECYCLE_PHASE` vocabulary stays deleted from `enums.js`: it was
+removed for being a dead second copy, and reviving it would make it a stale one.
+
+### Contract award converts the same project — it does not create a second one
+
+**This was built the other way first and the other way was wrong.** Award
+created a successor project at `CONSTRUCTION` and linked the two, on the
+reasoning that contractors number a bid and a job separately. They do, and it is
+still the wrong model for this platform.
+
+Two records for one job put a seam in the Golden Thread exactly where the
+most-argued question lives. A variation disputed in year three has to trace back
+to the tender assumption that priced the work, and with a successor that trace
+crosses a join — a join is a thing that breaks, and the one claim this platform
+makes above all others is one continuous immutable chain from opportunity
+registration to operation. It also meant re-entering information the platform
+already held, which is the failure the platform exists to remove.
+
+So the project id, its reference, its enterprise ownership, its client record,
+its evidence vault, its Golden Thread and its audit history are created **once**,
+at tender registration, and never reissued. Award changes the project's
+lifecycle status. It does not change which project it is.
+
+#### Three statuses, because they move independently
+
+`phase` is where the work is. `commercialStatus` is where the contract is.
+`deliveryStatus` is what the team is doing. A converted project is `AWARDED` and
+`MOBILISING` while its phase is still `DESIGN`, and collapsing those into one
+field is how a dashboard answers "design" to a commercial manager who asked
+whether the thing was signed.
+
+#### Entry stage is kept beside current stage, permanently
+
+A contractor's project enters at `TENDER` and then goes to `DESIGN` — which is
+*earlier* in this lifecycle, because the lifecycle order is the asset's and the
+asset's order is the client's: design it, then tender it. The contractor's order
+is the reverse.
+
+Recording that as a regression would put "the project went back a stage" on the
+one event that is the opposite of a setback, so `applyPhaseChange` gained a third
+direction, `CONVERSION`, beside `FORWARD` and `REGRESSION`. The screen shows
+**Entry stage: Tender · Current stage: Design · Commercial: Awarded · Delivery:
+Mobilising**, which is what actually happened.
+
+Delivery opens at `DESIGN` or `CONSTRUCTION`, asked rather than assumed: a
+contractor developing what they priced starts at design, one taking a novated
+complete design starts on site, and which it is changes what the next gate is.
+
+#### The tender becomes immutable, not invisible
+
+At conversion the tender position is frozen as a `TENDER` baseline and the
+contract as a `CONTRACT_AWARD` baseline beside it. The ledger is append-only so
+nothing could have been rewritten anyway — but a baseline is the difference
+between "the records are still there somewhere" and "this is what we tendered,
+as one thing, and here is what we contracted". **The original tender is never
+overwritten** by the award or by anything after it, which is what makes "what did
+we actually price" answerable in year three.
+
+The contract sum becomes the project's headline figure and the tendered figure
+moves to `tenderValueMinor` rather than being lost.
+
+#### Tender-to-contract reconciliation
+
+Ten fixed lines — price, programme, scope, assumptions, exclusions, risks,
+design, resources, cashflow, procurement — each an item with an owner, a due
+date, a status and an approval record. Fixed rather than free, because a
+reconciliation that grew or lost a line between two projects cannot be compared
+across them and "we reconciled the award" would mean something different each
+time.
+
+The platform measures the two it holds both sides of and opens the other eight as
+questions. **It does not claim to have compared scope.** Comparing a tendered
+scope with a contracted one is a reading of two documents, and a
+machine-generated "no difference" against a scope nobody read is the single most
+dangerous row this table could carry. Every line is `measurable: false` until a
+person says otherwise, and the two measured ones are stated as a *movement*
+rather than a verdict — whether 3% is acceptable is a commercial judgement.
+
+Completeness is over closed lines and the two measured movements do **not** count
+as closed: a movement is the input to a judgement, not the judgement, and a
+reconciliation reporting 20% complete the moment it opened would be reporting its
+own arithmetic as work. Closing a line requires the sentence explaining what the
+difference turned out to be, because that sentence is the whole value of the
+table.
+
+### Six ways a tender ends, not two
+
+`WON`, `LOST`, `WITHDRAWN`, `ON_HOLD`, `NEGOTIATION`, `FRAMEWORK_APPOINTMENT`.
+
+A register that knows only won and lost reads everything genuinely in between —
+negotiating, paused, withdrawn, appointed to a framework awaiting a call-off — as
+"still being priced", and a business then cannot tell live work from dead paper.
+Only `WON` converts, and it is the only one with its own gate: an award buried in
+a dropdown beside "on hold" is a contract award nobody reviewed.
+
+`ON_HOLD` and `NEGOTIATION` leave the project exactly where it was, which is the
+point of having six. Every outcome a bid has had is kept in order, because a bid
+that went on hold in March, back into negotiation in May and was lost in July has
+a story and one overwritten field tells none of it.
+
+A one-word reason is refused throughout. "Price" is the answer a business gives
+itself when it does not want to look, and an estimating review has nothing to
+learn from it. Without any loss record at all the hit rate cannot be computed:
+the denominator quietly disappears and what comes out is the ratio of wins to
+*open* bids, which always flatters.
+
+Conversion requires `PROJECT_SETUP:A`, which `roles.ts` already grants to the
+enterprise administrator and the commercial authority and to nobody else. A
+second role check written into the conversion would be a second permission model,
+and the first thing to drift.
+
+### The verification harness was hiding typecheck failures
+
+Stated because it invalidated two claims already made in this file.
+
+The background script ran `npm run typecheck` then `npm test` and wrote
+`DONE-$?` — which captures the **second** command's exit code. A typecheck
+failure was written into the log and then reported as a pass. `npm test` was
+green throughout, so nothing else caught it.
+
+`definitionofdone.test.ts` had been failing typecheck since it was committed:
+six calls passing `metric` to a chart whose JSDoc `@param` annotation never
+gained the parameter when the implementation did. The annotations had drifted
+from the destructuring patterns — thirteen chart functions take `metric` and
+none of them declared it — so the `.ts` test was rejected while the `.js` page
+callers passing the same key were not checked at all.
+
+The annotations now match the implementations, and the harness gates on both
+exit codes. **The "typecheck clean" claim on the two commits before this one was
+wrong.**
+
+### What is specified and not yet built
+
+Stated so the sections above are not read as the whole of it. The specification
+this work came from asks for four more things, and none of them is started:
+
+- **Overlapping workstreams.** A project genuinely is completing its tender
+  reconciliation, developing detailed design, procuring long-lead items and
+  mobilising the site at once. The platform now separates the primary stage from
+  the commercial and delivery statuses, which is the first third of that, but
+  there is no register of active workstreams running across stages and no
+  per-workstream progress. The primary stage is still a single phase.
+- **Information maturity classification.** Tender-stage information inherited
+  into design must be classified — accepted for contract, requires validation,
+  requires redesign, superseded, rejected, information only, awaiting client
+  confirmation — so a tender assumption is never mistaken for
+  approved-for-construction. Drawings carry `CURRENT`/`SUPERSEDED` and nothing
+  carries this. **Until it is built, inherited tender information is not marked
+  as tender-stage on the design screens**, which is the gap most likely to cause
+  harm of anything listed here.
+- **The full baseline set.** `TENDER` and `CONTRACT_AWARD` are frozen at
+  conversion. `DESIGN`, `CONSTRUCTION`, `APPROVED_CHANGE`, `FORECAST` and
+  `AS_BUILT` are named in `ProjectBaseline`'s `kind` and nothing writes them yet.
+- **Parent–child projects for framework call-offs.** A framework appointment is
+  recorded on the project and a call-off does not yet create a child project
+  under it. The `FRAMEWORK_APPOINTMENT` outcome exists so the appointment is not
+  lost in the meantime.
+
+### Two invariants the gated harness caught immediately
+
+Worth recording because both would have shipped under the old harness.
+
+**`ProjectBaseline` and `AwardReconciliation` were unclassified.**
+`identity.test.ts` checks that every entity type the event catalogue can produce
+has an entry in `entityAccess.ts`, and two new ones did not. An unclassified
+entity is not a cosmetic gap: it is an entity the capability boundary has no
+rule for, on records that carry a frozen tender value beside a contract sum.
+Both are `PROJECT_SETUP` — the same area that already authorises award — at
+`COMMERCIAL_L3`, because a baseline is exactly the record an external party on a
+project must not be able to read: it is what the business priced the job at.
+
+**And the harness itself.** The previous script wrote `DONE-$?` after running
+typecheck and then tests, capturing only the second exit code. It now gates on
+both and prints each, which is how the classification failure surfaced in the
+same run rather than in a later one.

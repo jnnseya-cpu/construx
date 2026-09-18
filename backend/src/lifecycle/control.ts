@@ -555,6 +555,45 @@ export type ControlReport = {
   blockingGaps: string[];
   /** What the platform itself does not track, so the report is not read as complete. */
   notTracked: Array<{ id: string; label: string; reason: string }>;
+
+  /*
+   * Where the project joined the lifecycle, and how its bid ended.
+   *
+   * Optional because `evaluateControl` is pure and knows only a phase and a
+   * lookup — it is `projectControl` that reads the project record and fills
+   * these in. A hypothetical evaluation has no project to have started
+   * anywhere, and a required field there would have to be invented.
+   */
+  /** The phase this project opened at, which is not always the first one. */
+  startedAtPhase?: LifecyclePhase;
+  /**
+   * Phases this project never entered.
+   *
+   * A completeness percentage means something different against a project that
+   * opened at CONSTRUCTION than against one that walked there, and a reader
+   * comparing two numbers has to know which they are looking at.
+   */
+  phasesNotTraversed?: LifecyclePhase[];
+  startingPhaseReason?: string;
+  /**
+   * Where the contract is, where the work is and what the team is doing.
+   *
+   * Three fields rather than one, because they move independently: a project is
+   * `AWARDED` and `MOBILISING` while its phase is still `DESIGN`.
+   */
+  commercialStatus?: string;
+  deliveryStatus?: string;
+  /** How the tender ended, on a project that was one. */
+  tenderOutcome?: string;
+  /** Every outcome it has had, in order — a bid on hold in March and lost in July has a story. */
+  outcomeHistory?: Array<Record<string, unknown>>;
+  awardedAt?: string;
+  /** What was tendered, kept beside the contract sum rather than replaced by it. */
+  tenderValueMinor?: number;
+  contractValueMinor?: number;
+  tenderBaselineId?: string;
+  awardBaselineId?: string;
+  reconciliationId?: string;
 };
 
 /**
