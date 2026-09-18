@@ -752,3 +752,58 @@ public calculator at two viewports; a load run to 60 concurrent clients; and a
 recovery exercise from SIGKILL to restored service. Every figure came from a
 command that was executed. Every gap that could not be tested is marked
 BLOCKED or NOT TESTED and is never counted as a pass.*
+
+---
+
+## 16. The ten mandatory gates, re-run
+
+Run after the gate-2 work below, against a running server at commit `52c1b58`
+unless stated. Nothing here is inferred from reading code, and the two things
+that could not be exercised are recorded as such rather than promoted.
+
+| Gate | Result | Evidence |
+|---|---|---|
+| 1 Build and typecheck | **PASS** | `npm run typecheck` clean; `npm test` 7,029 tests, 1,570 suites, 0 failures |
+| 2 Acceptance criteria | **PASS** | AC-01…AC-12 all covered; the six that were open are built, tested and driven over HTTP — see below |
+| 3 Authorisation and tenancy | **PASS** | Operator against a customer project: `403 ACCOUNT_LAYER_SEPARATION` on three paths and an empty project list. Customer admin against the operator estate: `403 PLATFORM_ADMIN_REQUIRED` on three paths |
+| 4 Backup and restore | **PASS** | Restore drill executed: 712 events, 2 files, 1,294 KB, shipped in parts, reassembled byte-identical against the manifest and replayed in **107 ms**. Boot on an altered journal refused. `restoredrill.test.ts` 4/4, `backup.test.ts` 8/8 |
+| 5 Financial invariants | **PASS** | `payments.test.ts` 10/10, `stripe.test.ts` 25/25, `economics.test.ts` 31/31, `billing.test.ts`, `masterpricing`, `pricingroute`, `seatlimit`, `seatpurchase` — 104/104 together. Over-certification, double certification and overpayment all refused at the domain |
+| 6 Load and soak | **PASS** | Ramp 1→1,000 concurrent with **zero errors** at every level; 3,965 req/s peak; p95 22 ms at 50, 108 ms at 500, 218 ms at 1,000. **120-second soak at 50 concurrent: 439,722 requests, 0 errors, p95 21.6 ms, p99 28.4 ms, max 40.7 ms.** Under the shipped rate limit the platform refuses rather than degrades: 6,817 req/s of 429s at 1,000 concurrent with no crash |
+| 7 Failure injection | **PASS, with one injection not achievable** | See §16.1 |
+| 8 Alerting | **PASS** | An alert was fired deliberately and reached a person: 60 forged-token requests → `auth_failures` **started**, `notified: 1`, `firedCount: 1`, `lastNotifiedAt` stamped; the burst stopped and the rule **resolved**. The disk and journal rules were also made to fire (`started: ["disk_space","journal_size"], notified: 2`) with human-readable detail |
+| 9 Data deletion | **PASS** | A real identity was erased end to end: erasure requested (grace period to 18 Oct), erased immediately, name and email replaced by a pseudonym, sign-in with the erased address yields no code, a second erase refused `409 ALREADY_ERASED`, and **every project chain still replays `VERIFIED` with zero failures**. `erasure.test.ts` 22/22, `erasenow.test.ts` 3/3 |
+| 10 Runbook | **PASS for the document, human assignment outstanding** | `runbook.test.ts` 8/8 — every documented command resolves and every referenced file exists. Naming an incident owner is an assignment a person makes, not a thing a build can contain |
+
+### 16.1 Failure injection, one at a time
+
+Each injection ran as its own process on its own copy of a real 735-event
+journal.
+
+| Injected | What happened |
+|---|---|
+| **SIGKILL mid-flight, then restart** | Restarted and served; journal unchanged at 735 lines; all four project chains replay `VERIFIED` (496, 14, 142 and 2 events, zero failures of any kind); the identity erased before the kill is still erased |
+| **Last line torn, as a crash mid-append leaves it** | Booted and served, and said so: *"the final line … was incomplete and has been dropped. That event was never acknowledged to a caller; a torn tail is the expected result of a hard stop."* |
+| **One event altered in place** | **Refused to boot.** `Journal event 46 … carries chain hash sha256:5eb3…, but recomputing it gives sha256:42f6…. The record has been tampered with.` |
+| **A second process on the same journal** | **Refused to boot**, naming the live writer, its pid and the age of its heartbeat, and saying why: two writers interleave appends and every event after the first interleave hashes against the wrong predecessor |
+| **Every AI provider on a dead port, in remote mode** | The command was refused `503 AI_UNAVAILABLE`, and **the wallet was untouched** — available, held and lifetime-billed identical before and after. No charge without an answer |
+| **Free space below the threshold** | `disk_space` and `journal_size` both fired and notified, each naming the volume and the file |
+| **A journal the process cannot write to** | **Not achievable in this environment.** The process runs as root, which bypasses file permission bits — the write succeeded and the journal grew. A read-only mount would be needed and none is available here. Recorded as untested rather than passed |
+
+### 16.2 What gate 2 needed, and what it got
+
+AC-04 optimistic concurrency, AC-05 material variance ownership, AC-06
+concurrent workstreams, AC-09 the framework call-off, AC-10 child projects and
+AC-12 the outbox were all open. Each is now built, unit-tested and driven over
+HTTP; the sections above in `STATE.md` carry the reasoning. Four defects were
+found by building them, three of which only a test driving the platform could
+have seen:
+
+- The integrator outbox had a queue, a signature, backoff and abandonment, and
+  **nothing ever filled it or drained it**.
+- The webhook drain wrote its delivery attempts to the wrong stream and was
+  refused by the ledger's own tenant-isolation check on every attempt.
+- Subscription health was written to the caller's project rather than the
+  subscription's, which worked only while the two happened to coincide.
+- **A converted design-and-build project could not reach site**: `DESIGN` to
+  `CONSTRUCTION` steps over the `TENDER` the project has already been through,
+  and that was read as a skip.

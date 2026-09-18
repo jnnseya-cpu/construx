@@ -23429,3 +23429,61 @@ and name what they mean — "5,000 billed, which is half the limit" — so the r
 is pinned once, in `economics.test.ts`, which is the test whose subject it is.
 No public page states the multiplier, so nothing customer-facing needed a word
 changed.
+
+## The ten launch gates, exercised rather than reasoned about
+
+Recorded here because the distinction between "the code would do this" and "this
+was made to happen" is the whole value of the exercise. `docs/LAUNCH_VERDICT.md`
+§16 carries the table; what follows is what it cost to get there and what it
+found.
+
+**Seven failure injections, each in its own process on its own copy of a real
+735-event journal.** A hard SIGKILL and restart: journal unchanged, all four
+project chains replay VERIFIED, and an identity erased before the kill is still
+erased afterwards. A torn last line: booted, dropped it, and said why. **An
+altered event: refused to boot**, naming the event, both hashes and the word
+tampered. **A second process on the same journal: refused to boot**, naming the
+live writer, its pid and the age of its heartbeat. **Every AI provider on a dead
+port: `503 AI_UNAVAILABLE`, and the wallet untouched** — available, held and
+lifetime-billed identical before and after, which is the property that matters
+and the one a passing unit test would not have proved.
+
+**One injection could not be made real and is recorded as untested rather than
+promoted.** A journal the process cannot write to: the process runs as root,
+root bypasses permission bits, the write succeeded and the journal grew. Closing
+it properly needs a read-only mount, which this environment does not have.
+
+**The alert was fired at a person, not asserted about.** Sixty requests carrying
+forged bearer tokens took the auth-failure rate from 0% to 98% inside one
+evaluation window; the rule started, one notification went out, `firedCount`
+became 1 and `lastNotifiedAt` was stamped. The burst stopped and the rule
+resolved on the next pass. The disk and journal rules were made to fire the same
+way.
+
+**The deletion was carried out, not simulated.** A real identity was erased:
+grace period recorded, erased immediately on request, name and email replaced by
+a pseudonym, sign-in with the erased address yields no code, a second erase
+refused 409 — and every project chain still replays VERIFIED with zero failures,
+which is the assertion that matters, because an erasure that broke the chain
+would trade one obligation for another.
+
+**The operator boundary, finally tested properly.** The earlier audit had to
+mark it BLOCKED: the operator account requires an authenticator and the probe
+got `MFA_ENROLMENT_REQUIRED`, which is a 403 for the wrong reason. Enrolling the
+authenticator over the API — the path a real operator takes on day one — allowed
+the actual test: three customer project reads refused `ACCOUNT_LAYER_SEPARATION`
+and an empty project list, and three operator reads refused
+`PLATFORM_ADMIN_REQUIRED` to the customer admin.
+
+**Load, measured twice.** Under the shipped rate limit the platform refuses
+rather than degrades: 6,817 req/s of 429s at 1,000 concurrent with no crash and
+no connection failure. With the limit lifted to measure the platform itself: a
+ramp from 1 to 1,000 concurrent with **zero errors at every level**, 3,965 req/s
+peak, and a 120-second soak at 50 concurrent that served **439,722 requests with
+no errors at all** — p95 21.6ms, p99 28.4ms, worst 40.7ms. Above 250 concurrent
+the p99 hits a 5-second ceiling that is connection queueing rather than work,
+which is the honest shape of a single node.
+
+**The restore drill, timed.** 712 events and 1,294 KB shipped in parts,
+reassembled byte-identical against the manifest and replayed in 107ms. A backup
+nobody has restored is a backup nobody has; this one has been restored.
