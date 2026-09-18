@@ -1,5 +1,5 @@
 import { api, entityBundle } from '../lib/api.js';
-import { donutChart, ganttChart, lineChart, sparkline, waterfallChart } from '../lib/charts.js';
+import { donutChart, funnelChart, gauge, ganttChart, lineChart, sparkline, waterfallChart } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { today } from '../lib/enums.js';
 import { badge, date, exact, html, humanise, metric, money, pct, positionReport, raw, render, statusTone, table, toast, track } from '../lib/ui.js';
@@ -849,6 +849,8 @@ export async function commercial(root) {
           sources: cashSources,
         })}
       </div>
+
+      ${cvrPanel(cvr, ledger)}
 
       <div id="commercial-insight" style="margin-bottom:14px"></div>
 
@@ -1870,6 +1872,173 @@ export async function commercial(root) {
     if (!spec) return;
     if (await command(spec)) await draw();
   });
+}
+
+/**
+ * The live CVR, as the four pictures the numbers are.
+ *
+ * The four tiles above carry the CVR's conclusions — forecast value, forecast
+ * cost, margin, cash. What they cannot carry is how each was arrived at, and
+ * that is the whole of a cost value reconciliation: a margin percentage is not
+ * a finding, it is the last line of an arithmetic somebody has to be able to
+ * follow. A commercial manager handed 16.14% asks *of what* before they ask
+ * anything else.
+ *
+ * The engine publishes the inputs (`backend/src/engines/maths/evm.ts`), so each
+ * chart here is the engine's own terms drawn in the order it adds them up. No
+ * figure is recomputed in the browser — the arithmetic is the platform's and a
+ * second copy here would be a second answer.
+ *
+ * ## Four questions, not one dashboard
+ *
+ * **Where the value comes from.** Contract sum, plus variations the client has
+ * agreed, plus variations claimed and not agreed. The last of those three is
+ * the one that matters and the one a single "forecast final value" hides: it is
+ * money the forecast is counting that nobody has committed to paying. It is
+ * toned as exposure rather than as an increase, because it is not the same kind
+ * of number as the two beside it.
+ *
+ * **Where the cost comes from.** Cost posted, plus accrued cost for work done
+ * and not invoiced, plus the forecast to complete. Again the three are not the
+ * same kind of number — the first is a fact in the ledger, the second is an
+ * estimate of invoices in the post, the third is a quantity surveyor's
+ * judgement — and the toning says so rather than the caption.
+ *
+ * **Where the money stops.** Committed, certified, paid: three figures from the
+ * cost ledger and two gaps. The gaps are the commercial position — work
+ * committed but not yet valued, and value certified but not yet in the bank.
+ * Drawn as a funnel because that is what it is, and because the proportions are
+ * the point: the first gap is buyout running ahead of valuation, the second is
+ * somebody else holding this business's money.
+ *
+ * **How much of the CVR is actually populated.** The engine counts how many of
+ * its eight inputs are non-zero and publishes the fraction. A CVR built from
+ * five of eight sources should not be read with the confidence of one built
+ * from eight, and this is the only place on the platform that says so as a
+ * picture. The footnote names the unpopulated inputs, because a confidence
+ * figure a reader cannot act on is decoration.
+ */
+function cvrPanel(cvr, ledger) {
+  if (!cvr) return '';
+
+  // The eight inputs `calculateCVR` takes, in the engine's own names, so the
+  // completeness figure can be explained rather than just stated.
+  const INPUTS = [
+    ['contractValueMinor', 'contract sum'],
+    ['approvedVariationsMinor', 'agreed variations'],
+    ['unapprovedVariationsMinor', 'variations not agreed'],
+    ['certifiedToDateMinor', 'certified to date'],
+    ['commitmentsMinor', 'commitments'],
+    ['costToDateMinor', 'cost to date'],
+    ['accrualsMinor', 'accruals'],
+    ['costToCompleteMinor', 'cost to complete'],
+  ];
+  const missing = INPUTS.filter(([key]) => Number(cvr[key] ?? 0) === 0).map(([, label]) => label);
+
+  const value = waterfallChart({
+    title: 'Where the forecast value comes from',
+    metric: 'CONTRACT_VALUE',
+    steps: [
+      { label: 'Contract sum', value: Number(cvr.contractValueMinor ?? 0), tone: 'actual' },
+      { label: 'Agreed variations', value: Number(cvr.approvedVariationsMinor ?? 0), tone: 'actual' },
+      { label: 'Not agreed', value: Number(cvr.unapprovedVariationsMinor ?? 0), tone: 'warn' },
+      { label: 'Forecast final value', value: Number(cvr.forecastFinalValueMinor ?? 0), total: true },
+    ],
+    format: money,
+    empty: 'This CVR carries no value terms, which cannot happen on an executed contract.',
+    footnote:
+      `${money(Number(cvr.unapprovedExposureMinor ?? 0))} of this forecast is variations that have been claimed and ` +
+      'not agreed. It is drawn apart from the two beside it because it is a different kind of number: the contract ' +
+      'sum and the agreed variations are money somebody has committed to paying, and this is not. ' +
+      'If it were struck out the forecast final value would be ' +
+      `${money(Number(cvr.forecastFinalValueMinor ?? 0) - Number(cvr.unapprovedExposureMinor ?? 0))}.`,
+  });
+
+  const cost = waterfallChart({
+    title: 'Where the forecast cost comes from',
+    metric: 'FORECAST_FINAL_COST',
+    steps: [
+      { label: 'Cost to date', value: Number(cvr.costToDateMinor ?? 0), tone: 'actual' },
+      { label: 'Accruals', value: Number(cvr.accrualsMinor ?? 0), tone: 'cyan' },
+      { label: 'Cost to complete', value: Number(cvr.costToCompleteMinor ?? 0), tone: 'forecast' },
+      { label: 'Forecast final cost', value: Number(cvr.forecastFinalCostMinor ?? 0), total: true },
+    ],
+    format: money,
+    empty: 'This CVR carries no cost terms.',
+    footnote:
+      'Three different kinds of number. Cost to date is posted in the ledger and is a fact. Accruals are an estimate ' +
+      'of work done and not yet invoiced. Cost to complete is a judgement the quantity surveyor enters when the CVR ' +
+      'is published — the platform offers a starting point from the remaining budget and has no basis for the answer. ' +
+      `${Math.round((Number(cvr.costToCompleteMinor ?? 0) / Math.max(1, Number(cvr.forecastFinalCostMinor ?? 0))) * 100)}% ` +
+      'of this forecast is that judgement.',
+  });
+
+  // The cost ledger is a separate read and may have been refused or failed.
+  // Without it there are no three figures to funnel, and a funnel built from
+  // the CVR's own certified figure alone would be one bar calling itself a
+  // funnel.
+  const committed = Number(ledger?.committedMinor ?? 0);
+  const certified = Number(ledger?.certifiedMinor ?? 0);
+  const paid = Number(ledger?.paidMinor ?? 0);
+  const retentionHeld = Number(ledger?.retentionHeldMinor ?? 0);
+
+  const funnel =
+    committed > 0
+      ? funnelChart({
+          title: 'Committed, certified, paid',
+          metric: 'CERTIFIED_TO_DATE',
+          stages: [
+            { label: 'Committed', value: committed, tone: 'actual' },
+            { label: 'Certified', value: certified, tone: 'cyan' },
+            { label: 'Paid', value: paid, tone: 'green' },
+          ],
+          format: money,
+          footnote:
+            `${money(committed - certified)} is committed and not yet certified — work bought and not yet valued. ` +
+            `${money(certified - paid)} is certified and not yet paid, of which ${money(retentionHeld)} is retention ` +
+            'held under the contract and falls due at the dates on the retention panel below. The rest is somebody ' +
+            'else holding this business’s money, and the payment-cycle windows say by when.',
+        })
+      : '';
+
+  const completeness = Number(cvr.dataCompleteness ?? 0) * 100;
+  const confidence = gauge({
+    title: 'How much of this CVR is populated',
+    value: completeness,
+    max: 100,
+    target: 70,
+    label: `${INPUTS.length - missing.length} of ${INPUTS.length} inputs`,
+    tone: completeness < 70 ? 'bad' : completeness < 100 ? 'warn' : 'ok',
+    footnote:
+      missing.length === 0
+        ? 'All eight of the CVR’s inputs carry a figure. That is completeness, not accuracy — a populated input can ' +
+          'still be wrong, and cost to complete is a judgement whatever its value.'
+        : `${missing.length} of the eight inputs the reconciliation takes ${missing.length === 1 ? 'is' : 'are'} zero: ` +
+          `${missing.join(', ')}. The margin above is computed as though ${missing.length === 1 ? 'it were' : 'they were'} ` +
+          'nil, which is a different statement from not knowing. The engine raises an alert below 70%; ' +
+          'this is a measure of how much the CVR was told, not of whether it is right.',
+  });
+
+  return html`<div class="card" style="margin-bottom:14px">
+    <h2>The reconciliation, in the order it adds up</h2>
+    <div class="metric-sub" style="margin-bottom:11px">
+      The four figures above are conclusions. These are the terms they were reached from, drawn in the engine’s own
+      order — nothing here is recomputed in the browser.
+    </div>
+    <div class="chart-row">
+      <div>${raw(value)}</div>
+      <div>${raw(cost)}</div>
+    </div>
+    <div class="chart-row">
+      ${funnel
+        ? html`<div>${raw(funnel)}</div>`
+        : html`<div class="notice">
+            <b>The cost ledger could not be read.</b> Committed, certified and paid come from it rather than from the
+            CVR, so the funnel is not drawn rather than drawn from one figure and two blanks.
+          </div>`}
+      <div>${raw(confidence)}</div>
+    </div>
+  </div>`;
 }
 
 /**

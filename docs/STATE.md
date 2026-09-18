@@ -22049,6 +22049,10 @@ eleven.
   confidence bands. There is no forecast a chart currently plots as a forecast.
 - **Section 7**: no responsive testing has been done against tablet, Android or
   iOS, and no offline field mode exists.
+  *Superseded below — see "Section 7: offline field mode, and the line this
+  platform will not cross". Offline capture is built and visible; offline
+  reading is refused rather than unbuilt; native iOS and Android are a separate
+  product decision and are not planned.*
 - **Section 8**: no governed semantic metric layer with owner and refresh
   cadence; no measured render-time target; no small-number suppression.
 - **Section 9**: WCAG 2.2 AA is met for contrast, measured. Keyboard navigation,
@@ -22057,6 +22061,10 @@ eleven.
 - **Sections 10 and 11**: the acceptance criteria and the definition of done are
   not met. No visual has been through the standard's eleven-point completion
   list.
+  *Superseded below — see "Section 11: the definition of done, as a register".
+  Six of the eleven points are now checked on every run for every chart in the
+  kit; four cannot be closed by a test, and point 11's three approvals are
+  outstanding.*
 
 ## Section 3.2 and 4: the interactions and the misuse controls
 
@@ -22527,3 +22535,179 @@ each answering a question the table makes somebody compute by hand:
   large variations sitting unagreed becomes visible as a shape rather than a
   sort.
 - **Notice ageing**, as a histogram, against the contract's own notice periods.
+
+## Section 6: the five modules that had screens and no pictures
+
+Five of the thirteen modules named in the standard carried a register table and
+nothing else. Each now carries the charts its own records already justify, and
+in three cases the chart that would have been obvious is deliberately absent
+because the field it needs does not exist.
+
+### Live CVR
+
+The four tiles on Cost & Value are conclusions: forecast value, forecast cost,
+margin, cash. What none of them carries is how it was arrived at, and that is
+the whole of a cost value reconciliation — a margin percentage is the last line
+of an arithmetic somebody has to be able to follow. Handed 16.14%, a commercial
+manager asks *of what* before anything else.
+
+Four charts, each a question, drawn in the engine's own order and recomputing
+nothing in the browser:
+
+- **Where the forecast value comes from.** Contract sum, agreed variations,
+  variations claimed and not agreed. The third is toned apart from the other
+  two because it is a different kind of number — money the forecast counts that
+  nobody has committed to paying — and the footnote states what the forecast
+  would be without it.
+- **Where the forecast cost comes from.** Cost posted, accrued, and the forecast
+  to complete. Three different kinds of number again: a ledger fact, an estimate
+  of invoices in the post, and a quantity surveyor's judgement. On this seed
+  **84% of the forecast is that judgement**, which the footnote says rather than
+  leaving a reader to divide two bars.
+- **Committed, certified, paid.** Three figures from the cost ledger and two
+  gaps: work bought and not yet valued, and value certified and not yet in the
+  bank. Drawn as a funnel because the proportions are the point.
+- **How much of the CVR is populated.** The engine counts how many of its eight
+  inputs are non-zero and publishes the fraction; this is the only place on the
+  platform that draws it. The footnote names the unpopulated ones, because a
+  confidence figure a reader cannot act on is decoration. **Completeness is not
+  accuracy** and the empty-state wording says so.
+
+### Variation control, procurement, drawing control, field capture
+
+**Procurement** gained the programme and the funnel. A package is a run of dates
+— raised, issued, returns due, awarded — and the gaps between them are where the
+time goes; in a table a reader has to subtract seven ISO strings to see them.
+Every date is the RFQ record's own, written at the transition, and a package
+with no issue date is drawn up to the point it reached and no further. The
+funnel is invited → acknowledged → intending to bid → returned, across every
+package, because the question is about the supply chain's appetite and one
+package is not evidence of that.
+
+**Drawing control** gained three. Revision depth is the count of records sharing
+a drawing number, which is exact — `bim.ts` writes one record per registration —
+and deliberately *not* read off the revision string, because `P01`, `C02` and
+`T3` are a suitability code and a number rather than a sequence, and a chart
+sorting them as one would be confidently wrong on any project using two codes.
+The same records grouped by discipline and banded by depth is the chart that
+says where to put the design manager. Markups per drawing is the churn chart one
+step earlier. **There is no markup ageing** — a markup has no resolved state in
+the ledger, and the ones that mattered became RFIs, which carry their own dates.
+
+**Field capture** gained five. Labour hours per day breaks where the diary
+breaks, which is the coverage gauge's number drawn where the missing days
+actually fall. Person-hours by trade is the diary's own arithmetic split a
+second way. Plant worked against plant standing is ordered by standing time,
+because that is the part being paid for and not used. Evidence held against
+evidence only asserted, by type — a hash proves a file has not changed and does
+not produce the file. And progress measured by activity and week.
+
+**It is by activity, not by location**, and that is the standard's asked-for
+location heatmap declined rather than deferred: `recordProgress` writes against
+a task, and a task carries no zone, level or gridline on this platform. A
+location grid would need a field nobody has entered.
+
+### Two defects the screenshots found and the tests did not
+
+**Horizontal bars drew `keys[0]` and dropped the rest in silence.** `barChart`
+routes every `horizontal: true` call to `horizontalBars`, which read the first
+series and ignored the others. A three-series call rendered one — no error, no
+blank, no failing test — with a legend beside it naming two bands that were not
+on the chart and a table listing all three. The fix is to stack them rather than
+refuse: a stacked horizontal bar is an ordinary thing to want, and refusing it
+would have sent the caller to build one by hand. One series behaves exactly as
+before, including `row.tone` painting the bar. Measured in a browser at three
+bands: five rects for six cells, the zero band dropped rather than drawn at the
+1px floor, bands abutting to the pixel, and the total in the table.
+
+**A waterfall's legend named colours that were not on it.** The legend said
+"Increase, Decrease, Subtotal" whatever the bars were, and the CVR's value
+build-up tones its steps, so it drew blue, blue, amber and grey under three keys
+for green, red and grey. Keying the legend to the toned steps alone fixed that
+one chart and broke the partly-toned case — the variation waterfall tones only
+its middle bar and would have lost the other two. So the legend is now built by
+walking the bars and taking each one's real colour, deduplicated **by colour
+rather than by label**: a legend exists to say what a colour means, and two keys
+of one colour is a reader looking for a difference that is not there. Where two
+steps share a colour their names are joined.
+
+## Section 7: offline field mode, and the line this platform will not cross
+
+The write half was already built and is unchanged: `frontend/lib/outbox.js`
+holds operations in IndexedDB with the device's own timestamp, refuses to queue
+a governance event, clears on sign-out, and feeds `backend/src/field/sync.ts`,
+which reconciles on operation-id idempotency.
+
+What was missing was everything the person holding the handset could see. With
+no signal the console failed to fetch and showed whatever each screen's `catch`
+produced — usually an empty panel. Nothing said the device was offline, nothing
+said capture still worked, and nothing said the records already made were safe.
+A supervisor in a basement therefore had every reason to believe the platform
+had lost them, and the rational response to that belief is to write the day on
+paper.
+
+Two things now say so. A bar at the top of the shell — amber for offline, blue
+for sending, and **not red**, because being out of signal on a construction site
+is an ordinary condition this platform is built for and colouring it as a
+failure would teach people to ignore the colour that means failure. And a panel
+on the field screen listing what this handset captured and has not yet filed,
+each with the time the button was pressed.
+
+The count moves because `outbox.js` dispatches at the five places its store
+changes, not because anything polls: a timer waking a handset every few seconds
+to count an IndexedDB store is a battery cost on exactly the device that can
+least afford one.
+
+### Reading offline is refused, not unbuilt
+
+`frontend/sw.js` states the rule: nothing under `/v1/` is ever cached, because a
+cached API response is one identity's project data sitting somewhere the access
+control cannot reach, on a device routinely handed to the next operative. The
+bar and the panel read only this device's own outbox — already on the device,
+authorised at the moment of capture, cleared on sign-out.
+
+So the honest boundary is: **capture works offline, reading the project does
+not.** The standard's line about caching authorised project visuals is the one
+part of it this platform declines rather than the part it has not reached yet.
+
+**Native iOS and Android are not built and are not planned as a separate
+product.** The installable PWA — manifest, worker, install prompt — puts the
+same content on both, and a native application is a distinct product decision
+with its own store accounts, release process and review latency. Recorded here
+so the absence is a decision rather than a gap.
+
+## Section 11: the definition of done, as a register
+
+Section 11 lists eleven things a visual needs before it is complete. Six a test
+can decide; `backend/tests/definitionofdone.test.ts` decides them for every
+chart in the kit on every run. Four it cannot. The file holds both, because a
+checklist that lists only what passes is how eleven points become six and nobody
+notices which five went missing.
+
+| # | Point | Verdict |
+|---|---|---|
+| 1 | Approved business question and role | **Partly met** — stated on every chart card; approval is a person's act and is outstanding |
+| 2 | Governed metric definitions and source mapping | Checked here, against `shared/metrics.js` |
+| 3 | Permission and tenancy tests | Checked in `crossorg`, `guests`, `customroles` |
+| 4 | Responsive desktop/tablet/mobile | **Measured, not gated** — 390/768/1440px and 200% zoom, in a browser, on one build |
+| 5 | Loading, empty, partial-data and error states | Checked here, on the empty path of all 18 chart kinds |
+| 6 | Tooltip, filters, comparison, drill-down | Checked here |
+| 7 | Accessible table and keyboard/screen-reader | Checked here, plus `chartdata.test.ts` |
+| 8 | Export and deep-link behaviour | Checked here |
+| 9 | Data reconciliation tests | Checked here — the CSV is read from the rendered table |
+| 10 | Audit logging where an action is taken | **Not applicable** — no chart tool writes to the ledger, asserted so it stays true |
+| 11 | Product, domain and technical owner approval | **OPEN — none of the three has been given** |
+
+Point 2 is the one with a number worth watching: **11 of 200 chart calls name a
+governed metric.** The test prints the figure rather than asserting a
+percentage, because not every chart draws a metric and forcing one would be
+worse — "markups per drawing" is a count of records, not a measure with an owner
+and a refresh cadence, and inventing a catalogue entry so a test could pass
+would be the catalogue lying rather than the chart improving.
+
+Point 11 is what keeps section 11 open. Three named humans, none of whom has
+approved anything, and no test, comment or commit can substitute for one.
+
+The register also fails when a new chart type is added to the kit without being
+added to it — an uncovered chart is one that can ship with no empty state, no
+tooltip and no export.

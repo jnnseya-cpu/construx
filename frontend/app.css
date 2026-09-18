@@ -1793,6 +1793,56 @@ input:focus, select:focus, textarea:focus {
 .company-switch { display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; }
 .company-switch select { max-width: 220px; }
 
+/*
+ * The offline bar.
+ *
+ * Prepended to the body, so it sits above the shell and stays put through a
+ * navigation. `position: sticky` rather than fixed: fixed would float over the
+ * first row of whatever is beneath it, and on a phone the first row is usually
+ * the thing somebody just tapped.
+ *
+ * Amber for offline and blue for sending, which are the standard's warning and
+ * measurement colours — not red. Being out of signal on a construction site is
+ * an ordinary condition the platform is built for, and colouring it as a
+ * failure would teach people to ignore the colour that means failure.
+ */
+.offline-bar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  padding: 9px 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--line);
+}
+
+.offline-bar[hidden] {
+  display: none;
+}
+
+.offline-bar.is-offline {
+  background: color-mix(in srgb, var(--brand-amber) 16%, var(--panel));
+  color: var(--text);
+  border-bottom-color: color-mix(in srgb, var(--brand-amber) 45%, var(--line));
+}
+
+.offline-bar.is-sending {
+  background: color-mix(in srgb, var(--brand-blue) 14%, var(--panel));
+  color: var(--text);
+  border-bottom-color: color-mix(in srgb, var(--brand-blue) 40%, var(--line));
+}
+
+.offline-bar b {
+  color: var(--text);
+}
+
+/* A status strip is not the chart the reader asked to print. */
+@media print {
+  .offline-bar {
+    display: none;
+  }
+}
+
 /* ------------------------------------------------- targets on a touch device
  *
  * The standard sets a 44x44 minimum on touch. A desktop pointer does not need

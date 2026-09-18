@@ -1,5 +1,5 @@
 import { api, entityBundle, isWithheld } from '../lib/api.js';
-import { barChart, boxPlot, radarChart, scatterPlot } from '../lib/charts.js';
+import { barChart, boxPlot, funnelChart, ganttChart, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
@@ -980,6 +980,8 @@ export async function procurement(root) {
       }
 
       ${procurementCharts(scores, coverage, costIntel)}
+
+      ${procurementProgramme(b.RFQ ?? [], b.SupplierSubmission ?? [])}
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Bid evaluation${evaluation ? ` — ${evaluation.method.price} price / ${evaluation.method.programme} programme / ${humanise(evaluation.method.risk)} risk` : ''}</h2>
@@ -2194,6 +2196,147 @@ function supplierPortalPanel(portal) {
  * flagged in words above; plotted, the reader sees how far the cheapest bid sat
  * below the winner on quality, which is the whole of the justification.
  */
+/**
+ * The procurement programme, and where the field falls away.
+ *
+ * The charts above are about one package's returns: who scored what, and
+ * whether the recommendation is defensible. What is missing from this screen —
+ * and from the tables on it — is the two things that make procurement late
+ * rather than wrong.
+ *
+ * ## When each package actually moves
+ *
+ * A package is not a row in a register, it is a run of dates: raised, issued,
+ * returns due, awarded. The gaps between them are where the time goes, and they
+ * are invisible in a table because a reader has to subtract seven ISO strings to
+ * see them. Drawn as bars, a package sitting three weeks between raised and
+ * issued is a shape, and so is one whose return deadline has passed with the
+ * status still `ISSUED`.
+ *
+ * The dates are the RFQ record's own — `createdAt`, `issuedAt`,
+ * `returnDeadline`, `awardedAt`, written by `backend/src/domain/procurement.ts`
+ * at each transition. Nothing here is interpolated: a package with no
+ * `issuedAt` is drawn up to the point it reached and no further, because a bar
+ * running to a date nobody set is a schedule the platform invented.
+ *
+ * ## How many firms survive each step
+ *
+ * Invited, acknowledged, intending to bid, actually returned. Four figures that
+ * exist on every enquiry and are never put beside each other, so the ordinary
+ * procurement failure — eight firms invited, two returns, and the package
+ * competed against itself — is discovered at the evaluation rather than in the
+ * week there was still time to invite more.
+ *
+ * Drawn as a funnel across every package on the project rather than per
+ * package, because the question it answers is about the supply chain's appetite
+ * and one package is not evidence of that. The per-package position stays in
+ * the register table above, which is where somebody chasing a specific enquiry
+ * is already looking.
+ */
+function procurementProgramme(rfqs, submissions) {
+  const packages = (rfqs ?? []).filter((rfq) => rfq && rfq.createdAt);
+  if (packages.length === 0) return '';
+
+  const day = (value) => (value ? String(value).slice(0, 10) : undefined);
+  const now = today();
+
+  // Returns are separate records, counted against the RFQ they answer rather
+  // than taken from a figure on the RFQ — there is no such figure, and adding
+  // one to the browser would be a second count of the same thing.
+  const returnsBy = new Map();
+  for (const submission of submissions ?? []) {
+    returnsBy.set(submission.rfqId, (returnsBy.get(submission.rfqId) ?? 0) + 1);
+  }
+
+  const tasks = packages.flatMap((rfq) => {
+    const reference = String(rfq.reference ?? rfq.title ?? 'Package');
+    const raised = day(rfq.createdAt);
+    const issued = day(rfq.issuedAt);
+    const due = day(rfq.returnDeadline);
+    const awarded = day(rfq.awardedAt);
+    const bars = [];
+
+    // Raised to issued: the package being made ready. A long bar here is a
+    // tender pack that was not complete, which is the gate that refused it.
+    if (raised && issued) {
+      bars.push({ id: `${rfq.id}-prep`, label: `${reference} · preparing the pack`, start: raised, end: issued, tone: 'baseline' });
+    } else if (raised && !issued) {
+      bars.push({ id: `${rfq.id}-prep`, label: `${reference} · preparing the pack`, start: raised, end: now, tone: 'warn' });
+    }
+
+    // Issued to the return deadline: the firms' own time. Past the deadline
+    // with no award, the bar is drawn to the deadline and the overrun is drawn
+    // separately, because a tender period that has ended has ended.
+    if (issued && due) {
+      bars.push({ id: `${rfq.id}-tender`, label: `${reference} · out to tender`, start: issued, end: due, tone: 'actual' });
+    }
+    if (due && !awarded && due < now) {
+      bars.push({ id: `${rfq.id}-over`, label: `${reference} · past the return deadline`, start: due, end: now, tone: 'bad' });
+    }
+
+    // Deadline to award: evaluation and the approval behind it.
+    if (due && awarded) {
+      bars.push({ id: `${rfq.id}-award`, label: `${reference} · evaluating and awarding`, start: due, end: awarded, tone: 'forecast' });
+    }
+
+    return bars.filter((bar) => bar.start && bar.end && bar.start <= bar.end);
+  });
+
+  const invited = packages.reduce((sum, rfq) => sum + (rfq.invitedSupplierIds ?? []).length, 0);
+  const acknowledgements = packages.flatMap((rfq) => rfq.acknowledgements ?? []);
+  const intending = acknowledgements.filter((entry) => entry.intendToBid !== false).length;
+  const returned = packages.reduce((sum, rfq) => sum + (returnsBy.get(rfq.id) ?? 0), 0);
+
+  const funnel =
+    invited > 0
+      ? funnelChart({
+          title: 'Firms invited, and how many return',
+          stages: [
+            { label: 'Invited', value: invited, tone: 'actual' },
+            { label: 'Acknowledged', value: acknowledgements.length, tone: 'cyan' },
+            { label: 'Intending to bid', value: intending, tone: 'amber' },
+            { label: 'Returned a price', value: returned, tone: 'green' },
+          ],
+          format: (value) => String(Math.round(value)),
+          empty: 'No enquiry has been issued on this project.',
+          footnote:
+            `Across ${packages.length} package${packages.length === 1 ? '' : 's'}. ` +
+            'Silence and a declined acknowledgement are different things and are counted apart: a firm that said it ' +
+            'would not bid told somebody, and a firm that said nothing did not. ' +
+            (returned < 3
+              ? `Only ${returned} price${returned === 1 ? '' : 's'} has come back, which is a package competing against ` +
+                'itself rather than against the market.'
+              : 'A return that arrives after the deadline is still counted here — whether it can be accepted is the ' +
+                'evaluation’s decision, not this chart’s.'),
+        })
+      : '';
+
+  return html`<div class="grid g2" style="margin-bottom:14px">
+    <div class="card">
+      <h2>When each package actually moves</h2>
+      ${raw(
+        ganttChart({
+          title: 'Procurement programme',
+          tasks,
+          scale: 'WEEK',
+          showFloat: false,
+          showLinks: false,
+          today: now,
+          empty: 'No package carries the dates to draw a programme from.',
+          footnote:
+            'Every date is the RFQ record’s own, written when the transition happened. A package with no issue date is ' +
+            'drawn up to where it got to and no further — a bar running to a date nobody set would be a programme the ' +
+            'platform invented. Red is time past a return deadline with no award against it.',
+        }),
+      )}
+    </div>
+    <div class="card">
+      <h2>Where the field falls away</h2>
+      ${raw(funnel)}
+    </div>
+  </div>`;
+}
+
 function procurementCharts(scores, coverage, costIntel) {
   const ranked = (scores ?? []).filter((score) => score && Number.isFinite(Number(score.totalScore)));
 

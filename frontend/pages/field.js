@@ -3,7 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { OBSERVATION_TYPE, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, today } from '../lib/enums.js';
 import { badge, date, days, drillable, html, humanise, pct, raw, reference, render, statusTone, table, time, toast, track } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
-import { barChart, gauge, pieChart } from '../lib/charts.js';
+import { barChart, gauge, heatmap, lineChart, pieChart } from '../lib/charts.js';
 import * as outbox from '../lib/outbox.js';
 import { recordVoice, recordingDescription, voiceSupport } from '../lib/voice.js';
 import { mountSiteTwin } from '../lib/sitetwin.js';
@@ -696,6 +696,17 @@ export async function field(root) {
   // anybody a photograph was sitting on a phone rather than in the record.
   const carrying = await outbox.pendingFiles().catch(() => []);
 
+  // And the records themselves. `pendingFiles` shows the bytes waiting for a
+  // record; this is the other half — operations captured on this handset and
+  // not yet accepted by the platform. Shown for the same reason the files are:
+  // an operative who cannot see what they captured has no way to tell a queue
+  // from a loss, and the rational response to that doubt is to keep a second
+  // record on paper.
+  //
+  // Read from IndexedDB on this device. It is not a cache of anything under
+  // /v1/ and must not become one — see `frontend/lib/offline.js`.
+  const queued = (await outbox.pending().catch(() => [])).filter((op) => op.projectId === projectId);
+
   // Conflicts the sync engine resolved on its own. Every resolution has a
   // losing side, and until these were recorded the only trace of a discarded
   // site record was a line in a response the handset may never have received.
@@ -838,7 +849,32 @@ export async function field(root) {
             </div>`
       }
 
+      ${
+        queued.length === 0
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <h2 style="padding:15px 17px 0">Captured here, waiting to be filed</h2>
+              <div style="padding:8px 17px 0"><div class="metric-sub">
+                ${queued.length} record${queued.length === 1 ? '' : 's'} made on this device and not yet accepted.
+                Each carries the time the button was pressed, not the time it eventually sends — that is the fact
+                a delay claim turns on, and the platform keeps its own received-at time beside it. They are filed
+                automatically whenever this device has signal; nothing here needs doing.
+              </div></div>
+              ${table({
+                headers: ['Captured at', 'What was recorded', 'Against'],
+                rows: queued.map((operation) => [
+                  time(operation.deviceTimestamp),
+                  humanise(String(operation.eventType ?? '')),
+                  `${humanise(String(operation.entity?.refType ?? ''))} ${String(operation.entity?.refId ?? '').slice(-6)}`,
+                ]),
+                empty: 'Nothing is waiting.',
+              })}
+            </div>`
+      }
+
       ${fieldCharts(diary, walk, plant)}
+
+      ${fieldCapture(b.SiteDiary ?? [], b.ProgressMeasurement ?? [], b.Task ?? [], plant, evidence)}
 
       ${capturePanel(missions, brief)}
 
@@ -2485,6 +2521,244 @@ export async function field(root) {
  *
  * Both come from positions the API already computes; nothing is counted here.
  */
+/**
+ * What the site actually did, from the records it wrote while doing it.
+ *
+ * The three charts above are about the *quality* of the record — is the diary
+ * complete, what did the walks find, what is past its date. These five are
+ * about the work: who was on site, what they had, where the progress was
+ * measured and whether it was evidenced.
+ *
+ * Every figure comes from a site diary, a progress measurement or the evidence
+ * register. Nothing is averaged into a rate, because a rate needs a
+ * denominator — output per person-hour needs a quantity, and this platform
+ * measures activities in percent complete, which cannot be divided by hours to
+ * mean anything.
+ *
+ * ## The output trend breaks where the diary does
+ *
+ * Labour hours per day, plotted on the diary's own dates. A day with no entry
+ * is a gap in the line rather than a zero and rather than a bridge: zero says
+ * nobody worked, a bridge says the platform knows something it does not, and
+ * the gap says exactly what happened — no record. That is the same fact the
+ * coverage gauge reports as a number, drawn where the missing days actually
+ * fall, which is what decides whether a gap matters.
+ *
+ * Hours lost to weather is the second series because it is the commonest reason
+ * the first one drops, and the two together are the beginning of every
+ * weather-related extension of time.
+ *
+ * ## It is by activity, not by location
+ *
+ * Stated because the standard asks for a location heatmap and this is not one.
+ * `recordProgress` writes a measurement against a task; a task has no zone,
+ * level or gridline on this platform. A heatmap keyed on location would need a
+ * field nobody has entered, so this is keyed on the activity the measurement
+ * was actually recorded against, and the week it was recorded in.
+ */
+function fieldCapture(diaries, measurements, tasks, plant, evidence) {
+  const entries = (diaries ?? [])
+    .filter((entry) => entry && entry.diaryDate && entry.status !== 'DRAFT')
+    .sort((a, b) => String(a.diaryDate).localeCompare(String(b.diaryDate)));
+
+  // Person-hours by trade across every day recorded. Headcount times hours is
+  // the diary's own arithmetic — it is what `labourHours` on the record sums —
+  // so this is the same total split a second way, not a second measurement.
+  const trades = new Map();
+  for (const entry of entries) {
+    for (const line of entry.labour ?? []) {
+      const trade = String(line.trade ?? 'Unspecified');
+      const hours = Number(line.headcount ?? 0) * Number(line.hours ?? 0);
+      trades.set(trade, (trades.get(trade) ?? 0) + hours);
+    }
+  }
+  const mix = [...trades.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([trade, hours]) => ({ label: humanise(trade), value: Math.round(hours) }));
+
+  const output = entries.map((entry) => ({
+    label: String(entry.diaryDate).slice(0, 10),
+    hours: Number(entry.labourHours ?? 0),
+    lost: Number(entry.weather?.hoursLost ?? 0),
+  }));
+  const stopped = entries.filter((entry) => entry.weather?.workingStopped === true).length;
+
+  // Plant utilisation comes from the register's own position, which has already
+  // matched diary lines to hired items. Items named in a diary and on nobody's
+  // register are held separately by the engine and are not silently folded in
+  // here — an unregistered item is a finding, and the plant panel makes it one.
+  const utilisation = (plant?.items ?? [])
+    .filter((item) => Number(item.hoursWorked ?? 0) + Number(item.hoursIdle ?? 0) > 0)
+    .sort((a, b) => Number(b.hoursIdle ?? 0) - Number(a.hoursIdle ?? 0))
+    .slice(0, 10)
+    .map((item) => ({
+      label: String(item.description ?? item.reference ?? 'Plant').slice(0, 30),
+      worked: Number(item.hoursWorked ?? 0),
+      idle: Number(item.hoursIdle ?? 0),
+    }));
+
+  // Evidence by type, held against asserted. `held` is whether the platform has
+  // the file, not whether somebody says it exists — the register records the
+  // hash either way, and the distinction is the whole point of the column.
+  const byType = new Map();
+  for (const item of evidence?.entries ?? []) {
+    const type = String(item.type ?? 'UNCLASSIFIED');
+    const row = byType.get(type) ?? { label: humanise(type), held: 0, asserted: 0 };
+    if (item.held) row.held += 1;
+    else row.asserted += 1;
+    byType.set(type, row);
+  }
+  const coverage = [...byType.values()].sort((a, b) => b.asserted - a.asserted || b.held - a.held).slice(0, 10);
+
+  // Progress measured, by activity and by week. The week is the recording
+  // date's, not the measurement's period — a measurement has no period, and
+  // inventing one would put work in a week nobody claimed it in.
+  const nameOf = new Map((tasks ?? []).map((task) => [task._refId ?? task.id, String(task.name ?? task.id ?? '')]));
+  const weekOf = (iso) => {
+    const date = new Date(String(iso));
+    if (Number.isNaN(date.getTime())) return undefined;
+    // Monday of that week, as a date. Cheap, exact, and no calendar library.
+    const monday = new Date(date);
+    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+    return monday.toISOString().slice(0, 10);
+  };
+
+  const cells = new Map();
+  const weeks = new Set();
+  for (const measurement of measurements ?? []) {
+    const week = weekOf(measurement.recordedAt);
+    if (!week) continue;
+    const activity = nameOf.get(measurement.taskId) ?? String(measurement.taskId ?? '');
+    if (!activity) continue;
+    weeks.add(week);
+    const key = `${activity} ${week}`;
+    cells.set(key, (cells.get(key) ?? 0) + 1);
+  }
+  const weekList = [...weeks].sort();
+  const activityList = [...new Set([...cells.keys()].map((key) => key.split(' ')[0]))]
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, 14);
+  const grid = activityList.map((activity) => weekList.map((week) => cells.get(`${activity} ${week}`) ?? 0));
+
+  if (entries.length === 0 && utilisation.length === 0 && coverage.length === 0 && activityList.length === 0) return '';
+
+  return html`
+    ${
+      output.length > 1
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Hours on site, day by day</h2>
+            ${raw(
+              lineChart({
+                title: 'Labour hours from the diary',
+                data: output,
+                series: [
+                  { key: 'hours', label: 'Labour hours', colour: 'actual' },
+                  { key: 'lost', label: 'Hours lost to weather', colour: 'red' },
+                ],
+                markers: true,
+                format: (value) => `${Math.round(value)} h`,
+                empty: 'Fewer than two days have been recorded.',
+                footnote:
+                  `${entries.length} day${entries.length === 1 ? '' : 's'} recorded` +
+                  (stopped > 0 ? `, ${stopped} on which weather stopped work` : ', none on which weather stopped work') +
+                  '. A day with no diary entry is a break in the line, not a zero and not a bridge: zero would say ' +
+                  'nobody worked and a bridge would say the platform knows something it does not. Where the line ' +
+                  'breaks is the part of the record a delay claim is argued into.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Who was on site</h2>
+        ${raw(
+          barChart({
+            title: 'Person-hours by trade',
+            horizontal: true,
+            data: mix,
+            format: (value) => `${Math.round(value)} h`,
+            empty: 'No diary records a labour line.',
+            footnote:
+              'Headcount multiplied by hours, which is the diary’s own arithmetic — the same total the coverage gauge ' +
+              'counts, split by trade rather than by day. A trade absent here was absent from every diary, which is ' +
+              'not the same as absent from site.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Plant working and plant standing</h2>
+        ${raw(
+          barChart({
+            title: 'Hours worked against hours standing',
+            horizontal: true,
+            stacked: true,
+            data: utilisation,
+            series: [
+              { key: 'worked', label: 'Worked', colour: 'green' },
+              { key: 'idle', label: 'Standing', colour: 'red' },
+            ],
+            format: (value) => `${Math.round(value)} h`,
+            empty: 'No hired item has been named in a diary with hours against it.',
+            footnote:
+              'Ordered by standing time, because that is the part being paid for and not used. Items named in a diary ' +
+              'and on no register are not folded in here — the engine holds them separately and the plant panel ' +
+              'reports them, since an unregistered item is a finding rather than a row.',
+          }),
+        )}
+      </div>
+    </div>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Evidence held, and evidence only asserted</h2>
+        ${raw(
+          barChart({
+            title: 'Register entries by type',
+            horizontal: true,
+            stacked: true,
+            data: coverage,
+            series: [
+              { key: 'held', label: 'File held', colour: 'green' },
+              { key: 'asserted', label: 'Hash only', colour: 'amber' },
+            ],
+            format: (value) => String(Math.round(value)),
+            empty: 'Nothing has been registered as evidence on this project.',
+            footnote:
+              (evidence?.storeConfigured === false
+                ? 'This deployment has no evidence store configured, so every entry is a hash and no file is held. ' +
+                  'That is a deployment setting rather than lost evidence. '
+                : '') +
+              'A hash proves a file has not changed since it was registered. It does not produce the file, and an ' +
+              'entry nobody can produce the file for is an assertion — which is worth recording and is not the same ' +
+              'thing as evidence.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Where progress was measured</h2>
+        ${raw(
+          heatmap({
+            title: 'Measurements by activity and week',
+            rows: activityList,
+            columns: weekList,
+            values: grid,
+            format: (value) => `${Math.round(value)} measurement${Math.round(value) === 1 ? '' : 's'}`,
+            empty: 'No progress has been measured against an activity.',
+            footnote:
+              'Keyed on the activity, not the location: a measurement is recorded against a task and a task carries no ' +
+              'zone, level or gridline on this platform, so a location grid would need a field nobody has entered. ' +
+              'The week is the week it was recorded in — a measurement carries no period, and assigning one would put ' +
+              'work in a week nobody claimed it in.',
+          }),
+        )}
+      </div>
+    </div>
+  `;
+}
+
 function fieldCharts(diary, walk, plant) {
   if (!diary && !walk) return '';
 

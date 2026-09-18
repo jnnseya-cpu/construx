@@ -383,6 +383,8 @@ export async function design(root) {
 
       <div id="design-insight" style="margin-bottom:14px"></div>
 
+      ${drawingControl(b.Drawing, b.DrawingMarkup ?? [])}
+
       <div class="grid g-2-1" style="margin-bottom:14px">
         <div class="card pad0">
           <h2 style="padding:15px 17px 0">Drawing register</h2>
@@ -1528,6 +1530,169 @@ export async function design(root) {
  * installed cost, and one resolved by revising the model is not, so the split
  * is a cost story rather than a tidy-up statistic.
  */
+/**
+ * Drawing control, as the three questions the register cannot answer.
+ *
+ * The register below is a correct and complete list of every revision, sorted
+ * by nothing in particular, and it is the wrong shape for all three of the
+ * questions a design manager actually has. Each of these reads the same
+ * records; none of them adds a field.
+ *
+ * ## Which drawings will not settle
+ *
+ * A drawing at its eighth revision is not eight times the work of one at its
+ * first — it is a part of the design that is still being decided, and every
+ * revision of it is a chance somebody built from the one before. Revision depth
+ * is the count of records sharing a drawing number, which is exact rather than
+ * parsed: `backend/src/engines/bim.ts` writes one record per registration and
+ * supersedes the previous one, so the records *are* the revision history. It is
+ * deliberately not read off the revision string — `P01`, `C02` and `T3` are a
+ * suitability code and a number, they are not a sequence, and a chart that
+ * sorted them as one would be confidently wrong on any project using two codes.
+ *
+ * ## Which discipline is churning
+ *
+ * The same count grouped by discipline and banded, so a discipline where most
+ * drawings are still on their first issue reads differently from one where most
+ * are on their third or worse. This is the chart that says where to put the
+ * design manager, and it is three sums the register makes somebody do by eye.
+ *
+ * ## Where the questions are
+ *
+ * Markups per drawing. A drawing carrying a dozen markups is being queried, and
+ * being queried is what precedes a revision. Ageing is deliberately absent: a
+ * markup has no resolved state in the ledger — it is a record, and where it
+ * mattered enough it was converted into an RFI, which has its own dates and its
+ * own panel. Drawing an "open markup age" here would require inventing the one
+ * field that would make it meaningful.
+ */
+function drawingControl(drawings, markups) {
+  const all = drawings ?? [];
+  if (all.length === 0) return '';
+
+  // One record per registration, so the records sharing a number are that
+  // drawing's revision history. Counted rather than parsed from the revision
+  // string, which is a suitability code and not a sequence.
+  const byNumber = new Map();
+  for (const drawing of all) {
+    const number = String(drawing.drawingNumber ?? '—');
+    const entry = byNumber.get(number) ?? { number, count: 0, discipline: 'GENERAL', title: '', current: undefined };
+    entry.count += 1;
+    if (drawing.status === 'CURRENT') {
+      entry.current = drawing;
+      entry.discipline = String(drawing.discipline ?? 'GENERAL');
+      entry.title = String(drawing.title ?? '');
+    } else if (!entry.title) {
+      entry.title = String(drawing.title ?? '');
+      entry.discipline = String(drawing.discipline ?? 'GENERAL');
+    }
+    byNumber.set(number, entry);
+  }
+  const sheets = [...byNumber.values()];
+
+  const churn = sheets
+    .filter((sheet) => sheet.count > 1)
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8)
+    .map((sheet) => ({
+      label: `${sheet.number}${sheet.title ? ` — ${sheet.title.slice(0, 24)}` : ''}`,
+      value: sheet.count,
+      // Four issues of the same sheet is where a design manager is asked why.
+      tone: sheet.count >= 4 ? 'bad' : sheet.count === 3 ? 'warn' : '',
+    }));
+
+  // Banded by depth rather than counted flat: "most of this discipline is still
+  // on its first issue" and "most of it is on its third" are opposite findings
+  // that a single bar per discipline would draw identically.
+  const disciplines = new Map();
+  for (const sheet of sheets) {
+    const key = String(sheet.discipline ?? 'GENERAL');
+    const row = disciplines.get(key) ?? { label: humanise(key), first: 0, second: 0, third: 0 };
+    if (sheet.count === 1) row.first += 1;
+    else if (sheet.count === 2) row.second += 1;
+    else row.third += 1;
+    disciplines.set(key, row);
+  }
+  const bands = [...disciplines.values()].sort((a, b) => b.third + b.second - (a.third + a.second));
+
+  const markupsBy = new Map();
+  for (const markup of markups ?? []) {
+    const number = String(markup.drawingNumber ?? '—');
+    markupsBy.set(number, (markupsBy.get(number) ?? 0) + 1);
+  }
+  const queried = [...markupsBy.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([number, count]) => ({ label: number, value: count, tone: count >= 5 ? 'warn' : '' }));
+
+  const reissued = sheets.filter((sheet) => sheet.count > 1).length;
+
+  return html`
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h2>Which drawings will not settle</h2>
+        ${raw(
+          barChart({
+            title: 'Issues per drawing number',
+            horizontal: true,
+            data: churn,
+            format: (value) => `${Math.round(value)} issue${Math.round(value) === 1 ? '' : 's'}`,
+            empty: 'Every drawing on this project is still on its first issue — nothing has been superseded.',
+            footnote:
+              `${reissued} of ${sheets.length} drawing${sheets.length === 1 ? '' : 's'} on this project has been ` +
+              'reissued at least once. The count is the number of records registered against the number, not the ' +
+              'revision letter — a suitability code is not a sequence, and reading one as a count is wrong on any ' +
+              'project that uses two of them.',
+          }),
+        )}
+      </div>
+      <div class="card">
+        <h2>Which discipline is churning</h2>
+        ${raw(
+          barChart({
+            title: 'Drawings by discipline and issue depth',
+            stacked: true,
+            horizontal: true,
+            data: bands,
+            series: [
+              { key: 'first', label: 'First issue', colour: 'green' },
+              { key: 'second', label: 'Second issue', colour: 'amber' },
+              { key: 'third', label: 'Third or later', colour: 'red' },
+            ],
+            format: (value) => String(Math.round(value)),
+            empty: 'No drawing carries a discipline.',
+            footnote:
+              'The same records grouped a second way, because "how many drawings" and "how settled are they" are ' +
+              'different questions and a count answers only the first. A discipline mostly red is where the design is ' +
+              'still being decided, whatever its total.',
+          }),
+        )}
+      </div>
+    </div>
+
+    ${
+      queried.length > 0
+        ? html`<div class="card" style="margin-bottom:14px">
+            <h2>Where the questions are</h2>
+            ${raw(
+              barChart({
+                title: 'Markups per drawing',
+                horizontal: true,
+                data: queried,
+                format: (value) => `${Math.round(value)} markup${Math.round(value) === 1 ? '' : 's'}`,
+                empty: 'No drawing has been marked up.',
+                footnote:
+                  'Being queried is what precedes a revision, so this is the churn chart above one step earlier. ' +
+                  'There is no ageing here on purpose: a markup has no resolved state in the ledger, and the ones that ' +
+                  'mattered were converted into RFIs, which carry their own dates and appear on the RFI panel.',
+              }),
+            )}
+          </div>`
+        : ''
+    }
+  `;
+}
+
 function designCharts(clashes, rfi, readiness, spec) {
   if (!clashes && !rfi && !readiness) return '';
 

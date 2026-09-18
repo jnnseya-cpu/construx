@@ -4,6 +4,7 @@ import { wireCharts } from './lib/charttools.js';
 import { wireDrill } from './lib/drill.js';
 import { maybeShowActivation } from './lib/activation.js';
 import { armInstallPrompt } from './lib/install.js';
+import { mountOfflineBar } from './lib/offline.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
@@ -627,6 +628,11 @@ wireDrill(() => state.session?.projectId);
 // data, export it, expand it, link to it. Installed here rather than per page,
 // because a page that has to remember is a page that forgets.
 wireCharts();
+// The offline state, said out loud. Mounted at the body rather than inside the
+// shell so a navigation does not make it flash, and reading only this device's
+// own outbox — nothing under /v1/ is ever cached, which is the rule `sw.js`
+// exists to keep.
+mountOfflineBar();
 // A cross-filter click changes the address bar; the page then redraws from its
 // own payload with the filter applied. Going through `draw()` rather than
 // mutating the DOM is what makes the tiles, the tables and the exports agree

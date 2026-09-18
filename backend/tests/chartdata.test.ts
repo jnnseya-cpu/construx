@@ -185,6 +185,124 @@ describe('every chart publishes the data it drew', () => {
     assert.equal((rows[1] as string[])[1], 'not measured');
   });
 
+  it('draws every band of a stacked horizontal bar, not just the first', () => {
+    /*
+     * `barChart` routes every `horizontal: true` call to `horizontalBars`, which
+     * used to read `keys[0]` and ignore the rest. A three-series call therefore
+     * rendered one series, with a legend beside it naming two bands that were
+     * not on the chart and a table that listed all three.
+     *
+     * Nothing threw and nothing was blank, which is the failure mode this kit is
+     * written against — the reader sees a picture and it is wrong. The check is
+     * geometric: count the bars actually drawn in the SVG, because the table
+     * was right the whole time and testing it would have passed either way.
+     */
+    const markup = svg(
+      barChart({
+        title: 'By discipline',
+        horizontal: true,
+        stacked: true,
+        data: [
+          { label: 'Architectural', first: 3, second: 2, third: 1 },
+          { label: 'Structural', first: 4, second: 1, third: 2 },
+        ],
+        series: [
+          { key: 'first', label: 'First issue' },
+          { key: 'second', label: 'Second issue' },
+          { key: 'third', label: 'Third or later' },
+        ],
+      }),
+    );
+
+    const drawn = [...markup.matchAll(/class="chart-bar"/g)].length;
+    assert.equal(drawn, 6, `two rows of three bands should draw six bars, drew ${drawn}`);
+
+    // Each row's bands must abut rather than all start at the axis, or they are
+    // six overlapping bars rather than a stack.
+    const xs = [...markup.matchAll(/class="chart-bar" x="([\d.]+)"/g)].map((match) => Number(match[1]));
+    assert.equal(new Set(xs).size > 2, true, 'every band starts at the same x, so nothing is stacked');
+
+    // And the total reaches the table, so the export reconciles with the bar.
+    const rows = tableRows(markup);
+    assert.equal((rows[0] as string[]).at(-1), '6', 'the stack total is not in the published data');
+    assert.equal(headers(markup).at(-1), 'Total');
+  });
+
+  it('keeps a single-series horizontal bar exactly as it was', () => {
+    // The fix above must not change the twenty-odd existing callers, which pass
+    // one series and rely on `row.tone` painting the bar.
+    const markup = svg(
+      barChart({
+        title: 'Exposure',
+        horizontal: true,
+        data: [{ label: 'Ground conditions', value: 124, tone: 'bad' }],
+      }),
+    );
+    assert.equal([...markup.matchAll(/class="chart-bar"/g)].length, 1);
+    assert.equal(headers(markup).includes('Total'), false, 'a one-series bar gained a total column it never had');
+  });
+
+  it('keys a waterfall legend to the colours it actually painted', () => {
+    /*
+     * The legend used to say "Increase, Decrease, Subtotal" whatever the bars
+     * were. The CVR's value build-up tones its steps — contract sum, agreed
+     * variations and variations-not-agreed are three kinds of money, not three
+     * increases — so it drew blue, blue, amber and grey under a legend naming
+     * green, red and grey. Three keys for colours that were not there.
+     *
+     * Three cases, because the first fix broke the middle one: fully toned,
+     * partly toned, and untoned. A legend keyed to the toned steps alone would
+     * have left the variation waterfall's untoned bars unexplained.
+     */
+    const keys = (chart: unknown): string[] => {
+      const markup = svg(chart);
+      const caption = /<figcaption class="chart-legend">([\s\S]*?)<\/figcaption>/.exec(markup)?.[1] ?? '';
+      return [...caption.matchAll(/<span class="chart-key"[\s\S]*?<\/span\s*>/g)].map((match) =>
+        (match[0] as string).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim(),
+      );
+    };
+
+    assert.deepEqual(
+      keys(waterfallChart({ title: 'EAC', steps: [{ label: 'Budget', value: 400 }, { label: 'Change', value: -60 }, { label: 'EAC', value: 340, total: true }] })),
+      ['Increase', 'Decrease', 'Subtotal'],
+      'an untoned waterfall lost its default keys',
+    );
+
+    assert.deepEqual(
+      keys(
+        waterfallChart({
+          title: 'Variations',
+          steps: [
+            { label: 'Instructed', value: 100 },
+            { label: 'Movement on assessment', value: -20, tone: 'bad' },
+            { label: 'Agreed', value: 80, total: true },
+          ],
+        }),
+      ),
+      ['Increase', 'Movement on assessment', 'Subtotal'],
+      'a partly toned waterfall left its untoned bars unexplained',
+    );
+
+    // Two steps sharing a colour get one key naming both, because a legend says
+    // what a colour means and two keys of one colour is a difference that is
+    // not there.
+    assert.deepEqual(
+      keys(
+        waterfallChart({
+          title: 'Value',
+          steps: [
+            { label: 'Contract sum', value: 2052, tone: 'actual' },
+            { label: 'Agreed variations', value: 0, tone: 'actual' },
+            { label: 'Not agreed', value: 86, tone: 'warn' },
+            { label: 'Forecast final value', value: 2138, total: true },
+          ],
+        }),
+      ),
+      ['Contract sum and Agreed variations', 'Not agreed', 'Subtotal'],
+      'a fully toned waterfall keys a colour it did not paint',
+    );
+  });
+
   it('carries the float and the critical flag a Gantt draws but a table would lose', () => {
     const rows = tableRows(
       svg(

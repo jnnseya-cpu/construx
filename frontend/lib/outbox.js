@@ -139,6 +139,19 @@ function transact(db, mode, run, storeName = STORE) {
 }
 
 /**
+ * Tell whoever is showing the queue that it moved.
+ *
+ * Here rather than at each call site, because a call site is a thing that can
+ * forget: the count on screen must not be able to drift from the count in the
+ * store, and there is exactly one way for it to change. A plain DOM event
+ * rather than an import, so this module still has no dependencies and nothing
+ * that reads the queue has to be known to it.
+ */
+function announce() {
+  if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('construx:outbox'));
+}
+
+/**
  * Queue one operation for the next flush.
  *
  * Returns the operation as stored, so a caller can show the operative what is
@@ -167,6 +180,7 @@ export async function queue({ projectId, eventType, entity, nextState, evidenceR
   const db = await open();
   await transact(db, 'readwrite', (store) => store.put(operation));
   db.close();
+  announce();
   return operation;
 }
 
@@ -193,6 +207,7 @@ export async function queueFile(file, projectId) {
     FILES,
   );
   db.close();
+  announce();
   return hash;
 }
 
@@ -219,6 +234,7 @@ export async function discardFile(hash) {
   const db = await open();
   await transact(db, 'readwrite', (store) => store.delete(hash), FILES);
   db.close();
+  announce();
 }
 
 /**
@@ -357,6 +373,7 @@ export async function flushFiles(upload, options = {}) {
       for (const hash of settled) store.delete(hash);
     }, FILES);
     db.close();
+    announce();
   }
 
   return { stored, waiting, rejected };
@@ -439,6 +456,7 @@ export async function flush(post) {
   }
 
   await forget(settled);
+  announce();
   return { accepted, duplicates, conflicts, unsent };
 }
 
@@ -455,4 +473,5 @@ export async function clear() {
   await transact(db, 'readwrite', (store) => store.clear());
   await transact(db, 'readwrite', (store) => store.clear(), FILES);
   db.close();
+  announce();
 }

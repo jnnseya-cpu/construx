@@ -627,21 +627,55 @@ function fitLabel(label, gutterPx, fontPx = 10.5) {
   return text.length <= budget ? text : `${text.slice(0, budget - 1).trimEnd()}…`;
 }
 
+/**
+ * Horizontal bars, stacked where the caller named more than one series.
+ *
+ * ## It used to draw `keys[0]` and drop the rest in silence
+ *
+ * `barChart` routes every `horizontal: true` call here, including the ones
+ * carrying three series, and this drew the first and ignored the others. No
+ * error, no blank, no failing test — a bar labelled "drawings by discipline and
+ * issue depth" that was in fact a count of first issues only, with a legend
+ * beside it naming two bands that were not on the chart.
+ *
+ * That is the failure mode the whole kit is written against: a picture that is
+ * wrong rather than absent. The fix is to draw them, not to refuse — a stacked
+ * horizontal bar is an ordinary thing to want, and refusing it would have sent
+ * the caller to build one by hand.
+ *
+ * One series behaves exactly as before, including `row.tone` overriding the
+ * series colour, because that is what every existing caller relies on. With
+ * more than one, `tone` is not consulted: a stack's colours are the series'
+ * and a per-row override would repaint every band of one row the same.
+ */
 function horizontalBars({ rows, keys, title, desc, format, footnote, metric }) {
+  const stacked = keys.length > 1;
   const box = { w: 720, h: Math.max(120, 34 * rows.length + 40) };
   const pad = { top: 12, right: 60, bottom: 26, left: 168 };
   const area = plot(box, pad);
-  const axis = niceScale(0, Math.max(...rows.map((row) => Math.max(...keys.map((k) => num(row[k.key]))))));
+  const extent = rows.map((row) =>
+    stacked ? keys.reduce((sum, k) => sum + num(row[k.key]), 0) : Math.max(...keys.map((k) => num(row[k.key]))),
+  );
+  const axis = niceScale(0, Math.max(...extent));
   const x = scale(axis.min, axis.max, area.x, area.x + area.w);
   const band = area.h / rows.length;
 
   return frame({
     metric,
     title,
-    desc: desc ?? `${rows.length} rows ranked by value.`,
+    desc:
+      desc ??
+      (stacked
+        ? `${rows.length} rows of ${keys.length} stacked bands.`
+        : `${rows.length} rows ranked by value.`),
+    legend: stacked ? legend(keys.map((key, index) => ({ label: key.label, colour: key.colour ?? seriesColour(index) }))) : undefined,
     table: {
-      columns: ['Category', ...keys.map((key) => key.label)],
-      rows: rows.map((row) => [row.label, ...keys.map((key) => format(num(row[key.key])))]),
+      columns: ['Category', ...keys.map((key) => key.label), ...(stacked ? ['Total'] : [])],
+      rows: rows.map((row) => [
+        row.label,
+        ...keys.map((key) => format(num(row[key.key]))),
+        ...(stacked ? [format(keys.reduce((sum, key) => sum + num(row[key.key]), 0))] : []),
+      ]),
     },
     box,
     footnote,
@@ -652,7 +686,8 @@ function horizontalBars({ rows, keys, title, desc, format, footnote, metric }) {
       </g>`,
     )}
     ${rows.map((row, index) => {
-      const value = num(row[keys[0].key]);
+      const total = keys.reduce((sum, key) => sum + num(row[key.key]), 0);
+      const value = stacked ? total : num(row[keys[0].key]);
       const top = area.y + index * band + band * 0.18;
       const height = band * 0.64;
       // A second line under the label, where the caller gave one. Bar lists in
@@ -671,16 +706,27 @@ function horizontalBars({ rows, keys, title, desc, format, footnote, metric }) {
               ${fitLabel(sub, pad.left - 12, 9)}
             </text>`
           : ''}
-        <rect
-          class="chart-bar"
-          x="${raw(r2(area.x))}"
-          y="${raw(r2(top))}"
-          width="${raw(r2(Math.max(1, x(value) - area.x)))}"
-          height="${raw(r2(height))}"
-          fill="${raw(paint(row.tone ?? keys[0].colour, 0))}"
-        >
-          <title>${row.label}: ${format(value)}</title>
-        </rect>
+        ${
+          stacked
+            ? (() => {
+                let running = 0;
+                return keys.map((key, band_) => {
+                  const part = num(row[key.key]);
+                  const from = running;
+                  running += part;
+                  // Zero-width bands are dropped rather than drawn at the 1px
+                  // floor a single bar gets: on a stack a 1px sliver reads as a
+                  // small value, and the value is nil.
+                  if (part <= 0) return '';
+                  return html`<rect class="chart-bar" x="${raw(r2(x(from)))}" y="${raw(r2(top))}" width="${raw(r2(Math.max(1, x(from + part) - x(from))))}" height="${raw(r2(height))}" fill="${raw(paint(key.colour, band_))}">
+                    <title>${row.label} · ${key.label}: ${format(part)}</title>
+                  </rect>`;
+                });
+              })()
+            : html`<rect class="chart-bar" x="${raw(r2(area.x))}" y="${raw(r2(top))}" width="${raw(r2(Math.max(1, x(value) - area.x)))}" height="${raw(r2(height))}" fill="${raw(paint(row.tone ?? keys[0].colour, 0))}">
+                <title>${row.label}: ${format(value)}</title>
+              </rect>`
+        }
         <text class="chart-value" x="${raw(r2(x(value) + 8))}" y="${raw(r2(top + height / 2 + 4))}">${format(value)}</text>
       </g>`;
     })}`,
@@ -2071,12 +2117,52 @@ export function waterfallChart({
           <text class="chart-cat" x="${raw(r2(cx))}" y="${raw(r2(area.y + area.h + 20))}" text-anchor="middle">${bar.label}</text>
         </g>`;
       })}`,
-    legend: legend([
-      { label: 'Increase', colour: 'ok' },
-      { label: 'Decrease', colour: 'bad' },
-      { label: 'Subtotal', colour: 'neutral' },
-    ]),
+    legend: legend(waterfallLegend(bars)),
   });
+}
+
+/**
+ * A key for each colour a waterfall actually painted, exactly once.
+ *
+ * ## The fixed legend was wrong the moment a caller toned a step
+ *
+ * A waterfall colours increases green, decreases red and subtotals grey — and
+ * the legend said so, permanently, whatever the bars were. The CVR's value
+ * build-up tones its steps, because "contract sum", "agreed variations" and
+ * "variations not agreed" are three different kinds of money rather than three
+ * increases. The chart therefore drew blue, blue, amber and grey under a legend
+ * naming green, red and grey: three keys for colours that were not there, and
+ * four colours with nothing explaining them.
+ *
+ * Replacing the fixed legend with the toned steps' own labels fixes that one
+ * chart and breaks the partly-toned case — the variation waterfall tones only
+ * its middle bar, and would have lost the keys for the other two. So the rule
+ * is neither: walk the bars, take each one's real colour, and key it.
+ *
+ * Deduplicated **by colour rather than by label**, because a legend exists to
+ * say what a colour means and two keys of the same colour is a reader looking
+ * for a difference that is not there. Where two steps share a colour their
+ * names are joined, which is the true statement: on the CVR's value chart the
+ * blue key reads "Contract sum and Agreed variations", and both of those bars
+ * are blue because both are money somebody has committed to paying.
+ */
+function waterfallLegend(bars) {
+  const byColour = new Map();
+  for (const bar of bars) {
+    // The same expression the bar itself is painted with, so the key cannot
+    // describe a colour the chart did not use.
+    const tone = bar.total ? 'neutral' : (bar.tone ?? (bar.value >= 0 ? 'ok' : 'bad'));
+    const name = bar.total ? 'Subtotal' : (bar.tone ? bar.label : bar.value >= 0 ? 'Increase' : 'Decrease');
+    const colour = paint(tone);
+    const entry = byColour.get(colour) ?? { colour: tone, names: [] };
+    if (!entry.names.includes(name)) entry.names.push(name);
+    byColour.set(colour, entry);
+  }
+
+  return [...byColour.values()].map((entry) => ({
+    colour: entry.colour,
+    label: entry.names.length === 1 ? entry.names[0] : `${entry.names.slice(0, -1).join(', ')} and ${entry.names.at(-1)}`,
+  }));
 }
 
 /**
