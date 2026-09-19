@@ -1,6 +1,6 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, currentPhase, registerEvidence, write, type EngineContext } from './context.ts';
+import { authorise, currentPhase, registerEvidence, secondPerson, write, type EngineContext } from './context.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import type { CDEState } from '../domain/designplan.ts';
 
@@ -397,7 +397,10 @@ export function decideReview(
 
   const cycle = requireOpenCycle(ctx, input.cycleId);
 
-  if (cycle.state.submittedBy === ctx.auth.actorId) {
+  // Unless nobody else holds the authority to be that second party, in which
+  // case the record says one person did both — see `secondPerson`.
+  const second = secondPerson(ctx, cycle.state.submittedBy, 'DESIGN_INFORMATION', 'A');
+  if (second.refuse) {
     throw new DomainError(
       'REVIEW_SELF_APPROVAL',
       'The person who submitted a deliverable may not accept it. A second party decides.',
@@ -446,6 +449,10 @@ export function decideReview(
     // against.
     openCommentsAtDecision: comments.filter((comment) => !comment.closed).length,
     openBlockingAtDecision: openBlocking.length,
+    // Where the author accepted their own deliverable because nobody else in
+    // the company holds the authority, the record says so rather than leaving
+    // a reader to infer it from two matching identifiers.
+    ...(second.note ? { segregation: second.note } : {}),
   };
 
   // Two calls rather than one with a conditional event type. Accepting a design

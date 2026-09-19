@@ -96,7 +96,57 @@ export type EngineContext = {
    * default and never to their own organisation without its consent.
    */
   acu?: AcuContext;
+  /**
+   * Whether anybody else in this company could take the second act.
+   *
+   * Four rules on this platform refuse a second act from the person who took
+   * the first: a gate decision, a design check, a design approval and a payment
+   * certification. They are right, and they are maker-checker rules — *two acts
+   * by one person*, which the permission matrix cannot express, so each engine
+   * checks it against its own record.
+   *
+   * What none of them could see is whether a second person exists. A sole
+   * trader running their whole business from one identity was not being held to
+   * a control; they were being stopped, permanently, with the remedy —
+   * "assign it to another identity" — naming somebody who does not exist. A
+   * control nobody can satisfy is not a control, it is a dead end, and it made
+   * the platform unusable for the smallest businesses it is sold to.
+   *
+   * So the refusal now asks this first: is there another active identity here
+   * holding the authority the second act needs? If there is, the refusal
+   * stands exactly as before. If there is not, the act proceeds and the event
+   * records that one person did both and that nobody else could have — which
+   * is the honest thing for an auditor to read years later, and is strictly
+   * more than the record said when the act was simply impossible.
+   *
+   * Absent means refuse, so a context built without it keeps the old rule.
+   */
+  secondPersonCould?: (area: CapabilityArea, code: PermissionCode) => boolean;
 };
+
+/**
+ * The maker-checker decision, in one place because four engines make it.
+ *
+ * Returns whether this act is refused, and where it is not, the note the event
+ * carries about why one person took both halves.
+ */
+export function secondPerson(
+  ctx: EngineContext,
+  firstActorId: unknown,
+  area: CapabilityArea,
+  code: PermissionCode,
+): { same: boolean; refuse: boolean; note: string | null } {
+  const same = String(firstActorId ?? '') === ctx.auth.actorId;
+  if (!same) return { same: false, refuse: false, note: null };
+  // No resolver means no way to know, and the safe answer to "is there somebody
+  // else" is to assume there is.
+  const available = ctx.secondPersonCould ? ctx.secondPersonCould(area, code) : true;
+  return {
+    same: true,
+    refuse: available,
+    note: available ? null : 'Taken by the same person: no other active identity in this company holds this authority',
+  };
+}
 
 export type AcuContext = {
   membershipId: string;

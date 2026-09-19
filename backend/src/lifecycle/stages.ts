@@ -1,7 +1,7 @@
 import { DomainError, NotFoundError } from '../core/errors.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
-import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
+import { authorise, registerEvidence, secondPerson, write, type EngineContext } from '../engines/context.ts';
 import { evaluatePhaseGate, nextPhase, PHASE_GATES, type GateEvaluation, type LifecyclePhase } from './phases.ts';
 
 /**
@@ -505,7 +505,11 @@ export function decideGate(
   // Segregation of duties. The whole purpose of a gate is that somebody other
   // than the person doing the work confirms it is fit to pass, and a gate one
   // person can raise and approve is a formality with a timestamp on it.
-  if (review.submittedBy === ctx.auth.actorId) {
+  // Unless there is nobody to be that somebody. A sole trader running their
+  // whole business from one identity was not being held to this control, they
+  // were stopped by it permanently — see `secondPerson` in `engines/context.ts`.
+  const second = secondPerson(ctx, review.submittedBy, 'PROJECT_SETUP', 'A');
+  if (second.refuse) {
     throw new DomainError(
       'GATE_SELF_APPROVAL',
       'The person who submitted a gate may not decide it. A second approver is required.',
@@ -592,6 +596,10 @@ export function decideGate(
       authorityBasis: input.authorityBasis,
       decisionComments: input.comments,
       actions: newActions,
+      // Where one person submitted and decided because nobody else could, the
+      // record says so. An auditor reading this years later learns more than
+      // they would have from an act that was simply impossible.
+      ...(second.note ? { segregation: second.note } : {}),
     },
     evidenceRefs: [decisionEvidence],
   });

@@ -2,7 +2,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { assertNotFuture } from '../domain/dates.ts';
-import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
+import { authorise, currentPhase, registerEvidence, runAI, secondPerson, write, type EngineContext } from './context.ts';
 import { calculateCVR, calculateEVM, sCurveDistribution, type CVRInput } from './maths/evm.ts';
 import { checkNoticeCompliance, generatePaymentCycle, type PaymentTerms } from './maths/claims.ts';
 import {
@@ -557,7 +557,16 @@ export function certifyApplication(
   // settled convention for separation of duties, and money is not the place to
   // start softening it: an override would be taken every time by exactly the
   // person the control exists to stop.
-  if (application.state.submittedBy === ctx.auth.actorId) {
+  //
+  // With one exception, and it is not a softening: where no other active
+  // identity in the company holds payment authority, the remedy this refusal
+  // names — "assign it to another identity" — names nobody. A sole trader was
+  // not being held to the control, they were stopped by it permanently, and
+  // could not certify a payment on their own business at all. The act then
+  // proceeds and the certificate carries, in its own words, that one person
+  // did both and that nobody else could have.
+  const second = secondPerson(ctx, application.state.submittedBy, 'PAYMENT_APPLICATIONS', 'A');
+  if (second.refuse) {
     throw new DomainError(
       'CERTIFICATION_SELF_APPROVAL',
       'The person who submitted an application may not certify it. Certification turns a valuation into a debt, ' +
@@ -617,6 +626,11 @@ export function certifyApplication(
       finalDateForPayment: period.finalDateForPayment,
       certifiedAt: new Date().toISOString(),
       certifiedBy: ctx.auth.actorId,
+      // Money is where this matters most. Where the applicant certified their
+      // own application because the company holds nobody else with payment
+      // authority, the certificate carries that fact rather than reading as
+      // though two people were involved.
+      ...(second.note ? { segregation: second.note } : {}),
     },
     evidenceRefs: [evidence],
   });

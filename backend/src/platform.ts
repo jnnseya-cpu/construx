@@ -52,7 +52,7 @@ import type { EventSource } from './goldenthread/types.ts';
 import { bindCredentialStores } from './identity/credentialstore.ts';
 import type { AuthContext } from './identity/auth.ts';
 import { issueTokens, type TokenPair } from './identity/auth.ts';
-import type { Role } from './identity/roles.ts';
+import { rolePermissions, type Role } from './identity/roles.ts';
 import { accessClassOf } from './identity/licence.ts';
 import {
   amendCustomRole,
@@ -4313,6 +4313,20 @@ export class Platform {
       // grant, so reactivating restores what they had rather than silently
       // dropping a module nobody remembered to re-add.
       grantedModules: this.grantedModules(auth.tenantId),
+      // Whether a maker-checker rule has anybody to hand the second act to.
+      //
+      // Resolved lazily, because almost no command asks: only a gate decision,
+      // a design check, a design approval and a payment certification do, and
+      // walking the identity list on every context would be a cost paid by
+      // every other request for the benefit of four.
+      secondPersonCould: (area, code) =>
+        this.users(auth.tenantId).some(
+          (person) =>
+            person.id !== auth.actorId &&
+            person.status === 'ACTIVE' &&
+            person.erasedAt === undefined &&
+            person.roles.some((role) => rolePermissions(role, area).includes(code)),
+        ),
     };
   }
 

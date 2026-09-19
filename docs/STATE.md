@@ -24594,3 +24594,36 @@ score for a reading that did not happen. The bill reads *"a surveyor"* against
 those lines and *"a model"* against the machine-measured ones, which is the more
 useful fact anyway, and the door — *"Enter measured quantities"* — takes
 `description | unit | quantity` one per line against a named sheet.
+
+### A control nobody can satisfy is a dead end, not a control
+
+Four rules refuse a second act from whoever took the first: a gate decision, a
+design check, a design acceptance and a payment certification. They are right,
+and they are maker-checker rules — *two acts by one person* — which the
+permission matrix cannot express, so each engine checks it against its own
+record.
+
+What none of them could see is whether a second person exists. A sole trader
+running the whole business from one identity was not being held to the control;
+they were stopped by it permanently, and the remedy the refusal named — *"assign
+the certificate to another identity with payment authority"* — named somebody
+who does not exist. That company could not pass a stage gate, accept its own
+design, or certify a payment on its own job, ever.
+
+`secondPersonCould(area, code)` on the engine context answers whether any other
+**active** identity in the company holds the authority the second act needs —
+authority, not head count, so a tenancy that once created a viewer does not
+thereby open a financial control. Where somebody could, the refusal stands
+exactly as before. Where nobody could, the act proceeds and the event carries
+`segregation`: *"Taken by the same person: no other active identity in this
+company holds this authority"*. An auditor reading that years later learns more
+than they would have from an act that was simply impossible.
+
+Absent resolver means refuse, so a context built without one keeps the old rule.
+
+**The OWNER row was not the problem and was not touched.** It already holds
+every permission code in all 25 areas of its own tenancy — `PLATFORM_ADMINISTRATION`
+is excluded by construction, because it governs *other companies'* tenancies and
+billing and an enterprise owner is a customer. `ENTERPRISE_ADMIN` is narrower by
+design (read-only on take-off and estimating); signup and onboarding give a
+founder both roles, so the person who founded the company holds everything.
