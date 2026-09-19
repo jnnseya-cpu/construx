@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { barChart, gauge, pieChart, treemap } from '../lib/charts.js';
 import { command } from '../lib/command.js';
-import { badge, date, html, humanise, notice, positionReport, raw, render, table, toast } from '../lib/ui.js';
+import { badge, date, html, humanise, notice, positionReport, raw, reading, render, table, toast } from '../lib/ui.js';
 // No `can` gate on the row buttons: the navigation already reaches this screen
 // only for a role holding EVIDENCE_AUDIT read, which is the same authority
 // generation checks. A second copy of that rule here would be a second place
@@ -952,14 +952,27 @@ async function issuerPanels(host) {
   const statusTone = (status) => (status === 'ISSUED' ? 'ok' : status === 'APPROVED' ? 'ok' : status === 'AWAITING_APPROVAL' ? 'warn' : 'neutral');
   const documentActions = (doc) => {
     const act = (action, label, tone = 'quiet') => html`<button class="btn ${tone} sm" data-document-action="${action}" data-document="${doc.id}" data-title="${doc.title}" data-revision="${doc.revision}" data-hash="${doc.revisions[doc.revisions.length - 1]?.hash ?? ''}">${label}</button>`;
-    if (doc.status === 'ISSUED') return html`${act('download', 'Download')} ${act('supersede', 'Supersede')}`;
+    /*
+     * Read it, on every row, whatever the status.
+     *
+     * The screen offered **Approve** and **Send back** against a quotation and
+     * no way at all to open it. Somebody was being asked to approve a priced
+     * offer to a customer without being able to see a single row of it — and
+     * the only way to the rows was to press Generate and read them out of the
+     * form that exists to change them, which is editing a frozen manifest in
+     * order to look at it.
+     *
+     * First, and quiet, because reading is what you do before you decide.
+     */
+    const read = act('read', 'Read it');
+    if (doc.status === 'ISSUED') return html`${read} ${act('download', 'Download')} ${act('supersede', 'Supersede')}`;
     const pending = (lifecycle.issuances ?? []).find((issuance) => issuance.documentId === doc.id && issuance.status === 'PENDING');
-    if (pending) return html`${act('issue', `Retry ${pending.number}`, '')} <button class="btn quiet sm" data-issuance-void="${pending.id}" data-number="${pending.number}">Void number</button>`;
-    if (doc.status === 'DRAFT') return act('generate', doc.revision === 0 ? 'Generate' : 'Regenerate');
-    if (doc.status === 'GENERATED') return html`${act('generate', 'Regenerate')} ${act('submit', 'Submit')} ${act('approve', 'Approve')} ${act('issue', 'Issue', '')}`;
-    if (doc.status === 'AWAITING_APPROVAL') return html`${act('approve', 'Approve', '')} ${act('reject', 'Send back')}`;
-    if (doc.status === 'APPROVED') return html`${act('issue', 'Issue', '')} ${act('reject', 'Send back')} ${act('generate', 'Regenerate')}`;
-    return '';
+    if (pending) return html`${read} ${act('issue', `Retry ${pending.number}`, '')} <button class="btn quiet sm" data-issuance-void="${pending.id}" data-number="${pending.number}">Void number</button>`;
+    if (doc.status === 'DRAFT') return html`${read} ${act('generate', doc.revision === 0 ? 'Generate' : 'Regenerate')}`;
+    if (doc.status === 'GENERATED') return html`${read} ${act('generate', 'Regenerate')} ${act('submit', 'Submit')} ${act('approve', 'Approve')} ${act('issue', 'Issue', '')}`;
+    if (doc.status === 'AWAITING_APPROVAL') return html`${read} ${act('approve', 'Approve', '')} ${act('reject', 'Send back')}`;
+    if (doc.status === 'APPROVED') return html`${read} ${act('issue', 'Issue', '')} ${act('reject', 'Send back')} ${act('generate', 'Regenerate')}`;
+    return read;
   };
   render(
     host,
@@ -1240,6 +1253,30 @@ async function issuerPanels(host) {
     button.addEventListener('click', async () => {
       const { documentAction, document: id, title, revision, hash } = button.dataset;
       try {
+        if (documentAction === 'read') {
+          const doc = await api.get(`/v1/documents/lifecycle/${id}`);
+          const rows = Object.entries(doc.body ?? {});
+          const last = doc.revisions?.[doc.revisions.length - 1];
+          await reading({
+            title: doc.title,
+            // What is on screen and what it is worth. A draft body is what the
+            // document would say if generated now; a generated one is what was
+            // frozen and is the thing an approval attaches to.
+            intent:
+              doc.revision === 0
+                ? 'This is a draft. Nothing is frozen yet — these rows are what a revision would say if you generated one now.'
+                : `Revision ${doc.revision}${last?.hash ? `, frozen as ${last.hash.slice(0, 23)}…` : ''}${
+                    last?.approval ? ' — approved' : ''
+                  }${doc.issuance ? `, issued as ${doc.issuance.number}` : ''}.`,
+            content:
+              rows.length === 0
+                ? notice('This document has no rows. Generate it from the record it came from, or open a draft with the rows on it.', 'warn')
+                : table({
+                    headers: ['', ''],
+                    rows: rows.map(([label, value]) => [html`<b>${label}</b>`, String(value)]),
+                  }),
+          });
+        }
         if (documentAction === 'generate') {
           const doc = await api.get(`/v1/documents/lifecycle/${id}`);
           const result = await command({

@@ -701,3 +701,49 @@ export function modal({ title, fields, submitLabel = 'Confirm' }) {
     host.querySelector('input, select, textarea')?.focus();
   });
 }
+
+/**
+ * The same dialog with nothing to fill in: something to read.
+ *
+ * Added because of a plain gap that was easy to miss and impossible to defend.
+ * A quotation arrives on the documents screen with two buttons against it —
+ * **Approve** and **Send back** — and no way whatever to open it. The person
+ * approving a legal offer to a customer could not read the offer. They could
+ * see its title, its status and its revision number, and that was all; the
+ * only path to the rows was to press Generate and read them out of the form
+ * that exists to change them, which invites editing a frozen manifest in order
+ * to look at it.
+ *
+ * No new component: the same `modal-host`, the same `modal`, the same footer,
+ * one button instead of two. Nothing here submits anything, which is the whole
+ * point of it.
+ */
+export function reading({ title, intent, content, closeLabel = 'Close' }) {
+  return new Promise((resolveModal) => {
+    const host = document.createElement('div');
+    host.className = 'modal-host';
+    host.innerHTML = resolve(html`<div class="modal" role="dialog" aria-label="${title}">
+      <header><h3>${title}</h3><button data-close aria-label="Close">×</button></header>
+      <div class="body">
+        ${intent ? html`<div class="metric-sub" style="margin-bottom:10px">${intent}</div>` : ''}
+        ${content}
+      </div>
+      <div class="foot"><button class="btn quiet" data-close>${closeLabel}</button></div>
+    </div>`);
+
+    const close = () => {
+      host.remove();
+      document.removeEventListener('keydown', onKey);
+      resolveModal(null);
+    };
+    function onKey(event) {
+      if (event.key === 'Escape') close();
+    }
+    host.addEventListener('click', (event) => {
+      if (event.target === host || event.target.closest('[data-close]')) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.append(host);
+    host.querySelector('[data-close]')?.focus();
+  });
+}

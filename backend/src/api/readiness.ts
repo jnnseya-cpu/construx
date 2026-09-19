@@ -308,6 +308,52 @@ export function readiness(now = new Date()): Readiness {
             : 'Mode is production and no provider key is set, so every AI request falls back to the deterministic engines.',
       env: ['AI_MODE', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'AI_REASONING_PROVIDER', 'AI_PERCEPTION_PROVIDER'],
     },
+    /*
+     * Each capability separately, because a deployment can be keyed and still
+     * be unable to do half the work.
+     *
+     * `ai.providers` above reports whether *any* key is set, and a deployment
+     * with Gemini alone reads as "live calls enabled" — while every reasoning
+     * task silently falls back to the deterministic stand-in. That is exactly
+     * what happened: drawings were read and measured correctly, and fifteen
+     * lines came back unpriced saying the market had no view of them, because
+     * nothing was configured to have one.
+     *
+     * A customer who cannot ask anybody for a fix has to be able to see this
+     * before they start, not discover it in the middle of pricing a job. So
+     * each capability says what it serves and what stops working without it.
+     */
+    ...(['REASONING', 'PERCEPTION'] as const).map((capability) => {
+      const named = capability === 'REASONING' ? config.ai.reasoningProvider : config.ai.perceptionProvider;
+      // A name the router has never heard of fails exactly like a missing key,
+      // and reads as a mystery unless it is said out loud. A typo in one of
+      // these two variables is the cheapest way to switch a capability off
+      // without meaning to.
+      const known = providers.some(([name]) => name === named);
+      const served = known && keyed.includes(named as (typeof keyed)[number]);
+      const selector = capability === 'REASONING' ? 'AI_REASONING_PROVIDER' : 'AI_PERCEPTION_PROVIDER';
+      const does =
+        capability === 'REASONING'
+          ? 'Reading an invitation, taking a view on a market rate, drafting a response section and every other piece of reasoning'
+          : 'Measuring a drawing, reading a title block and transcribing a scan';
+      return {
+        key: `ai.${capability.toLowerCase()}`,
+        label: `AI — ${capability.toLowerCase()}`,
+        critical: false,
+        state: config.ai.mode !== 'production' ? 'NOT_SET' : served ? 'CONFIGURED' : 'DEGRADED',
+        detail:
+          config.ai.mode !== 'production'
+            ? `Mode is "${config.ai.mode}", so the deterministic engines serve this and no provider is called.`
+            : served
+              ? `${does} goes to ${named}.`
+              : known
+                ? `${named} is named for this and holds no key, so ${does.toLowerCase()} has no model to ask. ` +
+                  'Tasks that refuse a stand-in say so by name; the rest fall back to the deterministic engines and produce nothing useful.'
+                : `${selector} is set to "${named}", which is not a provider this platform routes to. ` +
+                  `Name one of ${providers.map(([name]) => name).join(', ')} — until then ${does.toLowerCase()} has no model to ask.`,
+        env: known ? [selector, `${named}_API_KEY`] : [selector],
+      } satisfies Capability;
+    }),
     {
       key: 'ai.clearance',
       label: 'AI vendor clearance',

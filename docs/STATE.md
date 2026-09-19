@@ -25034,3 +25034,22 @@ considered refusal. The reading also accepts `items` or a bare array where
 `rates` was asked for, and `unitRateMinor`, `rate` or `amountMinor` where
 `rateMinor` was: none of those is worth a failed run, and each was a silent
 nought until the diagnosis made it visible.
+
+### A quotation nobody could read before approving it
+
+Site Documents listed a quotation with two buttons against it — **Approve** and
+**Send back** — and no way whatever to open it. The row carried the title, the
+status, the revision and the word *unnumbered*, and that was the whole of what
+an approver could see. The only path to the rows was to press **Generate** and
+read them out of the form that exists to change them, which is editing a frozen
+manifest in order to look at it.
+
+Every row now carries **Read it**, first and quiet, on every status from draft
+to issued. It opens the document's rows as they stand and says what they are
+worth: a draft's body is what a revision *would* say if one were generated now;
+a generated one names the revision, the hash it is frozen as, whether it is
+approved, and the number if it has been issued. Nothing on it submits anything.
+
+`reading()` in `frontend/lib/ui.js` is the same dialog as `modal()` with
+nothing to fill in — the same `modal-host`, the same `modal`, the same footer,
+one button instead of two. No new component and no new colour.
