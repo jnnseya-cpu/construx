@@ -161,10 +161,30 @@ export type PackProposal = {
   }>;
   /** What happened when the market was asked, where it was asked at all. */
   marketView: MarketDiagnosis | null;
+  /**
+   * What this package already holds, where it has been measured before.
+   *
+   * A bill turned up carrying seventy-nine items across six packages for a job
+   * with three drawings on it — the same three sheets measured over and over,
+   * because an acceptance that failed at the quotation step looked from the
+   * screen as though nothing had happened. That cause is fixed. This is the
+   * check that means it cannot happen again for a cause nobody has thought of:
+   * the run says what is already on the bill before anybody presses anything,
+   * and the acceptance refuses to add a second copy of it.
+   */
+  alreadyMeasured: { items: number; costCodes: string[] } | null;
   /** Everything a person still has to decide. Empty means the run answered it all. */
   outstanding: string[];
   acuConsumed: number;
 };
+
+/** The bill items this package already holds. Empty on a package never measured. */
+function measuredAlready(ctx: EngineContext, packageId: string): Array<Record<string, unknown>> {
+  return ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .map((record) => record.state)
+    .filter((state) => String(state.packageId ?? '') === packageId);
+}
 
 /** The rates this business has actually committed, grouped by item and unit. */
 function proposedRates(ctx: EngineContext): Map<string, ProposedRate> {
@@ -684,6 +704,21 @@ export async function proposePackPrice(
   }
   if (unread.length > 0) outstanding.push(`${unread.length} drawing${unread.length === 1 ? '' : 's'} could not be read, so anything on ${unread.length === 1 ? 'it' : 'them'} is not in this price.`);
 
+  // Said first, because it changes what the person should do with everything
+  // below it. A package already on the bill does not want measuring again.
+  const existing = measuredAlready(ctx, input.packageId);
+  const alreadyMeasured =
+    existing.length === 0
+      ? null
+      : { items: existing.length, costCodes: existing.map((item) => String(item.costCode ?? '')).filter(Boolean) };
+  if (alreadyMeasured) {
+    outstanding.unshift(
+      `This package already holds ${alreadyMeasured.items} measured item${alreadyMeasured.items === 1 ? '' : 's'} on the ` +
+        'bill. Accepting this run would add a second copy of the same works and price the job twice over, so it is ' +
+        'refused. Price the bill you have, or run this under a different package name if the drawings have been revised.',
+    );
+  }
+
   return {
     packageId: input.packageId,
     read,
@@ -693,6 +728,7 @@ export async function proposePackPrice(
     indicative,
     headsToSettle,
     marketView,
+    alreadyMeasured,
     outstanding,
     acuConsumed,
   };
@@ -772,6 +808,38 @@ export async function acceptPackProposal(
 }> {
   if (input.lines.length === 0) {
     throw new DomainError('PROPOSAL_EMPTY', 'There is nothing to accept: no measured line was included', 422);
+  }
+
+  /*
+   * Refused before anything is written, never after.
+   *
+   * A bill arrived holding seventy-nine items across six packages for a job
+   * with three drawings on it. Nobody meant to measure the same three sheets
+   * six times; each acceptance failed at the quotation step *after* writing
+   * the bill, reported the failure, and looked from the screen as though
+   * nothing had happened — so the obvious thing to do was press it again.
+   *
+   * That cause is fixed above. This is the guard that does not depend on
+   * having found the cause: a package already on the bill is not measured a
+   * second time, whatever brought somebody back to the button. Re-measuring a
+   * revised drawing is a different package, because it is a different measure
+   * — and saying so is the honest answer, where quietly replacing a bill
+   * somebody may already have priced against is not.
+   */
+  const existing = measuredAlready(ctx, input.packageId);
+  if (existing.length > 0) {
+    throw new DomainError(
+      'PACKAGE_ALREADY_MEASURED',
+      `${input.packageId} already holds ${existing.length} measured item${existing.length === 1 ? '' : 's'} on the bill ` +
+        `(${existing
+          .slice(0, 3)
+          .map((item) => String(item.costCode ?? ''))
+          .filter(Boolean)
+          .join(', ')}${existing.length > 3 ? ' and more' : ''}). Accepting this run would add a second copy of the same ` +
+        'works and price the job twice. Price the bill you have from the estimate screen, or run this under a different ' +
+        'package name if the drawings have been revised — a re-measure of a revision is a different measure.',
+      409,
+    );
   }
 
   // Confirm each reading once, in draft order, and keep the bill item each

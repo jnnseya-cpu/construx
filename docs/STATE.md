@@ -25127,3 +25127,22 @@ unpriced lines saying the market had no view of them. `/readyz` now reports
 `ai.reasoning` and `ai.perception` separately, each naming what it serves and
 what stops working without it, and naming a provider the router has never heard
 of as the typo it is.
+
+### The same pack is not measured into the same package twice
+
+A bill arrived holding seventy-nine measured items across six packages for a
+job with three drawings on it. Nobody meant to do that: every acceptance had
+failed at the quotation step *after* confirming the readings and writing the
+bill, reported the failure, and left a screen on which nothing appeared to have
+happened — so the obvious thing to do was press the button again.
+
+That cause is fixed. This is the guard that does not depend on having found it.
+`proposePackPrice` reports `alreadyMeasured` and says it first, above everything
+else on the panel; the console shows it as a refusal and locks the accept
+button with the count on it; `acceptPackProposal` refuses
+`PACKAGE_ALREADY_MEASURED` **before** confirming a single reading, so a refused
+run leaves the bill exactly as it was.
+
+Re-measuring a revised drawing is a different package, because it is a
+different measure. Quietly replacing a bill somebody may already have priced
+against is not an option the platform takes on its own.

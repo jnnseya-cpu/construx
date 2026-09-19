@@ -661,6 +661,54 @@ describe('the pricing line, end to end over HTTP', () => {
     );
   });
 
+  it('refuses to measure the same pack into the same package twice', async () => {
+    /*
+     * The defect that produced a bill of seventy-nine items across six
+     * packages for a job with three drawings on it.
+     *
+     * Nobody meant to do that. Every acceptance failed at the quotation step
+     * *after* confirming the readings and writing the bill, reported the
+     * failure, and left a screen on which nothing appeared to have happened —
+     * so the obvious thing to do was press the button again. Six times.
+     *
+     * Both halves are pinned here: the run says what the package already
+     * holds, before anything is pressed, and the acceptance refuses before it
+     * writes rather than after.
+     */
+    const second = await call('POST', `/v1/projects/${projectId}/tender/pack/price`, {
+      token: qsToken,
+      body: { packageId },
+    });
+    assert.equal(second.status, 201, second.text);
+    assert.ok(second.body.alreadyMeasured, 'the run did not notice the package was already on the bill');
+    assert.equal(second.body.alreadyMeasured.items, proposal.lines.length);
+    assert.ok(
+      (second.body.outstanding as string[])[0]?.includes('already holds'),
+      'the warning was not the first thing said',
+    );
+
+    const again = await call('POST', `/v1/projects/${projectId}/tender/pack/accept`, {
+      token: qsToken,
+      body: {
+        packageId,
+        costCodePrefix: 'FND',
+        lines: (second.body.lines as Array<Record<string, any>>).map((line) => ({
+          draftId: line.draftId,
+          index: line.index,
+          labourRateMinor: 1_000,
+          rateSource: 'PERSON',
+        })),
+        estimate: { durationWeeks: 6, basisOfEstimate: 'A second run of the same pack.', margin: { overheadPercent: 9, profitPercent: 7 } },
+      },
+    });
+    assert.equal(again.status, 409, again.text);
+    assert.match(again.text, /PACKAGE_ALREADY_MEASURED/);
+
+    // Refused *before* writing: the bill is exactly what it was.
+    const boq = await call('GET', `/v1/projects/${projectId}/tender/boq`, { token: qsToken });
+    assert.equal((boq.body.items ?? []).length, proposal.lines.length, 'the refused run still added to the bill');
+  });
+
   it('writes a quotation whose rows are the works, and whose rows add up', async () => {
     const document = await call('GET', `/v1/documents/lifecycle/${accepted.quotationId}`, { token: qsToken });
     assert.equal(document.status, 200, document.text);

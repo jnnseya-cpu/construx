@@ -177,6 +177,28 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
               }
 
               ${
+                /*
+                 * Said before anything else on this panel, because it decides
+                 * whether any of the rest is worth reading.
+                 *
+                 * A bill arrived holding seventy-nine items across six
+                 * packages for a job with three drawings on it. Every
+                 * acceptance had failed at the quotation step after writing
+                 * the bill, so the screen looked as though nothing had
+                 * happened and the obvious thing to do was press it again.
+                 */
+                proposal.alreadyMeasured
+                  ? html`<div class="notice bad" style="margin-top:11px"><div>
+                      <b>This package is already on the bill —
+                      ${proposal.alreadyMeasured.items} measured item${proposal.alreadyMeasured.items === 1 ? '' : 's'}.</b>
+                      Accepting this run would add a second copy of the same works and price the job twice, so it is
+                      refused. Price the bill you already have, or run this under a different package name if the
+                      drawings have been revised — a re-measure of a revision is a different measure.
+                    </div></div>`
+                  : ''
+              }
+
+              ${
                 proposal.headsToSettle?.length > 0
                   ? html`<div class="notice warn" style="margin-top:11px"><div>
                       <b>${proposal.headsToSettle.length} cost head${proposal.headsToSettle.length === 1 ? '' : 's'}
@@ -215,11 +237,17 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
                       id: 'accept-pack',
                       label: 'Accept — write the bill, price it and draw the quotation',
                       tone: 'primary',
-                      permitted: can('ESTIMATE_TENDER', 'C') && can('EVIDENCE_AUDIT', 'I') && proposal.lines.length > 0,
+                      permitted:
+                        can('ESTIMATE_TENDER', 'C') &&
+                        can('EVIDENCE_AUDIT', 'I') &&
+                        proposal.lines.length > 0 &&
+                        !proposal.alreadyMeasured,
                       reason:
                         proposal.lines.length === 0
                           ? 'The run measured nothing, so there is nothing to accept.'
-                          : blockedReason('ESTIMATE_TENDER', 'C') ?? blockedReason('EVIDENCE_AUDIT', 'I'),
+                          : proposal.alreadyMeasured
+                            ? `This package already holds ${proposal.alreadyMeasured.items} measured items. The platform refuses to bill the same works twice.`
+                            : blockedReason('ESTIMATE_TENDER', 'C') ?? blockedReason('EVIDENCE_AUDIT', 'I'),
                     },
                   ]),
                 )}
