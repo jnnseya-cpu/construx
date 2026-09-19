@@ -24741,3 +24741,27 @@ quietly, and a re-read that changes nothing writes nothing. The extraction is
 deliberately untouched: what came out of the bytes is a fact about the bytes,
 not about the rules, and re-deriving it would risk discarding a confirmed
 transcription of a scan. Every file row carries **Re-read**.
+
+### Fourteen fields the business had already answered
+
+The third refusal met while trying to price one wall: *"the company's own facts
+are needed first"*. The refusal is correct — a compliance matrix sets a buyer's
+requirements against what this business actually holds, and inventing an
+accreditation is the one thing that must never happen. But the form asked for
+fourteen things, and five of them were already on the record.
+
+Prefilled from the company's own projects, each labelled with where it came
+from and each editable: the **registered name** (from the enterprise name, with
+the warning that it is the name on the certificate of incorporation), the
+**regions** (the towns its projects are in), the **sectors** (the sectors its
+projects are in), the **value band** (the smallest and largest job on its
+record, noting that the largest built is not the largest that can be carried)
+and the **committed projects** (how many are live). The four the platform
+genuinely cannot know — turnover, net assets, accreditations, target margin —
+stay blank. A plausible number in a prequalification field is the one that gets
+a bid disqualified.
+
+**And the refusal now opens the form.** It used to name the button and scroll to
+it, which is still asking somebody to go and find the thing that unblocks them.
+The form was defined inside its own panel's click handler and was unreachable
+from anywhere else; it is a function now, and both call it.

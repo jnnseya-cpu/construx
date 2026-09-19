@@ -2114,11 +2114,13 @@ export async function pipeline(root) {
           'The company’s own facts are needed first',
           'The compliance matrix sets the buyer’s requirements against what this business actually holds — its ' +
             'accreditations, its insurances, what it turns over. None of that is recorded yet, so there is nothing to ' +
-            'set them against. “Record the company’s facts” is at the bottom of this screen; it takes a minute, and ' +
-            'it is read by every screen above.',
+            'set them against. The form is open; most of it is already filled in from your own projects.',
           'warn',
         );
-        document.querySelector('[data-company-facts]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Opened, not pointed at. Scrolling somebody to a button is still
+        // asking them to go and find it, and this is the third refusal in a
+        // row somebody has met while trying to price one wall.
+        await recordCompanyFacts();
         return;
       }
       // Three figures the analyst needs and no invitation states, because none
@@ -2262,32 +2264,102 @@ export async function pipeline(root) {
    * Bound separately because the page's dispatcher binds one `.cmd-bar` and
    * this is a second one, on its own card.
    */
-  root.querySelector('[data-company-facts]')?.addEventListener('click', async (event) => {
-    if (!event.target.closest('[data-command="company-facts"]')) return;
+  /**
+   * The form, callable from anywhere that needs it.
+   *
+   * It used to exist only inside the click handler on its own panel, so every
+   * other place that discovered the facts were missing could do nothing but
+   * name the button and scroll to it. A refusal that scrolls somebody to a
+   * button is still asking them to go and find the thing; the refusal should
+   * open it.
+   */
+  async function recordCompanyFacts() {
     const held = profile?.error ? null : profile;
     const asList = (value) => (Array.isArray(value) ? value.join(', ') : '');
+
+    /*
+     * What the account already knows about itself.
+     *
+     * Fourteen fields on a form is the reason this record does not exist on
+     * most tenancies, and five of them are answerable from projects this
+     * business created itself — the towns it works in, the sectors it builds
+     * in, the range of job it takes on, and how many it is running now.
+     *
+     * Not invented, and not asserted: every one is drawn from the company's own
+     * records, shown in an editable field, and labelled with where it came
+     * from. The four the platform genuinely cannot know — turnover, net assets,
+     * accreditations, target margin — stay blank, because a plausible number in
+     * a prequalification field is the one that gets a bid disqualified.
+     */
+    const ourProjects = projectList?.projects ?? [];
+    const distinct = (values) => [...new Set(values.filter(Boolean))];
+    const suggestedRegions = distinct(ourProjects.map((project) => project.location?.city));
+    const suggestedSectors = distinct(ourProjects.map((project) => project.sectorType));
+    const projectValues = ourProjects.map((project) => Number(project.contractValueMinor ?? 0)).filter((value) => value > 0);
+    const fromOurRecord = (what) => `Suggested from ${what} on this account. Correct it — it is a claim the business makes to a buyer.`;
+
     const result = await command({
       title: 'The company’s own facts',
       intent:
         'What this business is, in the terms a buyer prequalifies on. The radar screens against it and asserts none of ' +
         'it on the company’s behalf — an opportunity filtered out for a fact nobody recorded is the commonest reason a ' +
-        'pipeline looks empty. Turnover is most recent year first.',
+        'pipeline looks empty. Turnover is most recent year first. Where a field is already filled in, it was drawn ' +
+        'from this company’s own projects and is yours to correct; what the platform cannot know it has left blank.',
       path: '/v1/company/profile',
       method: 'PUT',
       submitLabel: held ? 'Update the facts' : 'Record the facts',
       fields: [
-        { name: 'legalName', label: 'Registered name', value: held?.legalName ?? '' },
+        {
+          name: 'legalName',
+          label: 'Registered name',
+          value: held?.legalName ?? state.session?.enterprise ?? '',
+          ...(held?.legalName ? {} : { hint: fromOurRecord('the enterprise name') + ' It is the name on the certificate of incorporation, which may not be the trading name.' }),
+        },
         { name: 'turnover', label: 'Turnover by year (£, most recent first)', value: (held?.turnoverMinorByYear ?? []).map((m) => m / 100).join(', '), hint: 'Comma separated. At least one year — the radar sizes what the business can carry from it.' },
         { name: 'netAssets', label: 'Net assets (£)', type: 'number', required: false, value: held ? held.netAssetsMinor / 100 : '' },
         { name: 'workingCapital', label: 'Working capital (£)', type: 'number', required: false, value: held ? held.workingCapitalMinor / 100 : '' },
-        { name: 'regions', label: 'Regions worked', value: asList(held?.regions), hint: 'Towns, cities or counties the business actually operates in.' },
-        { name: 'sectors', label: 'Sectors', type: 'multiselect', value: held?.sectors ?? [], options: SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })) },
-        { name: 'valueMin', label: 'Smallest job worth bidding (£)', type: 'number', value: held ? held.valueBandMinor.min / 100 : '' },
-        { name: 'valueMax', label: 'Largest job the business can carry (£)', type: 'number', value: held ? held.valueBandMinor.max / 100 : '' },
+        {
+          name: 'regions',
+          label: 'Regions worked',
+          value: held?.regions?.length ? asList(held.regions) : suggestedRegions.join(', '),
+          hint: held?.regions?.length || suggestedRegions.length === 0
+            ? 'Towns, cities or counties the business actually operates in.'
+            : fromOurRecord(`the ${suggestedRegions.length} town${suggestedRegions.length === 1 ? '' : 's'} your projects are in`),
+        },
+        {
+          name: 'sectors',
+          label: 'Sectors',
+          type: 'multiselect',
+          value: held?.sectors?.length ? held.sectors : suggestedSectors,
+          options: SECTOR_GROUPED.flatMap((group) => group.options ?? [group]).map((o) => ({ value: o.value, label: o.label })),
+          ...(held?.sectors?.length || suggestedSectors.length === 0 ? {} : { hint: fromOurRecord('the sectors your projects are in') }),
+        },
+        {
+          name: 'valueMin',
+          label: 'Smallest job worth bidding (£)',
+          type: 'number',
+          value: held ? held.valueBandMinor.min / 100 : projectValues.length ? Math.min(...projectValues) / 100 : '',
+          ...(held || projectValues.length === 0 ? {} : { hint: fromOurRecord('the smallest job on your record') }),
+        },
+        {
+          name: 'valueMax',
+          label: 'Largest job the business can carry (£)',
+          type: 'number',
+          value: held ? held.valueBandMinor.max / 100 : projectValues.length ? Math.max(...projectValues) / 100 : '',
+          ...(held || projectValues.length === 0
+            ? {}
+            : { hint: fromOurRecord('the largest job on your record') + ' The largest you have built is not necessarily the largest you can carry.' }),
+        },
         { name: 'accreditations', label: 'Accreditations', required: false, value: asList(held?.accreditations), hint: 'CHAS, SafeContractor, ISO 9001 — comma separated.' },
         { name: 'trades', label: 'Trades delivered in-house', required: false, value: asList(held?.selfDeliveredTrades) },
         { name: 'concurrent', label: 'Sites the business can run at once', type: 'number', value: held?.capacity?.concurrentProjects ?? '' },
-        { name: 'committed', label: 'Of those, already committed', type: 'number', value: held?.capacity?.committedProjects ?? '' },
+        {
+          name: 'committed',
+          label: 'Of those, already committed',
+          type: 'number',
+          value: held?.capacity?.committedProjects ?? ourProjects.length,
+          ...(held?.capacity ? {} : { hint: fromOurRecord(`the ${ourProjects.length} live project${ourProjects.length === 1 ? '' : 's'} on this account`) }),
+        },
         { name: 'marginMin', label: 'Target margin, minimum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.min ?? '' },
         { name: 'marginMax', label: 'Target margin, maximum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.max ?? '' },
       ],
@@ -2316,6 +2388,12 @@ export async function pipeline(root) {
       toast('Recorded', 'The radar can screen against these now.', 'ok');
       await draw();
     }
+    return result;
+  }
+
+  root.querySelector('[data-company-facts]')?.addEventListener('click', async (event) => {
+    if (!event.target.closest('[data-command="company-facts"]')) return;
+    await recordCompanyFacts();
   });
 
   /*
