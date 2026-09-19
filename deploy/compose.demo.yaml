@@ -1,0 +1,91 @@
+# The sandbox, as its own deployment.
+#
+# `DEMO_TENANCY_ENABLED` seeds fourteen fictional identities and opens an
+# anonymous way into a wallet. Beside real customer records that is wrong, and
+# it is why the setting is off by default and why the live site now says the
+# sandbox is kept apart rather than explaining its own configuration.
+#
+# So this runs the same image as a second, separate deployment. It is not an
+# overlay on `compose.yaml` — it is a whole stack of its own, with its own
+# compose project, its own container name, its own volume and its own env file,
+# so nothing it does can reach the live record and `docker compose down` in one
+# cannot touch the other.
+#
+# Two settings make it free to run:
+#
+#   DEMO_TENANCY_ENABLED=true   the seeded programme exists and can be signed
+#                               into, with the one-time code returned in the
+#                               response rather than emailed.
+#   AI_MODE=local               the deterministic local engines. No provider is
+#                               called, so nothing is spent. `/readyz` and the
+#                               AI screens report the mode, so nobody is shown a
+#                               local answer dressed up as a model's.
+#
+# The anonymous bootstrap route stays refused whatever this file says:
+# `POST /v1/console/session` hands out a token with no challenge at all and is
+# barred in production by `isProduction()`, not by the demo switch.
+#
+# Usage, on the demo host:
+#
+#     cp .env.example .env.demo      # then set GATEWAY_JWT_SECRET to a NEW value
+#     docker compose -f deploy/compose.demo.yaml --env-file .env.demo up -d --build
+#
+# Then point the proxy at `construx-demo:8080` (attach it to the edge network
+# the way `compose.edge.yaml` does for the live stack), and set
+# DEMONSTRATION_URL on the live deployment to this site's address. The public
+# demonstration page then links visitors here.
+#
+# A different JWT secret from the live deployment is not optional. Sharing one
+# would make a token minted for a fictional sandbox identity verify against the
+# live platform.
+
+name: construx-demo
+
+services:
+  construx-demo:
+    container_name: construx-demo
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      # Loopback, like the live stack and for the same reason: docker's iptables
+      # rules are evaluated before the firewall's, so a published port reaches
+      # the internet on a host that allows only 80 and 443.
+      - '127.0.0.1:${CONSTRUX_DEMO_HOST_PORT:-8091}:8080'
+    env_file:
+      - ../.env.demo
+    environment:
+      NODE_ENV: production
+      PORT: '8080'
+      # Its own paths on its own volume. Nothing here is shared with the live
+      # deployment, which is the whole point of running it separately.
+      LEDGER_JOURNAL_PATH: /data/ledger.jsonl
+      LEDGER_JOURNAL_FSYNC: 'true'
+      EVIDENCE_STORE_PATH: /data/evidence
+      SITE_MEDIA_PATH: ${SITE_MEDIA_PATH:-/data/site-media}
+      # The two that make this a sandbox rather than a second live platform.
+      # Overrides rather than defaults: a demo deployment that inherited
+      # AI_MODE=production from a copied .env would quietly start spending real
+      # money on visitors, which is exactly the accident this file exists to
+      # prevent.
+      DEMO_TENANCY_ENABLED: 'true'
+      AI_MODE: 'local'
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set a NEW GATEWAY_JWT_SECRET in .env.demo, never the live one}
+      BUILD_COMMIT: ${BUILD_COMMIT:-}
+    volumes:
+      - demo-ledger:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks:
+      - default
+      - edge
+
+networks:
+  edge:
+    # The proxy's network, as in compose.edge.yaml. Not created here, because it
+    # belongs to whatever was on the host first.
+    external: true
+    name: ${CONSTRUX_EDGE_NETWORK:-construx-edge}
+
+volumes:
+  demo-ledger:

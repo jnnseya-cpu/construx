@@ -24627,3 +24627,24 @@ is excluded by construction, because it governs *other companies'* tenancies and
 billing and an enterprise owner is a customer. `ENTERPRISE_ADMIN` is narrower by
 design (read-only on take-off and estimating); signup and onboarding give a
 founder both roles, so the person who founded the company holds everything.
+
+### Somewhere for a visitor to actually try it
+
+Taking the operator's setting off the public page left the honest half —
+*"the sandbox is kept apart from the live platform"* — with nowhere to send
+anybody. `deploy/compose.demo.yaml` is that somewhere: the same image as a
+second, wholly separate stack, with its own compose project, container, volume
+and env file, so nothing it does can reach the live record.
+
+`DEMO_TENANCY_ENABLED=true` seeds the fourteen identities and returns the
+one-time code in the response rather than emailing it. `AI_MODE=local` runs the
+deterministic engines, so **a visitor spends nothing**: no provider is called at
+all. The mode is published on `/readyz` and on the AI screens, so a local answer
+is never presented as a model's. The anonymous bootstrap route
+`POST /v1/console/session` stays refused regardless — it is barred by
+`isProduction()`, not by the demo switch.
+
+`DEMONSTRATION_URL` on the live deployment then points the public page at it.
+The runbook section is in `docs/GO-LIVE.md`, including the requirement that the
+sandbox carry a **different** `GATEWAY_JWT_SECRET` — sharing one would make a
+token minted for a fictional identity verify against the live platform.

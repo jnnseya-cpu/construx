@@ -331,3 +331,40 @@ docker compose -f /srv/construx/app/deploy/compose.yaml \
 Related: `docs/ACCEPTANCE.md` for what to test once this is done,
 `docs/RUNBOOK.md` for operating the ledger, `docs/STATE.md` for what is built
 and what is deliberately not.
+
+---
+
+## The sandbox, on its own address
+
+The live deployment holds real customer records, so `DEMO_TENANCY_ENABLED` stays
+`false` on it. The sandbox is a second deployment of the same image, and
+`deploy/compose.demo.yaml` is the whole stack: its own compose project, its own
+container, its own volume, its own `.env.demo`.
+
+Two settings make it free to run and honest about it:
+`DEMO_TENANCY_ENABLED=true` seeds the fourteen identities and returns the
+one-time code in the response instead of emailing it, and `AI_MODE=local` runs
+the deterministic local engines so **no provider is called and nothing is
+spent**. The mode is published on `/readyz` and on the AI screens, so nobody is
+shown a local answer dressed up as a model's.
+
+```bash
+cp .env.example .env.demo          # then set a NEW GATEWAY_JWT_SECRET
+docker compose -f deploy/compose.demo.yaml --env-file .env.demo up -d --build
+docker network connect construx-edge construx-demo   # once, if not already
+```
+
+Point the proxy at `construx-demo:8080` on its own hostname, then set
+`DEMONSTRATION_URL` to that address in the live deployment's `.env` and restart
+it. The public demonstration page then links visitors to the sandbox instead of
+having nothing to offer.
+
+A **different** `GATEWAY_JWT_SECRET` from the live deployment is not optional.
+Sharing one would make a token minted for a fictional sandbox identity verify
+against the live platform.
+
+| Thing | Value |
+|---|---|
+| Container | `construx-demo`, host port `127.0.0.1:8091` → `8080` |
+| Configuration | `/srv/construx/app/.env.demo` |
+| Volume | `construx-demo_demo-ledger`, shared with nothing |
