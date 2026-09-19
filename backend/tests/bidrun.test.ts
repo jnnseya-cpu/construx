@@ -10,7 +10,7 @@ import { acceptPackProposal, proposePackPrice } from '../src/domain/bidrun.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
 import type { EngineContext } from '../src/engines/context.ts';
-import { ingestFile } from '../src/evidence/pipeline.ts';
+import { ingestFile, ingestedFiles } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -199,8 +199,31 @@ describe('the run from an uploaded pack', () => {
     await rejectsCode(() => proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' }), 'PACK_HAS_NO_DRAWING');
   });
 
-  it('reads every drawing, measures it, and prices it off this business’s own record', async () => {
+  it('publishes an ingested file as the pipeline recorded it, nested', async () => {
+    /*
+     * The shape the console has to read, pinned.
+     *
+     * The register publishes `inspection`, `classification` and `extraction`.
+     * Two screens read `file.kind`, which does not exist — it came back
+     * `undefined` for every file, so the drawing row fell through to the text
+     * path and the one button that measures a drawing never rendered, on the
+     * screen holding the drawings. Nothing failed; a button was simply absent.
+     */
     for (const sheet of SHEETS) await upload(sheet);
+    const filed = ingestedFiles(ctxFor('qs'));
+
+    assert.equal(filed.length, 2);
+    for (const file of filed) {
+      assert.equal(file.classification.kind, 'DRAWING', `${file.filename} was not classified as a drawing`);
+      assert.equal(
+        (file as unknown as { kind?: string }).kind,
+        undefined,
+        'an ingested file grew a flat `kind` — the console reads one of these two and they must not both exist',
+      );
+    }
+  });
+
+  it('reads every drawing, measures it, and prices it off this business’s own record', async () => {
     asked = [];
 
     const proposal = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });

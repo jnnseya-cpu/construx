@@ -127,7 +127,20 @@ const LOOKABLE = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
  * list, and every other branch reads the ingestion record's verdict.
  */
 function heldTenderFiles(evidence, ingestion) {
-  const ingested = new Map((ingestion?.files ?? []).map((file) => [file.hash, file]));
+  /*
+   * `classification.kind`, not `kind`.
+   *
+   * The register publishes an ingested file as the pipeline recorded it —
+   * `inspection`, `classification`, `extraction` — and every read of `file.kind`
+   * on this screen was `undefined`. It failed silently in the worst possible
+   * way: the drawing row fell through to the text path, so the one button that
+   * measures a drawing never rendered, on the one screen holding the drawings.
+   * Reported as "I cannot see the take-off". Normalised once, here, so the rest
+   * of the screen reads one field name.
+   */
+  const ingested = new Map(
+    (ingestion?.files ?? []).map((file) => [file.hash, { ...file, kind: file.classification?.kind }]),
+  );
 
   return (evidence?.entries ?? [])
     .filter((entry) => entry.held)

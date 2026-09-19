@@ -1271,7 +1271,11 @@ export async function procurement(root) {
 
       ${packRunPanel({
         available: perception?.capability?.available === true,
-        drawingsHeld: (ingestion?.files ?? []).filter((file) => file.kind === 'DRAWING').length,
+        // `classification.kind`, not `kind` — the register publishes an ingested
+        // file as the pipeline recorded it, and reading the flat name gave
+        // `undefined` for every file and "0 drawings filed" on a project that
+        // had them.
+        drawingsHeld: (ingestion?.files ?? []).filter((file) => file.classification?.kind === 'DRAWING').length,
         blocked: null,
       })}
 

@@ -24693,3 +24693,27 @@ The panel lives on Procurement rather than Pipeline & Bids, because `navreach`
 caught the placement: Pipeline is gated on `BUSINESS_DEVELOPMENT` and the BIM
 role holds writes on `BOQ_TAKEOFF` without holding that gate. The screen that
 offers a write has to be reachable by everyone who can take it.
+
+### The field that did not exist
+
+Reported as "not working", with a screen reading **0 drawings filed on this
+project** and a locked run — on a project holding drawings.
+
+The evidence register publishes an ingested file as the pipeline recorded it:
+`inspection`, `classification`, `extraction`. Two screens read `file.kind`,
+which is not a field. It came back `undefined` for every file, and it failed in
+the worst available way — silently, and in the branch that decides what a row
+offers. On Pipeline & Bids every drawing fell through to the text path, so
+**the one button that measures a drawing never rendered, on the one screen
+holding the drawings**; and the new pack run counted nought of them and locked
+itself with a truthful-sounding reason that was false.
+
+Both now read `classification.kind`, normalised once on the pipeline screen so
+the rest of it reads one name. `bidrun.test.ts` pins the published shape: an
+ingested file carries `classification.kind` and must not grow a flat `kind`
+beside it, because the console would then have two fields to read and only one
+of them would be maintained.
+
+The lesson is narrower than "check your field names". A missing field in a
+condition does not throw, does not log and does not render an error — it renders
+a screen that looks finished and does less than it says.
