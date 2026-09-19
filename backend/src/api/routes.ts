@@ -24539,6 +24539,22 @@ export const ROUTES: Route[] = [
         corrections: { type: 'object' },
         packageId: stringField,
         costCodePrefix: stringField,
+        /*
+         * ITT_REQUIREMENTS — the invitation the reading is filed against, and
+         * the three commercial figures no invitation states about the bidder.
+         *
+         * `ConfirmInput` has carried all four since the task was built, typed
+         * and commented. This schema never listed them, and
+         * `additionalProperties: false` turned that omission into a refusal:
+         * confirming a read invitation answered "estimatedValueMinor is not a
+         * permitted property" and the whole ITT path could not complete through
+         * the API at all. The engine was right; the door in front of it was
+         * narrower than the room behind.
+         */
+        invitationId: stringField,
+        estimatedValueMinor: { type: 'integer', minimum: 0 },
+        durationWeeks: { type: 'integer', minimum: 1 },
+        targetMarginPercent: { type: 'number', minimum: 0, maximum: 100 },
         observedBy: stringField,
         actionByDate: stringField,
         category: stringField,

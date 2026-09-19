@@ -1025,6 +1025,27 @@ export async function extractFromText(
       payload: { text, source: input.source, ...(input.documentHash ? { documentHash: input.documentHash } : {}) },
       responseSchema: definition.responseSchema,
     },
+    /*
+     * A reading presented as "what the AI read" must come from a model.
+     *
+     * This ran without the guard, so on a deployment with no reasoning
+     * provider — or one that had fallen back — the local stand-in answered,
+     * returned an extraction with nothing in it, and the guard below refused it
+     * with "there was not enough in that text to be worth confirming". The
+     * sentence blames the customer's document for the absence of a model. A
+     * tender pack was read five times, five drafts were filed, and every one of
+     * them said the document was thin.
+     *
+     * Refused here instead, before anything is filed, naming what is actually
+     * missing.
+     */
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
+        'This deployment is running the local stand-in, which reads nothing. What it returns is a fixed answer, not a ' +
+        'reading of your document, and filing it would put words on the record that no model produced. Configure a ' +
+        'reasoning provider and set AI_MODE=live; "Call each provider now" on AI Engine says which are answering.',
+    },
     toWrites: (output, confidence) => [
       {
         eventType: 'PERCEPTION_DRAFT_PRODUCED',

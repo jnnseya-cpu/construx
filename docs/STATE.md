@@ -24356,3 +24356,46 @@ Driven end to end in a browser: a request on a project carrying three payment
 certificates refused at the asking; a request on a clean one accepted, the
 project still listed; the requester offered withdrawal and no confirmation; the
 owner offered confirmation, taking it, and the project gone from the estate.
+
+### The ITT path could not be completed over HTTP
+
+Reported from a live tender: five PDFs uploaded against *Carlton Parish Church
+retaining wall*, each read, and confirming the reading answered
+**`VALIDATION_FAILED — estimatedValueMinor is not a permitted property`**.
+
+`perception.confirm` has accepted `invitationId`, `estimatedValueMinor`,
+`durationWeeks` and `targetMarginPercent` since the task was built — typed on
+`ConfirmInput`, commented, and exercised. The route in front of it never listed
+them, and `additionalProperties: false` turned the omission into a refusal. The
+engine was right; the door was narrower than the room behind it.
+
+**Nothing caught it because the engine tests call `perception.confirm`
+directly.** They are right to — that is the unit under test — but it means the
+schema in front of it was exercised by nobody, and a body the engine documents
+could be refused by the door with both halves passing their own tests.
+`consoleforms.test.ts` now reads `ConfirmInput` out of the engine source and
+asserts the route admits every field on it. Verified to fail against the old
+schema with the customer's own error text before it was fixed.
+
+### A reading with no model behind it blamed the document
+
+The same tender produced five drafts and five refusals reading *"There was not
+enough in that text to be worth confirming."*
+
+`readDocument` ran **without `requireModel`**, which every other engine that
+presents model output to a person sets. So on a deployment with no reasoning
+provider — or one that had fallen back — the local stand-in answered, returned
+an extraction with nothing in it, and the `usable()` guard refused it with a
+sentence blaming the customer's document for the absence of a model. Five
+drafts were filed saying a tender pack was thin.
+
+It is refused before anything is filed now, naming what is actually missing:
+the stand-in reads nothing, what it returns is a fixed answer rather than a
+reading, and filing it would put words on the record no model produced.
+
+### Forty more forms may post a field their route refuses
+
+A scan of every console form's posted keys against its route's schema flags 40
+candidates. It is a text heuristic and it has visible false positives — an enum
+*value* read as a property name among them — so it is recorded as a finding
+rather than acted on wholesale, and it is not a test. Triage is outstanding.

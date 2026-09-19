@@ -306,3 +306,52 @@ describe('an HTML route must declare a policy its own page can live under', () =
     });
   }
 });
+
+/**
+ * The door is as wide as the room behind it.
+ *
+ * `perception.confirm` has always accepted `invitationId`,
+ * `estimatedValueMinor`, `durationWeeks` and `targetMarginPercent` — typed on
+ * `ConfirmInput`, commented, and exercised by `ittreading.test.ts`. The route
+ * in front of it never listed them, and `additionalProperties: false` turned
+ * that omission into a refusal: confirming a read invitation answered
+ * *"estimatedValueMinor is not a permitted property"*, and the whole ITT path
+ * was unreachable over HTTP.
+ *
+ * Nothing caught it because the engine tests call `perception.confirm` directly.
+ * They are right to — that is the unit under test — but it means the schema in
+ * front of it is exercised by nobody, and a body the engine documents can be
+ * refused by the door with both halves passing their own tests.
+ *
+ * Read from the source text rather than from a type, because the types are
+ * erased: `ConfirmInput` is the engine's published contract, and every optional
+ * field on it has to be a property the route admits.
+ */
+describe('a route admits every field its engine accepts', () => {
+  it('lets through everything perception.confirm is documented to take', () => {
+    const source = readFileSync(join(REPO_ROOT, 'backend', 'src', 'engines', 'perception.ts'), 'utf8');
+    const start = source.indexOf('export type ConfirmInput = {');
+    assert.ok(start > 0, 'ConfirmInput has been renamed; this check no longer guards anything');
+    const body = source.slice(start, source.indexOf('\n};', start));
+
+    // Top-level `name?: type;` entries, ignoring anything nested in a comment
+    // or an inline object.
+    const declared = [...body.matchAll(/^ {2}([A-Za-z_$][\w$]*)\??:/gm)].map((match) => match[1]!);
+    assert.ok(declared.length > 10, `only ${declared.length} fields parsed out of ConfirmInput; the shape has changed`);
+
+    const route = ROUTES.find((entry) => entry.pattern === '/v1/projects/:projectId/perception/:draftId/confirm');
+    assert.ok(route?.schema, 'the confirm route has no schema');
+    const permitted = (route.schema.properties ?? {}) as Record<string, unknown>;
+
+    const missing = declared.filter(
+      // `draftId` arrives in the path, never the body.
+      (field) => field !== 'draftId' && !(field in permitted),
+    );
+    assert.deepEqual(
+      missing,
+      [],
+      `perception.confirm accepts ${missing.join(', ')}, and the route refuses ${missing.length === 1 ? 'it' : 'them'}. ` +
+        'A caller sending what the engine documents gets "not a permitted property".',
+    );
+  });
+});
