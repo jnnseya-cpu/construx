@@ -378,7 +378,14 @@ export function companyProfile(ctx: EngineContext): CompanyProfile {
   if (!record) {
     throw new DomainError(
       'COMPANY_PROFILE_NOT_SET',
-      'The radar cannot screen anything until the company records its own facts — it will not invent them',
+      // Named with the door, because this refusal is reached from the bid
+      // chain as well as the radar — somebody who has just read an invitation
+      // and pressed "Confirm and build the matrix" was told a fact about the
+      // radar and given nothing to do about it.
+      'This business has not recorded its own facts yet — what it turns over, where it works, what it is accredited ' +
+        'for and how many jobs it can run at once. Nothing here invents them. A compliance matrix sets a buyer’s ' +
+        'requirements against them, and the radar screens opportunities with them, so both wait until they exist. ' +
+        'Record them with "Record the company’s facts" on Pipeline & Bids.',
       404,
     );
   }

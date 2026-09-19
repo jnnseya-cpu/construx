@@ -1851,8 +1851,22 @@ export async function pipeline(root) {
         await draw();
       } catch (error) {
         toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
-        readText.disabled = false;
-        readText.textContent = 'Read this invitation';
+        /*
+         * Redrawn on the failure too, because the failure wrote something.
+         *
+         * A reading that returns too little to confirm still files its draft —
+         * that is deliberate, and the refusal says so: "Draft 01M2W… records
+         * exactly what the reading returned, so it can be checked rather than
+         * guessed at". Only `draw()` was on the success path, so the draft the
+         * message pointed at did not appear until somebody reloaded the page by
+         * hand. The platform told five people in a row that the evidence
+         * existed and then did not put it on the screen.
+         *
+         * Now the reading appears below either way, with what it read and what
+         * it found, which is the difference between "it failed" and "here is
+         * what came back and why it was not enough".
+         */
+        await draw();
       }
       return;
     }
@@ -1876,6 +1890,33 @@ export async function pipeline(root) {
 
     const confirmIt = event.target.closest('[data-confirm-itt]');
     if (confirmIt) {
+      /*
+       * Refused before the form, not after it.
+       *
+       * Confirming builds the compliance matrix, and the matrix is the
+       * company's own facts set against the buyer's requirements — which
+       * accreditation is held, which insurance, what the business turns over.
+       * Without them every line is UNKNOWN and there is no matrix, so
+       * `analyseITT` refuses with COMPANY_PROFILE_NOT_SET.
+       *
+       * That refusal arrived *after* somebody had read an invitation, opened
+       * this form, typed the value they expect to price and pressed the button
+       * — naming a thing with no route to it. The door is on this very screen,
+       * a panel further down. Said here, before the work, with the button that
+       * fixes it.
+       */
+      if (profile?.error) {
+        toast(
+          'The company’s own facts are needed first',
+          'The compliance matrix sets the buyer’s requirements against what this business actually holds — its ' +
+            'accreditations, its insurances, what it turns over. None of that is recorded yet, so there is nothing to ' +
+            'set them against. “Record the company’s facts” is at the bottom of this screen; it takes a minute, and ' +
+            'it is read by every screen above.',
+          'warn',
+        );
+        document.querySelector('[data-company-facts]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       // Three figures the analyst needs and no invitation states, because none
       // of them is about the buyer: what this business expects to price, over
       // how long, and at what margin. Asked here rather than guessed, because
