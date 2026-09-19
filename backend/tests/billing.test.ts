@@ -74,6 +74,43 @@ describe('ACU wallet', () => {
     assert.equal(snap.unmetered?.reason, 'Enterprise was granted free of charge, and AI with it');
   });
 
+  it('does not count a run nobody was charged for against the realised rate', () => {
+    /*
+     * Reported as **"Effective multiplier 1.70× IS TOTALLY WRONG. IT MUST BE
+     * 4X TO 10X"**, on a screen dividing everything billed by everything it
+     * cost. On an exempt account those are two different things: billed stops
+     * rising, provider cost keeps rising, and the ratio decays towards zero —
+     * so a platform whose floor is 4× reported itself selling at 1.70×.
+     *
+     * A realised rate is what was charged over what the *charged* runs cost.
+     * Runs nobody was charged for are Absorbed.
+     */
+    const w = wallet(100_000);
+    const charged = w.reserve({ aiRequestId: 'charged', estimatedRawCostMinor: 43 });
+    w.settle(charged.holdId, 43, 'OPENAI');
+
+    w.setUnmetered({ reason: 'granted free' });
+    const given = w.reserve({ aiRequestId: 'given', estimatedRawCostMinor: 58 });
+    w.settle(given.holdId, 58, 'OPENAI');
+
+    const snap = w.snapshot();
+    assert.equal(snap.monthRawSpendMinor, 101, 'both runs cost the providers something');
+    assert.equal(snap.monthChargedRawMinor, 43, 'only one of them was charged for');
+    assert.equal(snap.monthAbsorbedRawMinor, 58, 'the rest was borne by this platform');
+
+    const realised = snap.monthBilledMinor / snap.monthChargedRawMinor;
+    assert.equal(realised, RATE, 'the realised rate is not the rate the charged run was raised at');
+    assert.ok(realised >= minimumMultiplier(), 'the realised rate fell below the floor');
+    // The figure the screen used to show, named rather than merely absent: the
+    // old denominator understates the rate, and understates it further with
+    // every run that is given away — which is why an exempt account watched it
+    // fall through the floor.
+    assert.ok(
+      snap.monthBilledMinor / snap.monthRawSpendMinor < realised,
+      'dividing by every run, charged or not, no longer understates the realised rate',
+    );
+  });
+
   it('quotes an exempt tenancy nil, so the price before the button matches the charge after it', () => {
     const w = new ACUWallet('tenant-1');
     w.setUnmetered({ reason: 'granted free' });

@@ -51,7 +51,17 @@ export async function billing(root) {
     return value >= 10 || value === 0 ? `${Math.round(value)} GB` : `${value.toFixed(1)} GB`;
   };
 
-  const effective = wallet.monthRawSpendMinor === 0 ? 0 : wallet.monthBilledMinor / wallet.monthRawSpendMinor;
+  /*
+   * The realised rate: what was charged, over what the *charged* runs cost.
+   *
+   * This divided by every run's cost whether it was billed or given away, and
+   * on an exempt account that is two different things in one ratio: billed
+   * stops rising, provider cost keeps rising, and the figure decays towards
+   * zero. It reported **1.70×** on a platform whose floor is 4×, which reads as
+   * selling below cost and was simply the wrong denominator. Runs nobody was
+   * charged for are Absorbed, not a discount.
+   */
+  const effective = wallet.monthChargedRawMinor > 0 ? wallet.monthBilledMinor / wallet.monthChargedRawMinor : null;
   const totalBilled = attribution.attribution.reduce((sum, a) => sum + a.billedMinor, 0);
   const totalCalls = attribution.attribution.reduce((sum, a) => sum + a.calls, 0);
 
@@ -323,15 +333,26 @@ export async function billing(root) {
           <h2>Billed this month</h2>
           <div class="metric orange">${exact(wallet.monthBilledMinor)}</div>
           <div class="metric-sub">${
-            wallet.unmetered
-              ? html`borne by CONSTRUX — the providers charged ${exact(wallet.monthRawSpendMinor)}`
-              : html`on ${exact(wallet.monthRawSpendMinor)} of provider cost`
+            // Kept apart rather than blended. A month can contain both — charges
+            // raised before an exemption began, and runs borne since — and one
+            // sentence covering both said "£1.72 billed, borne by CONSTRUX",
+            // which cannot both be true of the same money.
+            wallet.monthAbsorbedRawMinor > 0
+              ? html`on ${exact(wallet.monthChargedRawMinor)} of provider cost.
+                  A further ${exact(wallet.monthAbsorbedRawMinor)} of provider cost was borne by CONSTRUX and charged to
+                  nobody.`
+              : html`on ${exact(wallet.monthChargedRawMinor)} of provider cost`
           }</div>
         </div>
         <div class="card">
           <h2>Effective multiplier</h2>
-          <div class="metric">${effective ? `${effective.toFixed(2)}×` : '—'}</div>
-          <div class="metric-sub">charged over underlying compute cost</div>
+          <div class="metric">${effective === null ? '—' : `${effective.toFixed(2)}×`}</div>
+          <div class="metric-sub">${
+            effective === null
+              ? html`nothing was charged this month, so there is no rate to realise`
+              : html`charged over what those runs cost — between ${plane?.markupRange?.[0] ?? 4}× and
+                  ${plane?.markupRange?.[1] ?? 10}× depending on monthly usage`
+          }</div>
         </div>
       </div>
 

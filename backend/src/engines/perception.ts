@@ -154,6 +154,15 @@ type TaskDefinition = {
   responseSchema: Record<string, unknown>;
   /** Whether the model returned enough to be worth showing anybody. */
   usable: (extraction: Record<string, unknown>) => boolean;
+  /**
+   * What `usable` was looking for and did not find, in the reader's own words.
+   *
+   * Named per task so a refusal can say "found no requirements in them" rather
+   * than "there was not enough in that text" — the second blames the document
+   * for the absence, and on a tender pack of drawings that reading was wrong
+   * about four files out of five.
+   */
+  absent: string;
 };
 
 const IMAGE_OR_PDF = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
@@ -197,6 +206,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     // would create a drawing nobody can supersede, because supersession keys on
     // the number.
     usable: (extraction) => typeof extraction.drawingNumber === 'string' && extraction.drawingNumber.trim() !== '',
+    absent: 'drawing number in a title block',
   },
 
   GROUND_MATERIAL: {
@@ -261,6 +271,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     // A classification with no surface in it is not one. It stays on the record
     // as a draft — it was paid for — and cannot be confirmed.
     usable: (extraction) => Array.isArray(extraction.surfaces) && extraction.surfaces.length > 0,
+    absent: 'surfaces',
   },
 
   DRAWING_TAKEOFF: {
@@ -300,6 +311,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       required: ['items'],
     },
     usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+    absent: 'measurable items',
   },
 
   /**
@@ -433,6 +445,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     // An invitation with no requirements has not been read. The same guard
     // `analyseITT` applies, applied before anything is shown to anybody.
     usable: (extraction) => Array.isArray(extraction.requirements) && extraction.requirements.length > 0,
+    absent: 'tender requirements',
   },
 
   VOICE_NOTE: {
@@ -467,6 +480,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       required: ['transcript', 'category'],
     },
     usable: (extraction) => typeof extraction.transcript === 'string' && extraction.transcript.trim().length > 0,
+    absent: 'speech to transcribe',
   },
 
   PROGRESS_FROM_IMAGES: {
@@ -513,6 +527,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     usable: (extraction) =>
       Array.isArray(extraction.items) &&
       extraction.items.some((item) => Number((item as { quantity?: unknown }).quantity) > 0),
+    absent: 'completed work it could put a quantity against',
   },
 
   PPE_COMPLIANCE: {
@@ -562,6 +577,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       typeof extraction.compliant === 'boolean' &&
       typeof extraction.narrative === 'string' &&
       extraction.narrative.trim().length > 0,
+    absent: 'people or protective equipment it could assess',
   },
 
   EQUIPMENT_RECOGNITION: {
@@ -601,6 +617,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       required: ['items'],
     },
     usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+    absent: 'measurable items',
   },
 
   DEFECT_DETECTION: {
@@ -644,6 +661,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       required: ['defects'],
     },
     usable: (extraction) => Array.isArray(extraction.defects) && extraction.defects.length > 0,
+    absent: 'defects',
   },
 
   /**
@@ -702,6 +720,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     usable: (extraction) =>
       Array.isArray(extraction.facts) &&
       extraction.facts.some((fact) => BRIEF_ITEMS.some((item) => item.id === String((fact as Record<string, unknown>).itemId))),
+    absent: 'answers to any of the brief’s questions',
   },
 
   /**
@@ -755,6 +774,7 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     usable: (extraction) =>
       Array.isArray(extraction.pages) &&
       extraction.pages.some((page) => String((page as Record<string, unknown>).text ?? '').trim() !== ''),
+    absent: 'legible text on any page',
   },
 };
 
@@ -1075,9 +1095,35 @@ export async function extractFromText(
   });
 
   if (!definition.usable(result.output)) {
+    /*
+     * Why the reading produced nothing, rather than a sentence that blames the
+     * document's length for it.
+     *
+     * "There was not enough in that text to be worth confirming" was said about
+     * every file in a tender pack — five of them, four of which were drawings.
+     * A drawing's text layer is its title block: a drawing number, a scale, a
+     * revision. A model reading it for tender requirements correctly finds
+     * none, and the platform reported that correct answer as a defect in the
+     * customer's file.
+     *
+     * So: how much was read, and what the absence most likely means. A
+     * substantial document that yielded nothing is a different problem from a
+     * title block that never had any, and only one of them is worth a second
+     * attempt.
+     */
+    const read = text.replace(/\s+/g, ' ').trim().length;
+    const thin = read < 400;
     throw new DomainError(
       'PERCEPTION_NOT_LEGIBLE',
-      `There was not enough in that text to be worth confirming. Draft ${draftId} records what the reading returned.`,
+      `${read.toLocaleString('en-GB')} characters were read from ${input.label}, and the reading found no ` +
+        `${definition.absent} in them. ` +
+        (thin
+          ? 'That is about as much text as a drawing title block or a cover sheet carries — which is what a drawing, ' +
+            'a calculation sheet or a scanned page looks like to a reader that only sees text. The invitation letter ' +
+            'or the instructions to tenderers is the document that states requirements; a general arrangement does not.'
+          : 'The text came through, so this is a document that does not contain them rather than one that could not be ' +
+            'read. Check it is the right file — the instructions to tenderers, not a drawing register or a schedule.') +
+        ` Draft ${draftId} records exactly what the reading returned, so it can be checked rather than guessed at.`,
       422,
     );
   }

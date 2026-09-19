@@ -24399,3 +24399,66 @@ A scan of every console form's posted keys against its route's schema flags 40
 candidates. It is a text heuristic and it has visible false positives — an enum
 *value* read as a property name among them — so it is recorded as a finding
 rather than acted on wholesale, and it is not a test. Triage is outstanding.
+
+### A realised rate divided by the wrong denominator
+
+Reported as **"Effective multiplier 1.70× IS TOTALLY WRONG. IT MUST BE 4X TO
+10X"**, beside a card reading *"Billed this month £1.72 — borne by CONSTRUX, the
+providers charged £1.01"*.
+
+Both were wrong, and for the same reason: a month can contain **charged** runs
+and **given-away** runs, and the screen folded them into one figure. The
+multiplier was `monthBilled / monthRawSpend`, which on an exempt account divides
+a total that has stopped rising by one that has not — so it decays towards zero,
+and a platform whose floor is 4× reported itself selling at 1.70×. The Billed
+card said £1.72 was billed *and* borne by CONSTRUX, which cannot both be true of
+the same money: £1.72 was charged before the exemption began, and everything
+since has been borne.
+
+The wallet now publishes `monthChargedRawMinor` and `monthAbsorbedRawMinor`
+beside `monthRawSpendMinor`. A realised rate is what was charged over what the
+**charged** runs cost; runs nobody was charged for are Absorbed, which is where
+`burn.ts` already put them. A month with no charge at all shows no rate rather
+than a nought. The price range itself is published on the control plane rather
+than restated in the browser — settled decision 6.
+
+### Reading a 2D CAD drawing
+
+Stated as a requirement: *"a bid will be a mix of document (word, pdf, excel)
+and cad drawing, bim model, 3d and 2d as well and it must read all these."*
+
+Most of it already read. `office.ts` opens `.docx` and `.xlsx`, `pdftext.ts`
+opens a PDF with a text layer and its tables, `engines/ifc.ts` is a 501-line IFC
+parser with storeys, elements and diffing. DWG, RVT and NWD are proprietary
+binaries; nothing here opens one and the platform says so and asks for an IFC
+export. **DXF was the gap** — the open interchange format every one of those
+tools exports to.
+
+**And it was worse than unread.** A DXF is ASCII, so `sniffType` called it
+`text/plain` and `extractText` handed the whole file over as prose: half a
+megabyte of coordinate pairs, one number per line, inside which a model was
+asked to find tender requirements. It found none, correctly, at full price.
+
+`evidence/dxf.ts` reads the part of a drawing that means anything to a reader
+that cannot see the lines: every `TEXT`, `MTEXT`, `ATTRIB` and `ATTDEF` value
+with the layer it sits on — the title block, the general notes, the
+specification references — plus the layers, the blocks, the entity counts and
+the extents. MTEXT's own markup is stripped, so a note arrives as *"NOTES: 1.
+All dimensions in mm"* rather than `{\fArial|b1;NOTES:}\P1. All dimensions...`.
+**The geometry is counted and never transcribed**, which is the point: a
+coordinate list in front of a model is the thing this module exists to stop. A
+binary DXF is refused with the export to ask for rather than guessed at.
+
+### A refusal that blamed the document for the reading
+
+`PERCEPTION_NOT_LEGIBLE` read *"There was not enough in that text to be worth
+confirming"* — said about every file in a tender pack, four of which were
+drawings. A drawing's text layer is its title block, a model reading it for
+tender requirements correctly finds none, and the platform reported that correct
+answer as a defect in the customer's file.
+
+It now says how much was read and what was looked for — *"312 characters were
+read from …, and the reading found no tender requirements in them"* — and
+distinguishes a title block's worth of text from a substantial document that
+genuinely contains none. Each task carries its own `absent` wording, so no
+refusal prints a schema field name at somebody.

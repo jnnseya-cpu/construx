@@ -118,6 +118,21 @@ export async function aiengine(root) {
                       ? badge('stays here', 'ok')
                       : badge(retentionLabel(provider.retention), provider.retention?.route === 'NOT_DECLARED' ? 'warn' : 'info')
                   }
+                  ${
+                    // And what it may be *sent*, which is the half that decides
+                    // whether work runs. This panel said "live" and stopped
+                    // there, so a deployment whose vendors are all capped at
+                    // ordinary project records read as fully working while
+                    // writing a tender submission was refused before a provider
+                    // was contacted. The control plane has carried `clearance`
+                    // all along; nothing rendered it.
+                    provider.transmits !== false && provider.clearance
+                      ? badge(
+                          `≤ ${humanise(provider.clearance).toLowerCase()}`,
+                          provider.clearance === 'LEGAL_L4' ? 'ok' : 'warn',
+                        )
+                      : ''
+                  }
                 </span>
               </div>`,
             )}

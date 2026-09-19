@@ -957,6 +957,15 @@ export class AIOrchestrator {
      * terms nobody at this company has read.
      */
     undeclaredRetention: AIProvider[];
+    /**
+     * The two ends of the AI price range, published rather than restated.
+     *
+     * Settled decision 6: the browser holds no rule the API does not publish. A
+     * screen quoting "4× to 10×" from its own source is a second place for the
+     * price to live, and it is the place that will be wrong the day the range
+     * moves.
+     */
+    markupRange: [number, number];
   } {
     const described = (
       adapter: AIProviderAdapter,
@@ -1022,6 +1031,7 @@ export class AIOrchestrator {
       undeclaredRetention: available
         .filter((entry) => entry.transmits && entry.retention.route === 'NOT_DECLARED')
         .map((entry) => entry.provider),
+      markupRange: [config.billing.markupMultiplier, config.billing.maxMarkupMultiplier],
     };
   }
 }

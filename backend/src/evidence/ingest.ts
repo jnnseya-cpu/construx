@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readOffice } from './office.ts';
 import { readPdfText, SENTENCE_END, type PdfTable } from './pdftext.ts';
+import { looksLikeDxf, readDxf } from './dxf.ts';
 import { zipEntries as readZipEntries } from './zip.ts';
 
 /**
@@ -535,6 +536,23 @@ const PDF_TEXT_FLOOR = 20;
  */
 export function extractText(bytes: Buffer, actualType: string | undefined): Extraction {
   if (actualType === 'text/plain') {
+    /*
+     * A DXF is ASCII, so it sniffs as text — and handing one over as prose is
+     * worse than not reading it. What a model received was half a megabyte of
+     * coordinate pairs, one number per line, inside which it was asked to find
+     * tender requirements. `dxf.ts` reads the part of a drawing that carries
+     * meaning to a reader that cannot see: the annotation, the layers and what
+     * is on them.
+     */
+    if (looksLikeDxf(bytes)) {
+      const drawing = readDxf(bytes);
+      if (drawing.kind === 'UNREADABLE') return { method: 'UNSUPPORTED', reason: drawing.reason };
+      return {
+        text: drawing.text,
+        method: 'NATIVE',
+        ...(drawing.note ? { note: drawing.note } : {}),
+      };
+    }
     const text = bytes.toString('utf8');
     const tables = parseDelimited(text);
     return { text, ...(tables ? { tables } : {}), method: 'NATIVE' };

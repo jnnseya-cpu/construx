@@ -357,6 +357,10 @@ export type WalletSnapshot = {
   lifetimeProfitPercent: number;
   lifetimeProfitMinor: number;
   monthRawSpendMinor: number;
+  /** Of that, what the charged runs cost — the denominator of a realised rate. */
+  monthChargedRawMinor: number;
+  /** And what this platform bore instead of charging on. */
+  monthAbsorbedRawMinor: number;
   monthBilledMinor: number;
   caps: ACUCaps;
   alerts: ACUAlert[];
@@ -890,6 +894,33 @@ export class ACUWallet {
       .reduce((sum, e) => sum + e.rawCostMinor, 0);
   }
 
+  /**
+   * The provider cost of the runs that were actually charged this month.
+   *
+   * Distinct from `monthRawSpendMinor`, which counts every run whether it was
+   * billed or given away, and the difference is not academic. An exempt
+   * tenancy keeps accruing provider cost at nil charge, so
+   * `billed / rawSpend` decays towards zero: a screen dividing one by the other
+   * reported a **realised multiplier of 1.70×** on a platform whose floor is
+   * 4×, and read as selling below cost. It was not — it was one ratio taken
+   * across two different things.
+   *
+   * A realised rate is what was charged over what the charged runs cost. Runs
+   * nobody was charged for belong in Absorbed, which is where `burn.ts` already
+   * puts them.
+   */
+  monthChargedRawMinor(now = new Date().toISOString()): number {
+    const key = monthKey(now);
+    return this.#entries
+      .filter((e) => e.type === 'DEBIT' && e.billedMinor > 0 && monthKey(e.timestamp) === key)
+      .reduce((sum, e) => sum + e.rawCostMinor, 0);
+  }
+
+  /** The provider cost this platform bore this month rather than charged on. */
+  monthAbsorbedRawMinor(now = new Date().toISOString()): number {
+    return this.monthRawSpendMinor(now) - this.monthChargedRawMinor(now);
+  }
+
   monthBilledMinor(now = new Date().toISOString()): number {
     const key = monthKey(now);
     return this.#entries
@@ -972,6 +1003,8 @@ export class ACUWallet {
       lifetimeProfitMinor: lifetimeBilled - lifetimeRawCost,
       lifetimeProfitPercent: profitPercent(lifetimeRawCost, lifetimeBilled),
       monthRawSpendMinor: this.monthRawSpendMinor(),
+      monthChargedRawMinor: this.monthChargedRawMinor(),
+      monthAbsorbedRawMinor: this.monthAbsorbedRawMinor(),
       monthBilledMinor: this.monthBilledMinor(),
       caps: this.#caps,
       alerts: this.alerts(),
