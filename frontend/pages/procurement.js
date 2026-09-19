@@ -94,9 +94,15 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
                 </div>
                 <div>
                   <div class="metric ${raw(proposal.lines.every((line) => line.rate) ? 'good' : 'warn')}">
-                    ${proposal.lines.filter((line) => line.rate).length}
+                    ${proposal.lines.filter((line) => line.rate?.source === 'OUR_RECORD').length}
                   </div>
-                  <div class="metric-sub">priced from our own record</div>
+                  <div class="metric-sub">
+                    priced from our own record${
+                      proposal.lines.some((line) => line.rate?.source === 'MARKET_AI')
+                        ? html`, ${proposal.lines.filter((line) => line.rate?.source === 'MARKET_AI').length} at a market view`
+                        : ''
+                    }
+                  </div>
                 </div>
                 <div>
                   <div class="metric orange">${proposal.indicative ? money(proposal.indicative.totalMinor) : '—'}</div>
@@ -114,9 +120,17 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
                   line.unit,
                   Number(line.quantity).toLocaleString('en-GB'),
                   line.sourceSheet ?? '—',
-                  line.rate ? money(line.rate.allInMinor) : badge('none', 'warn'),
                   line.rate
-                    ? html`<span style="font-size:12px;color:var(--text-3)">${line.rate.basis}</span>`
+                    ? html`${money(line.rate.allInMinor)}${
+                        line.rate.source === 'MARKET_AI' ? html`<br />${badge('market view', 'warn')}` : ''
+                      }`
+                    : badge('none', 'warn'),
+                  line.rate
+                    ? html`<span style="font-size:12px;color:var(--text-3)">${line.rate.basis}${
+                        line.rate.lowMinor && line.rate.highMinor
+                          ? html` Expect ${money(line.rate.lowMinor)}–${money(line.rate.highMinor)}.`
+                          : ''
+                      }</span>`
                     : html`<span style="font-size:12px;color:var(--text-3)">${line.unpriced}</span>`,
                 ]),
               })}
@@ -1596,18 +1610,35 @@ export async function procurement(root) {
         { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
         { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
-        // Only the lines our own record could not price. A form that asked for
-        // every rate again would be the thing this run exists to remove.
+        /*
+         * The lines that want a person's eye, and only those.
+         *
+         * Two kinds. A line nothing could price is an empty box somebody has to
+         * fill. A line priced at a model's view of the market is filled in
+         * already and wants looking at — it is the one number in the run that
+         * nothing in this company's record stands behind, and the form's job is
+         * to put it in front of somebody rather than let it through unread.
+         *
+         * A line priced from our own committed estimates is not asked about
+         * again. Asking for every rate is the thing this run exists to remove.
+         */
         ...(packRun?.lines ?? [])
           .map((line, index) => ({ line, index }))
-          .filter(({ line }) => !line.rate)
+          .filter(({ line }) => !line.rate || line.rate.source === 'MARKET_AI')
           .flatMap(({ line, index }) => [
             {
               name: `rate:${index}`,
               label: `${line.description} — ${line.quantity} ${line.unit}`,
               type: 'number',
               money: true,
-              hint: `${line.sourceSheet ?? 'measured'} · all-in rate per ${line.unit}. This business has never priced this item.`,
+              ...(line.rate ? { value: line.rate.allInMinor / 100 } : {}),
+              hint: line.rate
+                ? `${line.rate.basis}${
+                    line.rate.lowMinor && line.rate.highMinor
+                      ? ` Expect ${money(line.rate.lowMinor)}–${money(line.rate.highMinor)}.`
+                      : ''
+                  } Keep it or change it — it is a starting point, not this business's own rate.`
+                : `${line.sourceSheet ?? 'measured'} · all-in rate per ${line.unit}. Neither this business's record nor the market view could price it.`,
             },
             {
               name: `basis:${index}`,
@@ -1628,7 +1659,9 @@ export async function procurement(root) {
         packageId: packRun.packageId,
         costCodePrefix: v.costCodePrefix,
         lines: packRun.lines.map((line, index) => {
-          if (line.rate) {
+          // Priced from our own committed estimates: taken as it stands, and
+          // the estimate line says where it came from.
+          if (line.rate && line.rate.source === 'OUR_RECORD') {
             return {
               draftId: line.draftId,
               index: line.index,
@@ -1636,11 +1669,34 @@ export async function procurement(root) {
               materialRateMinor: line.rate.materialRateMinor,
               plantRateMinor: line.rate.plantRateMinor,
               subcontractRateMinor: line.rate.subcontractRateMinor,
+              rateSource: 'OUR_RECORD',
             };
           }
+
           const typed = Number(v[`rate:${index}`] ?? 0);
           const head = v[`basis:${index}`] || 'labourRateMinor';
-          return { draftId: line.draftId, index: line.index, ...(typed > 0 ? { [head]: typed } : {}) };
+
+          // A market view left exactly as the model gave it is a market view
+          // somebody kept, and it keeps the model's own split across the cost
+          // heads. Changed by so much as a pound, it is that person's rate and
+          // is recorded as theirs.
+          if (line.rate && typed === line.rate.allInMinor) {
+            return {
+              draftId: line.draftId,
+              index: line.index,
+              labourRateMinor: line.rate.labourRateMinor,
+              materialRateMinor: line.rate.materialRateMinor,
+              plantRateMinor: line.rate.plantRateMinor,
+              subcontractRateMinor: line.rate.subcontractRateMinor,
+              rateSource: 'MARKET_AI',
+            };
+          }
+
+          return {
+            draftId: line.draftId,
+            index: line.index,
+            ...(typed > 0 ? { [head]: typed, rateSource: 'PERSON' } : {}),
+          };
         }),
         estimate: {
           durationWeeks: Number(v.durationWeeks),

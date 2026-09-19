@@ -136,6 +136,22 @@ export type MeasuredLine = {
   materialWastePercent?: number;
   /** A subcontract sum agreed firm is not indexed for inflation. */
   subcontractFixedPrice?: boolean;
+  /**
+   * Where the rate against this line came from.
+   *
+   * Three provenances and they are not interchangeable. `OUR_RECORD` is a
+   * median of what this business has actually committed on past estimates.
+   * `PERSON` is a rate somebody put against the line themselves. `MARKET_AI` is
+   * a model's view of what the item goes for, which is a starting point a
+   * person kept — useful, and not the same kind of fact as the other two.
+   *
+   * Carried because two things downstream must be able to tell them apart: a
+   * reader asking why a number is what it is, and `harvestRates`, which builds
+   * "this business's own rates" and must not harvest a model's guess back as
+   * one. A guess that becomes history is a guess that gets more confident every
+   * time it is reused.
+   */
+  rateSource?: 'OUR_RECORD' | 'PERSON' | 'MARKET_AI';
 };
 
 /**

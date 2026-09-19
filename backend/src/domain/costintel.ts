@@ -134,6 +134,7 @@ type EstimateLine = {
   description?: string;
   unit?: string;
   quantity?: number;
+  rateSource?: string;
   labourRateMinor?: number;
   materialRateMinor?: number;
   plantRateMinor?: number;
@@ -160,6 +161,12 @@ export function harvestRates(ctx: EngineContext): RateObservation[] {
 
       for (const line of lines) {
         if (!line.description || !line.unit || !line.quantity) continue;
+        // A model's view of the market is not this business's own rate, and
+        // harvesting it back as one would let a guess become history — more
+        // confident every time it is reused, with nothing behind it but the
+        // first guess. Excluded here, at the one place "our own rates" is
+        // defined.
+        if (line.rateSource === 'MARKET_AI') continue;
         const components = {
           labourMinor: line.labourRateMinor ?? 0,
           materialMinor: line.materialRateMinor ?? 0,

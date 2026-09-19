@@ -1,5 +1,5 @@
 import { DomainError } from '../core/errors.ts';
-import { authorise, type EngineContext } from '../engines/context.ts';
+import { authorise, runAI, type EngineContext } from '../engines/context.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import { ingestedFiles } from '../evidence/pipeline.ts';
 import * as perception from '../engines/perception.ts';
@@ -47,10 +47,13 @@ import type { Platform } from '../platform.ts';
  * customer, priced at rates nobody looked at, is the one thing that would make
  * that claim false.
  *
- * **It invents no rate.** A line the record has never priced comes back
- * unpriced and says so. A median of one observation is reported as one
- * observation. Filling a gap with a plausible number is how an estimate becomes
- * confident and wrong, which is worse than incomplete and honest.
+ * **It invents no rate.** A median of one observation is reported as one
+ * observation. Where the record cannot price a line, a model is asked what the
+ * market pays — and the answer is labelled a market view everywhere it appears,
+ * carries a range rather than a point, is put in front of a person to keep or
+ * change, and is kept out of the rate history so a guess can never come back as
+ * this company's own committed rate. See `marketRates` for why that third rule
+ * is the one that makes the other two safe.
  */
 
 export type ProposedRate = {
@@ -59,10 +62,23 @@ export type ProposedRate = {
   materialRateMinor: number;
   plantRateMinor: number;
   subcontractRateMinor: number;
-  confidence: Confidence;
+  /**
+   * Where it came from, and the two are not the same kind of fact.
+   *
+   * `OUR_RECORD` is a median of what this business has actually committed on
+   * past estimates — evidence. `MARKET_AI` is a model's view of what the item
+   * goes for in this region today, which is a starting point rather than a
+   * fact, and is labelled as one everywhere it is shown.
+   */
+  source: 'OUR_RECORD' | 'MARKET_AI';
+  /** `MODEL_VIEW` where nothing in the record supports it. */
+  confidence: Confidence | 'MODEL_VIEW';
   observations: number;
   projects: number;
   newestOn: string;
+  /** The range, on a market view. An estimator prices inside a range, not at a point. */
+  lowMinor?: number;
+  highMinor?: number;
   /** In the words an estimator would check it in. */
   basis: string;
 };
@@ -137,6 +153,7 @@ function proposedRates(ctx: EngineContext): Map<string, ProposedRate> {
     const newestOn = bucket.map((o) => o.observedOn).filter((d) => d !== 'unknown').sort().at(-1) ?? 'unknown';
     const projects = new Set(bucket.map((o) => o.projectId)).size;
     rates.set(key, {
+      source: 'OUR_RECORD',
       allInMinor: middle(bucket.map((o) => o.rateMinor)),
       labourRateMinor: middle(bucket.map((o) => o.components.labourMinor)),
       materialRateMinor: middle(bucket.map((o) => o.components.materialMinor)),
@@ -153,6 +170,132 @@ function proposedRates(ctx: EngineContext): Map<string, ProposedRate> {
     });
   }
   return rates;
+}
+
+/**
+ * What the market pays for the lines our own record has never priced.
+ *
+ * Asked for, and the reasoning behind granting it is worth writing down,
+ * because this is the one place the platform lets a model put a number into a
+ * commercial document.
+ *
+ * The rule everywhere else is that the platform invents no rate: a line with no
+ * history comes back unpriced and says so, because filling a gap with a
+ * plausible number is how an estimate becomes confident and wrong. That rule
+ * stands. What changes is who is being asked. A median of this business's own
+ * committed estimates is **evidence**; a model's view of what an item goes for
+ * in this region today is **a starting point somebody experienced can correct
+ * in ten seconds**, which is worth a great deal more than an empty box — and a
+ * contractor pricing a line they have never priced before does exactly this,
+ * from memory or a rate book, every day.
+ *
+ * Three things keep it honest, and none of them is optional.
+ *
+ * **It is labelled, everywhere.** `source: 'MARKET_AI'` travels with the rate
+ * onto the screen, into the accepted estimate line, and into the record. A
+ * reader years later can see which lines were priced off a model's view and
+ * which off the company's own history.
+ *
+ * **It never becomes history.** `harvestRates` skips `MARKET_AI` lines, so a
+ * guess cannot be harvested back next month as "what this business charges".
+ * Without that, one guess compounds into a confident median with nothing behind
+ * it but the first guess.
+ *
+ * **It carries a range and a basis.** A point estimate invites acceptance; a
+ * range invites judgement, which is the behaviour this is for. The model is
+ * told to omit anything it cannot support rather than fill the row.
+ */
+async function marketRates(
+  ctx: EngineContext,
+  lines: ProposedLine[],
+  where: string,
+): Promise<{ rates: Map<string, ProposedRate>; acuConsumed: number }> {
+  const rates = new Map<string, ProposedRate>();
+  if (lines.length === 0) return { rates, acuConsumed: 0 };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'market_rate_estimate',
+    capability: 'REASONING',
+    inputRefs: [],
+    request: {
+      task:
+        'Give a current market unit rate for each measured item, for a contractor working in the region and at the ' +
+        'date stated. Split each rate into labour, materials, plant and subcontract so it can be priced to the right ' +
+        'cost head, and give a low and a high for the range you would expect to see. State the basis of each in one ' +
+        'sentence an estimator can argue with. Omit any item you cannot support a rate for rather than filling the ' +
+        'row — an omitted line is corrected in seconds, and a confident wrong rate is not noticed until the job is ' +
+        'lost or built at a loss. All money in minor units.',
+      payload: {
+        region: where,
+        date: today,
+        currency: 'GBP',
+        items: lines.map((line) => ({ description: line.description, unit: line.unit, quantity: line.quantity })),
+      },
+      responseSchema: {
+        type: 'object',
+        properties: {
+          rates: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string' },
+                unit: { type: 'string' },
+                labourMinor: { type: 'number' },
+                materialMinor: { type: 'number' },
+                plantMinor: { type: 'number' },
+                subcontractMinor: { type: 'number' },
+                lowMinor: { type: 'number' },
+                highMinor: { type: 'number' },
+                basis: { type: 'string' },
+              },
+              required: ['description', 'unit', 'basis'],
+            },
+          },
+          omitted: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['rates'],
+      },
+    },
+    // A market view is a proposal on a screen, not a record. Nothing is
+    // committed until a person accepts the run, and what they accept carries
+    // the provenance with it.
+    toWrites: () => [],
+  });
+
+  const answered = (result.output.rates as Array<Record<string, unknown>> | undefined) ?? [];
+  for (const answer of answered) {
+    const labour = Math.max(0, Math.round(Number(answer.labourMinor ?? 0)));
+    const material = Math.max(0, Math.round(Number(answer.materialMinor ?? 0)));
+    const plant = Math.max(0, Math.round(Number(answer.plantMinor ?? 0)));
+    const subcontract = Math.max(0, Math.round(Number(answer.subcontractMinor ?? 0)));
+    const allIn = labour + material + plant + subcontract;
+    // A row with no money in it is an omission the model reported in the shape
+    // of an answer, and carrying it would put a zero rate on a priced line.
+    if (allIn <= 0) continue;
+
+    const low = Number(answer.lowMinor ?? 0);
+    const high = Number(answer.highMinor ?? 0);
+    rates.set(rateKey(String(answer.description ?? ''), String(answer.unit ?? '')), {
+      source: 'MARKET_AI',
+      allInMinor: allIn,
+      labourRateMinor: labour,
+      materialRateMinor: material,
+      plantRateMinor: plant,
+      subcontractRateMinor: subcontract,
+      confidence: 'MODEL_VIEW',
+      observations: 0,
+      projects: 0,
+      newestOn: today,
+      ...(low > 0 ? { lowMinor: Math.round(low) } : {}),
+      ...(high > 0 ? { highMinor: Math.round(high) } : {}),
+      basis: `A model\u2019s view of the ${where} market on ${today}: ${String(answer.basis ?? 'no basis given')}`,
+    });
+  }
+
+  return { rates, acuConsumed: result.acuConsumed };
 }
 
 /** The heads and the margin this business last priced a job at. */
@@ -241,7 +384,49 @@ export async function proposePackPrice(
   for (const line of lines) {
     const rate = rates.get(rateKey(line.description, line.unit));
     if (rate && rate.allInMinor > 0) line.rate = rate;
-    else line.unpriced = 'This business has never priced this item, so there is no rate to propose. Put one against it.';
+  }
+
+  /*
+   * Our own record first, the market second, and never the other way round.
+   *
+   * A rate this business has actually committed is evidence and beats a model's
+   * view of the market every time — even a thin one, because it is what this
+   * company charges rather than what somebody charges. The model is asked only
+   * about the lines nothing in the record can answer, which is also what keeps
+   * the call small and the charge proportionate: one request for the gaps, not
+   * one per line and not one for the whole bill.
+   */
+  const gaps = lines.filter((line) => line.rate === null);
+  let marketConsumed = 0;
+  if (gaps.length > 0) {
+    const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId })?.state;
+    const location = project?.location as { city?: string; countryCode?: string } | undefined;
+    const where = [location?.city, location?.countryCode].filter(Boolean).join(', ') || 'the United Kingdom';
+    try {
+      const market = await marketRates(ctx, gaps, where);
+      marketConsumed = market.acuConsumed;
+      for (const line of gaps) {
+        const rate = market.rates.get(rateKey(line.description, line.unit));
+        if (rate) line.rate = rate;
+      }
+    } catch (error) {
+      // An unfunded wallet, an unavailable provider, a refusal. The run is not
+      // lost for it: the lines stay unpriced and say so, which is where they
+      // were before the market view existed.
+      for (const line of gaps) {
+        line.unpriced = `No rate in this business\u2019s record, and the market view could not be taken: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
+      }
+    }
+  }
+  acuConsumed += marketConsumed;
+
+  for (const line of lines) {
+    if (line.rate === null && !line.unpriced) {
+      line.unpriced =
+        'Neither this business\u2019s record nor the market view could put a rate against this item. Put one against it yourself.';
+    }
   }
 
   const basis = lastBasis(ctx);
@@ -271,9 +456,20 @@ export async function proposePackPrice(
   const outstanding: string[] = [];
   if (!basis) outstanding.push('This business has no complete estimate to take a basis from, so the period, the site-wide heads and the margin are all yours to state.');
   if (basis && !basis.durationWeeks) outstanding.push('How many weeks the job runs. Every time-related head is priced by the week and nothing in a drawing says how long it takes.');
-  if (lines.some((line) => line.rate === null)) {
-    const count = lines.filter((line) => line.rate === null).length;
-    outstanding.push(`${count} measured line${count === 1 ? ' has' : 's have'} no rate in this business's record and need one.`);
+  const unratedCount = lines.filter((line) => line.rate === null).length;
+  if (unratedCount > 0) {
+    outstanding.push(`${unratedCount} measured line${unratedCount === 1 ? ' has' : 's have'} no rate at all and need one.`);
+  }
+  // Said separately, because it is a different question. An unpriced line is
+  // work to do; a market-view line is priced and wants a look — it is the one
+  // number on the screen that nothing in this company's record stands behind.
+  const marketCount = lines.filter((line) => line.rate?.source === 'MARKET_AI').length;
+  if (marketCount > 0) {
+    outstanding.push(
+      `${marketCount} line${marketCount === 1 ? ' is' : 's are'} priced at a model\u2019s view of the market rather than ` +
+        `anything this business has committed. Keep ${marketCount === 1 ? 'it' : 'them'} or change ` +
+        `${marketCount === 1 ? 'it' : 'them'} — nothing else in the run is a guess.`,
+    );
   }
   if (indicative && indicative.omissions.length > 0) {
     outstanding.push(`${indicative.omissions.length} cost head${indicative.omissions.length === 1 ? '' : 's'} would be neither priced nor excluded: ${indicative.omissions.join(', ')}.`);
@@ -310,6 +506,14 @@ export type AcceptInput = {
     materialRateMinor?: number;
     plantRateMinor?: number;
     subcontractRateMinor?: number;
+    /**
+     * Where the accepted rate came from, carried onto the estimate line.
+     *
+     * A person who keeps a model's view of the market has accepted it, and the
+     * record says so — `harvestRates` will not take it back as one of this
+     * business's own rates, and a reader can see which lines it priced.
+     */
+    rateSource?: MeasuredLine['rateSource'];
   }>;
   estimate: {
     durationWeeks: number;
@@ -396,6 +600,7 @@ export async function acceptPackProposal(
         ...(line.materialRateMinor ? { materialRateMinor: line.materialRateMinor } : {}),
         ...(line.plantRateMinor ? { plantRateMinor: line.plantRateMinor } : {}),
         ...(line.subcontractRateMinor ? { subcontractRateMinor: line.subcontractRateMinor } : {}),
+        ...(line.rateSource ? { rateSource: line.rateSource } : {}),
       });
     }
   }

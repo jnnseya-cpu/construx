@@ -8,6 +8,7 @@ import { rejectsCode } from './helpers.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import { bidFlow } from '../src/domain/bidflow.ts';
+import { harvestRates } from '../src/domain/costintel.ts';
 import { acceptPackProposal, proposePackPrice } from '../src/domain/bidrun.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
@@ -61,6 +62,54 @@ const SHEETS = [
     ],
   },
 ];
+
+/** What the reasoning stub was last asked for a market rate, and what it said. */
+let marketAsked: ProviderRequest[] = [];
+
+/**
+ * A reasoning provider with a view on the market.
+ *
+ * It answers for the coping line and says nothing about anything else, which
+ * is the behaviour that matters: a model that fills every row is the failure
+ * mode, and a run has to carry an unanswered line as unpriced rather than as
+ * nought.
+ */
+function reasoningStub(): AIProviderAdapter {
+  return {
+    name: 'OPENAI',
+    capability: 'REASONING',
+    multimodal: false,
+    transmits: true,
+    estimateCostMinor: () => 25,
+    healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      marketAsked.push(request);
+      const items = ((request.payload as { items?: Array<{ description: string; unit: string }> } | undefined)?.items) ?? [];
+      return {
+        provider: 'OPENAI',
+        modelClass: 'reasoning-standard',
+        output: {
+          rates: items
+            .filter((item) => item.description.startsWith('Replace coping'))
+            .map((item) => ({
+              description: item.description,
+              unit: item.unit,
+              labourMinor: 7_000,
+              materialMinor: 5_500,
+              plantMinor: 0,
+              subcontractMinor: 0,
+              lowMinor: 10_000,
+              highMinor: 15_500,
+              basis: 'Reclaimed stone coping, bedded and pointed, two-man gang at typical north-west day rates.',
+            })),
+          omitted: [],
+        },
+        rawCostMinor: 25,
+        latencyMs: 6,
+      };
+    },
+  };
+}
 
 /** A provider that can be handed a sheet, and answers with what is on it. */
 function seeingStub(): AIProviderAdapter {
@@ -128,7 +177,7 @@ async function priorEstimate(): Promise<void> {
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'construx-bidrun-'));
   store = new EvidenceStore(directory);
-  platform = new Platform(new AIOrchestrator({ perception: seeingStub() }), store);
+  platform = new Platform(new AIOrchestrator({ perception: seeingStub(), reasoning: reasoningStub() }), store);
   seed = await seedDemoProject(platform);
 
   const admin = seed.users.admin!.auth;
@@ -252,6 +301,7 @@ describe('the run from an uploaded pack', () => {
   it('reads every drawing, measures it, and prices it off this business’s own record', async () => {
     asked = [];
 
+    marketAsked = [];
     const proposal = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });
 
     // Both sheets read, each once. A run that read one drawing twice would
@@ -270,12 +320,34 @@ describe('the run from an uploaded pack', () => {
     assert.match(String(repoint.rate?.basis), /Median of 1 priced line/);
     assert.equal(repoint.rate?.confidence, 'THIN');
 
-    // The line this business has never priced is not given a number. A plausible
-    // guess here is how an estimate becomes confident and wrong.
+    // The line this business has never priced gets the market view, and it is
+    // labelled as one. This is the single place the platform lets a model put a
+    // number into a commercial document, and the label is what makes it safe:
+    // a starting point somebody corrects in ten seconds beats an empty box, and
+    // it must never read as though the company had priced it before.
     const coping = proposal.lines.find((line) => line.description.startsWith('Replace coping'))!;
-    assert.equal(coping.rate, null);
-    assert.match(String(coping.unpriced), /never priced this item/);
-    assert.ok(proposal.outstanding.some((item) => /1 measured line has no rate/.test(item)));
+    assert.equal(coping.rate?.source, 'MARKET_AI');
+    assert.equal(coping.rate?.confidence, 'MODEL_VIEW');
+    assert.equal(coping.rate?.allInMinor, 12_500);
+    assert.equal(coping.rate?.observations, 0);
+    // A range, not a point. A point estimate invites acceptance; a range
+    // invites the judgement this is for.
+    assert.equal(coping.rate?.lowMinor, 10_000);
+    assert.equal(coping.rate?.highMinor, 15_500);
+    assert.match(String(coping.rate?.basis), /model’s view of the .*market/);
+
+    // Our own record is never displaced by it: the repoint line keeps the rate
+    // this business actually committed, thin as that evidence is.
+    assert.equal(repoint.rate?.source, 'OUR_RECORD');
+    // And the model was asked only about the gap, not about the whole bill.
+    assert.equal(marketAsked.length, 1);
+    const itemsAsked = (marketAsked[0]!.payload as { items: Array<{ description: string }> }).items;
+    assert.deepEqual(itemsAsked.map((item) => item.description), ['Replace coping, bed and point']);
+
+    assert.ok(
+      proposal.outstanding.some((item) => /priced at a model’s view of the market/.test(item)),
+      `the run did not say which lines are a guess: ${proposal.outstanding.join(' | ')}`,
+    );
 
     // And the heads and margin came from the last complete estimate rather than
     // being asked for again.
@@ -360,6 +432,65 @@ describe('the run from an uploaded pack', () => {
   });
 });
 
+
+describe('a market view is never mistaken for this business’s own rate', () => {
+  /*
+   * The compounding failure this prevents, and the reason the label exists at
+   * all. `harvestRates` builds "the rates this business has committed" out of
+   * its estimates. If a model's guess were harvested back as one, next month it
+   * would be proposed as our own record — with a confidence, an observation
+   * count and a project behind it, all derived from nothing but the first
+   * guess. One guess becomes a house rate that nobody ever decided.
+   */
+  it('is kept out of the rate history it would otherwise poison', async () => {
+    const qs = ctxFor('qs');
+    const taken = await tender.runTakeoff(qs, {
+      packageId: 'POISON',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'POISON' }],
+      costCodePrefix: 'PSN',
+      measuredBy: 'PERSON',
+      items: [{ description: 'An item nobody has ever priced', unit: 'nr', quantity: 5 }],
+    });
+
+    tender.buildEstimate(qs, {
+      packageId: 'POISON',
+      durationWeeks: 2,
+      lines: [
+        {
+          boqItemId: taken.boqItemIds[0]!,
+          description: 'An item nobody has ever priced',
+          unit: 'nr',
+          quantity: 5,
+          labourRateMinor: 99_000,
+          rateSource: 'MARKET_AI',
+        },
+      ],
+      quantified: [{ head: 'WASTE', description: 'Skips', unit: 'sum', quantity: 1, rateMinor: 10_000 }],
+      insurance: { policies: [{ type: 'Contract works', percentOfContractValue: 0.9 }] },
+      exclusions: [{ head: 'PLANT', reason: 'None required' }],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+      basisOfEstimate: 'A line kept at the market view, accepted by a person.',
+      assumptions: [],
+    });
+
+    // The estimate carries it, because a person accepted it and the record says
+    // what they accepted.
+    const estimate = platform.ledger.list(projectId, 'Estimate').at(-1)!.state;
+    const kept = (estimate.lines as Array<{ rateSource?: string }>)[0];
+    assert.equal(kept?.rateSource, 'MARKET_AI');
+
+    // And the rate history does not, so it can never come back as ours.
+    const harvested = harvestRates(qs);
+    assert.equal(
+      harvested.filter((observation) => observation.description === 'An item nobody has ever priced').length,
+      0,
+      'a model’s guess was harvested back as one of this business’s own committed rates',
+    );
+    // The check is looking at the right thing: rates a person or the record put
+    // there are still harvested.
+    assert.ok(harvested.length > 0, 'nothing at all was harvested; the check would pass by finding nothing');
+  });
+});
 
 describe('where the job is, and the one thing to do next', () => {
   /*

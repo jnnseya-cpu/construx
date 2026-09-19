@@ -24883,3 +24883,43 @@ command id the flow module can emit, from its source rather than from one run of
 it, and fails if any names a command no console page defines: the two are
 matched by string, so a renamed command would otherwise be silent until somebody
 pressed a button that did nothing.
+
+### The one place a model may put a number in a commercial document
+
+Asked for directly: the AI should propose a market rate where the business has
+no history, and a person keeps or changes it. It is the right call — a
+contractor pricing a line they have never priced before does exactly this, from
+memory or a rate book, every day, and an empty box is worth less than a starting
+point somebody experienced corrects in ten seconds.
+
+It is also the single place on this platform where a model's number reaches a
+document a customer will read, so it is fenced.
+
+**Our own record first, always.** A rate this business has actually committed
+beats a model's view every time, thin as that evidence may be: it is what this
+company charges rather than what somebody charges. The model is asked only about
+the lines nothing in the record can answer — one request for the gaps, not one
+per line and not one for the whole bill.
+
+**Labelled everywhere.** `source: 'MARKET_AI'` travels from the proposal, onto
+the screen as a **market view** badge, into the accepted estimate line, and into
+the record. The headline count reads "priced from our own record" and says
+separately how many are a market view. The outstanding list names them as the
+one thing in the run that is a guess.
+
+**A range, not a point.** A point estimate invites acceptance; a range invites
+the judgement this exists for. The model is told to omit any item it cannot
+support rather than fill the row — a run carries an unanswered line as unpriced,
+never as nought.
+
+**And it never becomes history.** `harvestRates` skips `MARKET_AI` lines. Without
+that, a guess is harvested back next month as this business's own rate, with a
+confidence, an observation count and a project behind it, all derived from
+nothing but the first guess — one guess compounding into a house rate nobody
+ever decided. That is the rule which makes the other three safe, and it has its
+own test.
+
+Keeping the model's number as it stands records it as `MARKET_AI`; changing it
+by a pound records it as that person's own. A provider that is unavailable or a
+wallet that is empty costs the run nothing: those lines stay unpriced and say
+why, which is where they were before any of this existed.

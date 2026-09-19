@@ -12633,6 +12633,11 @@ export const ROUTES: Route[] = [
               materialRateMinor: { type: 'number', minimum: 0 },
               plantRateMinor: { type: 'number', minimum: 0 },
               subcontractRateMinor: { type: 'number', minimum: 0 },
+              // Where the accepted rate came from. A person who keeps a model's
+              // view of the market has accepted it, and the estimate line says
+              // so — the rate history will not take it back as one of this
+              // business's own.
+              rateSource: { type: 'string', enum: ['OUR_RECORD', 'PERSON', 'MARKET_AI'] },
             },
             additionalProperties: false,
           },
