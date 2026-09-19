@@ -148,6 +148,27 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
               }
 
               ${
+                proposal.headsToSettle?.length > 0
+                  ? html`<div class="notice warn" style="margin-top:11px"><div>
+                      <b>${proposal.headsToSettle.length} cost head${proposal.headsToSettle.length === 1 ? '' : 's'}
+                      ${proposal.headsToSettle.length === 1 ? 'is' : 'are'} neither priced nor excluded.</b>
+                      A quotation cannot be drawn from an estimate that carries one, so accepting asks you for each:
+                      a figure, or blank to say it is not in this offer.
+                      <div class="split-list" style="margin-top:7px">
+                        ${proposal.headsToSettle.map(
+                          (entry) => html`<div class="row">
+                            <span class="lbl"><b>${entry.label}</b>
+                              <span class="metric-sub" style="display:block">${entry.note}</span>
+                            </span>
+                            <span class="val metric-sub">${humanise(entry.basis).toLowerCase()}</span>
+                          </div>`,
+                        )}
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+
+              ${
                 proposal.outstanding.length > 0
                   ? html`<div class="notice" style="margin-top:11px"><div>
                       <b>Still yours to decide.</b>
@@ -1607,6 +1628,49 @@ export async function procurement(root) {
             ? `Measured off ${packRun.read.map((sheet) => sheet.filename).join(', ')}; rates from this business's own committed estimates.`
             : '',
         },
+        /*
+         * The heads this job carries and nothing has answered for.
+         *
+         * Met as ESTIMATE_INCOMPLETE after an acceptance: a business with no
+         * previous estimate has no basis to inherit, so the estimate carried
+         * nothing against insurance or waste and the quotation refused it —
+         * correctly, and after the work, leaving somebody holding an estimate
+         * they could not send.
+         *
+         * Each head is one field, labelled in the unit the cost model prices it
+         * in, and **blank means excluded**. That is the honest default: a head
+         * somebody deliberately left empty is a head they are saying is not in
+         * this offer, and the reason travels into the quotation as a stated
+         * qualification rather than being inferred by a reader.
+         */
+        ...(packRun?.headsToSettle ?? []).map((entry) => ({
+          name: `head:${entry.head}`,
+          label:
+            entry.basis === 'TIME_RELATED'
+              ? `${entry.label}, per week (£)`
+              : entry.basis === 'VALUE_RELATED'
+                ? `${entry.label} (% of contract value)`
+                : entry.basis === 'RISK_REGISTER' || entry.basis === 'MEASURED'
+                  ? `${entry.label} — not priceable here`
+                  : `${entry.label}, as a sum (£)`,
+          type: entry.basis === 'VALUE_RELATED' ? 'number' : 'number',
+          ...(entry.basis === 'VALUE_RELATED' ? { step: '0.01' } : { money: true }),
+          required: false,
+          hint:
+            entry.basis === 'RISK_REGISTER'
+              ? 'Contingency comes from a quantified risk register, never from a percentage — leave this blank and it is excluded, which is the honest answer until the register exists.'
+              : entry.basis === 'MEASURED'
+                ? 'Priced from the measured lines above. Nothing on this bill carries it, so leaving it blank excludes it.'
+                : `${entry.note}. Leave blank and it is excluded from this offer.`,
+        })),
+        {
+          name: 'exclusionReason',
+          label: 'Why the heads you left blank are not in this offer',
+          type: 'text',
+          required: (packRun?.headsToSettle ?? []).length === 0,
+          value: (packRun?.headsToSettle ?? []).length > 0 ? 'Not included in this offer' : '',
+          hint: 'It travels into the quotation as a stated qualification, so the customer reads it rather than assuming it.',
+        },
         { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
         { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
@@ -1698,15 +1762,50 @@ export async function procurement(root) {
             ...(typed > 0 ? { [head]: typed, rateSource: 'PERSON' } : {}),
           };
         }),
-        estimate: {
-          durationWeeks: Number(v.durationWeeks),
-          basisOfEstimate: v.basisOfEstimate,
-          margin: { overheadPercent: Number(v.overheadPercent), profitPercent: Number(v.profitPercent) },
-          ...(packRun.basis?.timeRelated?.length ? { timeRelated: packRun.basis.timeRelated } : {}),
-          ...(packRun.basis?.quantified?.length ? { quantified: packRun.basis.quantified } : {}),
-          ...(packRun.basis?.insurance ? { insurance: packRun.basis.insurance } : {}),
-          ...(packRun.basis?.exclusions?.length ? { exclusions: packRun.basis.exclusions } : {}),
-        },
+        estimate: (() => {
+          // What was inherited from the last complete estimate, plus what was
+          // just answered for the heads nothing covered. A head left blank is
+          // excluded with the stated reason — never carried as a nought.
+          const timeRelated = [...(packRun.basis?.timeRelated ?? [])];
+          const quantified = [...(packRun.basis?.quantified ?? [])];
+          const policies = [...(packRun.basis?.insurance?.policies ?? [])];
+          const exclusions = [...(packRun.basis?.exclusions ?? [])];
+          const why = v.exclusionReason || 'Not included in this offer';
+
+          for (const entry of packRun.headsToSettle ?? []) {
+            const answered = Number(v[`head:${entry.head}`] ?? 0);
+            // Contingency comes from a quantified risk register and a measured
+            // head comes from the bill. Neither can be answered with a number
+            // typed into a box, and putting one there would be exactly the
+            // percentage-contingency the cost model exists to refuse — so both
+            // are excluded whatever was typed.
+            const cannotBePriced = entry.basis === 'RISK_REGISTER' || entry.basis === 'MEASURED';
+            if (cannotBePriced || !(answered > 0)) {
+              exclusions.push({ head: entry.head, reason: why });
+              continue;
+            }
+            if (entry.basis === 'TIME_RELATED') {
+              timeRelated.push({ head: entry.head, description: entry.label, weeklyRateMinor: answered, quantity: 1 });
+            } else if (entry.basis === 'VALUE_RELATED') {
+              policies.push({ type: entry.label, percentOfContractValue: answered });
+            } else if (entry.basis === 'FEE') {
+              // The cost model takes a fee as a lump sum on its own list.
+              quantified.push({ head: entry.head, description: entry.label, unit: 'sum', quantity: 1, rateMinor: answered });
+            } else {
+              quantified.push({ head: entry.head, description: entry.label, unit: 'sum', quantity: 1, rateMinor: answered });
+            }
+          }
+
+          return {
+            durationWeeks: Number(v.durationWeeks),
+            basisOfEstimate: v.basisOfEstimate,
+            margin: { overheadPercent: Number(v.overheadPercent), profitPercent: Number(v.profitPercent) },
+            ...(timeRelated.length > 0 ? { timeRelated } : {}),
+            ...(quantified.length > 0 ? { quantified } : {}),
+            ...(policies.length > 0 ? { insurance: { policies } } : {}),
+            ...(exclusions.length > 0 ? { exclusions } : {}),
+          };
+        })(),
         quotation: {
           clientName: v.clientName,
           validUntil: v.validUntil,

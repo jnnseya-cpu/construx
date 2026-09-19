@@ -24923,3 +24923,33 @@ Keeping the model's number as it stands records it as `MARKET_AI`; changing it
 by a pound records it as that person's own. A provider that is unavailable or a
 wallet that is empty costs the run nothing: those lines stay unpriced and say
 why, which is where they were before any of this existed.
+
+### The estimate the run produced and then could not quote
+
+`ESTIMATE_INCOMPLETE — INSURANCE, WASTE` on the first job a business ever
+priced. The refusal is right and the timing was wrong: it arrived *after* the
+acceptance, leaving somebody holding an estimate they could not send.
+
+The cause is the basis. The run inherits the site-wide heads and the margin from
+this business's last complete estimate — and a business pricing its first job
+has none, so the accepted estimate carried nothing against insurance or waste,
+and the quotation refused it as it should.
+
+The run now computes `headsToSettle` whether or not there is a basis to inherit:
+the heads this bill would carry that nothing has answered for, each with its
+label and the basis the cost model prices it on. The panel names them before
+acceptance, and the accept form asks one field per head — *Insurance (% of
+contract value)*, *Waste, as a sum* — where **blank means excluded**, with one
+shared reason that travels into the quotation as a stated qualification.
+
+Two heads are never offered as a box to type in. Contingency is drawn from a
+quantified risk register, and a measured head comes from the bill; a number
+typed against either would be exactly the percentage-contingency the cost model
+exists to refuse, so both are excluded whatever is entered.
+
+Pinned by a fixture that needed building properly to mean anything: the basis is
+the business's last complete estimate on *any* of its projects, so a second
+project in a tenancy that has estimates still inherits one. The test builds a
+tenancy that has never priced anything, funds it through the payment path so a
+model can actually read the sheets, and asserts that insurance and waste — the
+two the person met — come back named.

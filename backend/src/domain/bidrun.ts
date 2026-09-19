@@ -5,7 +5,7 @@ import { ingestedFiles } from '../evidence/pipeline.ts';
 import * as perception from '../engines/perception.ts';
 import * as tender from '../engines/tender.ts';
 import { confidenceFor, harvestRates, rateKey, type Confidence } from './costintel.ts';
-import { priceEstimate, type CostModelInput, type MeasuredLine } from '../engines/maths/costModel.ts';
+import { costHead, priceEstimate, type CostHead, type CostModelInput, type MeasuredLine } from '../engines/maths/costModel.ts';
 import { quoteFromEstimate, type QuotationInput } from './quotation.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
@@ -121,6 +121,24 @@ export type PackProposal = {
     omissions: string[];
     warnings: string[];
   } | null;
+  /**
+   * The cost heads this job would carry and nothing has answered for.
+   *
+   * The reason this exists: a business with no previous complete estimate has
+   * no basis for the run to inherit, so the accepted estimate carried nothing
+   * against insurance or waste and the quotation refused it — correctly, and
+   * after the work, with the person left holding an estimate they could not
+   * send. Reported before the acceptance instead, so the form can ask the two
+   * questions that settle each one: what is it, or why is it not in this offer.
+   */
+  headsToSettle: Array<{
+    head: CostHead;
+    label: string;
+    /** How the model prices this head, which decides what the form asks for. */
+    basis: string;
+    /** In plain words, so a person knows what they are being asked about. */
+    note: string;
+  }>;
   /** Everything a person still has to decide. Empty means the run answered it all. */
   outstanding: string[];
   acuConsumed: number;
@@ -434,17 +452,24 @@ export async function proposePackPrice(
   // Priced, not recorded. `priceEstimate` is the same arithmetic `buildEstimate`
   // would run, so what the screen shows is what accepting would produce — not a
   // preview computed a second way that disagrees with the real thing.
+  const model = (over: Partial<CostModelInput> = {}): CostModelInput => ({
+    // A week, and a margin of nothing, where the record supplies neither. Both
+    // are placeholders for a pricing run whose only output used here is the
+    // list of omissions — which depends on the lines and the heads, not on the
+    // duration or the margin.
+    durationWeeks: basis?.durationWeeks ?? 1,
+    lines: lines.map(toMeasuredLine),
+    ...(basis?.timeRelated ? { timeRelated: basis.timeRelated } : {}),
+    ...(basis?.quantified ? { quantified: basis.quantified } : {}),
+    ...(basis?.insurance ? { insurance: basis.insurance } : {}),
+    ...(basis?.exclusions ? { exclusions: basis.exclusions } : {}),
+    margin: basis?.margin ?? { overheadPercent: 0, profitPercent: 0 },
+    ...over,
+  });
+
   let indicative: PackProposal['indicative'] = null;
   if (lines.length > 0 && basis?.margin && basis.durationWeeks) {
-    const priced = priceEstimate({
-      durationWeeks: basis.durationWeeks,
-      lines: lines.map(toMeasuredLine),
-      ...(basis.timeRelated ? { timeRelated: basis.timeRelated } : {}),
-      ...(basis.quantified ? { quantified: basis.quantified } : {}),
-      ...(basis.insurance ? { insurance: basis.insurance } : {}),
-      ...(basis.exclusions ? { exclusions: basis.exclusions } : {}),
-      margin: basis.margin,
-    });
+    const priced = priceEstimate(model());
     indicative = {
       totalMinor: priced.tenderTotalMinor,
       netMeasuredMinor: priced.subtotals.netMeasuredMinor,
@@ -452,6 +477,29 @@ export async function proposePackPrice(
       warnings: priced.warnings,
     };
   }
+
+  /*
+   * Which heads this job would carry and nothing has answered for — computed
+   * whether or not there is a basis to inherit, because the case that needs it
+   * most is the business with no previous estimate at all.
+   *
+   * That is exactly what went wrong: the run inherited nothing, the estimate
+   * carried nothing against insurance or waste, and the quotation refused it
+   * after the acceptance. The refusal is right; meeting it after the work is
+   * not. Asked before instead.
+   */
+  const headsToSettle =
+    lines.length === 0
+      ? []
+      : priceEstimate(model()).omissions.map((head) => {
+          const definition = costHead(head);
+          return {
+            head,
+            label: definition?.label ?? head,
+            basis: definition?.basis ?? 'MEASURED',
+            note: definition?.note ?? '',
+          };
+        });
 
   const outstanding: string[] = [];
   if (!basis) outstanding.push('This business has no complete estimate to take a basis from, so the period, the site-wide heads and the margin are all yours to state.');
@@ -471,12 +519,17 @@ export async function proposePackPrice(
         `${marketCount === 1 ? 'it' : 'them'} — nothing else in the run is a guess.`,
     );
   }
-  if (indicative && indicative.omissions.length > 0) {
-    outstanding.push(`${indicative.omissions.length} cost head${indicative.omissions.length === 1 ? '' : 's'} would be neither priced nor excluded: ${indicative.omissions.join(', ')}.`);
+  if (headsToSettle.length > 0) {
+    outstanding.push(
+      `${headsToSettle.length} cost head${headsToSettle.length === 1 ? '' : 's'} ${
+        headsToSettle.length === 1 ? 'is' : 'are'
+      } neither priced nor excluded — ${headsToSettle.map((entry) => entry.label).join(', ')}. ` +
+        'Price each or say it is not in this offer; a quotation cannot be drawn from an estimate that carries one.',
+    );
   }
   if (unread.length > 0) outstanding.push(`${unread.length} drawing${unread.length === 1 ? '' : 's'} could not be read, so anything on ${unread.length === 1 ? 'it' : 'them'} is not in this price.`);
 
-  return { packageId: input.packageId, read, unread, lines, basis, indicative, outstanding, acuConsumed };
+  return { packageId: input.packageId, read, unread, lines, basis, indicative, headsToSettle, outstanding, acuConsumed };
 }
 
 function toMeasuredLine(line: ProposedLine): MeasuredLine {

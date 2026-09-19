@@ -16,7 +16,7 @@ import type { EngineContext } from '../src/engines/context.ts';
 import { ingestFile, ingestedFiles, reclassifyFile } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { Platform } from '../src/platform.ts';
-import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { authOf, seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
  * From a pack of drawings to a price, in one run.
@@ -222,9 +222,9 @@ before(async () => {
 after(() => rmSync(directory, { recursive: true, force: true }));
 
 /** File a sheet the way an upload does: claimed as evidence, stored, ingested. */
-async function upload(sheet: (typeof SHEETS)[number]): Promise<string> {
+async function upload(sheet: (typeof SHEETS)[number], into?: EngineContext, tenantId?: string): Promise<string> {
   const hash = hashBytes(sheet.bytes);
-  const ctx = ctxFor('qs');
+  const ctx = into ?? ctxFor('qs');
   ctx.ledger.commit({
     tenantId: ctx.tenantId,
     projectId: ctx.projectId,
@@ -232,9 +232,11 @@ async function upload(sheet: (typeof SHEETS)[number]): Promise<string> {
     source: 'WEB',
     correlationId: ctx.correlationId,
     eventType: 'EVIDENCE_REGISTERED',
-    entity: { refType: 'EvidenceItem', refId: `ev-${hash.slice(-12)}` },
+    // Scoped to the project, because the same sheet filed on two jobs is two
+    // evidence items — one per project — not one shared between them.
+    entity: { refType: 'EvidenceItem', refId: `ev-${ctx.projectId.slice(-6)}-${hash.slice(-12)}` },
     nextState: {
-      id: `ev-${hash.slice(-12)}`,
+      id: `ev-${ctx.projectId.slice(-6)}-${hash.slice(-12)}`,
       type: 'DRAWING_FILE',
       hash,
       description: sheet.filename,
@@ -242,7 +244,7 @@ async function upload(sheet: (typeof SHEETS)[number]): Promise<string> {
       capturedAt: new Date().toISOString(),
     },
   });
-  store.put(seed.tenantId, hash, sheet.bytes, 'application/pdf');
+  store.put(tenantId ?? seed.tenantId, hash, sheet.bytes, 'application/pdf');
   await ingestFile(ctx, store, { hash, filename: sheet.filename });
   return hash;
 }
@@ -372,6 +374,108 @@ describe('the run from an uploaded pack', () => {
     // evidence whether or not anybody acts on it.
     const drafts = platform.ledger.list(projectId, 'PerceptionDraft').map((record) => record.state);
     assert.ok(drafts.filter((draft) => draft.task === 'DRAWING_TAKEOFF' && draft.status === 'DRAFT').length >= 2);
+  });
+
+  it('names the cost heads nothing has answered for, before the acceptance', async () => {
+    /*
+     * Met as ESTIMATE_INCOMPLETE after an acceptance, on the very first job a
+     * business priced: with no previous complete estimate there was no basis to
+     * inherit, so the estimate carried nothing against insurance or waste and
+     * the quotation refused it. The refusal is right. Meeting it *after* the
+     * work, holding an estimate that cannot be sent, is not.
+     */
+    // On this project the last complete estimate settles waste, insurance and
+    // plant, so the run inherits them and has nothing left to ask about. That
+    // is the whole value of a basis and it is the case that already worked.
+    const inherited = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });
+    assert.deepEqual(inherited.headsToSettle, []);
+
+    // The failing case, and it needs a company that has never priced anything:
+    // the basis is the business's last complete estimate on any of its
+    // projects, so a second project in a tenancy that has estimates still
+    // inherits one. This is a tenancy with none.
+    const virgin = new Platform(new AIOrchestrator({ perception: seeingStub(), reasoning: reasoningStub() }), store);
+    const { tenant } = virgin.createTenant({
+      legalName: 'First Job Ltd',
+      enterpriseName: 'First Job',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'ENTERPRISE',
+    });
+    const owner = virgin.createUser({
+      tenantId: tenant.id,
+      name: 'Ana',
+      email: `ana-${Math.random().toString(36).slice(2)}@firstjob.test`,
+      roles: ['OWNER'],
+    });
+    // A tenancy with no credit cannot run a model, and a run that read nothing
+    // would prove nothing about the heads. Funded through the payment path,
+    // which is the only route a wallet is credited by.
+    virgin.creditFromPayment({
+      tenantId: tenant.id,
+      amountMinor: 500_000,
+      method: 'BANK_TRANSFER',
+      reference: `FIXTURE-${tenant.id}`,
+      recordedBy: 'fixture',
+      note: 'Opening credit so the first job can be read',
+    });
+    const ownerAuth = authOf(virgin, owner.id);
+    const governance = virgin.context(ownerAuth, `${tenant.id}-governance`, { source: 'WEB' });
+    const { portfolioId: firstPortfolio } = structure.createPortfolio(governance, {
+      name: 'Repairs',
+      enterpriseId: String(virgin.ledger.listByTenant(tenant.id, 'Enterprise')[0]?.state.id ?? ''),
+      governanceModel: 'Sole director',
+      continentCode: 'EU',
+      city: 'Rawtenstall',
+    });
+    const firstProject = structure.createProject(governance, {
+      portfolioId: firstPortfolio,
+      name: 'The first job this business ever priced',
+      sectorType: 'RMI',
+      assetType: 'Boundary wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Rawtenstall' },
+      contractValueMinor: 2_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-06-01',
+      plannedCompletion: '2026-07-15',
+    }).projectId;
+    const firstCtx = virgin.context(ownerAuth, firstProject, { source: 'WEB' });
+
+    structure.createScopePackage(firstCtx, {
+      name: 'Wall repair',
+      discipline: 'CIVILS',
+      scopeOfWorks: 'Repoint and rebuild.',
+      inclusions: ['Repointing'],
+      exclusions: ['Everything else'],
+      acceptanceCriteria: ['Accepted when complete'],
+      estimatedValueMinor: 2_000_000,
+      designResponsibility: 'CONTRACTOR',
+    });
+    structure.transitionPhase(firstCtx, { to: 'DESIGN', justification: 'Scope defined' });
+    structure.assessDesignMaturity(firstCtx, {
+      packageId: virgin.ledger.list(firstProject, 'ScopePackage')[0]!.refId,
+      disciplineScores: [{ discipline: 'CIVILS', ribaStage: 4, completenessPercent: 95, frozen: true }],
+      informationGaps: [],
+      assessorNotes: 'Priceable.',
+    });
+    structure.transitionPhase(firstCtx, { to: 'TENDER', justification: 'Pricing it' });
+    for (const sheet of SHEETS) await upload(sheet, firstCtx, tenant.id);
+
+    const proposal = await proposePackPrice(firstCtx, store, { packageId: 'WALL' });
+    assert.equal(proposal.basis, null, 'the fixture is not testing what it claims to: a basis was inherited');
+
+    const heads = proposal.headsToSettle.map((entry) => entry.head);
+    // The two the person actually met, by name.
+    assert.ok(heads.includes('INSURANCE'), `insurance was not raised: ${heads.join(', ')}`);
+    assert.ok(heads.includes('WASTE'), `waste was not raised: ${heads.join(', ')}`);
+    for (const entry of proposal.headsToSettle) {
+      assert.ok(entry.label.length > 2, `${entry.head} has no label to put on a form`);
+      assert.ok(entry.basis.length > 2, `${entry.head} says nothing about how it is priced`);
+    }
+    assert.ok(
+      proposal.outstanding.some((item) => /neither priced nor excluded/.test(item)),
+      `the run did not say which heads are unanswered: ${proposal.outstanding.join(' | ')}`,
+    );
   });
 
   it('turns one acceptance into the bill, the estimate and the quotation', async () => {
