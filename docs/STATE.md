@@ -25282,3 +25282,29 @@ The `ensureFirstPortfolio` context is built with `scopesForRoles(owner.roles)`
 rather than an empty scope list. An empty one is refused `projects:write` by
 the same check that protects a real request — which is how the first version of
 this was caught rather than shipped.
+
+### The money, over HTTP
+
+`backend/tests/moneycycle.test.ts` drives the payment cycle through the
+gateway: generate the statutory schedule, submit an application, fail to
+certify it as the person who submitted it, fail to certify more than was
+applied for, certify less with a reason, fail to certify it twice, part-pay,
+fail to creep past the certified sum in a second payment, pay the balance, fail
+to pay a closed certificate, read the notice position, and issue a pay-less
+notice under s.111 with a basis somebody can argue with.
+
+`payments.test.ts` already covered those rules by calling the engine. This
+answers the question an engine test cannot: **does a person with a browser
+reach them?** Three route schemas refused fields their own engines required
+earlier in the week, and every test called the engine directly, so the
+estimating line was unusable while its engine tests were green. On the payment
+cycle that failure costs money rather than an afternoon — an application that
+cannot be submitted is a month of work uninvoiced.
+
+**It passed twelve of twelve on the first complete run.** Two assertions were
+my own: `OVERCERTIFICATION` and `OVERPAYMENT` answer 422, not 400, which is
+right — the request is well formed and asks for something the rules forbid —
+and the test now pins the error code a client branches on rather than the
+status the platform is free to choose. The payment cycle is the best-built part
+of this platform and the only journey so far to survive its first end-to-end
+run intact.
