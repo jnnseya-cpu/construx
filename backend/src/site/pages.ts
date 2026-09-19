@@ -1621,13 +1621,14 @@ function identityCard(identity: { name: string; email: string; roles: readonly s
 export type DemoInput = {
   available: boolean;
   /**
-   * Why not, when not. Two different sentences: an operator switched the
-   * sandbox off, which is a decision and the right one beside real customer
-   * records; or it is switched on and the programme is not there, which is a
-   * fault. Telling somebody a setting is off when it is on wastes the time of
-   * whoever goes to check it.
+   * Where the sandbox is, when it is somewhere else.
+   *
+   * The demonstration belongs on its own deployment rather than beside real
+   * customer records, so when one is named the page sends the visitor to it.
+   * Empty means there is not one, and the page offers the guided session and
+   * the trial without mentioning deployments at all.
    */
-  unavailableBecause: 'SWITCHED_OFF' | 'NOT_SEEDED';
+  demonstrationUrl?: string;
   /** The seeded programme's identities, if the demonstration is offered. */
   seeded: { name: string; email: string; roles: readonly string[] }[];
   /** The empty workspace's three seats. */
@@ -1880,22 +1881,19 @@ ${
 ${bookingSection}`
     : `<section class="prose">
   <div class="wrap">
-    <div class="callout${input.unavailableBecause === 'NOT_SEEDED' ? ' bad' : ''}">
+    <div class="callout">
+      <p>
+        <b>The sandbox is not on this address.</b><br>
+        This is the live platform, and the accounts on it are real companies' records. The sandbox anybody may sign
+        into and write to is kept separately, which is the only arrangement under which both can be true at once.
+      </p>
       ${
-        input.unavailableBecause === 'SWITCHED_OFF'
-          ? `<p>
-        <b>The instant accounts are switched off on this deployment.</b><br>
-        Somebody has set <code>DEMO_TENANCY_ENABLED=false</code>, which is the right setting for a deployment holding
-        real customer records — a sandbox anybody can sign into does not belong beside them. Nothing is broken.
-      </p>`
-          : `<p>
-        <b>The instant accounts are switched on and are not there.</b><br>
-        The demonstration programme did not build on this deployment, so there is nothing to sign into. That is a
-        fault rather than a setting, and it has been recorded. Booking below still works.
-      </p>`
+        input.demonstrationUrl
+          ? `<p><a class="btn" href="${esc(input.demonstrationUrl)}">Open the sandbox <span aria-hidden="true">→</span></a></p>`
+          : ''
       }
     </div>
-    <p>A guided session shows the same platform, and a trial gives you your own record in it.</p>
+    <p>A guided session shows the same platform on a real programme, and a trial gives you your own record in it.</p>
   </div>
 </section>
 

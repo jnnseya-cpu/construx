@@ -237,6 +237,7 @@ import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
+import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
@@ -12500,15 +12501,63 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => tender.runTakeoff(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/boq',
+    readOnly: true,
+    description: 'The measured items held for this project, and what they are priceable as — the bridge from a take-off to an estimate',
+    handler: (platform, ctx) => {
+      /*
+       * What a take-off produced, so it can be priced.
+       *
+       * `runTakeoff` wrote BoQ items and nothing could read them back. The
+       * estimating engine takes `lines` with a `boqItemId` on each — the bridge
+       * is designed and was unreachable, so the only way to price a measured
+       * job was to retype every quantity into a generated form. For a wall
+       * repair with a dozen items that is not a tool anybody would choose.
+       *
+       * Returned in the shape `buildEstimate` takes, so the screen hands them
+       * straight back with rates against them rather than translating between
+       * two vocabularies for the same thing.
+       */
+      const context = projectContext(platform, ctx);
+      authorise(context, 'BOQ_TAKEOFF', 'R');
+      const items = platform.ledger.list(ctx.params.projectId as string, 'BoQItem').map((record) => record.state);
+      return {
+        items: items.map((item) => ({
+          boqItemId: String(item.id),
+          costCode: String(item.costCode ?? ''),
+          description: String(item.description ?? ''),
+          unit: String(item.unit ?? ''),
+          quantity: Number(item.quantity ?? 0),
+          packageId: String(item.packageId ?? ''),
+          measurementRule: String(item.measurementRule ?? 'NRM2'),
+          // Where the quantity came from, carried through: an estimator
+          // pricing a machine-measured line is entitled to know which sheet it
+          // was measured off and how sure the reading was.
+          sourceSheet: item.sourceSheet ?? null,
+          source: String(item.source ?? '2D'),
+          confidenceScore: item.confidenceScore ?? null,
+        })),
+        packages: [...new Set(items.map((item) => String(item.packageId ?? '')).filter(Boolean))],
+      };
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
     description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
     schema: {
       type: 'object',
-      required: ['packageId', 'durationWeeks', 'lines', 'margin'],
+      required: ['packageId', 'durationWeeks', 'lines', 'margin', 'basisOfEstimate'],
       properties: {
         packageId: stringField,
         durationWeeks: { type: 'integer', minimum: 1 },
+        // Named, because the engine's input requires them and the schema did
+        // not list them: a caller that omitted the basis got an estimate whose
+        // stated basis was `undefined`, and the one thing an estimate is read
+        // back for years later is what it was built on.
+        basisOfEstimate: { type: 'string', minLength: 3, maxLength: 4000 },
+        assumptions: { type: 'array', items: { type: 'string' } },
         // The twenty cost heads are a large nested shape owned by the cost model,
         // which validates each head as it prices it and refuses a head that is
         // neither priced nor excluded. Declared open here rather than restated:
@@ -12601,6 +12650,35 @@ export const ROUTES: Route[] = [
       // market by exactly as much as the business has been. Nothing changes
       // until a lesson is promoted; the note says which it is.
       learning.calibratedBenchmark(projectContext(platform, ctx), ctx.params.estimateId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/quotation',
+    description:
+      'Draw the priced estimate up as a quotation: a draft legal document whose rows are composed from the estimate, ' +
+      'the tender total apportioned across the measured lines, and which then goes through the issuing lifecycle like ' +
+      'any other instrument',
+    schema: {
+      type: 'object',
+      required: ['clientName', 'validUntil'],
+      properties: {
+        clientName: { type: 'string', minLength: 2, maxLength: 200 },
+        validUntil: stringField,
+        paymentTerms: { type: 'string', maxLength: 500 },
+        coveringNote: { type: 'string', maxLength: 1000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      // Two authorities, checked separately because they are two different
+      // things: reading a commercial position, and creating a legal instrument
+      // under the company's own name.
+      quoteFromEstimate(
+        platform,
+        projectContext(platform, ctx),
+        authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'),
+        { estimateId: ctx.params.estimateId as string, ...body<Omit<QuotationInput, 'estimateId'>>(ctx) },
+      ),
   },
   /*
    * The loop closing on the bid — L7.6, §4.10.

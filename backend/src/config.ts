@@ -1513,6 +1513,22 @@ export const config = {
   publicBaseUrl: str('PUBLIC_BASE_URL', `http://localhost:${num('PORT', 8080)}`),
 
   /**
+   * Where the sandbox lives, when it lives somewhere else.
+   *
+   * The demonstration seeds fourteen fictional identities and opens an
+   * anonymous route into a wallet, which is why `DEMO_TENANCY_ENABLED` is off
+   * by default on any deployment holding real customer records. Off is the
+   * right setting and it leaves a visitor with nowhere to go — so a sandbox
+   * run as its own deployment can be named here, and the public site sends
+   * people there instead of explaining that this one has it switched off.
+   *
+   * Empty by default, and empty is inert: the page offers the guided session
+   * and the trial, and says nothing about how this deployment is configured.
+   * A deployment's own settings are not a visitor's business.
+   */
+  demonstrationUrl: str('DEMONSTRATION_URL', ''),
+
+  /**
    * Marketing measurement on the public site.
    *
    * Both are empty by default and everything downstream is inert while they

@@ -138,6 +138,27 @@ export type MeasuredLine = {
   subcontractFixedPrice?: boolean;
 };
 
+/**
+ * What one measured line costs at the rates against it, before anything
+ * site-wide.
+ *
+ * One definition, because two things need it and they must agree: the check
+ * below that a line carries a rate at all, and the apportionment that spreads
+ * a tender total back across the lines for a quotation. A line's share of the
+ * price is its share of the cost, and if those two arithmetics ever disagreed
+ * the quotation would not add up to the estimate it came from.
+ */
+export function lineNetCostMinor(line: MeasuredLine): number {
+  const wasteFactor = 1 + (line.materialWastePercent ?? 0) / 100;
+  return (
+    line.quantity *
+    ((line.labourRateMinor ?? 0) +
+      (line.materialRateMinor ?? 0) * wasteFactor +
+      (line.plantRateMinor ?? 0) +
+      (line.subcontractRateMinor ?? 0))
+  );
+}
+
 /** A resource paid by the week for as long as it is on site. */
 export type TimeRelatedItem = {
   head: Extract<CostHead, 'PRELIMINARIES' | 'SITE_MANAGEMENT' | 'LOGISTICS' | 'HEALTH_AND_SAFETY' | 'QUALITY'>;
@@ -310,7 +331,21 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
   let subcontract = 0;
   let subcontractFixed = 0;
 
+  /**
+   * Lines measured but never rated.
+   *
+   * A quantity is not a price. A take-off hands over descriptions, units and
+   * quantities; the rates are the estimator's, and a line that arrives without
+   * one contributes nothing and used to do so in silence — the same failure
+   * this whole model exists to refuse one level up, where a head with no basis
+   * is reported as unpriced rather than as zero. Named here, with the lines,
+   * because "your estimate is £4,000 light" is only useful if it says which
+   * four items it is light on.
+   */
+  const unrated: string[] = [];
+
   for (const line of input.lines) {
+    if (lineNetCostMinor(line) === 0) unrated.push(`${line.description} (${line.quantity} ${line.unit})`);
     const wasteFactor = 1 + (line.materialWastePercent ?? 0) / 100;
     labour += line.quantity * (line.labourRateMinor ?? 0);
     materials += line.quantity * (line.materialRateMinor ?? 0) * wasteFactor;
@@ -318,6 +353,15 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
     const sub = line.quantity * (line.subcontractRateMinor ?? 0);
     subcontract += sub;
     if (line.subcontractFixedPrice) subcontractFixed += sub;
+  }
+
+  if (unrated.length > 0) {
+    const shown = unrated.slice(0, 5).join('; ');
+    warnings.push(
+      `${unrated.length} measured line${unrated.length === 1 ? '' : 's'} carr${unrated.length === 1 ? 'ies' : 'y'} no rate and ` +
+        `${unrated.length === 1 ? 'is' : 'are'} priced at nothing: ${shown}` +
+        `${unrated.length > 5 ? `; and ${unrated.length - 5} more` : ''}`,
+    );
   }
 
   amounts.set('DIRECT_WORKS', round(labour));

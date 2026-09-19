@@ -31,7 +31,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -49,6 +49,11 @@ export async function procurement(root) {
     // history because a promoted lesson is what corrects it.
     api.read('/v1/calibration', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/calibration/lessons', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    // What has actually been measured on this project. The bridge from a
+    // take-off to an estimate: `buildEstimate` prices `lines`, each carrying a
+    // `boqItemId`, and until this was readable the only way to price a measured
+    // job was to retype every quantity into a form.
+    api.read(`/v1/projects/${projectId}/tender/boq`, 'BOQ_TAKEOFF').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -924,7 +929,47 @@ export async function procurement(root) {
                     </div>
                   </div>`
                 : ''
-            }`
+            }
+
+            <div class="card" style="margin-bottom:14px">
+              <h2>The quotation</h2>
+              <p style="font-size:12.5px;color:var(--text-3);margin:4px 0 0">
+                The last step of the line that starts at a drawing. The offer is composed from this estimate — the
+                measured works with their quantities, the total apportioned across them so the lines add up exactly,
+                and every assumption and exclusion carried through as a qualification. It opens as a draft under Legal
+                instruments on Site Documents, and is issued from there under its own number.
+              </p>
+              ${
+                (estimate.omissions ?? []).length > 0
+                  ? html`<div class="notice warn" style="margin-top:10px">
+                      <div>
+                        <b>This estimate cannot be quoted yet.</b> ${estimate.omissions.length} cost
+                        head${estimate.omissions.length === 1 ? ' is' : 's are'} neither priced nor excluded —
+                        ${estimate.omissions.map((h) => humanise(h)).join(', ')}. Price
+                        ${estimate.omissions.length === 1 ? 'it' : 'them'} or state
+                        ${estimate.omissions.length === 1 ? 'it' : 'them'} as an exclusion; a nought against a head is
+                        not a job without it.
+                      </div>
+                    </div>`
+                  : ''
+              }
+              <div class="actions" style="margin-top:12px">
+                ${raw(
+                  commandBar([
+                    {
+                      id: 'quote',
+                      label: 'Draw up the quotation',
+                      tone: 'primary',
+                      permitted: can('EVIDENCE_AUDIT', 'I') && can('ESTIMATE_TENDER', 'R') && (estimate.omissions ?? []).length === 0,
+                      reason:
+                        (estimate.omissions ?? []).length > 0
+                          ? 'The estimate carries a cost head that is neither priced nor excluded.'
+                          : blockedReason('EVIDENCE_AUDIT', 'I') ?? blockedReason('ESTIMATE_TENDER', 'R'),
+                    },
+                  ]),
+                )}
+              </div>
+            </div>`
           : ''
       }
 
@@ -1069,6 +1114,68 @@ export async function procurement(root) {
         </div>
       </div>
 
+      ${
+        /*
+         * The bill, and the door that prices it.
+         *
+         * Both engines existed and neither had a screen: `runTakeoff` wrote
+         * measured items nothing could read back, and `buildEstimate` prices
+         * twenty cost heads from lines that nothing could hand it. The only
+         * route to a priced job was the generated command catalogue, retyping
+         * every quantity — which for a wall repair with a dozen items is not a
+         * tool anybody would choose.
+         *
+         * The lines are handed back exactly as they were measured, each keeping
+         * its `boqItemId`, so what is priced is traceably what was measured off
+         * the sheet rather than a second copy of it.
+         */
+        boq?.error
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px">
+                <h2>The bill, and what it prices at</h2>
+                <div class="metric-sub" style="margin-bottom:11px">
+                  ${(boq?.items ?? []).length} measured item${(boq?.items ?? []).length === 1 ? '' : 's'} held against
+                  ${(boq?.packages ?? []).length} package${(boq?.packages ?? []).length === 1 ? '' : 's'}. Every line
+                  carries the sheet it was measured from and the rule it was measured under. An estimate is built from
+                  these across the twenty heads below — time-related costs by the week, contingency from the risk
+                  register at P80, margin on the cost beneath. A head neither priced nor excluded comes back as an
+                  omission and the estimate says so rather than carrying it as nought.
+                </div>
+                ${(boq?.items ?? []).length > 0
+                  ? table({
+                      headers: ['Code', 'Description', 'Unit', 'Quantity', 'Measured from', 'Confidence'],
+                      align: ['', '', '', 'num', '', 'num'],
+                      rows: (boq.items ?? []).slice(0, 60).map((item) => [
+                        item.costCode,
+                        item.description,
+                        item.unit,
+                        Number(item.quantity).toLocaleString('en-GB'),
+                        item.sourceSheet ?? '—',
+                        item.confidenceScore === null ? '—' : pct(Number(item.confidenceScore) * 100, 0),
+                      ]),
+                    })
+                  : html`<div class="empty"><b>Nothing measured yet</b>Measure a drawing on Pipeline &amp; Bids, confirm
+                      the quantities, and they appear here ready to price.</div>`}
+                <div class="actions" style="margin-top:12px">
+                  ${raw(
+                    commandBar([
+                      {
+                        id: 'build-estimate',
+                        label: 'Price the bill',
+                        permitted: can('ESTIMATE_TENDER', 'C') && (boq?.items ?? []).length > 0,
+                        reason:
+                          (boq?.items ?? []).length === 0
+                            ? 'Nothing has been measured yet. An estimate prices measured lines; it does not invent them.'
+                            : blockedReason('ESTIMATE_TENDER', 'C'),
+                      },
+                    ]),
+                  )}
+                </div>
+              </div>
+            </div>`
+      }
+
       ${positionReport({
         title: 'The twenty cost heads',
         intent:
@@ -1191,6 +1298,236 @@ export async function procurement(root) {
    * is worse than a free-text box.
    */
   const COMMANDS = {
+    /*
+     * Price the measured bill across the twenty heads.
+     *
+     * The lines are not asked for. They are what was measured and confirmed,
+     * handed back with their `boqItemId` intact so what is priced is traceably
+     * what came off the sheet. What *is* asked for is everything a drawing
+     * cannot tell anybody: how long the job runs, what this business adds for
+     * overhead and profit, and the basis the estimate was built on — none of
+     * which is in a tender pack, and none of which the platform invents.
+     *
+     * Rates are left to the estimator. A quantity is not a rate, and a platform
+     * that filled them in from an index would be pricing somebody else's job.
+     */
+    'build-estimate': {
+      title: 'Price the bill',
+      intent:
+        'Prices every measured line across the twenty tender cost heads. Time-related costs are priced by the week ' +
+        'rather than as a percentage of works, contingency is drawn from the risk register at P80, and margin sits on ' +
+        'the cost beneath it. A head that is neither priced nor excluded comes back as an omission and the estimate is ' +
+        'marked incomplete — a nought against waste is not a job with no waste in it.',
+      path: `/v1/projects/${projectId}/tender/estimate`,
+      submitLabel: 'Price it',
+      fields: [
+        {
+          name: 'packageId',
+          label: 'Work package',
+          type: 'select',
+          options: (boq?.packages ?? []).map((id) => ({ value: id, label: id })),
+          hint: 'The package whose measured lines are being priced.',
+        },
+        {
+          name: 'durationWeeks',
+          label: 'Construction period (weeks)',
+          type: 'number',
+          step: '1',
+          hint: 'Drives every time-related head. Not in the drawings, and not guessed at here.',
+        },
+        {
+          name: 'overheadPercent',
+          label: 'Overhead (%)',
+          type: 'number',
+          step: '0.1',
+          hint: 'What this business carries, on the cost beneath it.',
+        },
+        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1' },
+        {
+          name: 'basisOfEstimate',
+          label: 'Basis of the estimate',
+          type: 'textarea',
+          rows: 2,
+          hint: 'What it was built from and what it assumes. It travels with the estimate and into the quotation.',
+        },
+        {
+          name: 'assumptions',
+          label: 'Assumptions, one per line',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          hint: 'Each becomes a stated assumption on the estimate rather than something a reader has to infer.',
+        },
+        // The site-wide heads a small job actually carries. Priced on their own
+        // basis — by the week, or as their own sum — never as a percentage of
+        // the works, which is the mistake the cost model exists to refuse.
+        {
+          name: 'prelimsWeeklyMinor',
+          label: 'Preliminaries, per week',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Set-up, welfare, accommodation, utilities. Multiplied by the period above, so a longer job costs more.',
+        },
+        {
+          name: 'safetyWeeklyMinor',
+          label: 'Health and safety, per week',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Safety advice, inductions, PPE, monitoring.',
+        },
+        {
+          name: 'wasteMinor',
+          label: 'Waste, as a sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Skips, muck away and gate fees for the whole job.',
+        },
+        {
+          name: 'insurancePercent',
+          label: 'Insurance (% of contract value)',
+          type: 'number',
+          step: '0.01',
+          required: false,
+          hint: 'Contract works and liability premiums, on the value they insure.',
+        },
+        // The other half of honesty about a head. A head neither priced nor
+        // excluded is an omission, the estimate is marked incomplete, and a
+        // quotation cannot be drawn from it — so the way to say "not ours" has
+        // to be on the same form as the way to price it.
+        {
+          name: 'excluded',
+          label: 'Heads not included in this price',
+          type: 'multiselect',
+          required: false,
+          options: (costHeads?.heads ?? []).map((head) => ({ value: head.head, label: `${head.label} — ${head.note}` })),
+          hint:
+            'Each becomes a stated exclusion carried into the quotation. Contingency belongs here unless the risk ' +
+            'register is quantified, because a contingency taken as a percentage is a number nobody can defend.',
+        },
+        {
+          name: 'exclusionReason',
+          label: 'Why those are excluded',
+          type: 'text',
+          required: false,
+          placeholder: 'Not included in this offer; by others',
+        },
+        // One rate field per measured line. The quantities are what came off
+        // the drawings and are not asked for again; the rate is the
+        // estimator's, and nothing here fills it in from an index — that would
+        // be pricing somebody else's job.
+        ...(boq?.items ?? []).flatMap((item) => [
+          {
+            name: `rate:${item.boqItemId}`,
+            label: `${item.description} — ${item.quantity} ${item.unit}`,
+            type: 'number',
+            money: true,
+            required: false,
+            hint: `${item.packageId}${item.sourceSheet ? ` · measured off ${item.sourceSheet}` : ''} · all-in rate per ${item.unit}.`,
+          },
+          {
+            name: `basis:${item.boqItemId}`,
+            label: `— priced as`,
+            type: 'select',
+            required: false,
+            value: 'labourRateMinor',
+            options: [
+              { value: 'labourRateMinor', label: 'Our own labour' },
+              { value: 'materialRateMinor', label: 'Materials' },
+              { value: 'plantRateMinor', label: 'Plant' },
+              { value: 'subcontractRateMinor', label: 'Subcontract' },
+            ],
+          },
+        ]),
+      ],
+      transform: (v) => {
+        const excluded = Array.isArray(v.excluded) ? v.excluded : v.excluded ? [v.excluded] : [];
+        const weeks = Number(v.durationWeeks);
+        const timeRelated = [
+          v.prelimsWeeklyMinor
+            ? { head: 'PRELIMINARIES', description: 'Site set-up, welfare and establishment', weeklyRateMinor: Number(v.prelimsWeeklyMinor), quantity: 1 }
+            : null,
+          v.safetyWeeklyMinor
+            ? { head: 'HEALTH_AND_SAFETY', description: 'Safety advice, inductions and monitoring', weeklyRateMinor: Number(v.safetyWeeklyMinor), quantity: 1 }
+            : null,
+        ].filter(Boolean);
+        const quantified = v.wasteMinor
+          ? [{ head: 'WASTE', description: 'Skips, muck away and gate fees', unit: 'sum', quantity: 1, rateMinor: Number(v.wasteMinor) }]
+          : [];
+        return {
+          packageId: v.packageId,
+          durationWeeks: weeks,
+          basisOfEstimate: v.basisOfEstimate,
+          assumptions: String(v.assumptions ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+          margin: { overheadPercent: Number(v.overheadPercent), profitPercent: Number(v.profitPercent) },
+          ...(timeRelated.length > 0 ? { timeRelated } : {}),
+          ...(quantified.length > 0 ? { quantified } : {}),
+          ...(v.insurancePercent
+            ? { insurance: { policies: [{ type: 'Contract works and liability', percentOfContractValue: Number(v.insurancePercent) }] } }
+            : {}),
+          ...(excluded.length > 0
+            ? { exclusions: excluded.map((head) => ({ head, reason: v.exclusionReason || 'Not included in this offer' })) }
+            : {}),
+          // Measured, confirmed, and handed back as measured — with the rate
+          // the estimator put against each one.
+          lines: (boq?.items ?? [])
+            .filter((item) => item.packageId === v.packageId)
+            .map((item) => {
+              const rate = Number(v[`rate:${item.boqItemId}`] ?? 0);
+              const basis = v[`basis:${item.boqItemId}`] || 'labourRateMinor';
+              return {
+                boqItemId: item.boqItemId,
+                description: item.description,
+                unit: item.unit,
+                quantity: item.quantity,
+                ...(rate > 0 ? { [basis]: rate } : {}),
+              };
+            }),
+        };
+      },
+    },
+    /*
+     * The quotation, from the estimate rather than from somebody's memory of it.
+     *
+     * The last step of the line that starts at a drawing. Everything before it
+     * existed — the reading, the take-off, a person confirming it, the pricing
+     * across twenty heads — and then it stopped, and the only way to get a
+     * quotation out was to retype the total into the legal-document screen.
+     * That is the point where the traceability was being thrown away.
+     *
+     * What the customer sees is the works, the quantities, the money and the
+     * qualifications. No overhead line, no profit line, no margin — the same
+     * rule the billing screen was corrected for.
+     */
+    quote: {
+      title: 'Draw up the quotation',
+      intent:
+        'Composes the quotation from the estimate: the measured works with their quantities, the tender total ' +
+        'apportioned across them so the lines add up exactly, and every assumption and exclusion carried through as a ' +
+        'qualification. It opens as a draft on Site Documents under Legal instruments, where it is generated against a ' +
+        'frozen manifest, approved by a signatory and issued under its own number. An estimate carrying a head that is ' +
+        'neither priced nor excluded is refused rather than quoted.',
+      path: (collected) => `/v1/projects/${projectId}/tender/estimate/${collected.estimateId}/quotation`,
+      submitLabel: 'Draw it up',
+      fields: [
+        {
+          name: 'estimateId',
+          label: 'Estimate',
+          type: 'select',
+          options: b.Estimate.map((e) => ({
+            value: e._refId,
+            label: `${e.packageId ?? e._refId} · ${e.status ?? ''}`.trim(),
+          })),
+        },
+        { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to. An estimate has no addressee; this is it.' },
+        { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
+        { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
+        { name: 'coveringNote', label: 'Covering note', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: ({ estimateId, ...rest }) => rest,
+    },
     rfq: {
       title: 'Raise an RFQ',
       intent:

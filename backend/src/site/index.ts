@@ -1,4 +1,5 @@
 import type { RequestContext } from '../api/middleware.ts';
+import { config } from '../config.ts';
 import { NotFoundError } from '../core/errors.ts';
 import type { Platform } from '../platform.ts';
 import { channelStatus } from '../notifications/notify.ts';
@@ -125,7 +126,10 @@ export function demoInput(
 
   return {
     available: available && seeded.length > 0,
-    unavailableBecause: available ? 'NOT_SEEDED' : 'SWITCHED_OFF',
+    // Where the sandbox is, if it is anywhere. Why it is not *here* is an
+    // operator's question, answered at boot and on the readiness report; a
+    // visitor is told where to go, not how this deployment is configured.
+    ...(config.demonstrationUrl ? { demonstrationUrl: config.demonstrationUrl } : {}),
     seeded: seeded.map((user) => ({ name: user.name, email: user.email, roles: user.roles })),
     clean,
     programme: DEMO_PROGRAMME,

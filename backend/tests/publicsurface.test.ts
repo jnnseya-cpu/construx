@@ -256,6 +256,29 @@ describe('the demonstration surface in production', () => {
     assert.equal(body.title, 'DEMO_DISABLED');
   });
 
+  it('tells a visitor where the sandbox is, never how this deployment is configured', async () => {
+    /*
+     * The page a visitor lands on when the sandbox is not here.
+     *
+     * It used to read "Somebody has set DEMO_TENANCY_ENABLED=false", which is
+     * an operator's sentence on a marketing page: it names an internal setting,
+     * tells the public what state this deployment is in, and invites the reader
+     * to wonder what else is switched off. The setting is right and it was
+     * nobody's business but the operator's, who is told at boot and on the
+     * readiness report.
+     *
+     * What the visitor gets instead is the true and useful half: the sandbox is
+     * kept apart from the live platform, and here is the way in that suits you.
+     */
+    const text = await asProduction(async () => (await fetch(`${base}/demo`)).text());
+
+    for (const leak of ['DEMO_TENANCY_ENABLED', 'NODE_ENV', 'this deployment', 'Somebody has set']) {
+      assert.ok(!text.includes(leak), `the public demonstration page says "${leak}"`);
+    }
+    assert.match(text, /sandbox is not on this address/i);
+    assert.match(text, /guided session/i);
+  });
+
   it('refuses to list demonstration identities when the demonstration is switched off', async () => {
     const response = await asProduction(() =>
       fetch(`${base}/v1/console/identities`, {

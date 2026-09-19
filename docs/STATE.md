@@ -24504,3 +24504,75 @@ The row now offers the reading where it can work and names the document where it
 cannot — *"Read anyway — this is a calculation"* — rather than hiding the
 button, because a classifier is a rule and the person holding the file knows
 better than it does.
+
+### A drawing becomes a quotation
+
+The pieces were all built and the line between them was not, which is the same
+as not having it. A drawing could be read, quantities measured off it and
+confirmed by a person, and the measured lines priced across the twenty cost
+heads — and then it stopped. Getting a quotation out meant opening the
+legal-document screen and retyping the total into a free-text box: the offer
+that reached the customer was no longer connected to the estimate it came from.
+
+Four things now join up, and none of them is a new engine.
+
+**Take-off is offered on a drawing**, from the file row on Pipeline & Bids,
+whatever its text layer holds — the classifier knows which files are drawings,
+so the row offers `Measure quantities` beside a quiet *"Read as an invitation"*
+for the case where it is one.
+
+**The measured quantities are a panel, confirmed by a person.** Draft take-offs
+tabulate description, unit, quantity, the sheet each was measured off and the
+rule used, with the omissions named; confirming asks only for the package and
+the cost-code prefix, and writes `BOQITEM_CREATED_FROM_TAKEOFF`.
+
+**`GET /v1/projects/:projectId/tender/boq` reads the bill back.** `runTakeoff`
+wrote BoQ items and nothing could read them: the bridge into `buildEstimate` —
+`lines`, each carrying a `boqItemId` — was designed and unreachable, so the only
+way to price a measured job was to retype every quantity. The estimating door
+now hands the measured lines back with their ids intact, asks for the rate
+against each and what it is priced as, plus the site-wide heads a small job
+actually carries (prelims and safety by the week, waste as a sum, insurance on
+the value it insures) and the heads this offer excludes.
+
+**`quoteFromEstimate` composes the offer** and hands it to the document
+lifecycle that already existed — draft, hashed manifest, approval by that hash,
+issue under a reserved number. The customer sees the works, the quantities, the
+money and the qualifications: no overhead line, no profit line, no margin, no
+cost. The tender total is apportioned across the lines in proportion to what
+each costs, with the rounding remainder on the last line, so the lines sum to
+the total exactly.
+
+Two refusals hold the line honest. An estimate carrying a head that is neither
+priced nor excluded is **not quoted** — `ESTIMATE_INCOMPLETE`, naming the heads
+— because a nought against waste is not a job without waste in it. And a
+measured line with no rate against it is **named in the warnings** rather than
+priced at nothing, which was the silence that made the whole flow able to
+produce a confident, wrong number.
+
+The estimate route's schema also required `basisOfEstimate`, which its engine
+took and the schema never listed: a caller could produce an estimate whose
+stated basis was `undefined`, and the basis is the one thing an estimate is read
+back for years later.
+
+Verified in `backend/tests/quotation.test.ts` on the job that prompted it — a
+£20,000 church wall repair, three measured items off three sheets — through to
+issued, numbered bytes.
+
+### An operator's setting on a marketing page
+
+The public demonstration page read *"Somebody has set
+`DEMO_TENANCY_ENABLED=false`"*. The setting is right — a sandbox anybody can
+sign into does not belong beside real customer records — and it was nobody's
+business but the operator's, who is told at boot and on the readiness report.
+On a marketing page it names an internal variable, states what configuration
+this deployment is running, and invites the reader to wonder what else is off.
+
+The visitor now gets the true and useful half: the sandbox is kept apart from
+the live platform, and here is the way in. `DEMONSTRATION_URL` names the
+sandbox's own deployment when there is one, and the page links to it; empty is
+inert and the page offers the guided session and the trial without mentioning
+deployments at all. The operator-facing distinction did not move — the readiness
+check says which state this deployment is in and what to set. Held by
+`publicsurface.test.ts`, which now asserts the page never prints a variable
+name, a `NODE_ENV`, or the words "this deployment".

@@ -179,6 +179,14 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   const published = new Map((perception?.capability?.tasks ?? []).map((entry) => [entry.task, entry]));
   const ittTask = published.get('ITT_REQUIREMENTS');
   const drafts = (perception?.drafts ?? []).filter((d) => d.task === 'ITT_REQUIREMENTS' && d.status === 'DRAFT');
+  /*
+   * Measured quantities waiting for a person, which is the other half of
+   * reading a tender pack. A drawing is measured, not read: the numbers are in
+   * the geometry. The confirmation is what puts them in the bill, and until
+   * somebody has checked them nothing downstream can price anything — the same
+   * rule the requirements reading follows.
+   */
+  const takeoffDrafts = (perception?.drafts ?? []).filter((d) => d.task === 'DRAWING_TAKEOFF' && d.status === 'DRAFT');
   const readable = heldTenderFiles(evidence, ingestion);
 
   return html`
@@ -272,7 +280,23 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * because a classifier is a rule and the person holding the
                  * file knows better than it does.
                  */
-                road === 'TEXT'
+                /*
+                 * A drawing is offered the thing a drawing is for.
+                 *
+                 * Measuring a drawing means *seeing* it — the quantities are in
+                 * the geometry, not in the text layer. The road here is chosen
+                 * by "does this file have text?", so a drawing with a title
+                 * block was routed to the text path and the take-off was never
+                 * offered at all. Every quantity in a tender pack sat behind a
+                 * button that did not exist on the screen holding the drawings.
+                 */
+                String(file.kind ?? '') === 'DRAWING'
+                  ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
+                      <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
+                        title="A drawing states no tender requirements. This will run and will almost certainly find none.">
+                        Read as an invitation
+                      </button>`
+                  : road === 'TEXT'
                   ? CANNOT_BE_AN_INVITATION.includes(String(file.kind ?? ''))
                     ? html`<button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                           title="This is ${humanise(String(file.kind)).toLowerCase()}, which states no tender requirements. Read the invitation letter or the instructions to tenderers instead — this will run, and will almost certainly find none.">
@@ -367,6 +391,68 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                   </div>
                 </div>`;
               })}
+            </div>`
+          : ''
+      }
+
+      ${
+        /*
+         * Measured quantities, awaiting a person.
+         *
+         * A drawing is measured rather than read, and until somebody has
+         * checked the measurement nothing is in the bill. Confirming writes the
+         * BoQ items that `buildEstimate` prices — which is the whole bridge
+         * from a set of drawings to a quotation, and it had no screen.
+         */
+        takeoffDrafts.length > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px">
+                <h2>Quantities measured off the drawings, awaiting a person</h2>
+                <p class="metric-sub" style="margin-bottom:10px">
+                  Check them against the sheet before confirming. Every line carries the sheet it was measured from and
+                  the rule it was measured under; confirming writes them into the bill, which is what an estimate is
+                  priced from. Nothing here is a price — a quantity is not a rate.
+                </p>
+                ${takeoffDrafts.map((draft) => {
+                  const items = draft.extraction?.items ?? [];
+                  const omitted = draft.extraction?.omitted ?? [];
+                  return html`<div class="card" style="margin-bottom:10px">
+                    <div class="metric-sub" style="margin-bottom:8px">
+                      ${items.length} item${items.length === 1 ? '' : 's'} measured${
+                        draft.extraction?.scale ? html` · scale ${draft.extraction.scale}` : ''
+                      }${draft.confidence !== undefined ? html` · confidence ${Math.round(Number(draft.confidence) * 100)}%` : ''}
+                    </div>
+                    ${items.length > 0
+                      ? table({
+                          headers: ['Description', 'Unit', 'Quantity', 'Measured from', 'Rule'],
+                          align: ['', '', 'num', '', ''],
+                          rows: items.slice(0, 40).map((item) => [
+                            item.description,
+                            item.unit,
+                            Number(item.quantity).toLocaleString('en-GB'),
+                            item.sourceSheet ?? '—',
+                            item.measurementRule ?? 'NRM2',
+                          ]),
+                        })
+                      : html`<div class="notice warn"><div>
+                          This reading measured nothing. A drawing with no dimensioned or scalable quantity on it is
+                          not a failure of the reader — check the sheet before confirming anything.
+                        </div></div>`}
+                    ${omitted.length > 0
+                      ? html`<div class="metric-sub" style="margin-top:9px">
+                          <b>Left out deliberately:</b> ${omitted.join('; ')}. A quantity that needed an assumption is
+                          omitted and named rather than guessed at.
+                        </div>`
+                      : ''}
+                    <div class="actions" style="margin-top:11px">
+                      <button class="btn" data-confirm-takeoff="${draft.id}" ${raw(items.length === 0 ? 'disabled' : '')}>
+                        Confirm and write the bill
+                      </button>
+                      <button class="btn quiet" data-reject-itt="${draft.id}">Reject this measurement</button>
+                    </div>
+                  </div>`;
+                })}
+              </div>
             </div>`
           : ''
       }
@@ -1842,6 +1928,26 @@ export async function pipeline(root) {
       return;
     }
 
+    const takeOff = event.target.closest('[data-take-off]');
+    if (takeOff) {
+      takeOff.disabled = true;
+      takeOff.textContent = 'Measuring…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/take-off`, { hash: takeOff.dataset.takeOff });
+        toast(
+          'Measured',
+          'The quantities are below, awaiting a person. Nothing reaches the bill until somebody confirms them.',
+          'ok',
+        );
+      } catch (error) {
+        toast('Not measured', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+      }
+      // Either way: a reading that returned too little still files its draft,
+      // and the draft is the evidence.
+      await draw();
+      return;
+    }
+
     const readText = event.target.closest('[data-read-itt-text]');
     if (readText) {
       readText.disabled = true;
@@ -1884,6 +1990,49 @@ export async function pipeline(root) {
         toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
         readIt.disabled = false;
         readIt.textContent = 'Read it with a model that can see';
+      }
+      return;
+    }
+
+    /*
+     * Confirming a measurement writes the bill.
+     *
+     * `perception.confirm` runs `runTakeoff`, which needs the package the items
+     * belong to and the cost-code prefix they are numbered under. Neither is on
+     * the drawing — a package is how this business organises its work, and a
+     * cost code is its own numbering — so both are asked rather than invented.
+     */
+    const confirmTakeoff = event.target.closest('[data-confirm-takeoff]');
+    if (confirmTakeoff) {
+      const filed = await command({
+        title: 'Confirm the measured quantities',
+        intent:
+          'Writes the measured items into the bill of quantities, each with the sheet it was measured from and the ' +
+          'rule it was measured under. Confirming runs the same command as entering them by hand — the analyst, its ' +
+          'authorisation and its ACU cost are unchanged. A quantity is not a rate: nothing here prices anything.',
+        path: `/v1/projects/${projectId}/perception/${confirmTakeoff.dataset.confirmTakeoff}/confirm`,
+        submitLabel: 'Confirm and write the bill',
+        fields: [
+          {
+            name: 'packageId',
+            label: 'Work package',
+            hint: 'How this business organises the work — the package these items are measured against.',
+          },
+          {
+            name: 'costCodePrefix',
+            label: 'Cost code prefix',
+            placeholder: 'E20',
+            hint: 'Items are numbered from it — E20.001, E20.002. Your own numbering; the platform invents none.',
+          },
+        ],
+      });
+      if (filed) {
+        toast(
+          'Written to the bill',
+          `${filed.result?.boqItemIds?.length ?? 0} item(s) are now priceable. Build the estimate on Tender & Procurement.`,
+          'ok',
+        );
+        await draw();
       }
       return;
     }

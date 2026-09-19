@@ -221,11 +221,14 @@ export function readiness(now = new Date()): Readiness {
       // by somebody, which is the point.
       state: !config.demo.enabled ? 'NOT_SET' : production ? 'DEGRADED' : 'CONFIGURED',
       detail: !config.demo.enabled
-        ? 'Switched off, which is the default. No sandbox identity exists to be signed into.'
+        ? 'Switched off, which is the default. No sandbox identity exists to be signed into.' +
+          (config.demonstrationUrl
+            ? ` The public site sends visitors to the sandbox at ${config.demonstrationUrl} instead.`
+            : ' Nothing on the public site says so: a visitor is offered the guided session and the trial. Run the sandbox as its own deployment and name it in DEMONSTRATION_URL to send people there.')
         : production
           ? 'Open in production: any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Right for a public sandbox; wrong beside real customer records.'
           : 'Open. Any visitor can sign into the seeded demonstration as any role.',
-      env: ['DEMO_TENANCY_ENABLED', 'DEMO_ACU_CREDIT_MINOR'],
+      env: ['DEMO_TENANCY_ENABLED', 'DEMO_ACU_CREDIT_MINOR', 'DEMONSTRATION_URL'],
     },
     {
       key: 'signing.key',
