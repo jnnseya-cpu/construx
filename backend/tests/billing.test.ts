@@ -111,6 +111,45 @@ describe('ACU wallet', () => {
     );
   });
 
+  it('keeps this platform’s own cost and margin out of the customer’s view', () => {
+    /*
+     * Reported as "USERS DON'T NEED TO SEE ALL OF THESE", against a screen
+     * reading "£1.72 on £0.43 of provider cost" beside an effective multiplier.
+     *
+     * It is worse than clutter: what the providers charge and what is made on
+     * top is this company's margin, and `/v1/billing/wallet` returned all of it
+     * — lifetime cost, lifetime profit, the profit percentage — to every
+     * tenancy that opened its billing screen. Taking the figures off the screen
+     * would not have touched that; the response carried them whether or not
+     * anything rendered them.
+     *
+     * Asserted on the keys rather than on the screen, because the screen is not
+     * where the boundary is.
+     */
+    const w = wallet(100_000);
+    const hold = w.reserve({ aiRequestId: 'r1', estimatedRawCostMinor: 43 });
+    w.settle(hold.holdId, 43, 'OPENAI');
+
+    const customer = w.customerSnapshot() as Record<string, unknown>;
+    for (const secret of [
+      'lifetimeRawCostMinor',
+      'lifetimeProfitMinor',
+      'lifetimeProfitPercent',
+      'monthRawSpendMinor',
+      'monthChargedRawMinor',
+      'monthAbsorbedRawMinor',
+    ]) {
+      assert.ok(!(secret in customer), `${secret} is this platform's own economics and reached the customer`);
+    }
+
+    // And everything they are actually owed is still there.
+    assert.equal(customer.monthBilledMinor, 43 * RATE);
+    assert.equal(customer.lifetimeBilledMinor, 43 * RATE);
+    assert.equal(customer.availableMinor, w.snapshot().availableMinor);
+    assert.equal(customer.aiHalted, false);
+    assert.ok('caps' in customer && 'alerts' in customer && 'unmetered' in customer);
+  });
+
   it('quotes an exempt tenancy nil, so the price before the button matches the charge after it', () => {
     const w = new ACUWallet('tenant-1');
     w.setUnmetered({ reason: 'granted free' });

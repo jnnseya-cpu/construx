@@ -389,6 +389,28 @@ export type WalletSnapshot = {
  */
 export type UnmeteredGrant = { reason: string; until?: string };
 
+/**
+ * The wallet as a customer may see it: what they were charged, what is left,
+ * and the limits they set themselves. None of this platform's own cost of
+ * serving them, which is not an answer to any question they are asking.
+ */
+export type CustomerWalletSnapshot = Pick<
+  WalletSnapshot,
+  | 'tenantId'
+  | 'balanceMinor'
+  | 'heldMinor'
+  | 'availableMinor'
+  | 'lifetimeBilledMinor'
+  | 'monthBilledMinor'
+  | 'caps'
+  | 'alerts'
+  | 'aiHalted'
+  | 'haltReason'
+  | 'frozen'
+  | 'unresolvedHolds'
+  | 'unmetered'
+>;
+
 function monthKey(iso: string): string {
   return iso.slice(0, 7);
 }
@@ -1016,6 +1038,45 @@ export class ACUWallet {
           : undefined,
       frozen: this.#frozen,
       unresolvedHolds: this.#unresolved.size,
+    };
+  }
+
+  /**
+   * What the customer is shown, which is what they were charged and no more.
+   *
+   * `snapshot()` carries this platform's own economics — what the providers
+   * cost, what was absorbed, the lifetime margin and the percentage it
+   * represents — and `/v1/billing/wallet` returned all of it to the tenancy.
+   * So every customer could read, from their own browser, exactly what CONSTRUX
+   * pays a provider and therefore exactly what the markup is. Taking the
+   * figures off the screen would not have touched that: the response carried
+   * them whether or not anything rendered them.
+   *
+   * A customer's legitimate question is "what am I being charged, and what is
+   * left". The platform's cost of serving them is not an answer to it, and is
+   * commercially the company's own. The operator sees the whole of it on the
+   * ACU Economy screen, through operator-only routes.
+   *
+   * Written as a pick rather than a delete, so a field added to `snapshot()`
+   * later is private until somebody decides otherwise — the safe direction for
+   * a boundary like this to fail in.
+   */
+  customerSnapshot(): CustomerWalletSnapshot {
+    const full = this.snapshot();
+    return {
+      tenantId: full.tenantId,
+      balanceMinor: full.balanceMinor,
+      heldMinor: full.heldMinor,
+      availableMinor: full.availableMinor,
+      lifetimeBilledMinor: full.lifetimeBilledMinor,
+      monthBilledMinor: full.monthBilledMinor,
+      caps: full.caps,
+      alerts: full.alerts,
+      aiHalted: full.aiHalted,
+      ...(full.haltReason ? { haltReason: full.haltReason } : {}),
+      frozen: full.frozen,
+      unresolvedHolds: full.unresolvedHolds,
+      unmetered: full.unmetered,
     };
   }
 

@@ -22885,7 +22885,10 @@ export const ROUTES: Route[] = [
           : { external: true, sponsorType: null, sponsoredBy: null, remainingMinor: 0, refusal: { code: position.code, message: position.message } };
       }
       const spending = platform.spendingWallet(actor.tenantId);
-      return { ...spending.wallet.snapshot(), sharedFrom: spending.sharedFrom };
+      // The customer's view. `snapshot()` carries what the providers cost this
+      // platform and what it made — the company's own margin, which was being
+      // returned to every tenancy that opened its billing screen.
+      return { ...spending.wallet.customerSnapshot(), sharedFrom: spending.sharedFrom };
     },
   },
 
@@ -23097,9 +23100,15 @@ export const ROUTES: Route[] = [
     pattern: '/v1/billing/attribution',
     description: 'Where the ACU spend went, by module, and whether each was a model or local compute',
     handler: (platform, ctx) => ({
+      // Without `rawCostMinor`. The customer is entitled to know what each
+      // module cost *them* and how many runs it took; what the providers
+      // charged this platform to serve it is the company's own margin, and
+      // returning it per module handed every customer the markup broken down
+      // by engine.
       attribution: platform
         .wallet(authoriseTenant(ctx, 'BILLING_ACU', 'R').tenantId)
-        .attributionByModule(ctx.query.get('month') ?? undefined),
+        .attributionByModule(ctx.query.get('month') ?? undefined)
+        .map(({ rawCostMinor: _cost, ...row }) => row),
     }),
   },
   {
@@ -23133,7 +23142,7 @@ export const ROUTES: Route[] = [
         message:
           'Recorded. Credit is added once payment has been received and matched to this request; ' +
           'the balance is unchanged until then.',
-        wallet: platform.wallet(actor.tenantId).snapshot(),
+        wallet: platform.wallet(actor.tenantId).customerSnapshot(),
       };
     },
   },

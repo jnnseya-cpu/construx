@@ -744,3 +744,57 @@ describe('what ingestion read, put to use in one step', () => {
     throwsCode(() => measureFromTable(ctxFor('planner'), { ingestionId: billIngestionId, table: billTable, scheduleId }), 'ACCESS_DENIED');
   });
 });
+
+/**
+ * A construction business that follows ISO 19650 has already told the platform
+ * what every file is.
+ *
+ * The standard puts the document's type in its reference: `DR` drawing, `CA`
+ * calculations, `LT` letter, `SP` specification, `SH` schedule. That is the
+ * strongest signal available about a file and nothing read it.
+ *
+ * A real tender pack of five arrived, every one classified "document", and the
+ * screen offered "Read this invitation" against each. One of them was a
+ * 101,572-character structural calculation: read in full, correctly found to
+ * contain no tender requirements, and reported to the customer as a failure —
+ * five times, because the pack had five files and only one of them was the
+ * invitation.
+ */
+describe('typing a document from its ISO 19650 reference', () => {
+  const pack = [
+    ['25133_TDC_XX_XX_CA_Z_0001-P02 St Andrews Church Wall Structural Calculations.pdf', 'CALCULATION'],
+    ['25133-TDC-00-ZZ-DR-C-9020_P02_Footpath Widening Layout.pdf', 'DRAWING'],
+    ['25133-TDC-FN-ZZ-DR-S-1600_P02_Wall Foundation Detail.pdf', 'DRAWING'],
+    ['25133-TDC-FN-ZZ-DR-S-1601_P02_Wall Foundation with Tree Rings.pdf', 'DRAWING'],
+    ['25133-TDC-XX-XX-LT-Z-0001-P01 St Andrews Church Wall.pdf', 'CORRESPONDENCE'],
+  ] as const;
+
+  it('types every file in a real tender pack, and finds the one invitation in it', () => {
+    for (const [filename, expected] of pack) {
+      assert.equal(
+        classify({ actualType: 'application/pdf', filename }).kind,
+        expected,
+        `${filename} was not typed from its reference`,
+      );
+    }
+    const letters = pack.filter(([filename]) => classify({ actualType: 'application/pdf', filename }).kind === 'CORRESPONDENCE');
+    assert.equal(letters.length, 1, 'the pack does not resolve to exactly one letter, which is the invitation');
+  });
+
+  it('matches the type field, never the same letters elsewhere in a name', () => {
+    // `DR` and `LT` are two characters. Matched as a word they would fire on
+    // half the filenames in a project, so they are matched only as a delimited
+    // field of the reference.
+    assert.notEqual(classify({ actualType: 'application/pdf', filename: 'DRAINAGE STRATEGY.pdf' }).kind, 'DRAWING');
+    assert.notEqual(classify({ actualType: 'application/pdf', filename: 'BOLT SCHEDULE NOTES.pdf' }).kind, 'CORRESPONDENCE');
+  });
+
+  it('reads a word with a space before it, which is how these files are actually named', () => {
+    // The rule required a dash or an underscore either side, so
+    // "Wall Foundation Detail.pdf" — a space before the word that types it —
+    // missed the very case it was written for.
+    assert.equal(classify({ actualType: 'application/pdf', filename: 'Wall Foundation Detail.pdf' }).kind, 'DRAWING');
+    assert.equal(classify({ actualType: 'application/pdf', filename: 'Footpath Widening Layout.pdf' }).kind, 'DRAWING');
+    assert.equal(classify({ actualType: 'application/pdf', filename: 'Retaining Wall Calculations.pdf' }).kind, 'CALCULATION');
+  });
+});

@@ -336,6 +336,10 @@ function typesAgree(declared: string, actual: string): boolean {
 
 export const DOCUMENT_KIND = [
   'DRAWING',
+  /** Structural or services calculations — read for facts, never for requirements. */
+  'CALCULATION',
+  /** A report: ground investigation, survey, condition. */
+  'REPORT',
   'SPECIFICATION',
   'PROGRAMME',
   'CONTRACT',
@@ -380,10 +384,68 @@ const KIND_SIGNALS: ReadonlyArray<{
   content?: RegExp;
   types?: string[];
 }> = [
+  /*
+   * ISO 19650 names the document's type in the reference itself, and a
+   * construction business that follows the standard has already told the
+   * platform what every file is.
+   *
+   * `25133-TDC-FN-ZZ-DR-S-1600_P02_Wall Foundation Detail.pdf` — the `DR` field
+   * is Drawing. `..._CA_Z_0001-P02 ... Structural Calculations.pdf` is
+   * Calculations. `..._LT_Z_0001-P01 ...` is a Letter, which on a tender pack
+   * is the invitation.
+   *
+   * This is the strongest signal available and it was not read. A pack of five
+   * arrived, every one of them classified "document", and the screen offered
+   * "Read this invitation" against each — including a 101,572-character
+   * structural calculation, which was read in full, correctly found to contain
+   * no tender requirements, and reported as a failure five times over.
+   *
+   * Matched on the delimited field rather than as a word, because `DR` and `LT`
+   * are far too short to look for anywhere else in a filename.
+   */
+  {
+    kind: 'DRAWING',
+    says: 'the ISO 19650 reference types it as a drawing (DR)',
+    name: /[-_](DR|M2|M3|MR|VS)[-_]/,
+  },
+  {
+    kind: 'CORRESPONDENCE',
+    says: 'the ISO 19650 reference types it as a letter (LT)',
+    name: /[-_](LT|MI|MN)[-_]/,
+  },
+  {
+    kind: 'SPECIFICATION',
+    says: 'the ISO 19650 reference types it as a specification (SP)',
+    name: /[-_](SP|SN)[-_]/,
+  },
+  {
+    kind: 'SCHEDULE',
+    says: 'the ISO 19650 reference types it as a schedule (SH)',
+    name: /[-_](SH|BQ|CO)[-_]/,
+  },
+  {
+    kind: 'CALCULATION',
+    says: 'the ISO 19650 reference types it as calculations (CA)',
+    name: /[-_](CA|AN)[-_]/,
+  },
+  {
+    kind: 'REPORT',
+    says: 'the ISO 19650 reference types it as a report (RP)',
+    name: /[-_](RP|RI|SU)[-_]/,
+  },
   {
     kind: 'DRAWING',
     says: 'the filename is a drawing reference',
-    name: /(^|[-_])(dwg|drg|drawing|ga|plan|section|elevation|detail)([-_]|\.|$)/i,
+    // The boundary includes a space. Construction filenames are full of them —
+    // "Wall Foundation Detail.pdf" has a space before the word that types it,
+    // so requiring a dash or an underscore missed exactly the files this rule
+    // was written for.
+    name: /(^|[-_\s])(dwg|drg|drawing|ga|plan|layout|section|elevation|detail)([-_\s]|\.|$)/i,
+  },
+  {
+    kind: 'CALCULATION',
+    says: 'the filename says calculations',
+    name: /(^|[-_\s])(calc|calcs|calculation|calculations)([-_\s]|\.|$)/i,
   },
   {
     kind: 'DRAWING',

@@ -24462,3 +24462,45 @@ read from …, and the reading found no tender requirements in them"* — and
 distinguishes a title block's worth of text from a substantial document that
 genuinely contains none. Each task carries its own `absent` wording, so no
 refusal prints a schema field name at somebody.
+
+### A customer could read this platform's margin from their own browser
+
+Reported as *"USERS DON'T NEED TO SEE ALL OF THESE"*, against a billing screen
+reading *"£1.72 on £0.43 of provider cost"* beside an effective multiplier.
+
+It was worse than clutter. `/v1/billing/wallet` returned `snapshot()` whole —
+`lifetimeRawCostMinor`, `lifetimeProfitMinor`, `lifetimeProfitPercent`,
+`monthRawSpendMinor` — and `/v1/billing/attribution` returned the provider cost
+of every module. So every customer could read, from the network tab, exactly
+what CONSTRUX pays a vendor and therefore exactly what the markup is, broken
+down by engine. Taking the figures off the screen would not have touched that.
+
+`customerSnapshot()` is what a tenancy is served now: what they were charged,
+what is left, their own caps and alerts. It is written as a pick rather than a
+delete, so a field added to `snapshot()` later is private until somebody decides
+otherwise — the safe direction for a boundary like this to fail in. The
+operator still sees all of it on ACU Economy through operator-only routes.
+
+### ISO 19650 already said what every file was
+
+A tender pack of five arrived and every one was classified "document". The
+screen offered **Read this invitation** against each, and a 101,572-character
+structural calculation was read in full, correctly found to contain no tender
+requirements, and reported to the customer as a failure — five times, because
+only one of the five was the invitation.
+
+The business names its files to ISO 19650, which puts the type in the reference:
+`DR` drawing, `CA` calculations, `LT` letter, `SP` specification, `SH` schedule.
+It is the strongest signal available about a file and nothing read it. Matched
+on the delimited field rather than as a word, because `DR` and `LT` are two
+characters and would otherwise fire on half a project.
+
+The filename word rule missed them too: it required a dash or underscore either
+side, and construction filenames use spaces — *"Wall Foundation Detail.pdf"* has
+a space before the word that types it, so the drawing rule missed the very case
+it was written for.
+
+The row now offers the reading where it can work and names the document where it
+cannot — *"Read anyway — this is a calculation"* — rather than hiding the
+button, because a classifier is a rule and the person holding the file knows
+better than it does.

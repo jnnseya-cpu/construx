@@ -152,6 +152,15 @@ function heldTenderFiles(evidence, ingestion) {
     });
 }
 
+/**
+ * Document kinds that state no tender requirements, whatever else they carry.
+ *
+ * A drawing's words are its title block; a calculation proves a design; a
+ * schedule lists quantities; a photograph shows a place. Requirements live in
+ * the invitation letter, the instructions to tenderers and the specification.
+ */
+const CANNOT_BE_AN_INVITATION = ['DRAWING', 'CALCULATION', 'SCHEDULE', 'PHOTOGRAPH', 'MODEL', 'CERTIFICATE'];
+
 function ittReadingPanel({ perception, evidence, ingestion, projectId, projectName, blocked, tenderProjects, invitationOptions }) {
   // Three separate reasons this cannot run, and they need different sentences.
   // Collapsing them into one "unavailable" is how somebody spends an afternoon
@@ -248,8 +257,28 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                 html`<span style="font-size:11.5px;color:var(--text-3)">${entry.contentType}</span>`,
                 html`<span style="font-size:12px;color:var(--text-3)">${says}</span>`,
                 entry.recordedAt ? date(entry.recordedAt) : '—',
+                /*
+                 * An invitation states requirements. A drawing, a calculation
+                 * sheet and a schedule do not, and offering the same button
+                 * against all of them is how a tender pack of five produced
+                 * five readings and five refusals — including a 101,572
+                 * character structural calculation read in full, correctly
+                 * found to contain no requirements, and reported as a failure.
+                 *
+                 * The classifier already knows: ISO 19650 types the document in
+                 * its own reference, and these filenames carry it. So the row
+                 * offers the reading where it can work, and says what the
+                 * document is where it cannot — rather than hiding the button,
+                 * because a classifier is a rule and the person holding the
+                 * file knows better than it does.
+                 */
                 road === 'TEXT'
-                  ? html`<button class="btn sm" data-read-itt-text="${file.ingestionId}">Read this invitation</button>`
+                  ? CANNOT_BE_AN_INVITATION.includes(String(file.kind ?? ''))
+                    ? html`<button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
+                          title="This is ${humanise(String(file.kind)).toLowerCase()}, which states no tender requirements. Read the invitation letter or the instructions to tenderers instead — this will run, and will almost certainly find none.">
+                          Read anyway — this is ${humanise(String(file.kind)).toLowerCase()}
+                        </button>`
+                    : html`<button class="btn sm" data-read-itt-text="${file.ingestionId}">Read this invitation</button>`
                   : road === 'LOOK'
                     ? html`<button class="btn sm" data-read-itt="${entry.hash}">Read it with a model that can see</button>`
                     : road === 'UNREAD'

@@ -52,16 +52,19 @@ export async function billing(root) {
   };
 
   /*
-   * The realised rate: what was charged, over what the *charged* runs cost.
+   * What this platform pays a provider, and what it makes, is not on this
+   * screen and is no longer in the response behind it.
    *
-   * This divided by every run's cost whether it was billed or given away, and
-   * on an exempt account that is two different things in one ratio: billed
-   * stops rising, provider cost keeps rising, and the figure decays towards
-   * zero. It reported **1.70×** on a platform whose floor is 4×, which reads as
-   * selling below cost and was simply the wrong denominator. Runs nobody was
-   * charged for are Absorbed, not a discount.
+   * It was both. "Billed this month £1.72 on £0.43 of provider cost" and an
+   * "Effective multiplier" card told every customer exactly what CONSTRUX pays
+   * and therefore exactly what the markup is — and `/v1/billing/wallet`
+   * returned the lifetime margin and its percentage whether or not anything
+   * rendered them, so taking the cards away alone would have changed nothing.
+   * The operator sees all of it on ACU Economy, through operator-only routes.
+   *
+   * What a customer is owed here is what they were charged, what is left, and
+   * what their own caps are doing. That is the whole of it.
    */
-  const effective = wallet.monthChargedRawMinor > 0 ? wallet.monthBilledMinor / wallet.monthChargedRawMinor : null;
   const totalBilled = attribution.attribution.reduce((sum, a) => sum + a.billedMinor, 0);
   const totalCalls = attribution.attribution.reduce((sum, a) => sum + a.calls, 0);
 
@@ -333,25 +336,7 @@ export async function billing(root) {
           <h2>Billed this month</h2>
           <div class="metric orange">${exact(wallet.monthBilledMinor)}</div>
           <div class="metric-sub">${
-            // Kept apart rather than blended. A month can contain both — charges
-            // raised before an exemption began, and runs borne since — and one
-            // sentence covering both said "£1.72 billed, borne by CONSTRUX",
-            // which cannot both be true of the same money.
-            wallet.monthAbsorbedRawMinor > 0
-              ? html`on ${exact(wallet.monthChargedRawMinor)} of provider cost.
-                  A further ${exact(wallet.monthAbsorbedRawMinor)} of provider cost was borne by CONSTRUX and charged to
-                  nobody.`
-              : html`on ${exact(wallet.monthChargedRawMinor)} of provider cost`
-          }</div>
-        </div>
-        <div class="card">
-          <h2>Effective multiplier</h2>
-          <div class="metric">${effective === null ? '—' : `${effective.toFixed(2)}×`}</div>
-          <div class="metric-sub">${
-            effective === null
-              ? html`nothing was charged this month, so there is no rate to realise`
-              : html`charged over what those runs cost — between ${plane?.markupRange?.[0] ?? 4}× and
-                  ${plane?.markupRange?.[1] ?? 10}× depending on monthly usage`
+            wallet.unmetered ? 'AI is not charged on this account' : `${exact(wallet.lifetimeBilledMinor)} billed in total`
           }</div>
         </div>
       </div>
@@ -369,14 +354,14 @@ export async function billing(root) {
                       .map((a) => ({ label: humanise(a.module), value: a.billedMinor / 100 })),
                     format: (value) => money(Math.round(value * 100)),
                     footnote:
-                      'Billed, not provider cost. The difference between the two is this platform’s margin and is ' +
-                      'shown as its own column in the table below.',
+                      'What each engine was charged at, and what share of the month it accounts for — so a bill is ' +
+                      'explainable by where the work happened rather than arriving as a lump sum.',
                   })}
                 </div>`
               : ''
           }
           ${table({
-            headers: ['Module', 'Ran on', 'Runs', 'Provider cost', 'Billed', 'Share'],
+            headers: ['Module', 'Ran on', 'Runs', 'Billed', 'Share'],
             align: ['', '', 'num', 'num', 'num', ''],
             rows: attribution.attribution.map((a) => [
               humanise(a.module),
@@ -392,7 +377,6 @@ export async function billing(root) {
                   ? badge('Both', 'warn')
                   : badge('A model', ''),
               a.calls,
-              exact(a.rawCostMinor),
               exact(a.billedMinor),
               track(totalBilled === 0 ? 0 : (a.billedMinor / totalBilled) * 100),
             ]),
@@ -486,7 +470,7 @@ export async function billing(root) {
               </div>`
         }
         <div class="metric-sub" style="margin-top:10px">
-          Total lifetime: ${exact(wallet.lifetimeBilledMinor)} billed on ${exact(wallet.lifetimeRawCostMinor)} of provider cost across ${totalCalls} executions.
+          Total lifetime: ${exact(wallet.lifetimeBilledMinor)} billed across ${totalCalls} executions.
         </div>
       </div>
 
