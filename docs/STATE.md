@@ -24822,3 +24822,39 @@ a screen that refuses without explaining.
 screen does it; a test fails if one does not. The panel is on Pipeline & Bids
 and Tender & Procurement, reading one endpoint, holding no rule of its own — the
 same reason the console holds no copy of the permission matrix.
+
+### Naming the step and not the door
+
+*"There is not do this Price the bill anywhere."* The flow panel named the
+step — "measure the drawings" — and the screen has no button of that name,
+because the button is called **Read and price the pack**. Naming a step and not
+a door sends somebody hunting a screen for a control that is in front of them
+under another name, and then they conclude the flow is broken.
+
+Every step now carries the button's own words and the panel prints them:
+*"Press **Read and price the pack** on Tender & Procurement."* A test reads
+every door the flow can emit and fails if the console prints no button of that
+name. It is a spelling check and must stay one — it proves the label exists,
+not that pressing it works.
+
+### A schema that refused its own engine
+
+`VALIDATION_FAILED — turnoverMinorByYear must contain at least 1 item(s);
+targetMarginPercent must be of type number, received object`, on the company
+profile the whole bid pipeline waits for. The form was right and the schema was
+wrong, twice, and both are the same defect: it had drifted from the engine it
+guards.
+
+`turnoverMinorByYear` is `number[]`, and the schema demanded
+`items: { type: 'object' }` — a correctly filled year list refused for being
+exactly what the engine reads. `targetMarginPercent` is `{ min, max }` and the
+radar reads `.max` of it; the schema demanded a bare number, so every correct
+submission was refused **and** anything satisfying the schema would have crashed
+the radar. `capacity` was an open object and is now its two integers.
+
+That is the third schema-versus-engine drift this file records, after the
+confirm route's missing properties and the estimate route's unlisted
+`basisOfEstimate`. `companyfacts.test.ts` pins this one from both ends: the
+payload the console sends must pass the schema, and the same object is assigned
+to `CompanyProfile`, so a change to the engine's type that the payload no longer
+satisfies fails the typecheck rather than a test nobody reruns.

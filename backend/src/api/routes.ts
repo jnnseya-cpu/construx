@@ -3638,7 +3638,13 @@ export const ROUTES: Route[] = [
         legalName: stringField,
         // At least one year, because the radar sizes what the business can carry
         // from turnover and will not invent it.
-        turnoverMinorByYear: { type: 'array', minItems: 1, items: { type: 'object' } },
+        //
+        // Integers, not objects. The engine's type is `number[]` and this said
+        // `items: { type: 'object' }` — so a correctly filled form was refused
+        // for sending exactly what the engine reads. A schema that disagrees
+        // with its own engine refuses the right answer and accepts the wrong
+        // one, which is worse than having no schema at all.
+        turnoverMinorByYear: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 0 } },
         netAssetsMinor: { type: 'integer' },
         workingCapitalMinor: { type: 'integer' },
         regions: { type: 'array', items: { type: 'string' } },
@@ -3654,8 +3660,27 @@ export const ROUTES: Route[] = [
         accreditations: { type: 'array', items: { type: 'string' } },
         references: { type: 'array', items: { type: 'object' } },
         selfDeliveredTrades: { type: 'array', items: { type: 'string' } },
-        targetMarginPercent: { type: 'number' },
-        capacity: { type: 'object' },
+        // A range, not a number. `CompanyProfile.targetMarginPercent` is
+        // `{ min, max }` and the radar reads both — `profile.targetMarginPercent.max`
+        // is compared against what a job would return. Declared as a bare number
+        // here, every correctly shaped submission was refused with "must be of
+        // type number, received object", and anything that satisfied the schema
+        // would have crashed the radar on `.max` of a number.
+        targetMarginPercent: {
+          type: 'object',
+          required: ['min', 'max'],
+          properties: { min: { type: 'number', minimum: 0 }, max: { type: 'number', minimum: 0 } },
+          additionalProperties: false,
+        },
+        capacity: {
+          type: 'object',
+          required: ['concurrentProjects', 'committedProjects'],
+          properties: {
+            concurrentProjects: { type: 'integer', minimum: 0 },
+            committedProjects: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },

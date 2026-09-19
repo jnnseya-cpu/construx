@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import { rejectsCode } from './helpers.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
@@ -32,6 +33,8 @@ import { seedDemoProject, type SeedResult } from '../src/seed.ts';
  * else. One person, on one screen, accepts — and that single act confirms every
  * reading, writes the bill, prices it and draws up the quotation.
  */
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 let directory: string;
 let store: EvidenceStore;
@@ -395,6 +398,39 @@ describe('where the job is, and the one thing to do next', () => {
     assert.match(flow.summary, /Next: issue it/);
   });
 
+  it('names a button that actually exists on the screen it names', () => {
+    /*
+     * Reported as "there is not do this Price the bill anywhere".
+     *
+     * The panel named the step — "measure the drawings" — and the screen has no
+     * button of that name, because the button is called "Read and price the
+     * pack". A step that names a door nobody can find is worse than no step at
+     * all: it sends somebody hunting a screen for a control that is in front of
+     * them under another name, and then they conclude the flow is broken.
+     *
+     * So every door this flow prints is checked against the console's own
+     * source. It is a spelling check and must stay one — it proves the label
+     * exists on the page, not that pressing it works.
+     */
+    const pages = readdirSync(join(REPO_ROOT, 'frontend', 'pages'))
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => readFileSync(join(REPO_ROOT, 'frontend', 'pages', name), 'utf8'))
+      .join('\n');
+
+    const flows = [bidFlow(platform, ctxFor('qs'))];
+    const missing: string[] = [];
+    for (const flow of flows) {
+      for (const step of flow.steps) {
+        if (!step.door) continue;
+        // "Re-read, on the file's own row" — the label is the part before the
+        // comma; the rest tells somebody where on the screen to look.
+        const label = step.door.split(',')[0]!.trim();
+        if (!pages.includes(label)) missing.push(`${step.id} points at a button called "${label}", which no console page prints`);
+      }
+    }
+    assert.deepEqual(missing, [], `\n${missing.join('\n')}\n`);
+  });
+
   it('names what to do, not only what is missing', () => {
     const flow = bidFlow(platform, ctxFor('qs'));
     for (const step of flow.steps) {
@@ -424,7 +460,8 @@ describe('where the job is, and the one thing to do next', () => {
 
     const flow = bidFlow(platform, platform.context(seed.users.qs!.auth, empty, { source: 'WEB' }));
     assert.equal(flow.nowDo?.id, 'PACK_FILED');
-    assert.match(String(flow.nowDo?.next), /Upload the drawings/);
+    // The button, by the words printed on it, not the name of the step.
+    assert.equal(flow.nowDo?.door, 'Upload a tender document');
     assert.equal(flow.steps.find((step) => step.id === 'MEASURED')!.state, 'BLOCKED');
   });
 });

@@ -55,6 +55,16 @@ export type FlowStep = {
   detail: string;
   /** What to do about it, where it is not done. */
   next?: string;
+  /**
+   * The button to press, in the words printed on it.
+   *
+   * Reported as *"there is not do this Price the bill anywhere"*: the panel
+   * named the step — "measure the drawings" — and the screen has no button of
+   * that name, because the button is called "Read and price the pack". Naming
+   * the step and not the door leaves somebody hunting a screen for a control
+   * that is right in front of them under another name.
+   */
+  door?: string;
   /** The screen that takes the action. */
   screen: 'pipeline' | 'procurement' | 'documents' | 'enterprise';
 };
@@ -119,8 +129,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
               : `${files.length} file${files.length === 1 ? ' is' : 's are'} filed and none reads as a drawing.`,
           next:
             files.length === 0
-              ? 'Upload the drawings and the enquiry on Pipeline & Bids. Nothing downstream can measure a pack that is not here.'
-              : 'If a drawing is typed as something else, press Re-read on its row — a file keeps whatever the rules said when it was filed.',
+              ? 'Nothing downstream can measure a pack that is not here.'
+              : 'A file keeps whatever the rules said when it was filed, so a drawing typed as something else is re-read rather than re-uploaded.',
+          door: files.length === 0 ? 'Upload a tender document' : 'Re-read, on the file’s own row',
           screen: 'pipeline',
         },
   );
@@ -141,8 +152,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           detail: 'Nothing is measured yet, so there is nothing to price.',
           next:
             drawings.length > 0
-              ? 'Tender & Procurement → "Read and price the pack" reads every sheet and proposes a rate for each line from your own past estimates. Or enter what you measured yourself.'
+              ? 'It reads every sheet, measures it, and proposes a rate for each line from your own past estimates — and accepting it does the pricing and the quotation in the same act. "Enter measured quantities", beside it, is the door for a take-off you did with a scale rule.'
               : 'A drawing has to be filed before anything can be measured off it.',
+          ...(drawings.length > 0 ? { door: 'Read and price the pack' } : {}),
           screen: 'procurement',
         },
   );
@@ -168,8 +180,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
             estimates.length > 0
               ? 'Price the outstanding heads or state them as exclusions. A nought against a head is not a job without it, and a quotation cannot be drawn from an estimate that carries one.'
               : boqItems.length > 0
-                ? 'Tender & Procurement → "Price the bill", or accept the pack run, which prices it from your own committed rates.'
-                : 'A bill of quantities has to exist before it can be priced.',
+                ? 'The button sits under the bill, and is locked until something is measured — which it now is. Accepting the pack run prices it in the same act instead.'
+                : 'A bill of quantities has to exist before it can be priced. The button is there and locked until it does.',
+          door: 'Price the bill',
           screen: 'procurement',
         },
   );
@@ -190,8 +203,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           detail: 'No offer has been composed from this estimate.',
           next:
             complete.length > 0
-              ? 'Tender & Procurement → "Draw up the quotation". The customer sees the works, the quantities, the money and the qualifications — never the build-up.'
+              ? 'It sits under the estimate build-up. The customer sees the works, the quantities, the money and the qualifications — never the build-up.'
               : 'A complete estimate has to exist before an offer can be composed from it.',
+          door: 'Draw up the quotation',
           screen: 'procurement',
         },
   );
@@ -212,8 +226,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           detail: 'Nothing has gone out under a number yet.',
           next:
             quotations.length > 0
-              ? 'Site Documents → Legal instruments: generate, submit, approve and issue. Issuing reserves the number and freezes what was approved, which is the one step here that is a legal act rather than arithmetic.'
+              ? 'Under Legal instruments: generate, then submit, then approve, then issue. Issuing reserves the number and freezes what was approved, which is the one step here that is a legal act rather than arithmetic.'
               : 'A quotation has to be drafted before it can be issued.',
+          door: 'Generate a revision, on the quotation’s own row',
           screen: 'documents',
         },
   );
@@ -238,8 +253,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       next: registerDone
         ? undefined
         : invitation
-          ? 'Pipeline & Bids → "It only asks for a price" where the enquiry is a letter, or "Add a deliverable" for each item a formal invitation asks for. Reading the invitation with AI files the whole register at once.'
-          : 'Record the invitation first, on Pipeline & Bids.',
+          ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
+          : 'Record the invitation first.',
+      door: invitation ? 'It only asks for a price' : 'Record an ITT',
       screen: 'pipeline',
     }),
   );
@@ -259,8 +275,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
         analyses.length > 0
           ? undefined
           : profile
-            ? 'Read the invitation on Pipeline & Bids and confirm the reading. The matrix is produced by the confirmation, not by the reading.'
-            : 'Record the company’s facts on Pipeline & Bids first — most of the form is filled in from your own projects.',
+            ? 'The matrix is produced by the confirmation, not by the reading, so the reading has to be confirmed before it exists.'
+            : 'Most of the form is filled in from your own projects; what the platform cannot know is left blank.',
+      door: profile ? 'Read this invitation, on the document’s own row' : 'Record the company’s facts',
       screen: 'pipeline',
     }),
   );
@@ -278,8 +295,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
         packs.length > 0
           ? 'Write the next section until none remains, then attack the pack before issuing it.'
           : analyses.length > 0
-            ? 'Pipeline & Bids → "Plan a response pack", then write one section at a time.'
+            ? 'Then write one section at a time: the size of the tender decides how many passes run, never how much of it fits into one.'
             : 'A compliance matrix has to exist before a submission can be planned against it.',
+      door: packs.length > 0 ? 'Write the next section' : 'Plan a response pack',
       screen: 'pipeline',
     }),
   );
@@ -297,8 +315,9 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
         reviews.length > 0
           ? undefined
           : packs.length > 0
-            ? 'Pipeline & Bids → "Attack the pack". A pack that passes every completeness rule can still score nothing.'
+            ? 'A pack that passes every completeness rule can still score nothing, because completeness is not the question a scorer asks.'
             : 'A pack has to exist before it can be attacked.',
+      door: 'Attack the pack',
       screen: 'pipeline',
     }),
   );

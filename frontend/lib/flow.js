@@ -52,7 +52,23 @@ export function flowPanel(flow, { here } = {}) {
         now
           ? html`<div class="notice ${now.state === 'READY' ? 'warn' : 'info'}" style="margin-top:11px">
               <div>
-                <b>Next: ${now.title}.</b> ${now.next ?? now.detail}
+                <b>Next: ${now.title}.</b>
+                ${
+                  /*
+                   * The button, in the words printed on it.
+                   *
+                   * Reported as "there is not do this Price the bill anywhere":
+                   * the panel named the step and the screen has no button of
+                   * that name, because the button is called something else.
+                   * Naming a step and not a door sends somebody hunting a
+                   * screen for a control that is in front of them.
+                   */
+                  now.door
+                    ? html` Press <b>“${now.door}”</b> on
+                        <b>${now.screen === here ? 'this screen' : SCREEN[now.screen] ?? 'the next screen'}</b>.`
+                    : ''
+                }
+                ${now.next ?? now.detail}
                 ${
                   SCREEN[now.screen] && now.screen !== here
                     ? html` <button class="btn quiet sm" data-nav="${now.screen}" style="margin-left:6px">
@@ -75,7 +91,9 @@ export function flowPanel(flow, { here } = {}) {
               <b style="${raw(step.state === 'NOT_NEEDED' ? 'color:var(--text-3)' : '')}">${step.title}</b>
               <span class="metric-sub" style="display:block;margin-top:2px">${step.detail}</span>
             </span>
-            <span class="val metric-sub">${SCREEN[step.screen] ?? ''}</span>
+            <span class="val metric-sub">
+              ${step.door && step.state !== 'DONE' && step.state !== 'NOT_NEEDED' ? html`“${step.door}” · ` : ''}${SCREEN[step.screen] ?? ''}
+            </span>
           </div>`,
         )}
       </div>
