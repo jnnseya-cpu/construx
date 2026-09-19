@@ -24765,3 +24765,25 @@ a bid disqualified.
 it, which is still asking somebody to go and find the thing that unblocks them.
 The form was defined inside its own panel's click handler and was unreachable
 from anywhere else; it is a function now, and both call it.
+
+### The enquiry that is a letter, not a tender pack
+
+Most small works arrive as an architect's letter with the drawings attached and
+a date to price by. There is no instructions-to-tenderers document, no numbered
+return register, and nothing for the invitation reader to find — it says so
+correctly, quoting the character count — and then the bid sits blocked for ever
+on "this invitation has not been read".
+
+The gate was never asking for an AI reading. It asks whether anybody has written
+down what has to go back, and on a job like this the answer is one line: a
+priced quotation, by a date. **It only asks for a price** records exactly that
+in one press instead of eleven fields — a person stating it, with the owner, the
+source and the internal date every mandatory return needs, so the gate stays as
+strict as it was.
+
+The response-pack door's refusal was improved at the same time. "This project
+holds no compliance matrix" is true and leaves somebody nowhere to go, and there
+are two different reasons for it: with no company facts recorded a matrix cannot
+be built at all, and with them it is produced by reading an invitation and
+confirming the reading. It now says which, and says plainly that an enquiry
+asking only for a price needs neither a matrix nor a response pack.

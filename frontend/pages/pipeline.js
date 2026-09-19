@@ -3,7 +3,7 @@ import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { insightPanel } from '../lib/insight.js';
-import { SECTOR_GROUPED } from '../lib/enums.js';
+import { SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
@@ -820,6 +820,11 @@ export async function pipeline(root) {
                 permitted: can('BUSINESS_DEVELOPMENT', 'C', TENANT), reason: blockedReason('BUSINESS_DEVELOPMENT', 'C', TENANT) },
               { id: 'invitation', label: 'Record an ITT', tone: '',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
+              { id: 'quote-only', label: 'It only asks for a price',
+                permitted: can('ESTIMATE_TENDER', 'U') && invitationOptions.length > 0,
+                reason: invitationOptions.length === 0
+                  ? 'No invitation is recorded, so there is nothing to record a return against.'
+                  : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'deliverable', label: 'Add a deliverable',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'addendum', label: 'Record an addendum',
@@ -1404,8 +1409,30 @@ export async function pipeline(root) {
       path: `/v1/projects/${projectId}/bid-responses`,
       submitLabel: 'Plan',
       fields: [
-        { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+        {
+          name: 'analysisId',
+          label: 'Compliance matrix',
+          type: 'select',
+          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
+          /*
+           * Why there is none, not merely that there is none.
+           *
+           * "This project holds no compliance matrix" is true and leaves
+           * somebody with nowhere to go — and there are two quite different
+           * reasons for it, with different remedies. A matrix is the buyer's
+           * requirements set against this company's own facts, so with no
+           * facts recorded it cannot be built at all; with facts recorded, it
+           * is produced by reading an invitation and confirming the reading.
+           */
+          hint: profile?.error
+            ? 'A matrix sets the buyer’s requirements against what this business holds, and this company’s facts are ' +
+              'not recorded yet — so there is nothing to set them against. Record them at the bottom of this screen ' +
+              'first; most of the form is already filled in from your own projects. Then read the invitation and ' +
+              'confirm the reading.'
+            : 'A matrix is produced by reading an invitation and confirming that reading. Read one above, confirm ' +
+              'what it found, and it appears here. An enquiry that arrived as a letter asking for a price needs no ' +
+              'matrix and no response pack — price it on Tender & Procurement and send the quotation.',
+        },
       ],
     },
     'bid-section': {
@@ -1764,6 +1791,72 @@ export async function pipeline(root) {
       }),
     },
 
+    /*
+     * The enquiry that is a letter, not a tender pack.
+     *
+     * Most small works arrive this way: an architect writes, attaches the
+     * drawings, and asks for a price by a date. There is no instructions-to-
+     * tenderers document, no numbered return register, and nothing for the
+     * invitation reader to find — it says so correctly, quoting the character
+     * count, and then the bid sits blocked on "this invitation has not been
+     * read" for ever.
+     *
+     * The gate is not asking for an AI reading. It is asking whether anybody
+     * has written down what has to go back, and on a job like this the answer
+     * is one line: a priced quotation, by a date. So this says exactly that, in
+     * one press, rather than making somebody fill eleven fields to record the
+     * least surprising fact in construction.
+     *
+     * It is a person stating it, not the platform inferring it. The gate stays
+     * exactly as strict — the deliverable it files carries the owner, the
+     * source and the internal date that every mandatory return needs.
+     */
+    'quote-only': {
+      title: 'This enquiry asks only for a price',
+      intent:
+        'For an enquiry that arrived as a letter rather than a tender pack. It records one mandatory return — a ' +
+        'priced quotation — with an owner, a date of our own and the document it came from, which is what the bid ' +
+        'gate is actually asking for. Nothing is inferred: you are stating that this buyer asked for a price and ' +
+        'nothing else, and anything else they turn out to want is added the same way.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        {
+          name: 'owner',
+          label: 'Who produces it',
+          type: 'select',
+          options: roleOptions,
+          value: 'QS',
+          hint: 'A mandatory return needs an owner before a bid can be approved.',
+        },
+        {
+          name: 'internalDueBy',
+          label: 'Our own date',
+          type: 'date',
+          min: today(),
+          ...(board.length === 1 && board[0]?.deadline?.local
+            ? { value: new Date(Date.parse(board[0].deadline.local) - 3 * 86_400_000).toISOString().slice(0, 10) }
+            : {}),
+          hint: 'Earlier than the buyer’s, and the one that actually binds. Suggested three days before the close.',
+        },
+        {
+          name: 'sourceDocument',
+          label: 'The document that asked',
+          type: 'text',
+          placeholder: 'The enquiry letter',
+          hint: 'What it is traceable to. A mandatory return with no source is a promise nobody can check.',
+        },
+      ],
+      transform: (v) => ({
+        reference: 'Q-01',
+        title: 'A priced quotation',
+        mandatory: true,
+        owner: v.owner,
+        internalDueBy: v.internalDueBy,
+        source: { document: v.sourceDocument },
+      }),
+    },
     deliverable: {
       title: 'Add a return deliverable',
       intent:
