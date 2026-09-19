@@ -227,8 +227,23 @@ async function marketRates(
   ctx: EngineContext,
   lines: ProposedLine[],
   where: string,
-): Promise<{ rates: Map<string, ProposedRate>; acuConsumed: number }> {
-  const rates = new Map<string, ProposedRate>();
+): Promise<{ rates: Map<number, ProposedRate>; acuConsumed: number }> {
+  /*
+   * Keyed by the position in the list the model was handed, not by the words
+   * it echoed back.
+   *
+   * The first version matched the answer to the question on a normalised
+   * description, and against a real model it matched nothing at all: twenty-two
+   * lines went out, twenty-two rates came back, and every one was dropped
+   * because *"Excavation for West pad foundation (750x750mm), maximum depth
+   * 1.8m."* had come back lightly reworded. The run then told somebody the
+   * market view could put no rate against any of their items, which was a true
+   * sentence about a join and a false one about the world.
+   *
+   * A model asked to echo a paragraph will paraphrase it. A model asked to echo
+   * the number 7 returns 7.
+   */
+  const rates = new Map<number, ProposedRate>();
   if (lines.length === 0) return { rates, acuConsumed: 0 };
 
   const today = new Date().toISOString().slice(0, 10);
@@ -240,16 +255,23 @@ async function marketRates(
     request: {
       task:
         'Give a current market unit rate for each measured item, for a contractor working in the region and at the ' +
-        'date stated. Split each rate into labour, materials, plant and subcontract so it can be priced to the right ' +
-        'cost head, and give a low and a high for the range you would expect to see. State the basis of each in one ' +
-        'sentence an estimator can argue with. Omit any item you cannot support a rate for rather than filling the ' +
-        'row — an omitted line is corrected in seconds, and a confident wrong rate is not noticed until the job is ' +
-        'lost or built at a loss. All money in minor units.',
+        'date stated. Answer with the item’s own `index` exactly as given — never a reworded description, which is ' +
+        'how an answer gets lost on the way back. Give an all-in `rateMinor` for every item you answer, and split it ' +
+        'into labour, materials, plant and subcontract where you can so it lands on the right cost head. Give a low ' +
+        'and a high for the range you would expect to see, and state the basis in one sentence an estimator can ' +
+        'argue with. Omit any item you cannot support a rate for rather than filling the row — an omitted line is ' +
+        'corrected in seconds, and a confident wrong rate is not noticed until the job is lost or built at a loss. ' +
+        'All money in minor units, so £125.00 is 12500.',
       payload: {
         region: where,
         date: today,
         currency: 'GBP',
-        items: lines.map((line) => ({ description: line.description, unit: line.unit, quantity: line.quantity })),
+        items: lines.map((line, index) => ({
+          index,
+          description: line.description,
+          unit: line.unit,
+          quantity: line.quantity,
+        })),
       },
       responseSchema: {
         type: 'object',
@@ -259,8 +281,8 @@ async function marketRates(
             items: {
               type: 'object',
               properties: {
-                description: { type: 'string' },
-                unit: { type: 'string' },
+                index: { type: 'number' },
+                rateMinor: { type: 'number' },
                 labourMinor: { type: 'number' },
                 materialMinor: { type: 'number' },
                 plantMinor: { type: 'number' },
@@ -269,7 +291,7 @@ async function marketRates(
                 highMinor: { type: 'number' },
                 basis: { type: 'string' },
               },
-              required: ['description', 'unit', 'basis'],
+              required: ['index', 'rateMinor', 'basis'],
             },
           },
           omitted: { type: 'array', items: { type: 'string' } },
@@ -285,31 +307,52 @@ async function marketRates(
 
   const answered = (result.output.rates as Array<Record<string, unknown>> | undefined) ?? [];
   for (const answer of answered) {
-    const labour = Math.max(0, Math.round(Number(answer.labourMinor ?? 0)));
-    const material = Math.max(0, Math.round(Number(answer.materialMinor ?? 0)));
-    const plant = Math.max(0, Math.round(Number(answer.plantMinor ?? 0)));
-    const subcontract = Math.max(0, Math.round(Number(answer.subcontractMinor ?? 0)));
-    const allIn = labour + material + plant + subcontract;
+    const index = Number(answer.index);
+    // An answer to a question that was not asked. Dropped rather than guessed
+    // at: there is no way to know which line it meant.
+    if (!Number.isInteger(index) || index < 0 || index >= lines.length) continue;
+
+    const at = (key: string): number => Math.max(0, Math.round(Number(answer[key] ?? 0)));
+    const labour = at('labourMinor');
+    const material = at('materialMinor');
+    const plant = at('plantMinor');
+    const subcontract = at('subcontractMinor');
+    const split = labour + material + plant + subcontract;
+    const allIn = at('rateMinor') || split;
+
     // A row with no money in it is an omission the model reported in the shape
     // of an answer, and carrying it would put a zero rate on a priced line.
     if (allIn <= 0) continue;
 
+    /*
+     * A rate given without a split still has to land on a cost head.
+     *
+     * Carried as direct works and **said so in the basis**, because the
+     * allocation is not a detail: it decides whether inflation touches the
+     * money and whether it reads as our own labour or a bought package. It does
+     * not change the total, so nobody is misled about the price — but somebody
+     * pricing a subcontract package should move it, and can only do that if the
+     * screen tells them it was assumed.
+     */
+    const unsplit = split <= 0;
     const low = Number(answer.lowMinor ?? 0);
     const high = Number(answer.highMinor ?? 0);
-    rates.set(rateKey(String(answer.description ?? ''), String(answer.unit ?? '')), {
+    rates.set(index, {
       source: 'MARKET_AI',
       allInMinor: allIn,
-      labourRateMinor: labour,
-      materialRateMinor: material,
-      plantRateMinor: plant,
-      subcontractRateMinor: subcontract,
+      labourRateMinor: unsplit ? allIn : labour,
+      materialRateMinor: unsplit ? 0 : material,
+      plantRateMinor: unsplit ? 0 : plant,
+      subcontractRateMinor: unsplit ? 0 : subcontract,
       confidence: 'MODEL_VIEW',
       observations: 0,
       projects: 0,
       newestOn: today,
       ...(low > 0 ? { lowMinor: Math.round(low) } : {}),
       ...(high > 0 ? { highMinor: Math.round(high) } : {}),
-      basis: `A model\u2019s view of the ${where} market on ${today}: ${String(answer.basis ?? 'no basis given')}`,
+      basis:
+        `A model\u2019s view of the ${where} market on ${today}: ${String(answer.basis ?? 'no basis given')}` +
+        (unsplit ? ' No split between labour, materials, plant and subcontract was given, so it is carried as direct works.' : ''),
     });
   }
 
@@ -423,10 +466,10 @@ export async function proposePackPrice(
     try {
       const market = await marketRates(ctx, gaps, where);
       marketConsumed = market.acuConsumed;
-      for (const line of gaps) {
-        const rate = market.rates.get(rateKey(line.description, line.unit));
+      gaps.forEach((line, index) => {
+        const rate = market.rates.get(index);
         if (rate) line.rate = rate;
-      }
+      });
     } catch (error) {
       // An unfunded wallet, an unavailable provider, a refusal. The run is not
       // lost for it: the lines stay unpriced and say so, which is where they
@@ -443,7 +486,8 @@ export async function proposePackPrice(
   for (const line of lines) {
     if (line.rate === null && !line.unpriced) {
       line.unpriced =
-        'Neither this business\u2019s record nor the market view could put a rate against this item. Put one against it yourself.';
+        'Nothing in this business\u2019s record prices this item, and the market view returned no rate it could ' +
+        'support for it. Put one against it yourself.';
     }
   }
 

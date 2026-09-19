@@ -67,6 +67,15 @@ const SHEETS = [
 let marketAsked: ProviderRequest[] = [];
 
 /**
+ * How the market stub answers, because real models do not all answer alike.
+ *
+ * `SPLIT` gives the four components. `ALL_IN` gives only a single rate, which
+ * is what a model does more often than not. `WRONG_INDEX` answers a question
+ * nobody asked — the failure that has to be dropped rather than guessed at.
+ */
+let marketStyle: 'SPLIT' | 'ALL_IN' | 'WRONG_INDEX' = 'SPLIT';
+
+/**
  * A reasoning provider with a view on the market.
  *
  * It answers for the coping line and says nothing about anything else, which
@@ -84,7 +93,8 @@ function reasoningStub(): AIProviderAdapter {
     healthy: () => true,
     async execute(request: ProviderRequest): Promise<ProviderResponse> {
       marketAsked.push(request);
-      const items = ((request.payload as { items?: Array<{ description: string; unit: string }> } | undefined)?.items) ?? [];
+      const items =
+        ((request.payload as { items?: Array<{ index: number; description: string; unit: string }> } | undefined)?.items) ?? [];
       return {
         provider: 'OPENAI',
         modelClass: 'reasoning-standard',
@@ -92,12 +102,16 @@ function reasoningStub(): AIProviderAdapter {
           rates: items
             .filter((item) => item.description.startsWith('Replace coping'))
             .map((item) => ({
-              description: item.description,
+              index: marketStyle === 'WRONG_INDEX' ? item.index + 99 : item.index,
+              // Reworded, deliberately. A real model paraphrases what it is
+              // shown, and the first version of this join matched on the
+              // description and therefore matched nothing at all.
+              description: 'Coping replacement, bedded & pointed',
               unit: item.unit,
-              labourMinor: 7_000,
-              materialMinor: 5_500,
-              plantMinor: 0,
-              subcontractMinor: 0,
+              rateMinor: 12_500,
+              ...(marketStyle === 'ALL_IN'
+                ? {}
+                : { labourMinor: 7_000, materialMinor: 5_500, plantMinor: 0, subcontractMinor: 0 }),
               lowMinor: 10_000,
               highMinor: 15_500,
               basis: 'Reclaimed stone coping, bedded and pointed, two-man gang at typical north-west day rates.',
@@ -374,6 +388,40 @@ describe('the run from an uploaded pack', () => {
     // evidence whether or not anybody acts on it.
     const drafts = platform.ledger.list(projectId, 'PerceptionDraft').map((record) => record.state);
     assert.ok(drafts.filter((draft) => draft.task === 'DRAWING_TAKEOFF' && draft.status === 'DRAFT').length >= 2);
+  });
+
+  it('takes a rate given without a split, and says where it put it', async () => {
+    // What a model does more often than not: one number, no components. The
+    // total is the same either way, so nobody is misled about the price — but
+    // the allocation decides whether inflation touches the money and whether it
+    // reads as our own labour or a bought package, so it is stated rather than
+    // assumed silently.
+    marketStyle = 'ALL_IN';
+    try {
+      const proposal = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });
+      const coping = proposal.lines.find((line) => line.description.startsWith('Replace coping'))!;
+      assert.equal(coping.rate?.allInMinor, 12_500);
+      assert.equal(coping.rate?.labourRateMinor, 12_500);
+      assert.equal(coping.rate?.materialRateMinor, 0);
+      assert.match(String(coping.rate?.basis), /carried as direct works/);
+    } finally {
+      marketStyle = 'SPLIT';
+    }
+  });
+
+  it('drops an answer to a question it did not ask', async () => {
+    // There is no way to know which line an out-of-range index meant, so the
+    // line stays unpriced and says so. Guessing would put somebody else's rate
+    // on this item.
+    marketStyle = 'WRONG_INDEX';
+    try {
+      const proposal = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });
+      const coping = proposal.lines.find((line) => line.description.startsWith('Replace coping'))!;
+      assert.equal(coping.rate, null);
+      assert.match(String(coping.unpriced), /no rate it could support/);
+    } finally {
+      marketStyle = 'SPLIT';
+    }
   });
 
   it('names the cost heads nothing has answered for, before the acceptance', async () => {

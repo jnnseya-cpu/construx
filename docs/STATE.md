@@ -24953,3 +24953,31 @@ project in a tenancy that has estimates still inherits one. The test builds a
 tenancy that has never priced anything, funds it through the payment path so a
 model can actually read the sheets, and asserts that insurance and waste — the
 two the person met — come back named.
+
+### Twenty-two rates came back and every one was dropped
+
+Reported from the live platform: 22 measured lines, **0 priced**, every row
+reading *"neither this business's record nor the market view could put a rate
+against this item"*. The market call had not failed — if it had, the line would
+have carried the provider's own error. It succeeded, and the join threw the
+answers away.
+
+The answer was matched to the question on a normalised description, and a model
+asked to echo *"Excavation for West pad foundation (750x750mm), maximum depth
+1.8m."* returns it lightly reworded. Every rate missed its line, and the run
+then told somebody the market could price none of their work — a true sentence
+about a join and a false one about the world.
+
+It is matched on the item's index now. A model asked to echo a paragraph will
+paraphrase it; a model asked to echo the number 7 returns 7. The stub in the
+test paraphrases deliberately, so the case that broke live is the case the test
+exercises.
+
+Two more things that lost live answers, both fixed with it. A rate given as a
+single `rateMinor` with no split — which is what a model returns more often than
+not — was discarded because the code summed four components that were not
+there; it is now taken, carried as direct works, and **says so in the basis**,
+because the allocation decides whether inflation touches the money even though
+it does not change the total. And an index outside the list is dropped rather
+than guessed at, leaving the line unpriced and saying so: there is no way to
+know which item somebody else's rate belonged to.
