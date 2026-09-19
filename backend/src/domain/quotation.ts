@@ -60,6 +60,9 @@ export type QuotationInput = {
 /** The most rows a document body holds, before the lifecycle refuses it. */
 const BODY_ROW_LIMIT = 200;
 
+/** The most a single row's value holds, which is what a long field runs into. */
+const BODY_VALUE_LIMIT = 2_000;
+
 export function quoteFromEstimate(
   platform: Platform,
   ctx: EngineContext,
@@ -140,19 +143,35 @@ export function quoteFromEstimate(
   // lines sum to the total exactly.
   const netTotal = lines.reduce((sum, line) => sum + lineNetCostMinor(line), 0);
   let allocated = 0;
+  /*
+   * The item number is the label and everything else is the value.
+   *
+   * The obvious shape — the description as the label, the money as the value —
+   * met `DOCUMENT_BODY_INVALID: … is too long` on the first real bill, because
+   * a document label is capped at 80 characters and a measured item is
+   * routinely longer: *"Excavation for two number pad foundations, commencing
+   * from existing ground level, maximum depth not exceeding 2.0m."* is 108.
+   *
+   * Truncating was never an option. The description **is** what the customer is
+   * being offered, and a quotation that shortens it offers something else. So
+   * the row is turned round: a short stable label, and the description,
+   * quantity and price together in the value, which holds two thousand
+   * characters. It also reads the way a priced bill reads.
+   */
   lines.forEach((line, index) => {
-    const label = `${index + 1}. ${line.description} — ${line.quantity} ${line.unit}`;
+    const label = `Item ${index + 1}`;
+    const measured = `${line.description} — ${line.quantity} ${line.unit}`;
     if (netTotal <= 0) {
       // Every rate excluded rather than priced: the works are stated and the
       // price stands as one sum, which is truthful where an apportionment
       // would be invented.
-      body[label] = 'Included in the sum below';
+      body[label] = `${measured} — included in the sum below`;
       return;
     }
     const share =
       index === lines.length - 1 ? totalMinor - allocated : Math.round((totalMinor * lineNetCostMinor(line)) / netTotal);
     allocated += share;
-    body[label] = formatMoney(share, currency);
+    body[label] = `${measured} — ${formatMoney(share, currency)}`;
   });
 
   body['Total, excluding VAT'] = formatMoney(totalMinor, currency);
@@ -163,6 +182,25 @@ export function quoteFromEstimate(
   exclusions.forEach((exclusion, index) => {
     body[`Not included ${index + 1} — ${exclusion.label ?? exclusion.head ?? ''}`.trim()] = exclusion.reason ?? 'Excluded';
   });
+
+  /*
+   * Every row against the limit the document body enforces, named by the row
+   * it is on.
+   *
+   * Refused rather than truncated. A basis of estimate or a covering note cut
+   * off mid-sentence in a quotation says something the estimate does not, and
+   * nobody reading the document can tell that anything was removed — which is
+   * the one failure mode a document that exists to be relied on cannot have.
+   */
+  for (const [label, value] of Object.entries(body)) {
+    if (typeof value === 'string' && value.length > BODY_VALUE_LIMIT) {
+      throw new DomainError(
+        'QUOTATION_FIELD_TOO_LONG',
+        `"${label}" is ${value.length} characters and a quotation row holds ${BODY_VALUE_LIMIT}. Shorten it — a quotation that cuts it off mid-sentence says something the estimate does not.`,
+        422,
+      );
+    }
+  }
 
   const document = createDraft(platform, actor, {
     documentType: 'quotation',

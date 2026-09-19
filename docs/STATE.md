@@ -24981,3 +24981,26 @@ because the allocation decides whether inflation touches the money even though
 it does not change the total. And an index outside the list is dropped rather
 than guessed at, leaving the line unpriced and saying so: there is no way to
 know which item somebody else's rate belonged to.
+
+### A measured item does not fit in a document label
+
+`DOCUMENT_BODY_INVALID — "1. Excavation for two number pad foundations,
+commencing from existing ground level, maximum depth not exceeding 2.0m. — 1.69
+m3" is too long`, on the first real bill to reach the quotation.
+
+A document label holds 80 characters. A measured item written to NRM2 is
+routinely longer — that one is 108 — and the quotation was composing the
+description *as* the label with the money as the value.
+
+Truncating was never an option. **The description is what the customer is being
+offered**, and a quotation that shortens it offers something else. So the row is
+turned round: `Item 1` as the label, and the description, the quantity and the
+price together in the value, which holds two thousand characters. It reads the
+way a priced bill reads, and nothing is lost.
+
+Every composed row is now swept against that two-thousand limit and refused by
+the row it is on, rather than being cut off. The case that reaches it in
+practice is the basis of the estimate, which the estimate route accepts at four
+thousand characters — a basis cut off mid-sentence in a quotation says something
+the estimate does not, and nobody reading the document can tell that anything
+was removed.

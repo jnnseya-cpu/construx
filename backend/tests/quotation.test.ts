@@ -89,8 +89,10 @@ describe('a priced estimate becomes a quotation', () => {
     assert.equal(body.Client, QUOTE.clientName);
     assert.equal(body['Payment terms'], '30 days from invoice');
     assert.match(String(body['Basis of this price']), /DR-S-1600/);
-    // Every measured line is on the offer, in order, with its quantity.
-    assert.match(String(Object.keys(body).find((k) => k.startsWith('1. '))), /Rake out and repoint in lime mortar — 86 m2/);
+    // Every measured line is on the offer, in order, with its quantity — the
+    // item number as the label and the works in the value, because a document
+    // label holds 80 characters and a measured item is routinely longer.
+    assert.match(String(body['Item 1']), /Rake out and repoint in lime mortar — 86 m2/);
     // The assumptions and the exclusion travel with the price as qualifications.
     assert.equal(body['Assumed 1'], 'Uninterrupted access to the churchyard');
     assert.match(
@@ -116,8 +118,13 @@ describe('a priced estimate becomes a quotation', () => {
     const estimate = completeEstimate();
     const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
 
-    const asMinor = (value: unknown): number => Math.round(Number(String(value).replace(/[^0-9.]/g, '')) * 100);
-    const lineRows = Object.entries(quoted.document.body).filter(([label]) => /^\d+\. /.test(label));
+    // The money is the last field of the row, after the works and the quantity.
+    // Parsing the whole string would pick up the quantity and the dimensions in
+    // the description, which is exactly the mistake a client's surveyor makes
+    // when a bill is laid out badly.
+    const asMinor = (value: unknown): number =>
+      Math.round(Number(String(value).split('—').at(-1)!.replace(/[^0-9.]/g, '')) * 100);
+    const lineRows = Object.entries(quoted.document.body).filter(([label]) => /^Item \d+$/.test(label));
     const summed = lineRows.reduce((total, [, value]) => total + asMinor(value), 0);
 
     assert.equal(lineRows.length, 3);
@@ -128,9 +135,38 @@ describe('a priced estimate becomes a quotation', () => {
     assert.equal(asMinor(quoted.document.body['Total, excluding VAT']), quoted.totalMinor);
     // And the biggest line by cost is the biggest line by price, because the
     // apportionment is by cost share rather than by order.
-    const rebuild = lineRows.find(([label]) => label.includes('Rebuild'))!;
-    const coping = lineRows.find(([label]) => label.includes('coping'))!;
+    const rebuild = lineRows.find(([, value]) => String(value).includes('Rebuild'))!;
+    const coping = lineRows.find(([, value]) => String(value).includes('coping'))!;
     assert.ok(asMinor(rebuild[1]) > asMinor(coping[1]));
+  });
+
+  it('carries a measured item longer than a document label, rather than shortening what is offered', () => {
+    /*
+     * `DOCUMENT_BODY_INVALID … is too long`, on the first real bill. A document
+     * label holds 80 characters and a measured item is routinely longer —
+     * "Excavation for two number pad foundations, commencing from existing
+     * ground level, maximum depth not exceeding 2.0m." is 108. Truncating was
+     * never an option: the description is what the customer is being offered,
+     * and a quotation that shortens it offers something else.
+     */
+    const long = 'Excavation for two number pad foundations, commencing from existing ground level, maximum depth not exceeding 2.0m.';
+    assert.ok(long.length > 80, 'the fixture is not long enough to exercise the limit');
+
+    const estimate = completeEstimate({
+      lines: [{ description: long, unit: 'm3', quantity: 1.69, labourRateMinor: 9_000, materialRateMinor: 2_000 }],
+    });
+    const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
+
+    assert.ok(String(quoted.document.body['Item 1']).includes(long), 'the description was shortened or dropped');
+    assert.match(String(quoted.document.body['Item 1']), /1\.69 m3/);
+  });
+
+  it('refuses a row longer than a document row holds, rather than cutting it off mid-sentence', () => {
+    const estimate = completeEstimate({ basisOfEstimate: 'x'.repeat(2_500) });
+    throwsCode(
+      () => quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE }),
+      'QUOTATION_FIELD_TOO_LONG',
+    );
   });
 
   it('refuses to quote an estimate carrying a head that is neither priced nor excluded', () => {
