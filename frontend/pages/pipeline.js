@@ -303,7 +303,8 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * offered at all. Every quantity in a tender pack sat behind a
                  * button that did not exist on the screen holding the drawings.
                  */
-                String(file.kind ?? '') === 'DRAWING'
+                html`${
+                  String(file.kind ?? '') === 'DRAWING'
                   ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
                       <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                         title="A drawing states no tender requirements. This will run and will almost certainly find none.">
@@ -322,7 +323,28 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                       ? html`<button class="btn quiet sm" data-ingest-tender="${entry.hash}" data-name="${entry.description}">
                           Look at the file first
                         </button>`
-                      : '',
+                      : ''
+                }
+                ${
+                  /*
+                   * Read it again, under the rules as they are now.
+                   *
+                   * A classification is recorded at ingestion and the record is
+                   * append-only, so a file filed before a rule existed keeps
+                   * the answer the old rules gave it. After the ISO 19650
+                   * reference rules shipped, drawings already on a project
+                   * stayed typed "unknown" — offered no take-off, counted past
+                   * by the pack run — and the only remedy was to upload the
+                   * file again. The rules improving is not a reason to make
+                   * somebody re-file their pack.
+                   */
+                  file
+                    ? html`<button class="btn quiet sm" data-reclassify="${file.ingestionId}"
+                        title="Read this file again under the current classification rules. A file filed before a rule existed keeps the old answer until something re-reads it.">
+                          Re-read
+                        </button>`
+                    : ''
+                }`,
               ]),
               empty: evidence?.storeConfigured
                 ? 'No tender document is held against this project yet. Upload one above and it appears here — a hash on its own cannot be read.'
@@ -1938,6 +1960,26 @@ export async function pipeline(root) {
         ingestTender.disabled = false;
         ingestTender.textContent = 'Look at the file first';
       }
+      return;
+    }
+
+    const reclassify = event.target.closest('[data-reclassify]');
+    if (reclassify) {
+      reclassify.disabled = true;
+      reclassify.textContent = 'Re-reading…';
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/ingestion/${reclassify.dataset.reclassify}/reclassify`, {});
+        toast(
+          result.changed ? 'Read again' : 'Unchanged',
+          result.changed
+            ? `It reads as ${humanise(result.kind).toLowerCase()} now; it was ${humanise(result.previousKind).toLowerCase()}.`
+            : `It still reads as ${humanise(result.kind).toLowerCase()}. The rules have not changed their answer for this file.`,
+          result.changed ? 'ok' : 'info',
+        );
+      } catch (error) {
+        toast('Not re-read', error.message, 'err');
+      }
+      await draw();
       return;
     }
 

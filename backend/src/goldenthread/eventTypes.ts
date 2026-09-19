@@ -1398,6 +1398,20 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('FILE_INGESTED', 'IngestedFile', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('FILE_EXTRACTED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
   def('FILE_QUARANTINED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
+  // The classifier improved, and the file did not.
+  //
+  // A classification is recorded when a file is ingested and the ledger is
+  // append-only, so a file read before a rule existed keeps the answer the old
+  // rules gave it — for ever. That is correct as a record and wrong as a
+  // working state: after the ISO 19650 reference rules shipped, a set of
+  // drawings already on the project stayed typed as "unknown", the screen
+  // offered them no take-off, and the pack run counted past them.
+  //
+  // Re-reading is therefore its own fact rather than a second `FILE_INGESTED`:
+  // the file was not ingested again, it was read again under rules that had
+  // changed. The event carries what it used to be, so the earlier reading is
+  // visible as superseded rather than quietly replaced.
+  def('FILE_RECLASSIFIED', 'IngestedFile', 'UPDATE', 'GOVERNANCE'),
   // A fourth: the file's text sent to an embedding provider and a semantic
   // vector recorded against it. Separate from `FILE_EXTRACTED` because it is a
   // separate fact with a separate cost and a separate provider — the extraction

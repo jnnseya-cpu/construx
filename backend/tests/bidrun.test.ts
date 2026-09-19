@@ -10,7 +10,7 @@ import { acceptPackProposal, proposePackPrice } from '../src/domain/bidrun.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
 import type { EngineContext } from '../src/engines/context.ts';
-import { ingestFile, ingestedFiles } from '../src/evidence/pipeline.ts';
+import { ingestFile, ingestedFiles, reclassifyFile } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -221,6 +221,28 @@ describe('the run from an uploaded pack', () => {
         'an ingested file grew a flat `kind` — the console reads one of these two and they must not both exist',
       );
     }
+  });
+
+  it('reads a file again when the rules have moved on, and says what it used to be', async () => {
+    /*
+     * The trap under an append-only record. A classification is written when a
+     * file is ingested, so a file filed before a rule existed keeps the answer
+     * the old rules gave it — for ever. After the ISO 19650 reference rules
+     * shipped, drawings already on a project stayed typed UNKNOWN: offered no
+     * take-off, counted straight past by the pack run, and the only remedy was
+     * to upload the pack again.
+     */
+    const filed = ingestedFiles(ctxFor('qs'));
+    const drawing = filed[0]!;
+
+    // Re-reading a file the rules already agree about writes nothing. An event
+    // whose diff is empty records nothing, and the ledger refuses one.
+    const unchanged = await reclassifyFile(ctxFor('qs'), store, drawing.ingestionId);
+    assert.equal(unchanged.changed, false);
+    assert.equal(unchanged.kind, 'DRAWING');
+    assert.equal(unchanged.previousKind, 'DRAWING');
+
+    await rejectsCode(() => reclassifyFile(ctxFor('qs'), store, 'not-a-file'), 'INGESTION_NOT_FOUND');
   });
 
   it('reads every drawing, measures it, and prices it off this business’s own record', async () => {

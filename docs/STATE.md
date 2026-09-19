@@ -24717,3 +24717,27 @@ of them would be maintained.
 The lesson is narrower than "check your field names". A missing field in a
 condition does not throw, does not log and does not render an error — it renders
 a screen that looks finished and does less than it says.
+
+### The classifier improved and the files did not
+
+The field fix worked — three drawings counted, the run unlocked — and it made
+the next defect visible. Of the five files in the pack, a structural calculation
+read as a drawing and a drawing read as `UNKNOWN`. Run against the classifier as
+it stands now, all five come back right: CALCULATION, DRAWING, DRAWING, DRAWING,
+CORRESPONDENCE.
+
+The rules were not wrong. The readings were old. A classification is written
+when a file is ingested and the ledger is append-only, so a file filed before a
+rule existed keeps the answer the old rules gave it — for ever, and `ingestFile`
+refuses a hash it has already read. The only remedy was to upload the pack
+again, and the consequences were not cosmetic: a drawing typed `UNKNOWN` is
+offered no take-off and is counted straight past by the pack run, and a
+calculation typed `DRAWING` would be sent to a vision model to be measured.
+
+`FILE_RECLASSIFIED` is its own event, because the file was not ingested again —
+it was read again under rules that had changed. It carries what the file used to
+be, so the earlier reading is superseded on the record rather than replaced
+quietly, and a re-read that changes nothing writes nothing. The extraction is
+deliberately untouched: what came out of the bytes is a fact about the bytes,
+not about the rules, and re-deriving it would risk discarding a confirmed
+transcription of a scan. Every file row carries **Re-read**.

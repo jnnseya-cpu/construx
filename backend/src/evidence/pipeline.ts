@@ -323,6 +323,85 @@ export function recordModelReading(
 }
 
 /** Every ingested file on the project, newest first. */
+/**
+ * Read a file again, under the rules as they are now.
+ *
+ * A classification is recorded when a file is ingested and the ledger is
+ * append-only, so a file read before a rule existed keeps the answer the old
+ * rules gave it. That is right as a record and wrong as a working state: after
+ * the ISO 19650 reference rules shipped, drawings already on a project stayed
+ * typed `UNKNOWN`, the screen offered them no take-off, and the pack run
+ * counted straight past them. The rules improving cannot be a reason to
+ * re-upload a file somebody already filed.
+ *
+ * So this re-runs inspection and classification over the stored bytes and
+ * records what changed. It is not a second ingestion — the file was not
+ * ingested again, it was read again — and the event says what the file used to
+ * be, so the earlier reading is superseded on the record rather than replaced
+ * quietly.
+ *
+ * The extraction is deliberately left alone. What came out of the bytes is a
+ * fact about the bytes, not about the rules, and re-deriving it here would
+ * either repeat work that produced the same answer or quietly discard a
+ * confirmed transcription somebody made of a scan.
+ */
+export async function reclassifyFile(
+  ctx: EngineContext,
+  store: EvidenceStore,
+  ingestionId: string,
+): Promise<{ ingestionId: string; kind: string; previousKind: string; changed: boolean }> {
+  authorise(ctx, 'EVIDENCE_AUDIT', 'I');
+
+  const file = filesOf(ctx).find((entry) => entry.ingestionId === ingestionId);
+  if (!file) throw new DomainError('INGESTION_NOT_FOUND', `No ingested file ${ingestionId} on this project`, 404);
+  if (file.status === 'QUARANTINED') {
+    throw new DomainError(
+      'FILE_QUARANTINED',
+      `${file.filename ?? file.hash} was quarantined. A quarantined file is not reclassified; it is released or it stays out.`,
+      409,
+    );
+  }
+  if (!(await store.holds(ctx.tenantId, file.hash))) {
+    throw new DomainError(
+      'FILE_NOT_HELD',
+      'The platform holds the hash of this file but not the file, so there is nothing to read again.',
+      409,
+    );
+  }
+
+  const held = await store.fetch(ctx.tenantId, file.hash);
+  const inspection = inspect({ bytes: held.bytes, declaredType: held.contentType, filename: file.filename });
+  const classification = classify({
+    filename: file.filename,
+    actualType: inspection.actualType,
+    text: file.extraction.text,
+  });
+
+  const previousKind = file.classification.kind;
+  if (classification.kind === previousKind) {
+    // Not a failure, and not a write. An event whose diff is empty records
+    // nothing, and the ledger refuses one.
+    return { ingestionId, kind: classification.kind, previousKind, changed: false };
+  }
+
+  write(ctx, {
+    eventType: 'FILE_RECLASSIFIED',
+    entity: { refType: 'IngestedFile', refId: ingestionId },
+    nextState: {
+      ...file,
+      classification: {
+        ...classification,
+        signals: [...classification.signals, `read again under the current rules; it was previously ${previousKind.toLowerCase()}`],
+      },
+      previousKind,
+      reclassifiedAt: new Date().toISOString(),
+      reclassifiedBy: ctx.auth.actorId,
+    } as unknown as Record<string, unknown>,
+  });
+
+  return { ingestionId, kind: classification.kind, previousKind, changed: true };
+}
+
 export function ingestedFiles(ctx: EngineContext): IngestedFileState[] {
   authorise(ctx, 'EVIDENCE_AUDIT', 'R');
   return filesOf(ctx);

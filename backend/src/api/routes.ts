@@ -23979,6 +23979,17 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/ingestion/:ingestionId/reclassify',
+    description:
+      'Read a filed document again under the classification rules as they are now. A file read before a rule existed ' +
+      'keeps the old answer for ever, because the record is append-only — this records the new reading and what it ' +
+      'used to be',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      ingestion.reclassifyFile(projectContext(platform, ctx), platform.evidence, ctx.params.ingestionId as string),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/ingestion',
     description: 'Inspect, classify and read a stored file, and quarantine it if it should not have been accepted',
     schema: {
