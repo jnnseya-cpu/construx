@@ -206,19 +206,64 @@ if (follower && ledgerStore) {
   writerLock = new WriterLock(`${config.ledger.journalPath}.writer`, {
     heartbeatSeconds: config.ledger.writerHeartbeatSeconds,
   });
-  try {
-    const claim = writerLock.acquire();
-    if (claim.taken === 'TAKEN_OVER') {
-      // Said out loud. The previous holder did not release, which means it was
-      // killed rather than stopped — worth knowing on the way up.
-      process.stderr.write(
-        `[journal] took over the writer lock from ${claim.previous?.host} (pid ${claim.previous?.pid}), ` +
-          `whose last heartbeat was ${claim.previous?.heartbeatAt}. That process did not shut down cleanly.\n`,
-      );
+  /*
+   * Waited for, not refused on the first try.
+   *
+   * Refusing immediately is correct about the danger and wrong about the
+   * moment. **A redeploy is two processes on one volume by construction**: the
+   * new container starts while the outgoing one is still draining, so the lock
+   * is legitimately held for a few seconds every single time. The new process
+   * exited, the supervisor restarted it, it exited again — and the site
+   * answered **502** for as long as that went on, which is at minimum the stale
+   * window and in a fast redeploy loop is indefinitely.
+   *
+   * So it waits out the handover before giving up. The safety property is
+   * unchanged: two writers never hold it at once, and a process that cannot
+   * claim it still refuses to start rather than interleaving appends. What
+   * changes is that a normal restart is a pause of a few seconds instead of a
+   * crash loop.
+   *
+   * Bounded by the stale window plus a margin, because that is the longest a
+   * lock can be held by a process that has actually died — past it, either the
+   * holder is alive and this process must not start, or something is wrong that
+   * waiting will not fix.
+   */
+  const staleSeconds = config.ledger.writerHeartbeatSeconds * 3;
+  const waitUntil = Date.now() + (staleSeconds + 10) * 1_000;
+  let claimed = false;
+  let lastError: Error | undefined;
+  let announcedWait = false;
+  while (!claimed) {
+    try {
+      const claim = writerLock.acquire();
+      if (claim.taken === 'TAKEN_OVER') {
+        // Said out loud. The previous holder did not release, which means it
+        // was killed rather than stopped — worth knowing on the way up.
+        process.stderr.write(
+          `[journal] took over the writer lock from ${claim.previous?.host} (pid ${claim.previous?.pid}), ` +
+            `whose last heartbeat was ${claim.previous?.heartbeatAt}. That process did not shut down cleanly.\n`,
+        );
+      }
+      writerLock.start();
+      claimed = true;
+    } catch (error) {
+      lastError = error as Error;
+      if (Date.now() >= waitUntil) break;
+      if (!announcedWait) {
+        announcedWait = true;
+        process.stdout.write(
+          `[journal] the writer lock is held — waiting up to ${staleSeconds + 10}s for the previous process to finish ` +
+            'shutting down. This is what a redeploy looks like from the new container.\n',
+        );
+      }
+      // Busy-waiting deliberately, with a whole second between attempts: this
+      // runs once, before anything is served, and a timer here would mean
+      // restructuring boot around a callback for no gain.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
     }
-    writerLock.start();
-  } catch (error) {
-    process.stderr.write(`\n[journal] ${(error as Error).message}\n\n`);
+  }
+  if (!claimed) {
+    process.stderr.write(`\n[journal] ${lastError?.message ?? 'the writer lock could not be claimed'}\n\n`);
     process.exit(1);
   }
 
@@ -817,6 +862,18 @@ const shutdown = (signal: string): void => {
   backupTimer();
   snapshotTimer();
   stopConsistencySweep();
+  /*
+   * Idle keep-alive sockets do not hold the shutdown open.
+   *
+   * `server.close()` waits for every connection to end, and `keepAliveTimeout`
+   * is 65 seconds — so a browser sitting on an idle connection could keep the
+   * callback below from running, and with it the release of the writer lock,
+   * long past the ten seconds a container gets before SIGKILL. The lock then
+   * outlived the process that held it and the next container had to wait out
+   * the stale window. Requests in flight are still finished; only idle sockets
+   * are closed.
+   */
+  server.closeIdleConnections();
   server.close(() => {
     void (async () => {
       // Whatever is still queued for Postgres gets a bounded chance to land.
