@@ -148,6 +148,35 @@ function packRunPanel({ available, drawingsHeld, blocked }) {
               }
 
               ${
+                /*
+                 * What happened when the market was asked, in numbers.
+                 *
+                 * Twice the run told somebody "the market view returned no rate
+                 * it could support" for every line — once because the answers
+                 * were joined on a reworded description, once because no
+                 * reasoning model was configured and a stand-in answered. Both
+                 * sentences were true about the call and useless about the
+                 * cause, and each cost a round trip to find. The screen says
+                 * what was asked and what came back.
+                 */
+                proposal.marketView && proposal.marketView.used < proposal.marketView.asked
+                  ? html`<div class="notice warn" style="margin-top:11px"><div>
+                      <b>The market view priced ${proposal.marketView.used} of ${proposal.marketView.asked}
+                      line${proposal.marketView.asked === 1 ? '' : 's'}.</b> ${proposal.marketView.note}
+                      ${
+                        proposal.marketView.dropped.length > 0
+                          ? html`<div class="split-list" style="margin-top:7px">
+                              ${proposal.marketView.dropped
+                                .slice(0, 6)
+                                .map((reason) => html`<div class="row"><span class="lbl">${reason}</span></div>`)}
+                            </div>`
+                          : ''
+                      }
+                    </div></div>`
+                  : ''
+              }
+
+              ${
                 proposal.headsToSettle?.length > 0
                   ? html`<div class="notice warn" style="margin-top:11px"><div>
                       <b>${proposal.headsToSettle.length} cost head${proposal.headsToSettle.length === 1 ? '' : 's'}

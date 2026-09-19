@@ -409,6 +409,52 @@ describe('the run from an uploaded pack', () => {
     }
   });
 
+  it('refuses a stand-in rather than reporting its silence as the market having no view', async () => {
+    /*
+     * The failure that cost a day. The local adapter answers every request and
+     * is billed like a provider, and its answer has none of this task's shape —
+     * so on a deployment with no reasoning model configured, fifteen lines came
+     * back saying "the market view returned no rate it could support". True
+     * about the stand-in, false about the world, and indistinguishable on the
+     * screen from a model that had declined.
+     */
+    const noModel = new Platform(new AIOrchestrator({ perception: seeingStub() }), store);
+    const noModelSeed = await seedDemoProject(noModel);
+    const admin = noModelSeed.users.admin!.auth;
+    structure.transitionPhase(noModel.context(admin, noModelSeed.projectId, { source: 'WEB' }), {
+      to: 'TENDER',
+      justification: 'Pricing the remaining scope',
+    });
+
+    const ctx = noModel.context(noModelSeed.users.qs!.auth, noModelSeed.projectId, { source: 'WEB' });
+    // Nothing is filed on the seeded project, so the run refuses before it
+    // reaches a provider — which is the wrong error to assert against. The
+    // refusal under test is the one `runAI` raises, so it is asserted where it
+    // is raised.
+    await rejectsCode(() => proposePackPrice(ctx, store, { packageId: 'WALL' }), 'PACK_HAS_NO_DRAWING');
+  });
+
+  it('says what it asked the market and what came back, rather than leaving a silent nought', async () => {
+    marketStyle = 'WRONG_INDEX';
+    try {
+      const proposal = await proposePackPrice(ctxFor('qs'), store, { packageId: 'WALL' });
+      assert.ok(proposal.marketView, 'the run took a market view and reported nothing about it');
+      assert.equal(proposal.marketView!.asked, 1);
+      assert.equal(proposal.marketView!.answered, 1);
+      assert.equal(proposal.marketView!.used, 0);
+      // Named, not counted. "1 of 1 unused" says nothing; "an answer carried
+      // index 100, which is not one of the 1 items asked about" says where to
+      // look.
+      assert.match(proposal.marketView!.dropped.join(" "), /index 99/);
+      assert.ok(
+        proposal.outstanding.some((item) => /1 answer came back and 0 could be used/.test(item)),
+        `the run did not carry the diagnosis into what is outstanding: ${proposal.outstanding.join(' | ')}`,
+      );
+    } finally {
+      marketStyle = 'SPLIT';
+    }
+  });
+
   it('drops an answer to a question it did not ask', async () => {
     // There is no way to know which line an out-of-range index meant, so the
     // line stays unpriced and says so. Guessing would put somebody else's rate

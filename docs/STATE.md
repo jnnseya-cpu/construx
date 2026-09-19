@@ -25004,3 +25004,33 @@ practice is the basis of the estimate, which the estimate route accepts at four
 thousand characters — a basis cut off mid-sentence in a quotation says something
 the estimate does not, and nobody reading the document can tell that anything
 was removed.
+
+### A stand-in has no view on the market
+
+Fifteen measured lines, none priced, every row reading *"the market view
+returned no rate it could support for it"*. The sentence was true about the call
+and useless about the cause — for the second time, and the second cause was not
+the first.
+
+The local adapter answers every request and is billed like a provider, and its
+answer has none of this task's shape. On a deployment whose reasoning model is
+unconfigured or unhealthy, the run therefore asked, got a synthetic answer back,
+found no rates in it, and reported that the market had no view. Nothing on the
+screen distinguished *the model declined* from *no model was asked*.
+
+`requireModel` is the mechanism the platform already had for exactly this, and
+this task had not set it. A synthetic answer is now refused by name —
+`NO_REASONING_PROVIDER`, nothing charged — and the lines say so.
+
+**And the run now reports what it asked and what came back.** `marketView`
+carries the number asked, the number answered, the number used, and each answer
+it could not use with the reason: an index outside the list, a row with no money
+in it. The panel prints it whenever fewer lines came back priced than were
+asked about.
+
+That is the part that should have existed first. Two causes, two round trips,
+and a day — both of them invisible because a silent nought looks exactly like a
+considered refusal. The reading also accepts `items` or a bare array where
+`rates` was asked for, and `unitRateMinor`, `rate` or `amountMinor` where
+`rateMinor` was: none of those is worth a failed run, and each was a silent
+nought until the diagnosis made it visible.

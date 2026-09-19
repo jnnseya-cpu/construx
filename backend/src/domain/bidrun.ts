@@ -83,6 +83,26 @@ export type ProposedRate = {
   basis: string;
 };
 
+/**
+ * What happened when the market was asked, in numbers.
+ *
+ * Carried because the run twice told somebody *"the market view returned no
+ * rate it could support"* for every line, and the sentence was true about the
+ * call and useless about the cause — once because the answers were joined on a
+ * reworded description, once because no reasoning model was configured at all
+ * and a stand-in answered. Neither was visible from the screen, and each cost a
+ * round trip to find. The run says what it asked, what came back, and what it
+ * could not use.
+ */
+export type MarketDiagnosis = {
+  asked: number;
+  answered: number;
+  used: number;
+  /** Each answer that could not be used, and why — never a silent nought. */
+  dropped: string[];
+  note: string;
+};
+
 export type ProposedLine = {
   /** Which reading it came from, so accepting can confirm the right draft. */
   draftId: string;
@@ -139,6 +159,8 @@ export type PackProposal = {
     /** In plain words, so a person knows what they are being asked about. */
     note: string;
   }>;
+  /** What happened when the market was asked, where it was asked at all. */
+  marketView: MarketDiagnosis | null;
   /** Everything a person still has to decide. Empty means the run answered it all. */
   outstanding: string[];
   acuConsumed: number;
@@ -227,7 +249,7 @@ async function marketRates(
   ctx: EngineContext,
   lines: ProposedLine[],
   where: string,
-): Promise<{ rates: Map<number, ProposedRate>; acuConsumed: number }> {
+): Promise<{ rates: Map<number, ProposedRate>; acuConsumed: number; diagnosis: MarketDiagnosis }> {
   /*
    * Keyed by the position in the list the model was handed, not by the words
    * it echoed back.
@@ -244,7 +266,10 @@ async function marketRates(
    * the number 7 returns 7.
    */
   const rates = new Map<number, ProposedRate>();
-  if (lines.length === 0) return { rates, acuConsumed: 0 };
+  const dropped: string[] = [];
+  if (lines.length === 0) {
+    return { rates, acuConsumed: 0, diagnosis: { asked: 0, answered: 0, used: 0, dropped, note: 'Nothing to ask about.' } };
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const result = await runAI(ctx, {
@@ -299,18 +324,55 @@ async function marketRates(
         required: ['rates'],
       },
     },
+    /*
+     * A stand-in cannot have a view on the market.
+     *
+     * The local adapter answers every request and is billed like a provider,
+     * and its answer has none of this task's shape — so on a deployment whose
+     * reasoning provider is unconfigured or unhealthy, the run came back with
+     * no rates at all and told fifteen lines that *"the market view returned no
+     * rate it could support"*. That sentence was true about the stand-in and
+     * false about the world, and it cost a day to find because nothing on the
+     * screen distinguished "the model declined" from "no model was asked".
+     *
+     * Refused by name now, with nothing charged.
+     */
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
+        'This deployment has no reasoning model configured or healthy, so nothing can take a view on the market. ' +
+        'The measured lines stand; the rates are yours to put against them.',
+    },
     // A market view is a proposal on a screen, not a record. Nothing is
     // committed until a person accepts the run, and what they accept carries
     // the provenance with it.
     toWrites: () => [],
   });
 
-  const answered = (result.output.rates as Array<Record<string, unknown>> | undefined) ?? [];
+  /*
+   * Where the answer lives, tolerantly.
+   *
+   * A model asked for `rates` sometimes returns `items`, sometimes a bare
+   * array. None of that is worth a failed run, and every one of these was a
+   * silent nought until the diagnosis below made it visible.
+   */
+  const output = result.output as Record<string, unknown>;
+  const answered = (Array.isArray(output.rates)
+    ? output.rates
+    : Array.isArray(output.items)
+      ? output.items
+      : Array.isArray(output)
+        ? output
+        : []) as Array<Record<string, unknown>>;
+
   for (const answer of answered) {
     const index = Number(answer.index);
-    // An answer to a question that was not asked. Dropped rather than guessed
-    // at: there is no way to know which line it meant.
-    if (!Number.isInteger(index) || index < 0 || index >= lines.length) continue;
+    if (!Number.isInteger(index) || index < 0 || index >= lines.length) {
+      // An answer to a question that was not asked. Dropped rather than guessed
+      // at: there is no way to know which line it meant.
+      dropped.push(`an answer carried index ${String(answer.index)}, which is not one of the ${lines.length} items asked about`);
+      continue;
+    }
 
     const at = (key: string): number => Math.max(0, Math.round(Number(answer[key] ?? 0)));
     const labour = at('labourMinor');
@@ -318,11 +380,16 @@ async function marketRates(
     const plant = at('plantMinor');
     const subcontract = at('subcontractMinor');
     const split = labour + material + plant + subcontract;
-    const allIn = at('rateMinor') || split;
+    // The name it was asked for, and the three a model reaches for instead.
+    const allIn = at('rateMinor') || at('unitRateMinor') || at('rate') || at('amountMinor') || split;
 
-    // A row with no money in it is an omission the model reported in the shape
-    // of an answer, and carrying it would put a zero rate on a priced line.
-    if (allIn <= 0) continue;
+    if (allIn <= 0) {
+      // A row with no money in it is an omission the model reported in the
+      // shape of an answer, and carrying it would put a zero rate on a priced
+      // line. Counted, so a run where every row came back empty says so.
+      dropped.push(`"${lines[index]!.description}" came back with no rate in it`);
+      continue;
+    }
 
     /*
      * A rate given without a split still has to land on a cost head.
@@ -356,7 +423,20 @@ async function marketRates(
     });
   }
 
-  return { rates, acuConsumed: result.acuConsumed };
+  return {
+    rates,
+    acuConsumed: result.acuConsumed,
+    diagnosis: {
+      asked: lines.length,
+      answered: answered.length,
+      used: rates.size,
+      dropped,
+      note:
+        answered.length === 0
+          ? 'The model was asked and returned no rates at all.'
+          : `${answered.length} answer${answered.length === 1 ? '' : 's'} came back and ${rates.size} could be used.`,
+    },
+  };
 }
 
 /** The heads and the margin this business last priced a job at. */
@@ -459,6 +539,7 @@ export async function proposePackPrice(
    */
   const gaps = lines.filter((line) => line.rate === null);
   let marketConsumed = 0;
+  let marketView: MarketDiagnosis | null = null;
   if (gaps.length > 0) {
     const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId })?.state;
     const location = project?.location as { city?: string; countryCode?: string } | undefined;
@@ -466,6 +547,7 @@ export async function proposePackPrice(
     try {
       const market = await marketRates(ctx, gaps, where);
       marketConsumed = market.acuConsumed;
+      marketView = market.diagnosis;
       gaps.forEach((line, index) => {
         const rate = market.rates.get(index);
         if (rate) line.rate = rate;
@@ -474,10 +556,10 @@ export async function proposePackPrice(
       // An unfunded wallet, an unavailable provider, a refusal. The run is not
       // lost for it: the lines stay unpriced and say so, which is where they
       // were before the market view existed.
+      const why = error instanceof Error ? error.message : String(error);
+      marketView = { asked: gaps.length, answered: 0, used: 0, dropped: [], note: `The market view could not be taken: ${why}` };
       for (const line of gaps) {
-        line.unpriced = `No rate in this business\u2019s record, and the market view could not be taken: ${
-          error instanceof Error ? error.message : String(error)
-        }`;
+        line.unpriced = `No rate in this business\u2019s record, and the market view could not be taken: ${why}`;
       }
     }
   }
@@ -550,7 +632,10 @@ export async function proposePackPrice(
   if (basis && !basis.durationWeeks) outstanding.push('How many weeks the job runs. Every time-related head is priced by the week and nothing in a drawing says how long it takes.');
   const unratedCount = lines.filter((line) => line.rate === null).length;
   if (unratedCount > 0) {
-    outstanding.push(`${unratedCount} measured line${unratedCount === 1 ? ' has' : 's have'} no rate at all and need one.`);
+    outstanding.push(
+      `${unratedCount} measured line${unratedCount === 1 ? ' has' : 's have'} no rate at all and need one.` +
+        (marketView ? ` ${marketView.note}` : ''),
+    );
   }
   // Said separately, because it is a different question. An unpriced line is
   // work to do; a market-view line is priced and wants a look — it is the one
@@ -573,7 +658,18 @@ export async function proposePackPrice(
   }
   if (unread.length > 0) outstanding.push(`${unread.length} drawing${unread.length === 1 ? '' : 's'} could not be read, so anything on ${unread.length === 1 ? 'it' : 'them'} is not in this price.`);
 
-  return { packageId: input.packageId, read, unread, lines, basis, indicative, headsToSettle, outstanding, acuConsumed };
+  return {
+    packageId: input.packageId,
+    read,
+    unread,
+    lines,
+    basis,
+    indicative,
+    headsToSettle,
+    marketView,
+    outstanding,
+    acuConsumed,
+  };
 }
 
 function toMeasuredLine(line: ProposedLine): MeasuredLine {
