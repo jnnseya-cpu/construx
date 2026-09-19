@@ -63,19 +63,35 @@ export function flowPanel(flow, { here } = {}) {
                    * Naming a step and not a door sends somebody hunting a
                    * screen for a control that is in front of them.
                    */
-                  now.door
+                  now.door && !(now.command && now.screen === here)
                     ? html` Press <b>“${now.door}”</b> on
                         <b>${now.screen === here ? 'this screen' : SCREEN[now.screen] ?? 'the next screen'}</b>.`
                     : ''
                 }
                 ${now.next ?? now.detail}
-                ${
-                  SCREEN[now.screen] && now.screen !== here
-                    ? html` <button class="btn quiet sm" data-nav="${now.screen}" style="margin-left:6px">
-                        Go to ${SCREEN[now.screen]} →
-                      </button>`
-                    : ''
-                }
+                <div class="actions" style="margin-top:9px">
+                  ${
+                    /*
+                     * The button itself, where the door is on this screen.
+                     *
+                     * Telling somebody which control to press and leaving it
+                     * sixty per cent down a page of empty panels is how "I
+                     * can't see this" happens twice. The id goes to the
+                     * screen's own dispatcher, exactly as every command bar
+                     * does; this holds no knowledge of what the command is.
+                     */
+                    now.command && now.screen === here
+                      ? html`<button class="btn" data-command="${now.command}">${now.door}</button>`
+                      : ''
+                  }
+                  ${
+                    SCREEN[now.screen] && now.screen !== here
+                      ? html`<button class="btn" data-nav="${now.screen}">
+                          Go to ${SCREEN[now.screen]} →
+                        </button>`
+                      : ''
+                  }
+                </div>
               </div>
             </div>`
           : html`<div class="notice ok" style="margin-top:11px"><div>

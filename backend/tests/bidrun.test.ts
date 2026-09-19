@@ -431,6 +431,35 @@ describe('where the job is, and the one thing to do next', () => {
     assert.deepEqual(missing, [], `\n${missing.join('\n')}\n`);
   });
 
+  it('points at a command the console actually defines, in every state it can emit one', () => {
+    /*
+     * Scanned from the module's own source rather than from one run of it,
+     * because a step only emits its command in one of its states — a check
+     * that exercised a single project would prove nothing about the other
+     * seven. The pair this protects is the panel's button id and the
+     * dispatcher's key: they are matched by string, so a renamed command is
+     * silent until somebody presses a button that does nothing.
+     */
+    const module = readFileSync(join(REPO_ROOT, 'backend', 'src', 'domain', 'bidflow.ts'), 'utf8');
+    // Every quoted id on a line that assigns one, so a ternary naming two is
+    // read as two rather than as its first branch.
+    const emitted = module
+      .split('\n')
+      .filter((line) => line.includes('command:'))
+      .flatMap((line) => [...line.matchAll(/'([a-z][a-z-]+)'/g)].map((match) => match[1]!));
+    assert.ok(emitted.length >= 7, `only ${emitted.length} commands found; the scan is no longer reading the module`);
+
+    const pages = readdirSync(join(REPO_ROOT, 'frontend', 'pages'))
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => readFileSync(join(REPO_ROOT, 'frontend', 'pages', name), 'utf8'))
+      .join('\n');
+
+    const orphans = [...new Set(emitted)].filter(
+      (id) => !pages.includes(`'${id}': {`) && !pages.includes(`${id}: {`),
+    );
+    assert.deepEqual(orphans, [], `the flow points at commands no console page defines: ${orphans.join(', ')}`);
+  });
+
   it('names what to do, not only what is missing', () => {
     const flow = bidFlow(platform, ctxFor('qs'));
     for (const step of flow.steps) {

@@ -65,6 +65,15 @@ export type FlowStep = {
    * that is right in front of them under another name.
    */
   door?: string;
+  /**
+   * The console command the door opens, where it is a single one.
+   *
+   * Carried so the panel can put the button itself in front of somebody rather
+   * than describing where to scroll for it. The screen's own dispatcher runs
+   * it: the panel emits the id and holds no knowledge of what the command does,
+   * which is the same arrangement every other command bar uses.
+   */
+  command?: string;
   /** The screen that takes the action. */
   screen: 'pipeline' | 'procurement' | 'documents' | 'enterprise';
 };
@@ -154,7 +163,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
             drawings.length > 0
               ? 'It reads every sheet, measures it, and proposes a rate for each line from your own past estimates — and accepting it does the pricing and the quotation in the same act. "Enter measured quantities", beside it, is the door for a take-off you did with a scale rule.'
               : 'A drawing has to be filed before anything can be measured off it.',
-          ...(drawings.length > 0 ? { door: 'Read and price the pack' } : {}),
+          ...(drawings.length > 0 ? { door: 'Read and price the pack', command: 'price-pack' } : {}),
           screen: 'procurement',
         },
   );
@@ -183,6 +192,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
                 ? 'The button sits under the bill, and is locked until something is measured — which it now is. Accepting the pack run prices it in the same act instead.'
                 : 'A bill of quantities has to exist before it can be priced. The button is there and locked until it does.',
           door: 'Price the bill',
+          ...(boqItems.length > 0 ? { command: 'build-estimate' } : {}),
           screen: 'procurement',
         },
   );
@@ -206,6 +216,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
               ? 'It sits under the estimate build-up. The customer sees the works, the quantities, the money and the qualifications — never the build-up.'
               : 'A complete estimate has to exist before an offer can be composed from it.',
           door: 'Draw up the quotation',
+          ...(complete.length > 0 ? { command: 'quote' } : {}),
           screen: 'procurement',
         },
   );
@@ -256,6 +267,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
           : 'Record the invitation first.',
       door: invitation ? 'It only asks for a price' : 'Record an ITT',
+      ...(invitation ? { command: 'quote-only' } : {}),
       screen: 'pipeline',
     }),
   );
@@ -298,6 +310,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
             ? 'Then write one section at a time: the size of the tender decides how many passes run, never how much of it fits into one.'
             : 'A compliance matrix has to exist before a submission can be planned against it.',
       door: packs.length > 0 ? 'Write the next section' : 'Plan a response pack',
+      command: packs.length > 0 ? 'bid-section' : 'bid-plan',
       screen: 'pipeline',
     }),
   );
@@ -318,6 +331,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
             ? 'A pack that passes every completeness rule can still score nothing, because completeness is not the question a scorer asks.'
             : 'A pack has to exist before it can be attacked.',
       door: 'Attack the pack',
+      command: 'bid-challenge',
       screen: 'pipeline',
     }),
   );

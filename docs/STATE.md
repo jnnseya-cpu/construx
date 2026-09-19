@@ -24858,3 +24858,28 @@ confirm route's missing properties and the estimate route's unlisted
 payload the console sends must pass the schema, and the same object is assigned
 to `CompanyProfile`, so a change to the engine's type that the payload no longer
 satisfies fails the typecheck rather than a test nobody reruns.
+
+### Telling somebody where to scroll is not telling them what to do
+
+*"I can't see this price the bill"*, against a screenshot of the top of Tender &
+Procurement. The panel that says what to do next was sixty per cent down the
+page — below the supply-chain chart, the bid evaluation, the award conditions,
+the adjudication and the package completeness, every one of which is empty on a
+job nobody has priced yet. A screen that opens with nine empty panels and puts
+the one live action underneath them is a screen nobody scrolls.
+
+Two changes, and the second is the one that matters.
+
+**The flow panel and the pack run are now the first things on the screen**,
+directly under the command bar, ahead of every panel that is empty until there
+is something to fill it.
+
+**And where the door is on the screen you are already on, the panel carries the
+button itself** rather than naming it and leaving it somewhere else on the page.
+The step emits the console command's id, the screen's own dispatcher runs it,
+and the panel holds no knowledge of what the command does — the same
+arrangement every command bar on the platform already uses. A test reads every
+command id the flow module can emit, from its source rather than from one run of
+it, and fails if any names a command no console page defines: the two are
+matched by string, so a renamed command would otherwise be silent until somebody
+pressed a button that did nothing.

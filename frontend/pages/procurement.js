@@ -622,6 +622,31 @@ export async function procurement(root) {
         </div>
       </div>
 
+      ${
+        /*
+         * First on the screen, not sixty per cent down it.
+         *
+         * Reported as "I can't see this price the bill", against a screenshot
+         * of the top of this page. The panel that says what to do next sat
+         * below the supply-chain chart, the bid evaluation, the award
+         * conditions, the adjudication and the package completeness — every
+         * one of which is empty on a job nobody has priced yet. A screen that
+         * opens with nine empty panels and puts the one live action underneath
+         * them is a screen nobody scrolls.
+         */
+        raw(flowPanel(flow, { here: 'procurement' }))
+      }
+
+      ${packRunPanel({
+        available: perception?.capability?.available === true,
+        // `classification.kind`, not `kind` — the register publishes an ingested
+        // file as the pipeline recorded it, and reading the flat name gave
+        // `undefined` for every file and "0 drawings filed" on a project that
+        // had them.
+        drawingsHeld: (ingestion?.files ?? []).filter((file) => file.classification?.kind === 'DRAWING').length,
+        blocked: null,
+      })}
+
       ${supplierSignIn ? supplierPortalPanel(portal) : ''}
 
       ${
@@ -1272,18 +1297,6 @@ export async function procurement(root) {
           }
         </div>
       </div>
-
-      ${raw(flowPanel(flow, { here: 'procurement' }))}
-
-      ${packRunPanel({
-        available: perception?.capability?.available === true,
-        // `classification.kind`, not `kind` — the register publishes an ingested
-        // file as the pipeline recorded it, and reading the flat name gave
-        // `undefined` for every file and "0 drawings filed" on a project that
-        // had them.
-        drawingsHeld: (ingestion?.files ?? []).filter((file) => file.classification?.kind === 'DRAWING').length,
-        blocked: null,
-      })}
 
       ${
         /*
