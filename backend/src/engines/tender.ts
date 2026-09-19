@@ -54,7 +54,28 @@ export type TakeoffItem = {
  */
 export async function runTakeoff(
   ctx: EngineContext,
-  input: { packageId: string; sources: TakeoffSource[]; items: TakeoffItem[]; costCodePrefix: string },
+  input: {
+    packageId: string;
+    sources: TakeoffSource[];
+    items: TakeoffItem[];
+    costCodePrefix: string;
+    /**
+     * Who measured. `MODEL` is the default and the path this function was
+     * written for: a model reads the sheets and its confidence travels with
+     * every quantity.
+     *
+     * `PERSON` is a surveyor who has already measured, off their own sheets,
+     * and is entering what they measured. It calls no provider, costs nothing
+     * and carries no confidence score, because there is no reading to be
+     * confident about — the quantity is a person's, stated as such.
+     *
+     * This is not a convenience. Until it existed, the only route to a bill of
+     * quantities ran a perception model, so a company with no AI credit could
+     * not price a job it had measured by hand — and a take-off somebody did
+     * with a scale rule was charged for a reading nobody performed.
+     */
+    measuredBy?: 'MODEL' | 'PERSON';
+  },
 ): Promise<{ takeoffId: string; boqItemIds: string[]; acuConsumed: number }> {
   authorise(ctx, 'BOQ_TAKEOFF', 'C', { lifecyclePhase: currentPhase(ctx) });
 
@@ -70,6 +91,55 @@ export async function runTakeoff(
   });
 
   const boqItemIds: string[] = [];
+  const method = input.sources.some((s) => s.modelRef) ? 'MODEL_BASED' : 'DRAWING_BASED';
+  const source = input.sources.some((s) => s.modelRef) ? 'BIM' : '2D';
+
+  if (input.measuredBy === 'PERSON') {
+    write(ctx, {
+      eventType: 'TAKEOFF_COMPLETED',
+      entity: { refType: 'Takeoff', refId: takeoffId },
+      evidenceRefs: [evidence],
+      nextState: {
+        id: takeoffId,
+        packageId: input.packageId,
+        sources: input.sources,
+        itemCount: input.items.length,
+        method,
+        measuredBy: 'PERSON',
+        // No confidence. A number here would be a score for a reading that did
+        // not happen, and the estimator downstream reads this field to decide
+        // how much to trust the quantity.
+        confidence: null,
+        completedAt: new Date().toISOString(),
+      },
+    });
+
+    input.items.forEach((item, index) => {
+      const boqItemId = ulid();
+      boqItemIds.push(boqItemId);
+      write(ctx, {
+        eventType: 'BOQITEM_CREATED_FROM_TAKEOFF',
+        entity: { refType: 'BoQItem', refId: boqItemId },
+        evidenceRefs: [evidence],
+        nextState: {
+          id: boqItemId,
+          takeoffId,
+          packageId: input.packageId,
+          costCode: `${input.costCodePrefix}.${String(index + 1).padStart(3, '0')}`,
+          description: item.description,
+          unit: item.unit,
+          quantity: item.quantity,
+          measurementRule: item.measurementRule ?? 'NRM2',
+          source,
+          sourceSheet: item.sourceSheet,
+          measuredBy: 'PERSON',
+          confidenceScore: null,
+        },
+      });
+    });
+
+    return { takeoffId, boqItemIds, acuConsumed: 0 };
+  }
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
@@ -101,7 +171,8 @@ export async function runTakeoff(
             packageId: input.packageId,
             sources: input.sources,
             itemCount: input.items.length,
-            method: input.sources.some((s) => s.modelRef) ? 'MODEL_BASED' : 'DRAWING_BASED',
+            method,
+            measuredBy: 'MODEL',
             confidence: baseConfidence,
             completedAt: new Date().toISOString(),
           },
@@ -124,8 +195,9 @@ export async function runTakeoff(
             unit: item.unit,
             quantity: item.quantity,
             measurementRule: item.measurementRule ?? 'NRM2',
-            source: input.sources.some((s) => s.modelRef) ? 'BIM' : '2D',
+            source,
             sourceSheet: item.sourceSheet,
+            measuredBy: 'MODEL',
             // Confidence travels with the quantity: a downstream estimator can
             // see which lines were machine-measured and how sure the engine was.
             confidenceScore: Number((baseConfidence * (output.judgement ? 0.9 + Number(output.judgement) * 0.2 : 1)).toFixed(3)),

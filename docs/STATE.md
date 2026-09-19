@@ -24576,3 +24576,21 @@ deployments at all. The operator-facing distinction did not move — the readine
 check says which state this deployment is in and what to set. Held by
 `publicsurface.test.ts`, which now asserts the page never prints a variable
 name, a `NODE_ENV`, or the words "this deployment".
+
+### A quantity a person measured was charged for as a reading
+
+`runTakeoff` always called a perception model, so the only route to a bill of
+quantities ran a provider. Two consequences, and the second is worse than the
+first: a company with no AI credit could not price a job it had already measured
+with a scale rule, and a take-off a surveyor did by hand was billed for a
+reading nobody performed.
+
+`measuredBy: 'PERSON'` writes the take-off and its BoQ items directly —
+`acuConsumed: 0`, no provider, no wallet movement — through
+`POST /v1/projects/:projectId/tender/takeoff/measured`, which carries no `ai`
+annotation because there is nothing to quote. The lines carry
+`measuredBy: 'PERSON'` and **no confidence score**: a number there would be a
+score for a reading that did not happen. The bill reads *"a surveyor"* against
+those lines and *"a model"* against the machine-measured ones, which is the more
+useful fact anyway, and the door — *"Enter measured quantities"* — takes
+`description | unit | quantity` one per line against a named sheet.

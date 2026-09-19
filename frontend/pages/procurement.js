@@ -1144,25 +1144,33 @@ export async function procurement(root) {
                 </div>
                 ${(boq?.items ?? []).length > 0
                   ? table({
-                      headers: ['Code', 'Description', 'Unit', 'Quantity', 'Measured from', 'Confidence'],
-                      align: ['', '', '', 'num', '', 'num'],
+                      headers: ['Code', 'Description', 'Unit', 'Quantity', 'Measured from', 'Measured by', 'Confidence'],
+                      align: ['', '', '', 'num', '', '', 'num'],
                       rows: (boq.items ?? []).slice(0, 60).map((item) => [
                         item.costCode,
                         item.description,
                         item.unit,
                         Number(item.quantity).toLocaleString('en-GB'),
                         item.sourceSheet ?? '—',
+                        item.measuredBy === 'PERSON' ? badge('a surveyor', 'ok') : badge('a model', ''),
                         item.confidenceScore === null ? '—' : pct(Number(item.confidenceScore) * 100, 0),
                       ]),
                     })
-                  : html`<div class="empty"><b>Nothing measured yet</b>Measure a drawing on Pipeline &amp; Bids, confirm
-                      the quantities, and they appear here ready to price.</div>`}
+                  : html`<div class="empty"><b>Nothing measured yet</b>Measure a drawing on Pipeline &amp; Bids, or enter
+                      what you measured yourself below. Either way the quantities appear here ready to price.</div>`}
                 <div class="actions" style="margin-top:12px">
                   ${raw(
                     commandBar([
                       {
+                        id: 'measured-takeoff',
+                        label: 'Enter measured quantities',
+                        permitted: can('BOQ_TAKEOFF', 'C'),
+                        reason: blockedReason('BOQ_TAKEOFF', 'C'),
+                      },
+                      {
                         id: 'build-estimate',
                         label: 'Price the bill',
+                        tone: 'primary',
                         permitted: can('ESTIMATE_TENDER', 'C') && (boq?.items ?? []).length > 0,
                         reason:
                           (boq?.items ?? []).length === 0
@@ -1311,6 +1319,63 @@ export async function procurement(root) {
      * Rates are left to the estimator. A quantity is not a rate, and a platform
      * that filled them in from an index would be pricing somebody else's job.
      */
+    /*
+     * The quantities a surveyor measured, entered as measured.
+     *
+     * The only route to a bill of quantities ran a perception model over the
+     * sheets, so a company with no AI credit could not price a job it had
+     * measured by hand — and a take-off done with a scale rule was charged for
+     * a reading nobody performed. This calls no provider and costs nothing.
+     *
+     * The quantities carry no confidence score, deliberately. A number there
+     * would be a score for a reading that did not happen; the bill says "a
+     * surveyor" instead, which is the more useful fact anyway.
+     */
+    'measured-takeoff': {
+      title: 'Enter measured quantities',
+      intent:
+        'For a take-off done off your own sheets. Nothing is read, nothing is charged, and each line is recorded as ' +
+        'measured by a person against the sheet you name — which is what an estimator, and anybody auditing the bid ' +
+        'years later, needs to know about a quantity.',
+      path: `/v1/projects/${projectId}/tender/takeoff/measured`,
+      submitLabel: 'Record the measurement',
+      fields: [
+        {
+          name: 'packageId',
+          label: 'Work package',
+          type: 'text',
+          suggestions: boq?.packages ?? [],
+          hint: 'The package these quantities belong to. Use the same name when you price them.',
+        },
+        { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on.' },
+        { name: 'discipline', label: 'Discipline', type: 'text', placeholder: 'STRUCTURES' },
+        { name: 'sheetId', label: 'Sheet', type: 'text', placeholder: '25133-TDC-FN-ZZ-DR-S-1600', hint: 'The drawing the measurement was taken off.' },
+        {
+          name: 'items',
+          label: 'The items, one per line',
+          type: 'textarea',
+          rows: 8,
+          placeholder:
+            'Rake out and repoint in lime mortar | m2 | 86\nRebuild collapsed section in reclaimed stone | m2 | 12\nReplace coping, bed and point | m | 34',
+          hint: 'description | unit | quantity — and optionally a fourth field naming a different sheet for that line.',
+        },
+      ],
+      transform: (v) => ({
+        packageId: v.packageId,
+        costCodePrefix: v.costCodePrefix,
+        sources: [{ discipline: v.discipline, sheetId: v.sheetId }],
+        items: String(v.items ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 3 && parts[0])
+          .map((parts) => ({
+            description: parts[0],
+            unit: parts[1],
+            quantity: Number(parts[2]),
+            sourceSheet: parts[3] || v.sheetId,
+          })),
+      }),
+    },
     'build-estimate': {
       title: 'Price the bill',
       intent:

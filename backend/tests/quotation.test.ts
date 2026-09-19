@@ -236,3 +236,38 @@ describe('a measured line with no rate against it', () => {
     assert.equal(priced.warnings.filter((w) => w.includes('no rate')).length, 0);
   });
 });
+
+describe('a take-off a surveyor did by hand', () => {
+  it('creates the bill without calling a provider or spending anything', async () => {
+    /*
+     * The blocker this closes. `runTakeoff` always ran a perception model, so
+     * the only route to a bill of quantities went through a provider — and a
+     * company with no AI credit could not price a job it had already measured
+     * with a scale rule. It was also charging for a reading nobody performed.
+     */
+    const ctx = qsCtx();
+    const before = platform.wallet(ctx.tenantId).availableMinor();
+
+    const taken = await tender.runTakeoff(ctx, {
+      packageId: 'WALL-MANUAL',
+      sources: [{ discipline: 'STRUCTURES', sheetId: '25133-TDC-FN-ZZ-DR-S-1600' }],
+      costCodePrefix: 'WALL',
+      measuredBy: 'PERSON',
+      items: WALL_LINES.map((line) => ({ description: line.description, unit: line.unit, quantity: line.quantity })),
+    });
+
+    assert.equal(taken.acuConsumed, 0, 'a hand measurement was charged for');
+    assert.equal(platform.wallet(ctx.tenantId).availableMinor(), before, 'the wallet moved on a measurement nobody read');
+    assert.equal(taken.boqItemIds.length, 3);
+
+    const item = platform.ledger.require({ refType: 'BoQItem', refId: taken.boqItemIds[0]! });
+    assert.equal(item.state.measuredBy, 'PERSON');
+    assert.equal(item.state.costCode, 'WALL.001');
+    assert.equal(item.state.sourceSheet, undefined);
+    assert.equal(item.state.measurementRule, 'NRM2');
+    // No confidence score. A number here would be a score for a reading that
+    // did not happen, and the estimator reads this field to decide how far to
+    // trust the quantity.
+    assert.equal(item.state.confidenceScore, null);
+  });
+});

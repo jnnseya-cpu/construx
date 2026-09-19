@@ -12501,6 +12501,57 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => tender.runTakeoff(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/takeoff/measured',
+    // Deliberately no `ai` annotation, because no provider is called. The cost
+    // quote for this action is nothing, and a route that declared otherwise
+    // would quote a reading nobody performs.
+    description:
+      'Engine A — enter quantities a surveyor measured, creating BoQ items with no provider call. The quantity is ' +
+      'recorded as a person’s and carries no confidence score',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'sources', 'items', 'costCodePrefix'],
+      properties: {
+        packageId: stringField,
+        sources: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['discipline'],
+            properties: {
+              discipline: stringField,
+              sheetId: stringField,
+              drawingRef: { type: 'object' },
+              modelRef: { type: 'object' },
+            },
+          },
+        },
+        items: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['description', 'unit', 'quantity'],
+            properties: {
+              description: stringField,
+              unit: stringField,
+              quantity: { type: 'number' },
+              sourceSheet: stringField,
+              measurementRule: stringField,
+            },
+            additionalProperties: false,
+          },
+        },
+        costCodePrefix: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.runTakeoff(projectContext(platform, ctx), { ...body<Parameters<typeof tender.runTakeoff>[1]>(ctx), measuredBy: 'PERSON' }),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/tender/boq',
     readOnly: true,
@@ -12536,6 +12587,11 @@ export const ROUTES: Route[] = [
           // was measured off and how sure the reading was.
           sourceSheet: item.sourceSheet ?? null,
           source: String(item.source ?? '2D'),
+          // Who measured, and how sure they were. A quantity a surveyor
+          // measured by hand carries no confidence score and must not be shown
+          // as though a model read it — and a machine-measured line must not
+          // be shown as though somebody checked it.
+          measuredBy: String(item.measuredBy ?? 'MODEL'),
           confidenceScore: item.confidenceScore ?? null,
         })),
         packages: [...new Set(items.map((item) => String(item.packageId ?? '')).filter(Boolean))],
