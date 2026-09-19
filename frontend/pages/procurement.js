@@ -16,6 +16,156 @@ import { blockedReason, can, draw, state } from '../app.js';
  * and the same penalty profile — which is what a challenged award requires.
  */
 
+/*
+ * The run, and what it found.
+ *
+ * Held here rather than in `state` because it belongs to this screen and to one
+ * sitting at it: a proposal is not platform state, nothing is recorded until it
+ * is accepted, and reloading the page should lose it rather than resurrect a
+ * price nobody remembers asking for. `#view` is rebuilt on every draw, so the
+ * panel below reads this on the way past.
+ */
+let packRun = null;
+
+/**
+ * Price the whole pack, from the files already filed.
+ *
+ * The complaint this answers, in the words it was made in: nobody will use a
+ * construction OS that makes them type what the platform has already read. Four
+ * screens and forty fields for a £20,000 wall repair is not a tool anybody
+ * chooses, whatever each screen does correctly on its own.
+ *
+ * So the run reads every drawing, measures it, and proposes a rate for each
+ * measured line out of this business's own committed estimates — and then
+ * stops, with everything on one screen, for one person to accept. That last
+ * part is not hesitancy about automation. Every quantity came out of a model
+ * and every rate came out of history, and both are wrong sometimes; a quotation
+ * that reached a customer at rates nobody looked at would make the platform's
+ * central claim false.
+ */
+function packRunPanel({ available, drawingsHeld, blocked }) {
+  const proposal = packRun;
+  return html`<div class="card pad0" style="margin-bottom:14px">
+    <div style="padding:15px 17px">
+      <h2>Price the pack</h2>
+      <p class="metric-sub" style="margin-bottom:11px">
+        One run, from the drawings already filed: every sheet read and measured, every measured line priced against
+        the rates this business has actually committed on its own past estimates, and the site-wide heads and margin
+        taken from your last complete estimate. It writes the readings — a reading is evidence either way — and
+        nothing else. No bill, no estimate and no quotation exists until you accept, which is one decision instead of
+        forty fields.
+      </p>
+      <div class="metric-sub" style="margin-bottom:11px">
+        ${drawingsHeld} drawing${drawingsHeld === 1 ? '' : 's'} filed on this project.
+      </div>
+      <div class="actions">
+        ${raw(
+          commandBar([
+            {
+              id: 'price-pack',
+              label: 'Read and price the pack',
+              tone: 'primary',
+              permitted: can('BOQ_TAKEOFF', 'C') && available && drawingsHeld > 0,
+              reason:
+                drawingsHeld === 0
+                  ? 'No file on this project is classified as a drawing. File the pack first — the run measures what it can see.'
+                  : !available
+                    ? 'This deployment has no model that can be shown a drawing, so nothing can be measured off one.'
+                    : blocked ?? blockedReason('BOQ_TAKEOFF', 'C'),
+            },
+          ]),
+        )}
+      </div>
+
+      ${
+        proposal
+          ? html`
+            <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:13px">
+              <h2>What the run found</h2>
+              <div class="grid g4" style="margin:9px 0 12px">
+                <div>
+                  <div class="metric">${proposal.read.length}</div>
+                  <div class="metric-sub">sheets read${proposal.unread.length > 0 ? `, ${proposal.unread.length} not` : ''}</div>
+                </div>
+                <div>
+                  <div class="metric">${proposal.lines.length}</div>
+                  <div class="metric-sub">measured lines</div>
+                </div>
+                <div>
+                  <div class="metric ${raw(proposal.lines.every((line) => line.rate) ? 'good' : 'warn')}">
+                    ${proposal.lines.filter((line) => line.rate).length}
+                  </div>
+                  <div class="metric-sub">priced from our own record</div>
+                </div>
+                <div>
+                  <div class="metric orange">${proposal.indicative ? money(proposal.indicative.totalMinor) : '—'}</div>
+                  <div class="metric-sub">
+                    ${proposal.indicative ? 'on these rates and your last basis' : 'nothing to price it on yet'}
+                  </div>
+                </div>
+              </div>
+
+              ${table({
+                headers: ['Description', 'Unit', 'Quantity', 'Sheet', 'Rate', 'Where the rate came from'],
+                align: ['', '', 'num', '', 'num', ''],
+                rows: proposal.lines.map((line) => [
+                  line.description,
+                  line.unit,
+                  Number(line.quantity).toLocaleString('en-GB'),
+                  line.sourceSheet ?? '—',
+                  line.rate ? money(line.rate.allInMinor) : badge('none', 'warn'),
+                  line.rate
+                    ? html`<span style="font-size:12px;color:var(--text-3)">${line.rate.basis}</span>`
+                    : html`<span style="font-size:12px;color:var(--text-3)">${line.unpriced}</span>`,
+                ]),
+              })}
+
+              ${
+                proposal.unread.length > 0
+                  ? html`<div class="notice warn" style="margin-top:11px"><div>
+                      <b>${proposal.unread.length} file${proposal.unread.length === 1 ? '' : 's'} could not be read</b>,
+                      so anything on ${proposal.unread.length === 1 ? 'it' : 'them'} is not in this price.
+                      <div class="split-list" style="margin-top:7px">
+                        ${proposal.unread.map((file) => html`<div class="row"><span class="lbl">${file.filename}</span><span class="val">${file.reason}</span></div>`)}
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+
+              ${
+                proposal.outstanding.length > 0
+                  ? html`<div class="notice" style="margin-top:11px"><div>
+                      <b>Still yours to decide.</b>
+                      <div class="split-list" style="margin-top:7px">
+                        ${proposal.outstanding.map((item) => html`<div class="row"><span class="lbl">${item}</span></div>`)}
+                      </div>
+                    </div></div>`
+                  : ''
+              }
+
+              <div class="actions" style="margin-top:12px">
+                ${raw(
+                  commandBar([
+                    {
+                      id: 'accept-pack',
+                      label: 'Accept — write the bill, price it and draw the quotation',
+                      tone: 'primary',
+                      permitted: can('ESTIMATE_TENDER', 'C') && can('EVIDENCE_AUDIT', 'I') && proposal.lines.length > 0,
+                      reason:
+                        proposal.lines.length === 0
+                          ? 'The run measured nothing, so there is nothing to accept.'
+                          : blockedReason('ESTIMATE_TENDER', 'C') ?? blockedReason('EVIDENCE_AUDIT', 'I'),
+                    },
+                  ]),
+                )}
+              </div>
+            </div>`
+          : ''
+      }
+    </div>
+  </div>`;
+}
+
 export async function procurement(root) {
   const projectId = state.session.projectId;
 
@@ -31,7 +181,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -54,6 +204,11 @@ export async function procurement(root) {
     // `boqItemId`, and until this was readable the only way to price a measured
     // job was to retype every quantity into a form.
     api.read(`/v1/projects/${projectId}/tender/boq`, 'BOQ_TAKEOFF').catch((error) => ({ error })),
+    // What the run has to work with: the files already filed, and whether this
+    // deployment has a model that can be shown a drawing. Both are reads the
+    // panel needs before it can honestly offer or refuse the run.
+    api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
+    api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -1114,6 +1269,12 @@ export async function procurement(root) {
         </div>
       </div>
 
+      ${packRunPanel({
+        available: perception?.capability?.available === true,
+        drawingsHeld: (ingestion?.files ?? []).filter((file) => file.kind === 'DRAWING').length,
+        blocked: null,
+      })}
+
       ${
         /*
          * The bill, and the door that prices it.
@@ -1319,6 +1480,167 @@ export async function procurement(root) {
      * Rates are left to the estimator. A quantity is not a rate, and a platform
      * that filled them in from an index would be pricing somebody else's job.
      */
+    /*
+     * The run: read the pack, measure it, price it against our own record.
+     *
+     * One field, because one field is all the platform cannot work out for
+     * itself. Everything else it reads, measures or takes from what this
+     * business has already committed — and where it cannot, it says so on the
+     * proposal rather than opening another form.
+     */
+    'price-pack': {
+      title: 'Read and price the pack',
+      intent:
+        'Reads every drawing filed on this project, measures what is dimensioned on each sheet, and proposes a rate ' +
+        'for every measured line from the estimates this business has actually committed — with the confidence and ' +
+        'the age of the evidence behind each one. It writes the readings and nothing else: no bill, no estimate and ' +
+        'no quotation exists until you accept what it found.',
+      path: `/v1/projects/${projectId}/tender/pack/price`,
+      submitLabel: 'Read the pack',
+      aiCost: { method: 'POST', path: `/v1/projects/${projectId}/tender/pack/price` },
+      fields: [
+        {
+          name: 'packageId',
+          label: 'Work package',
+          type: 'text',
+          placeholder: 'WALL',
+          hint: 'What to file the measured quantities under. The one thing no drawing states.',
+        },
+      ],
+      // The proposal is the screen's, not the platform's: nothing is recorded
+      // until it is accepted, so it is held here and drawn below.
+      onResult: (result) => {
+        packRun = result;
+      },
+    },
+    /*
+     * One decision, taken once.
+     *
+     * Everything the run could answer is already answered and is not asked for
+     * again: the quantities, the rates it found in our own record, the
+     * site-wide heads and the margin from the last complete estimate. What is
+     * asked for is what nothing could tell it — the rate on a line this
+     * business has never priced, and who the offer is being made to.
+     */
+    'accept-pack': {
+      title: 'Accept the run',
+      intent:
+        'Confirms every reading, writes the bill, prices it across the twenty cost heads and draws up the quotation. ' +
+        'The quotation opens as a draft under Legal instruments on Site Documents, where it is generated against a ' +
+        'frozen manifest, approved and issued under its own number — the one step of this that is a legal act rather ' +
+        'than arithmetic.',
+      path: `/v1/projects/${projectId}/tender/pack/accept`,
+      submitLabel: 'Accept and draw it up',
+      fields: [
+        {
+          name: 'costCodePrefix',
+          label: 'Cost code prefix',
+          type: 'text',
+          value: packRun?.packageId ?? '',
+          hint: 'Codes run WALL.001, WALL.002 and so on.',
+        },
+        {
+          name: 'durationWeeks',
+          label: 'Weeks on site',
+          type: 'number',
+          step: '1',
+          value: packRun?.basis?.durationWeeks ?? '',
+          hint: 'Drives every time-related head. Nothing in a drawing says how long a job takes.',
+        },
+        {
+          name: 'overheadPercent',
+          label: 'Overhead (%)',
+          type: 'number',
+          step: '0.1',
+          value: packRun?.basis?.margin?.overheadPercent ?? '',
+        },
+        {
+          name: 'profitPercent',
+          label: 'Profit (%)',
+          type: 'number',
+          step: '0.1',
+          value: packRun?.basis?.margin?.profitPercent ?? '',
+        },
+        {
+          name: 'basisOfEstimate',
+          label: 'Basis of the estimate',
+          type: 'textarea',
+          rows: 2,
+          value: packRun?.read?.length
+            ? `Measured off ${packRun.read.map((sheet) => sheet.filename).join(', ')}; rates from this business's own committed estimates.`
+            : '',
+        },
+        { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to.' },
+        { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
+        { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
+        // Only the lines our own record could not price. A form that asked for
+        // every rate again would be the thing this run exists to remove.
+        ...(packRun?.lines ?? [])
+          .map((line, index) => ({ line, index }))
+          .filter(({ line }) => !line.rate)
+          .flatMap(({ line, index }) => [
+            {
+              name: `rate:${index}`,
+              label: `${line.description} — ${line.quantity} ${line.unit}`,
+              type: 'number',
+              money: true,
+              hint: `${line.sourceSheet ?? 'measured'} · all-in rate per ${line.unit}. This business has never priced this item.`,
+            },
+            {
+              name: `basis:${index}`,
+              label: '— priced as',
+              type: 'select',
+              required: false,
+              value: 'labourRateMinor',
+              options: [
+                { value: 'labourRateMinor', label: 'Our own labour' },
+                { value: 'materialRateMinor', label: 'Materials' },
+                { value: 'plantRateMinor', label: 'Plant' },
+                { value: 'subcontractRateMinor', label: 'Subcontract' },
+              ],
+            },
+          ]),
+      ],
+      transform: (v) => ({
+        packageId: packRun.packageId,
+        costCodePrefix: v.costCodePrefix,
+        lines: packRun.lines.map((line, index) => {
+          if (line.rate) {
+            return {
+              draftId: line.draftId,
+              index: line.index,
+              labourRateMinor: line.rate.labourRateMinor,
+              materialRateMinor: line.rate.materialRateMinor,
+              plantRateMinor: line.rate.plantRateMinor,
+              subcontractRateMinor: line.rate.subcontractRateMinor,
+            };
+          }
+          const typed = Number(v[`rate:${index}`] ?? 0);
+          const head = v[`basis:${index}`] || 'labourRateMinor';
+          return { draftId: line.draftId, index: line.index, ...(typed > 0 ? { [head]: typed } : {}) };
+        }),
+        estimate: {
+          durationWeeks: Number(v.durationWeeks),
+          basisOfEstimate: v.basisOfEstimate,
+          margin: { overheadPercent: Number(v.overheadPercent), profitPercent: Number(v.profitPercent) },
+          ...(packRun.basis?.timeRelated?.length ? { timeRelated: packRun.basis.timeRelated } : {}),
+          ...(packRun.basis?.quantified?.length ? { quantified: packRun.basis.quantified } : {}),
+          ...(packRun.basis?.insurance ? { insurance: packRun.basis.insurance } : {}),
+          ...(packRun.basis?.exclusions?.length ? { exclusions: packRun.basis.exclusions } : {}),
+        },
+        quotation: {
+          clientName: v.clientName,
+          validUntil: v.validUntil,
+          ...(v.paymentTerms ? { paymentTerms: v.paymentTerms } : {}),
+        },
+      }),
+      // Accepted means recorded. The proposal has become a bill, an estimate
+      // and a quotation, and leaving it on screen would invite a second run
+      // against readings that are now confirmed.
+      onResult: () => {
+        packRun = null;
+      },
+    },
     /*
      * The quantities a surveyor measured, entered as measured.
      *
@@ -2561,7 +2883,13 @@ export async function procurement(root) {
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
-    if (await command(spec)) await draw();
+    const result = await command(spec);
+    if (!result) return;
+    // A command whose answer belongs to this screen rather than to the record
+    // says so. The pack run is the only one: its proposal is not platform state
+    // and nothing is written until somebody accepts it.
+    spec.onResult?.(result);
+    await draw();
   });
 }
 

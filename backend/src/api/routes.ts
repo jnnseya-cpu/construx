@@ -236,6 +236,7 @@ import * as conceptduediligence from '../domain/conceptduediligence.ts';
 import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
+import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
 import * as settlement from '../domain/settlement.ts';
@@ -12550,6 +12551,94 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tender.runTakeoff(projectContext(platform, ctx), { ...body<Parameters<typeof tender.runTakeoff>[1]>(ctx), measuredBy: 'PERSON' }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/pack/price',
+    // Its own task type, and quoted per sheet. The run reads one drawing per
+    // sheet, so the figure this returns is the cost of reading one of them —
+    // declaring the single-sheet task here instead would have given two routes
+    // one name and left a quote unable to say which it was pricing.
+    ai: { engine: 'TENDER', taskType: 'drawing_pack_measurement', capability: 'PERCEPTION' },
+    description:
+      'Read every drawing in the pack, measure it, and price what was measured against this business’s own ' +
+      'committed rates. Writes the readings and nothing else — no bill, no estimate and no quotation exists until a ' +
+      'person accepts',
+    schema: {
+      type: 'object',
+      required: ['packageId'],
+      properties: { packageId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidrun.proposePackPrice(projectContext(platform, ctx), platform.evidence, body<{ packageId: string }>(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/pack/accept',
+    description:
+      'Accept the run: confirm every reading, write the bill, price it across the twenty heads and draw up the ' +
+      'quotation. One decision, taken once',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'costCodePrefix', 'lines', 'estimate'],
+      properties: {
+        packageId: stringField,
+        costCodePrefix: stringField,
+        lines: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['draftId', 'index'],
+            properties: {
+              draftId: stringField,
+              index: { type: 'integer', minimum: 0 },
+              labourRateMinor: { type: 'number', minimum: 0 },
+              materialRateMinor: { type: 'number', minimum: 0 },
+              plantRateMinor: { type: 'number', minimum: 0 },
+              subcontractRateMinor: { type: 'number', minimum: 0 },
+            },
+            additionalProperties: false,
+          },
+        },
+        // The cost model owns the shape of its own heads and validates each one
+        // as it prices it; restating that here would be a second copy to drift.
+        estimate: {
+          type: 'object',
+          required: ['durationWeeks', 'basisOfEstimate', 'margin'],
+          properties: {
+            durationWeeks: { type: 'integer', minimum: 1 },
+            basisOfEstimate: { type: 'string', minLength: 3, maxLength: 4000 },
+            assumptions: { type: 'array', items: { type: 'string' } },
+            timeRelated: { type: 'array', items: { type: 'object' } },
+            quantified: { type: 'array', items: { type: 'object' } },
+            insurance: { type: 'object' },
+            exclusions: { type: 'array', items: { type: 'object' } },
+            margin: { type: 'object' },
+          },
+        },
+        quotation: {
+          type: 'object',
+          required: ['clientName', 'validUntil'],
+          properties: {
+            clientName: { type: 'string', minLength: 2, maxLength: 200 },
+            validUntil: stringField,
+            paymentTerms: { type: 'string', maxLength: 500 },
+            coveringNote: { type: 'string', maxLength: 1000 },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidrun.acceptPackProposal(
+        platform,
+        projectContext(platform, ctx),
+        authoriseTenant(ctx, 'EVIDENCE_AUDIT', 'I'),
+        body<bidrun.AcceptInput>(ctx),
+      ),
   },
   {
     method: 'GET',

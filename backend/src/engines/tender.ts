@@ -73,8 +73,17 @@ export async function runTakeoff(
      * quantities ran a perception model, so a company with no AI credit could
      * not price a job it had measured by hand — and a take-off somebody did
      * with a scale rule was charged for a reading nobody performed.
+     *
+     * `MODEL_CONFIRMED` is a machine reading a person has just confirmed. The
+     * reading already happened — a perception model read the sheet and its
+     * confidence is on the draft — so running a second model here read nothing
+     * new and charged for it. The confirmed quantity carries the confidence of
+     * the reading it came from, which is the honest number: a person accepting
+     * a machine's measurement does not make the machine surer of it.
      */
-    measuredBy?: 'MODEL' | 'PERSON';
+    measuredBy?: 'MODEL' | 'PERSON' | 'MODEL_CONFIRMED';
+    /** The confidence of the reading already taken, for `MODEL_CONFIRMED`. */
+    confidence?: number;
   },
 ): Promise<{ takeoffId: string; boqItemIds: string[]; acuConsumed: number }> {
   authorise(ctx, 'BOQ_TAKEOFF', 'C', { lifecyclePhase: currentPhase(ctx) });
@@ -94,7 +103,15 @@ export async function runTakeoff(
   const method = input.sources.some((s) => s.modelRef) ? 'MODEL_BASED' : 'DRAWING_BASED';
   const source = input.sources.some((s) => s.modelRef) ? 'BIM' : '2D';
 
-  if (input.measuredBy === 'PERSON') {
+  // Both paths that write without calling a model: a person's own measurement,
+  // and a machine reading that has just been confirmed. Neither has anything
+  // left to read.
+  if (input.measuredBy === 'PERSON' || input.measuredBy === 'MODEL_CONFIRMED') {
+    const byPerson = input.measuredBy === 'PERSON';
+    // A person's measurement carries no confidence score, because there was no
+    // reading to be confident about. A confirmed machine reading carries the
+    // confidence of that reading.
+    const confidence = byPerson ? null : (input.confidence ?? null);
     write(ctx, {
       eventType: 'TAKEOFF_COMPLETED',
       entity: { refType: 'Takeoff', refId: takeoffId },
@@ -105,11 +122,8 @@ export async function runTakeoff(
         sources: input.sources,
         itemCount: input.items.length,
         method,
-        measuredBy: 'PERSON',
-        // No confidence. A number here would be a score for a reading that did
-        // not happen, and the estimator downstream reads this field to decide
-        // how much to trust the quantity.
-        confidence: null,
+        measuredBy: input.measuredBy,
+        confidence,
         completedAt: new Date().toISOString(),
       },
     });
@@ -132,8 +146,8 @@ export async function runTakeoff(
           measurementRule: item.measurementRule ?? 'NRM2',
           source,
           sourceSheet: item.sourceSheet,
-          measuredBy: 'PERSON',
-          confidenceScore: null,
+          measuredBy: input.measuredBy,
+          confidenceScore: confidence,
         },
       });
     });

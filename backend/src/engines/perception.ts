@@ -1246,6 +1246,14 @@ export async function confirm(
       sources: [{ discipline: String(extraction.discipline ?? 'GENERAL'), sheetId: draft.evidenceHash }],
       items,
       costCodePrefix: input.costCodePrefix,
+      // The reading already happened, above, when a model read the sheet. This
+      // used to run a second model over items it had itself just extracted —
+      // a provider call that read nothing new and was charged for, on every
+      // confirmation. The confirmed quantity carries the confidence of the
+      // reading it came from; a person accepting a machine's measurement does
+      // not make the machine surer of it.
+      measuredBy: 'MODEL_CONFIRMED',
+      ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
     });
     result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
   } else if (draft.task === 'ITT_REQUIREMENTS') {

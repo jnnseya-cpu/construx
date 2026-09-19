@@ -24648,3 +24648,48 @@ is never presented as a model's. The anonymous bootstrap route
 The runbook section is in `docs/GO-LIVE.md`, including the requirement that the
 sandbox carry a **different** `GATEWAY_JWT_SECRET` — sharing one would make a
 token minted for a fictional identity verify against the live platform.
+
+### Four screens and forty fields is not a construction OS
+
+Said plainly by the person paying for it, and it was the right verdict: nobody
+will use a platform that reads a drawing and then asks them to type what it
+read. Every piece of the estimating line worked and a person carried the work
+between them — a button per drawing, a confirmation per reading, the package
+retyped, a rate typed against every measured line, then the preliminaries, the
+waste, the insurance, the overhead, the profit, then the quotation.
+
+`domain/bidrun.ts` is the run. From the files already filed it reads every
+drawing, measures what is dimensioned on each sheet, and **proposes a rate for
+every measured line out of this business's own committed estimates** — each with
+the confidence, the number of observations, the projects behind it and the age
+of the newest. The site-wide heads and the margin come from the last complete
+estimate. It prices the result with `priceEstimate`, the same arithmetic
+`buildEstimate` would run, so what the screen shows is what accepting produces
+rather than a preview computed a second way.
+
+Then it stops. **A proposal writes the readings — a reading is evidence either
+way — and nothing else.** No bill, no estimate, no quotation exists until one
+person accepts on one screen, and that single act confirms every reading, writes
+the bill, prices it across the twenty heads and draws up the quotation. That is
+not hesitancy about automation: every quantity came out of a model and every
+rate came out of history, and both are wrong sometimes. A quotation reaching a
+customer at rates nobody looked at is the one thing that would make the
+platform's central claim false.
+
+**It invents no rate.** A line this business has never priced comes back
+unpriced and says so, and the accept form asks for that one rate and no others.
+A median of one observation is reported as one observation. A file it could not
+read is named, never silently skipped — a pack of five where one was unreadable
+and the screen shows four is a pack quietly mispriced.
+
+**Confirming a reading no longer calls a second model.** `perception.confirm`
+ran `runTakeoff`, which ran a perception model over the items that model had
+itself just extracted: a provider call that read nothing new, charged for, on
+every confirmation. `measuredBy: 'MODEL_CONFIRMED'` writes the bill directly and
+carries the confidence of the reading it came from — a person accepting a
+machine's measurement does not make the machine surer of it.
+
+The panel lives on Procurement rather than Pipeline & Bids, because `navreach`
+caught the placement: Pipeline is gated on `BUSINESS_DEVELOPMENT` and the BIM
+role holds writes on `BOQ_TAKEOFF` without holding that gate. The screen that
+offers a write has to be reachable by everyone who can take it.
