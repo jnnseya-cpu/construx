@@ -4,6 +4,7 @@ import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
 import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
+import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
 import { supplierPaymentCard } from '../lib/siteportal.js';
 import { blockedReason, can, draw, state } from '../app.js';
@@ -181,7 +182,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -209,6 +210,9 @@ export async function procurement(root) {
     // panel needs before it can honestly offer or refuse the run.
     api.get(`/v1/projects/${projectId}/ingestion`).catch(() => null),
     api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
+    // Where this job is on the road from an enquiry to a price. Computed
+    // server-side: the console holds no copy of what happens next.
+    loadFlow(projectId),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -1268,6 +1272,8 @@ export async function procurement(root) {
           }
         </div>
       </div>
+
+      ${raw(flowPanel(flow, { here: 'procurement' }))}
 
       ${packRunPanel({
         available: perception?.capability?.available === true,

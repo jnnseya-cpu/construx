@@ -236,6 +236,7 @@ import * as conceptduediligence from '../domain/conceptduediligence.ts';
 import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
+import { bidFlow } from '../domain/bidflow.ts';
 import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
@@ -12551,6 +12552,15 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       tender.runTakeoff(projectContext(platform, ctx), { ...body<Parameters<typeof tender.runTakeoff>[1]>(ctx), measuredBy: 'PERSON' }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/flow',
+    readOnly: true,
+    description:
+      'Where this job is on the road from an enquiry to a price or a submission, which road it is on and why, and the ' +
+      'one thing to do next — computed from the record rather than from a checklist anybody ticks',
+    handler: (platform, ctx) => bidFlow(platform, projectContext(platform, ctx)),
   },
   {
     method: 'POST',

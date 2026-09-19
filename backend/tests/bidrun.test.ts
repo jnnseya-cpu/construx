@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import { rejectsCode } from './helpers.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
+import { bidFlow } from '../src/domain/bidflow.ts';
 import { acceptPackProposal, proposePackPrice } from '../src/domain/bidrun.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
@@ -353,5 +354,77 @@ describe('the run from an uploaded pack', () => {
     const lines = estimate.lines as Array<{ boqItemId?: string }>;
     assert.equal(lines.length, 3);
     assert.ok(lines.every((line) => accepted.boqItemIds.includes(String(line.boqItemId))));
+  });
+});
+
+
+describe('where the job is, and the one thing to do next', () => {
+  /*
+   * The complaint this answers, in the words it was made in: "the flow is not
+   * working everywhere in this OS". Every screen was right on its own, and
+   * walking one enquiry through four of them produced three truthful refusals
+   * in a row with nothing anywhere saying that this job does not need a
+   * compliance matrix at all — it needs a price.
+   */
+  it('names the road from what the enquiry asks for, not from a preference', () => {
+    const flow = bidFlow(platform, ctxFor('qs'));
+    // No invitation asking for more than a price is recorded here, so this is a
+    // quotation. The submission steps are present and marked not needed, which
+    // is a statement rather than a silence: somebody looking for the compliance
+    // matrix is told this job does not want one.
+    assert.equal(flow.road, 'PRICE');
+    const matrix = flow.steps.find((step) => step.id === 'MATRIX')!;
+    assert.equal(matrix.state, 'NOT_NEEDED');
+    assert.match(matrix.detail, /asks only for a price/);
+  });
+
+  it('reads every step from the record rather than from a checklist', () => {
+    const flow = bidFlow(platform, ctxFor('qs'));
+    const state = (id: string): string => flow.steps.find((step) => step.id === id)!.state;
+
+    // By this point in the file the pack is filed, measured, priced and quoted.
+    assert.equal(state('PACK_FILED'), 'DONE');
+    assert.equal(state('MEASURED'), 'DONE');
+    assert.equal(state('ESTIMATED'), 'DONE');
+    assert.equal(state('QUOTED'), 'DONE');
+    // And the one thing outstanding is the one step that is a legal act rather
+    // than arithmetic.
+    assert.equal(state('ISSUED'), 'READY');
+    assert.equal(flow.nowDo?.id, 'ISSUED');
+    assert.equal(flow.nowDo?.screen, 'documents');
+    assert.match(flow.summary, /Next: issue it/);
+  });
+
+  it('names what to do, not only what is missing', () => {
+    const flow = bidFlow(platform, ctxFor('qs'));
+    for (const step of flow.steps) {
+      if (step.state === 'READY' || step.state === 'BLOCKED') {
+        assert.ok(step.next, `${step.id} says it is outstanding and does not say what to do about it`);
+        assert.ok(step.next!.length > 20, `${step.id}'s remedy is too short to be a remedy: ${step.next}`);
+      }
+    }
+  });
+
+  it('has nothing to do on a project where nothing has started, and says what to start with', () => {
+    // A fresh project: the road exists, the first step is the only one that can
+    // be taken, and everything after it is waiting rather than broken.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const empty = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'Nothing has happened here',
+      sectorType: 'RMI',
+      assetType: 'Boundary wall',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Rawtenstall' },
+      contractValueMinor: 500_000,
+      currency: 'GBP',
+      plannedStart: '2026-05-04',
+      plannedCompletion: '2026-06-01',
+    }).projectId;
+
+    const flow = bidFlow(platform, platform.context(seed.users.qs!.auth, empty, { source: 'WEB' }));
+    assert.equal(flow.nowDo?.id, 'PACK_FILED');
+    assert.match(String(flow.nowDo?.next), /Upload the drawings/);
+    assert.equal(flow.steps.find((step) => step.id === 'MEASURED')!.state, 'BLOCKED');
   });
 });

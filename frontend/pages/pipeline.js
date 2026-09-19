@@ -2,6 +2,7 @@ import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
+import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
 import { SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
@@ -740,7 +741,7 @@ export async function pipeline(root) {
   // The reader is project-scoped: a reading is filed against the project the
   // tender is bid from, and it costs ACUs against that project's tenancy.
   const projectId = state.session?.projectId;
-  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions] = projectId
+  const [perception, evidence, ingestion, bidPacks, assurance, portalPort, submissions, flow] = projectId
     ? await Promise.all([
         api.get(`/v1/projects/${projectId}/perception`).catch(() => null),
         api.get(`/v1/projects/${projectId}/evidence`).catch(() => null),
@@ -761,8 +762,11 @@ export async function pipeline(root) {
         // offering an upload control that would silently do nothing.
         api.get('/v1/portal/adapters').catch((error) => ({ error })),
         api.read(`/v1/projects/${projectId}/submissions`, 'PROCUREMENT_AWARD', 'COMMERCIAL_L3').catch((error) => ({ error })),
+        // Where this job is on the road from an enquiry to a price or a
+        // submission, and the one thing to do next. Computed server-side.
+        loadFlow(projectId),
       ])
-    : [null, null, null, null, null, null, null];
+    : [null, null, null, null, null, null, null, null];
 
   // The register carries counts; the findings themselves are what somebody acts
   // on, so the newest review is opened in full rather than left behind a click.
@@ -841,6 +845,8 @@ export async function pipeline(root) {
         the autopilot queue — the screen a person opens once they have already
         decided to look at what the fleet found, which is exactly backwards.
       -->
+      ${raw(flowPanel(flow, { here: 'pipeline' }))}
+
       <div id="pipeline-insight" style="margin-bottom:14px"></div>
 
       <div class="card pad0" style="margin-bottom:14px">

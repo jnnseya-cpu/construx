@@ -24787,3 +24787,38 @@ are two different reasons for it: with no company facts recorded a matrix cannot
 be built at all, and with them it is produced by reading an invitation and
 confirming the reading. It now says which, and says plainly that an enquiry
 asking only for a price needs neither a matrix nor a response pack.
+
+### The flow, which was the thing that was missing
+
+Said after walking one enquiry through four screens: *"the flow is not working
+everywhere in this OS"*. Every screen was right on its own. What was missing is
+the thing that makes a set of screens an operating system rather than a filing
+cabinet — anywhere in it, an answer to "what happens now".
+
+The symptom was a chain of dead ends, each individually correct. *Read the
+invitation*: no tender requirements, because the enquiry is a letter. *Confirm
+it*: no compliance matrix, because the company's facts are not recorded. *Plan a
+response pack*: nothing to act on, because there is no matrix. Three truthful
+refusals in a row, and nothing anywhere saying that this job does not need a
+matrix at all — it needs a price.
+
+`domain/bidflow.ts` computes the road and every step of it from the record.
+
+**Two roads.** *Price it* — a letter or an email with drawings attached: read
+the sheets, measure, price the bill, send a quotation. No matrix, no response
+pack, no red team. *Bid it* — a formal invitation with a numbered return
+register: read it, file what goes back, set it against what this business holds,
+write the submission, attack it, submit; and it needs a price underneath as
+well. Which road a job is on is a fact about the enquiry rather than a
+preference, so it is derived: an invitation asking for more than a price is a
+bid, anything else is a quotation.
+
+**The submission steps are present on both roads.** On a letter enquiry they
+read *not needed*, which is a statement rather than a silence — somebody looking
+for the compliance matrix is told this job does not want one, instead of finding
+a screen that refuses without explaining.
+
+**Every outstanding step names what to do**, not only what is missing, and which
+screen does it; a test fails if one does not. The panel is on Pipeline & Bids
+and Tender & Procurement, reading one endpoint, holding no rule of its own — the
+same reason the console holds no copy of the permission matrix.
