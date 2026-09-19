@@ -575,6 +575,31 @@ export async function proposePackPrice(
 
   const basis = lastBasis(ctx);
 
+  /*
+   * What this job is worth according to the record, not according to a bill
+   * that is half rated.
+   *
+   * The scope package carries an estimated value somebody recorded on purpose,
+   * and the project carries a contract value. Either is a far better statement
+   * of the size of the job than a bill whose rates have not been typed yet —
+   * and the size of the job is what decides which cost heads are expected on
+   * it. Without this the run named three heads to settle, the person rated
+   * every line, and the estimate then refused to be quoted for four different
+   * ones. The list has to be stable across the act of typing a rate in, or it
+   * is not a warning, it is a trap.
+   */
+  const scopePackage = ctx.ledger
+    .list(ctx.projectId, 'ScopePackage')
+    .map((record) => record.state)
+    .find((state) => String(state.id) === input.packageId || String(state.packageId) === input.packageId);
+  // The package's own value where it has one, and the project's only where it
+  // does not. Never the larger of the two: one package of a fifty-million
+  // scheme is not a fifty-million job, and banding it as one would bury the
+  // handful of heads that actually matter on it under a dozen that do not.
+  const packageValueMinor = Number(scopePackage?.estimatedValueMinor ?? 0) || 0;
+  const projectRecord = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId })?.state;
+  const scaleFloorMinor = packageValueMinor > 0 ? packageValueMinor : Number(projectRecord?.contractValueMinor ?? 0) || 0;
+
   // Priced, not recorded. `priceEstimate` is the same arithmetic `buildEstimate`
   // would run, so what the screen shows is what accepting would produce — not a
   // preview computed a second way that disagrees with the real thing.
@@ -585,6 +610,7 @@ export async function proposePackPrice(
     // duration or the margin.
     durationWeeks: basis?.durationWeeks ?? 1,
     lines: lines.map(toMeasuredLine),
+    ...(scaleFloorMinor > 0 ? { scaleFloorMinor } : {}),
     ...(basis?.timeRelated ? { timeRelated: basis.timeRelated } : {}),
     ...(basis?.quantified ? { quantified: basis.quantified } : {}),
     ...(basis?.insurance ? { insurance: basis.insurance } : {}),
@@ -742,6 +768,7 @@ export async function acceptPackProposal(
   totalMinor: number;
   quotationId: string | null;
   quotationNumberPending: boolean;
+  quotationBlocked: { code: string; message: string; heads: string[] } | null;
 }> {
   if (input.lines.length === 0) {
     throw new DomainError('PROPOSAL_EMPTY', 'There is nothing to accept: no measured line was included', 422);
@@ -811,12 +838,41 @@ export async function acceptPackProposal(
     ...(input.estimate.exclusions ? { exclusions: input.estimate.exclusions } : {}),
   });
 
-  // The quotation refuses an incomplete estimate by itself, which is where that
-  // rule belongs. Nothing is caught here: an estimate that cannot be quoted has
-  // still been built, and the refusal names the heads to go and price.
-  const quoted = input.quotation
-    ? quoteFromEstimate(platform, ctx, actor, { estimateId: built.estimateId, ...input.quotation })
-    : null;
+  /*
+   * The quotation refuses an incomplete estimate, which is right, and that
+   * refusal must not take the bill and the estimate down with it.
+   *
+   * It did. The run named the heads to settle in advance so this would not
+   * happen, and the advance list was computed against a bill nobody had rated
+   * yet — so it named three heads, the person rated every line, the job banded
+   * a size larger, and four *different* heads became expected. The call then
+   * came back 409 having already confirmed every reading, written eighty-odd
+   * bill items and built the estimate. From the screen it looked like nothing
+   * had happened, so the obvious thing to do was run it again — which is how a
+   * bill ends up holding the same drawings measured six times over.
+   *
+   * The banding is fixed above. This is the guarantee that does not depend on
+   * getting the prediction right: work that was written is reported as
+   * written, and the one step that could not be taken is named, with the heads
+   * to go and answer and where to answer them. Nothing else is caught — a
+   * refusal for any other reason is a refusal.
+   */
+  let quoted: ReturnType<typeof quoteFromEstimate> | null = null;
+  let quotationBlocked: { code: string; message: string; heads: string[] } | null = null;
+  if (input.quotation) {
+    try {
+      quoted = quoteFromEstimate(platform, ctx, actor, { estimateId: built.estimateId, ...input.quotation });
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code !== 'ESTIMATE_INCOMPLETE') throw error;
+      const record = platform.ledger.get({ refType: 'Estimate', refId: built.estimateId });
+      quotationBlocked = {
+        code,
+        message: (error as Error).message,
+        heads: ((record?.state.omissions as string[] | undefined) ?? []).slice(),
+      };
+    }
+  }
 
   return {
     boqItemIds,
@@ -827,5 +883,11 @@ export async function acceptPackProposal(
     // company's own numbering rule — which is the one step of this that is a
     // legal act rather than arithmetic.
     quotationNumberPending: quoted !== null,
+    /**
+     * Why there is no quotation, where one was asked for and the bill and the
+     * estimate exist. Null when one was drawn up, and null when none was asked
+     * for — the caller knows which of those it did.
+     */
+    quotationBlocked,
   };
 }

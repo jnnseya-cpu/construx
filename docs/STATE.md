@@ -25053,3 +25053,77 @@ approved, and the number if it has been issued. Nothing on it submits anything.
 `reading()` in `frontend/lib/ui.js` is the same dialog as `modal()` with
 nothing to fill in — the same `modal-host`, the same `modal`, the same footer,
 one button instead of two. No new component and no new colour.
+
+### The pricing line, driven end to end over HTTP
+
+`backend/tests/pricingline.test.ts` takes three drawings in at the API and a
+numbered quotation out: register, upload, ingest, read the register, read the
+flow, price the pack, accept it, read the quotation, generate, submit, approve,
+issue, retry the issue. Thirteen steps, three seats — a BIM lead files the
+drawings, a surveyor prices them, an administrator approves — because no role
+of QS holds `I` on DESIGN_INFORMATION and the person who priced a job does not
+approve their own quotation.
+
+It exists because of a pattern, not a bug. Four separate failures reached the
+customer in one day, and every one of them had a passing unit test, because
+each test stubbed exactly the thing that was broken: the register published
+`classification.kind` and the console read `file.kind`; three route schemas
+refused fields their own engines require; the market-rate join matched on
+description text and real models paraphrase; a document label holds eighty
+characters and an NRM2 description is routinely longer. **The unit was correct
+and the join between units was not**, and no amount of further unit testing
+finds that.
+
+So the stubs behave like models rather than like fixtures. One sheet answers in
+`items` and another in `lines`; one rate comes back split four ways and another
+as a single all-in figure; the model rewords everything it answers and stays
+silent on half the bill; the longest description is 108 characters. The first
+run of it failed six of thirteen steps and found four defects.
+
+**A model's answer goes under the key the task asked for.** `underExpectedKey`
+in `engines/perception.ts` puts a required array-of-objects property back where
+the reading looks for it, driven by the declared schema rather than by a list
+of synonyms: a provider answering `{ lines: [...] }` to a request for
+`{ items: [...] }` had a whole drawing reported as *"could not read enough from
+this file"* and silently left out of the price. On a three-sheet pack that is a
+third of the job missing, blamed on the file. The raw answer is kept exactly as
+it came back, so the draft still records what the provider actually said.
+
+**The heads to settle no longer change under the person answering them.** The
+band that decides which cost heads are expected is taken from the works as
+priced, which is right for a finished estimate and wrong for a bill nobody has
+rated yet. The run named three heads, the person rated every line, the job
+banded a size larger, and the estimate refused to be quoted for four *different*
+heads. `CostModelInput.scaleFloorMinor` lets a caller that holds a better
+statement of the job's value say so — the pack run passes the scope package's
+estimated value, and the project's only where the package has none, because one
+package of a fifty-million scheme is not a fifty-million job. Absent, nothing
+changes; every other caller still bands by the works.
+
+**An acceptance never throws away work it has written.** The quotation refuses
+an incomplete estimate, correctly — and that refusal used to fail the whole
+call after every reading had been confirmed, the bill written and the estimate
+built. From the screen it looked as though nothing had happened, so the obvious
+thing to do was run the pack again, which is how a bill ends up holding the same
+three drawings measured six times over. `acceptPackProposal` now returns the
+bill and the estimate with `quotationBlocked` naming the heads and where to
+answer them. Only `ESTIMATE_INCOMPLETE` is caught; any other refusal is a
+refusal.
+
+**A document number carries its prefix once.** `prefix: 'QUO'` with
+`pattern: 'QUO-{YYYY}-{seq:4}'` is the natural thing to write and numbered the
+first quotation **QUOQUO-2026-0001**. Refused at the point the rule is set, not
+stripped: a document number is what a customer quotes back and what a court
+reads off the top of the page, and guessing which half somebody meant is not a
+guess this platform may make. The refusal prints what the number would have come
+out as. An issued number is never changed.
+
+### AI readiness, per capability
+
+`ai.providers` reports whether *any* provider key is set, so a deployment keyed
+for Gemini alone read as "live calls enabled" while every reasoning task fell
+back to the stand-in — which is exactly the failure that produced fifteen
+unpriced lines saying the market had no view of them. `/readyz` now reports
+`ai.reasoning` and `ai.perception` separately, each naming what it serves and
+what stops working without it, and naming a provider the router has never heard
+of as the typo it is.

@@ -188,6 +188,31 @@ function assertRule(type: string, rule: NumberingRule): void {
   if (/[{}]/.test(leftover)) throw new DomainError('NUMBERING_PATTERN_INVALID', `The ${type} pattern has a placeholder that is not {YYYY}, {YY}, {MM} or {seq:N}`);
   if (rule.seqScope !== 'year' && rule.seqScope !== 'all') throw new DomainError('NUMBERING_SCOPE_INVALID', 'seqScope is year or all');
   if (rule.prefix.length > 16) throw new DomainError('NUMBERING_PREFIX_TOO_LONG', 'A prefix is at most 16 characters');
+  /*
+   * The prefix, once.
+   *
+   * A number is the prefix followed by the pattern, and the pattern is the
+   * part that *looks* like a number — so the natural thing to write is
+   * `prefix: "QUO"` with `pattern: "QUO-{YYYY}-{seq:4}"`, and the first
+   * quotation goes out as **QUOQUO-2026-0001**. It is not recoverable
+   * afterwards: an issued number is issued, and the next one repeats the
+   * mistake.
+   *
+   * Refused rather than silently stripped. A document number is the reference
+   * a customer quotes back and a court reads off the top of the page, and
+   * guessing which half of it somebody meant is not a guess this platform is
+   * entitled to make. The refusal says both halves and what the number would
+   * have come out as.
+   */
+  const prefix = rule.prefix.trim();
+  if (prefix !== '' && rule.pattern.startsWith(prefix)) {
+    throw new DomainError(
+      'NUMBERING_PREFIX_REPEATED',
+      `The ${type} number is the prefix followed by the pattern, so "${prefix}" with "${rule.pattern}" would number the ` +
+        `first one ${renderNumber(rule, 1, new Date())}. Keep "${prefix}" as the prefix and take it out of the pattern, ` +
+        `or leave the prefix empty and let the pattern carry it.`,
+    );
+  }
 }
 
 function commitProfile(platform: Platform, actorId: string, profile: IssuerProfile): void {

@@ -2,7 +2,7 @@ import { api, entityBundle, isWithheld } from '../lib/api.js';
 import { barChart, boxPlot, funnelChart, ganttChart, radarChart, scatterPlot } from '../lib/charts.js';
 import { command, commandBar } from '../lib/command.js';
 import { CONTRACT_FORM, PRICING_BASIS, today } from '../lib/enums.js';
-import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table } from '../lib/ui.js';
+import { badge, date, days, drillable, exact, html, humanise, money, pct, positionReport, raw, render, resolveHtml, statusTone, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
@@ -1844,8 +1844,23 @@ export async function procurement(root) {
       // Accepted means recorded. The proposal has become a bill, an estimate
       // and a quotation, and leaving it on screen would invite a second run
       // against readings that are now confirmed.
-      onResult: () => {
+      //
+      // The quotation is the one step that can fail on its own: an estimate
+      // still carrying a head that is neither priced nor excluded cannot be
+      // quoted. The bill and the estimate are written either way, and the run
+      // now says so rather than reporting a failure over work that succeeded —
+      // which is what sent somebody back to run the pack again, and again.
+      onResult: (result) => {
         packRun = null;
+        if (result?.quotationBlocked) {
+          toast(
+            'Bill and estimate written — no quotation yet',
+            `${result.quotationBlocked.message} Price or exclude ${
+              result.quotationBlocked.heads.length === 1 ? 'it' : 'them'
+            } on the estimate, then draw the quotation from it. Do not run the pack again — it is measured.`,
+            'warn',
+          );
+        }
       },
     },
     /*

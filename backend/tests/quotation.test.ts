@@ -216,7 +216,11 @@ describe('a priced estimate becomes a quotation', () => {
         registrationNo: '08442119',
         registeredAddress: { line1: '14 Bury Road', line2: '', city: 'Rawtenstall', postcode: 'BB4 6AA', country: 'United Kingdom' },
       },
-      numberingRules: { quotation: { prefix: 'QUO', pattern: 'QUO-{YYYY}-{seq:4}', seqScope: 'year' } },
+      // The prefix once. This fixture carried it twice — `prefix: 'QUO'` with
+      // `pattern: 'QUO-…'` — and numbered the quotation **QUOQUO-2026-0001**,
+      // which nothing caught because the assertion below only asked whether a
+      // number came back at all. It now asks what the number is.
+      numberingRules: { quotation: { prefix: 'QUO-', pattern: '{YYYY}-{seq:4}', seqScope: 'year' } },
     });
 
     const estimate = completeEstimate();
@@ -239,7 +243,11 @@ describe('a priced estimate becomes a quotation', () => {
     const issued = issueDocument(platform, approver, quoted.document.id, { idempotencyKey: `quote-${quoted.document.id}` });
 
     assert.equal(issued.document.status, 'ISSUED');
-    assert.ok(issued.issuance.number, 'the quotation went out without a number');
+    assert.match(
+      String(issued.issuance.number),
+      /^QUO-\d{4}-\d{4}$/,
+      `the quotation went out numbered ${issued.issuance.number}`,
+    );
     // What was approved is what was issued.
     assert.equal(documentOf(platform, actor.tenantId, quoted.document.id).revisions.at(-1)!.approval?.hash, hash);
   });

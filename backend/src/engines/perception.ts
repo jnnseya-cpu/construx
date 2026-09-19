@@ -165,6 +165,60 @@ type TaskDefinition = {
   absent: string;
 };
 
+/**
+ * Put a model's answer under the key the task asked for.
+ *
+ * A response schema is a request, not a contract a model is bound by. Asked
+ * for `{ items: [...] }`, a real provider answers `{ lines: [...] }`, or
+ * `{ measurements: [...] }`, or just the bare array — and the reading then
+ * found nothing, the run reported the drawing as unreadable, and the whole
+ * sheet was silently out of the price. On a three-sheet pack that is a third
+ * of the job missing, named as *"the provider could not read enough from this
+ * file"*, which blames the file for the reader's strictness.
+ *
+ * This is the same tolerance the market-rate reading already has, made
+ * general, and it is driven by the declared schema rather than by a list of
+ * synonyms to keep up to date: for a required array-of-objects property that
+ * is absent, take the answer's first array of objects. The discriminator is
+ * exact — every auxiliary array in every one of these schemas (`omitted`,
+ * `obstructed`, `notJudgeable`) holds strings, never objects — so nothing that
+ * means something else can be taken by mistake.
+ *
+ * What came back is left exactly as it came back. The moved value is added
+ * under the expected key and the original key is not removed, so the draft
+ * records what the provider actually said and a person reading it later can
+ * see which shape arrived.
+ */
+export function underExpectedKey(
+  responseSchema: Record<string, unknown>,
+  output: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = responseSchema.properties as Record<string, Record<string, unknown>> | undefined;
+  const required = (responseSchema.required as string[] | undefined) ?? [];
+  if (!properties) return output;
+
+  let moved = output;
+  for (const key of required) {
+    const property = properties[key];
+    if (!property || property.type !== 'array') continue;
+    if ((property.items as { type?: string } | undefined)?.type !== 'object') continue;
+    if (Array.isArray(moved[key])) continue;
+
+    const objects = (value: unknown): boolean =>
+      Array.isArray(value) && value.length > 0 && typeof value[0] === 'object' && value[0] !== null && !Array.isArray(value[0]);
+
+    // A bare array where an object was asked for. Some providers do this when
+    // the answer is a single list and nothing else.
+    if (objects(output)) {
+      moved = { ...moved, [key]: output };
+      continue;
+    }
+    const found = Object.entries(moved).find(([name, value]) => name !== key && objects(value));
+    if (found) moved = { ...moved, [key]: found[1] };
+  }
+  return moved;
+}
+
 const IMAGE_OR_PDF = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
 
 /**
@@ -897,7 +951,7 @@ export async function extract(
           evidenceHash: input.hash,
           evidenceId: record.refId,
           contentType: file.contentType,
-          extraction: output,
+          extraction: underExpectedKey(definition.responseSchema, output),
           confidence,
           status: 'DRAFT',
           producedAt: new Date().toISOString(),
@@ -908,7 +962,13 @@ export async function extract(
     ],
   });
 
-  if (!definition.usable(result.output)) {
+  // Read the same way it was written. The draft above holds the answer under
+  // the key the task asked for, so the legibility check and what the caller
+  // gets back have to be the same object, or a sheet the record shows as read
+  // is refused to the run that paid for it.
+  const extraction = underExpectedKey(definition.responseSchema, result.output);
+
+  if (!definition.usable(extraction)) {
     // The draft stays in the record — it was paid for, and what a model failed
     // to read is itself worth knowing. It simply cannot be confirmed.
     throw new DomainError(
@@ -921,7 +981,7 @@ export async function extract(
   return {
     draftId,
     task: input.task,
-    extraction: result.output,
+    extraction,
     confidence: result.output.confidence as number | undefined,
     acuConsumed: result.acuConsumed,
   };
@@ -1083,7 +1143,7 @@ export async function extractFromText(
           textSource: input.source,
           textLabel: input.label,
           textLength: text.length,
-          extraction: output,
+          extraction: underExpectedKey(definition.responseSchema, output),
           confidence,
           status: 'DRAFT',
           producedAt: new Date().toISOString(),
@@ -1094,7 +1154,10 @@ export async function extractFromText(
     ],
   });
 
-  if (!definition.usable(result.output)) {
+  // The same key the draft was written under, for the same reason.
+  const extraction = underExpectedKey(definition.responseSchema, result.output);
+
+  if (!definition.usable(extraction)) {
     /*
      * Why the reading produced nothing, rather than a sentence that blames the
      * document's length for it.
@@ -1131,7 +1194,7 @@ export async function extractFromText(
   return {
     draftId,
     task: input.task,
-    extraction: result.output,
+    extraction,
     confidence: result.output.confidence as number | undefined,
     acuConsumed: result.acuConsumed,
   };

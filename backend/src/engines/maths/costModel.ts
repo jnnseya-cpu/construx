@@ -244,6 +244,28 @@ export type CostModelInput = {
    * an omission, and this model says so rather than carrying it as zero.
    */
   exclusions?: Array<{ head: CostHead; reason: string }>;
+  /**
+   * The value to band this job by, where the caller knows it better than the
+   * priced lines do.
+   *
+   * The band decides which heads are *expected*, and it is taken from the
+   * measured works because that is what the job is. On a finished estimate
+   * that is right. On a bill that is only half rated it is badly wrong, and
+   * that half-rated case is exactly what a pack run has in its hands before
+   * anybody has typed a rate: the works price at a few thousand because most
+   * lines carry nothing, the job bands as MINOR, and the run reports three
+   * heads to settle. The person then rates every line, the job bands as SMALL,
+   * and the estimate refuses to be quoted for four *different* heads that the
+   * run never mentioned — after the bill and the estimate have been written.
+   *
+   * So a caller that holds a better statement of what the job is worth — the
+   * scope package's estimated value, which somebody recorded on purpose — says
+   * so, and the band is taken from whichever is larger. Never smaller: a job
+   * that measures out bigger than it was scoped at is a bigger job.
+   *
+   * Absent, nothing changes. Every existing caller bands by the works.
+   */
+  scaleFloorMinor?: number;
 };
 
 // --- Output ---------------------------------------------------------------------
@@ -328,7 +350,7 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
         ((line.labourRateMinor ?? 0) + (line.materialRateMinor ?? 0) + (line.plantRateMinor ?? 0) + (line.subcontractRateMinor ?? 0)),
     0,
   );
-  const scale = projectScale(measuredForScale);
+  const scale = projectScale(Math.max(measuredForScale, input.scaleFloorMinor ?? 0));
 
   if (input.durationWeeks <= 0) {
     throw new Error('DURATION_REQUIRED: time-related costs cannot be priced without a construction period');

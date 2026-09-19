@@ -466,7 +466,6 @@ describe('the pricing line, end to end over HTTP', () => {
     });
     assert.equal(priced.status, 201, priced.text);
     proposal = priced.body;
-    console.error('DIAG read', JSON.stringify(proposal.read.map((r:any)=>({f:r.filename,i:r.items}))), 'unread', JSON.stringify(proposal.unread), 'heads', JSON.stringify(proposal.headsToSettle), 'market', JSON.stringify(proposal.marketView));
 
     assert.equal(proposal.read.length, SHEETS.length, 'the run did not read every sheet');
     assert.equal(proposal.unread.length, 0, `a sheet went unread: ${JSON.stringify(proposal.unread)}`);
@@ -554,12 +553,13 @@ describe('the pricing line, end to end over HTTP', () => {
     // one.
     const boq = await call('GET', `/v1/projects/${projectId}/tender/boq`, { token: qsToken });
     assert.equal(boq.status, 200, boq.text);
-    assert.equal((boq.body.lines ?? []).length, 0, 'the run wrote a bill nobody accepted');
+    assert.equal((boq.body.items ?? []).length, 0, 'the run wrote a bill nobody accepted');
   });
 
   it('accepts once: confirms every reading, writes the bill, prices it and draws the quotation', async () => {
     // Every head the run named, answered. Two are excluded and the rest are
     // priced, which is the decision a person actually takes on this screen.
+    const basis = proposal.basis as Record<string, any> | null;
     const excluded = (proposal.headsToSettle as Array<{ head: string }>).map((entry) => ({
       head: entry.head,
       reason: 'Not in this offer for the foundations package',
@@ -595,7 +595,20 @@ describe('the pricing line, end to end over HTTP', () => {
           basisOfEstimate:
             'Measured off drawings 1600, 1601 and 1602 at revision P02. Rates are our own where we hold them and a market view where we do not.',
           assumptions: ['Ground conditions as the site investigation reports them', 'Uninterrupted access during working hours'],
-          exclusions: excluded,
+          // Everything the run inherited from this business's last complete
+          // estimate, carried forward — exactly as the console's own form
+          // carries it. The acceptance route cannot know the basis; it is the
+          // person's to keep or change, so it comes back with the answer.
+          //
+          // Leaving it out is what made the pre-flight and the estimate
+          // disagree the first time this ran, and the disagreement was the
+          // test's fault rather than the product's. It is worth a comment: a
+          // test that quietly drops a field the console sends is testing a
+          // journey nobody takes.
+          ...(basis?.timeRelated ? { timeRelated: basis.timeRelated } : {}),
+          ...(basis?.quantified ? { quantified: basis.quantified } : {}),
+          ...(basis?.insurance ? { insurance: basis.insurance } : {}),
+          exclusions: [...(basis?.exclusions ?? []), ...excluded],
           margin: { overheadPercent: 9, profitPercent: 7 },
         },
         quotation: {
@@ -606,9 +619,26 @@ describe('the pricing line, end to end over HTTP', () => {
         },
       },
     });
-    if (reply.status !== 201) console.error('DIAG accept excluded', JSON.stringify(excluded));
     assert.equal(reply.status, 201, reply.text);
     accepted = reply.body;
+
+    /*
+     * The heads the run named in advance were the heads the estimate needed.
+     *
+     * They were not, and the disagreement was total: the run said SUBCONTRACT,
+     * PLANT and RISK; the estimate refused for PRELIMINARIES, INSURANCE, WASTE
+     * and HEALTH_AND_SAFETY — four heads out of four that were never
+     * mentioned. The band that decides which heads are expected was taken from
+     * the works as priced, and at the moment the run computes it most lines
+     * carry no rate at all, so the job bands a size too small. Typing the
+     * rates in is what made the other four appear, which is to say the warning
+     * changed under the person answering it.
+     */
+    assert.equal(
+      accepted.quotationBlocked,
+      null,
+      `every head the run named was answered and the quotation was still refused: ${JSON.stringify(accepted.quotationBlocked)}`,
+    );
 
     assert.equal(accepted.boqItemIds.length, proposal.lines.length, 'the bill does not hold every measured line');
     assert.ok(accepted.estimateId, 'no estimate was built');
@@ -625,9 +655,9 @@ describe('the pricing line, end to end over HTTP', () => {
     assert.equal(boq.status, 200, boq.text);
     const expected = SHEETS.flatMap((sheet) => sheet.items).length;
     assert.equal(
-      (boq.body.lines ?? []).length,
+      (boq.body.items ?? []).length,
       expected,
-      `the bill holds ${(boq.body.lines ?? []).length} items and the pack holds ${expected}`,
+      `the bill holds ${(boq.body.items ?? []).length} items and the pack holds ${expected}`,
     );
   });
 
@@ -683,10 +713,24 @@ describe('the pricing line, end to end over HTTP', () => {
             country: 'United Kingdom',
           },
         },
-        numberingRules: { quotation: { prefix: 'QUO', pattern: 'QUO-{YYYY}-{seq:4}', seqScope: 'year' } },
+        // The prefix once. Writing it into the pattern as well — which is the
+        // natural thing to do, and what the first fixture here did — numbered
+        // the quotation QUOQUO-2026-0001 and nothing caught it, because the
+        // test that issued one asserted only that *a* number came back.
+        numberingRules: { quotation: { prefix: 'QUO-', pattern: '{YYYY}-{seq:4}', seqScope: 'year' } },
       },
     });
     assert.equal(profile.status, 200, profile.text);
+
+    // And the mistake itself is refused where it is made, rather than turning
+    // up on the front of a legal instrument that cannot be renumbered.
+    const doubled = await call('PUT', '/v1/company/issuer', {
+      token: adminToken,
+      body: { numberingRules: { invoice: { prefix: 'INV', pattern: 'INV-{YYYY}-{seq:4}', seqScope: 'year' } } },
+    });
+    assert.equal(doubled.status, 422, doubled.text);
+    assert.match(doubled.text, /NUMBERING_PREFIX_REPEATED/);
+    assert.match(doubled.text, /INVINV-\d{4}-0001/, 'the refusal did not say what the number would have come out as');
 
     const generated = await call('POST', `/v1/documents/lifecycle/${accepted.quotationId}/generate`, {
       token: qsToken,
@@ -720,7 +764,7 @@ describe('the pricing line, end to end over HTTP', () => {
     });
     assert.equal(issued.status, 201, issued.text);
     assert.equal(issued.body.document.status, 'ISSUED');
-    assert.match(String(issued.body.issuance.number), /^QUO-\d{4}-\d{4}$/, 'the quotation went out unnumbered');
+    assert.match(String(issued.body.issuance.number), /^QUO-\d{4}-\d{4}$/, `the quotation went out as ${JSON.stringify(issued.body.issuance)}`);
 
     // Issuing again under the same key finishes the same issuance rather than
     // burning a second number on one offer.
