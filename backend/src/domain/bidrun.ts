@@ -709,7 +709,27 @@ export async function proposePackPrice(
   const headsToSettle =
     lines.length === 0
       ? []
-      : priceEstimate(model()).omissions.map((head) => {
+      : priceEstimate(model())
+          .omissions.filter((head) => {
+            /*
+             * Never overhead and never profit.
+             *
+             * They are margin heads: they come from the overhead and profit
+             * percentages the form asks for by name, not from anything a
+             * person prices or excludes line by line. The pre-flight prices
+             * with a margin of nothing — it only wants the omission list — so
+             * both computed to zero and both arrived as "heads to settle".
+             *
+             * The form's honest default is that a head left blank is a head
+             * excluded, and the reason travels into the quotation as a stated
+             * qualification. So a customer was sent a quotation reading
+             * **"Not included — Overhead"** and **"Not included — Profit"**,
+             * which tells them what the business does not intend to charge
+             * and is about the worst sentence that could appear on an offer.
+             */
+            return costHead(head)?.basis !== 'MARGIN';
+          })
+          .map((head) => {
           const definition = costHead(head);
           return {
             head,

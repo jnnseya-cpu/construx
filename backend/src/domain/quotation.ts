@@ -1,6 +1,6 @@
 import { DomainError, NotFoundError } from '../core/errors.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
-import { lineNetCostMinor, type MeasuredLine } from '../engines/maths/costModel.ts';
+import { costHead, lineNetCostMinor, type MeasuredLine } from '../engines/maths/costModel.ts';
 import { createDraft, type DocumentBody, type LifecycleDocument } from '../group/issuance.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
@@ -179,9 +179,26 @@ export function quoteFromEstimate(
   assumptions.forEach((assumption, index) => {
     body[`Assumed ${index + 1}`] = assumption;
   });
-  exclusions.forEach((exclusion, index) => {
-    body[`Not included ${index + 1} — ${exclusion.label ?? exclusion.head ?? ''}`.trim()] = exclusion.reason ?? 'Excluded';
-  });
+  /*
+   * Never a build-up head, whatever the estimate carries against it.
+   *
+   * The rule at the top of this file is that the customer sees a price and not
+   * our build-up. An *exclusion* against overhead or profit breaks it as
+   * completely as a priced line would, and worse: a quotation reading
+   * **"Not included — Profit"** tells the customer what the business does not
+   * intend to charge them. It reached a real quotation, because the run
+   * offered both as heads to settle and the form's honest default is that a
+   * head left blank is one excluded.
+   *
+   * Fixed there, and refused here as well. This is the boundary the rule
+   * belongs on: whatever else changes upstream, a margin head does not get
+   * printed on an offer.
+   */
+  exclusions
+    .filter((exclusion) => costHead(String(exclusion.head ?? ''))?.basis !== 'MARGIN')
+    .forEach((exclusion, index) => {
+      body[`Not included ${index + 1} — ${exclusion.label ?? exclusion.head ?? ''}`.trim()] = exclusion.reason ?? 'Excluded';
+    });
 
   /*
    * Every row against the limit the document body enforces, named by the row

@@ -25232,3 +25232,53 @@ all that says what it is: *the platform is restarting, nothing is wrong with
 the record and nothing has been lost.* The error body is also parsed
 defensively now — a gateway writes HTML or nothing, and parsing that as JSON
 surfaced a restart as `Unexpected token '<'`.
+
+### A new customer, from the sign-up form to something they can send
+
+`backend/tests/newcustomer.test.ts` drives a tenancy that has never existed
+before: register, prove the address, pay the first month, stand up a project,
+file one drawing, price the pack, accept, quote, generate, approve, issue,
+download. Twelve steps over HTTP, on a platform with no seed on it at all.
+
+It exists because `pricingline.test.ts` runs on the demonstration estate, which
+has four years of record behind it — committed estimates to harvest rates from,
+a basis to inherit, a funded wallet, a portfolio and a programme. Every defect
+that reached a customer in the worst week of this project reached them through
+the **absence** of exactly those things. A fixture that starts rich cannot find
+any of them. This one starts from a form submission and an email token.
+
+It failed eleven of its twelve steps on the first run.
+
+**A verified tenancy had nowhere to put a project.** It held an enterprise and
+nothing else — no portfolio, no programme. To price a first job a sole trader
+had to work out that a project lives in a portfolio, that a portfolio needs an
+`enterpriseId`, a `governanceModel` and a region, and fill in a form about none
+of which they had asked a question. That sat between signing up and every piece
+of value the platform has, and it is where somebody trying the product closes
+the tab.
+
+`ensureFirstPortfolio` supplies one, named after their own organisation and in
+their own region, to rename or add to. A project stays theirs to create — it is
+a real job at a real address and the platform would be inventing one. It is
+idempotent and called twice on purpose: a free package opens at verification
+and gets one there; a paid package is `AWAITING_PAYMENT` and every structural
+command on it is correctly refused, so it gets one the moment the charge
+settles. The paywall is a real rule and this is not an exception to it — the
+status is checked rather than the refusal caught, so a suspended or closed
+tenancy is not quietly provisioned either.
+
+**A quotation was telling the customer what the business did not intend to
+charge them.** It went out reading *"Not included — Overhead"* and *"Not
+included — Profit"*. The pre-flight prices with a margin of nothing — it only
+wants the omission list — so both margin heads computed to zero, came back as
+heads to settle, and the form's honest default is that a head left blank is one
+excluded. Margin heads are now filtered out of `headsToSettle`, and
+`quoteFromEstimate` refuses to print an exclusion row for one whatever the
+estimate carries. Two places, because the rule that the customer sees a price
+and not our build-up belongs on the document boundary regardless of what
+changes upstream.
+
+The `ensureFirstPortfolio` context is built with `scopesForRoles(owner.roles)`
+rather than an empty scope list. An empty one is refused `projects:write` by
+the same check that protects a real request — which is how the first version of
+this was caught rather than shipped.

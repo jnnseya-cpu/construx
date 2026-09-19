@@ -3,6 +3,7 @@ import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
+import { ensureFirstPortfolio } from '../domain/structure.ts';
 import { PACKAGES, type PackageTier } from './seats.ts';
 import { subscriptionPriceMinor } from '../group/agreement.ts';
 import { groupOfTenant } from '../group/directory.ts';
@@ -403,6 +404,13 @@ export async function attemptCollection(
  * money arriving is the only thing that should ever reverse a suspension for
  * non-payment, and doing it automatically means nobody has to be asked twice.
  */
+/**
+ * The region each jurisdiction the platform holds rules for sits in. A
+ * portfolio must name its region and a tenancy records a jurisdiction; the set
+ * is small and closed, so this is complete rather than a guess.
+ */
+const CONTINENT_OF: Record<string, string> = { GB: 'EU', IE: 'EU', AE: 'AS', ZA: 'AF', US: 'AM' };
+
 export function settleCharge(
   platform: Platform,
   input: { chargeId: string; reference: string },
@@ -455,6 +463,25 @@ export function settleCharge(
       status: 'ACTIVE',
       reason: `First subscription period paid against ${charge.id} (${input.reference}); the tenancy opens`,
       decidedBy: 'billing:collection',
+    });
+
+    /*
+     * And somewhere to file the first project, now that anything may be filed
+     * at all.
+     *
+     * Sign-up cannot do this for a paid package: the tenancy is
+     * AWAITING_PAYMENT and every structural command on it is correctly
+     * refused until the first month is paid. So the moment that stops being
+     * true, the one piece of structure a customer should never have to invent
+     * is there — otherwise somebody pays, signs in, and is asked to create a
+     * "portfolio" with a "governance model" before they can price anything.
+     *
+     * Idempotent, and it takes the region from the tenancy's own jurisdiction.
+     */
+    const tenant = platform.tenant(charge.tenantId);
+    ensureFirstPortfolio(platform, charge.tenantId, {
+      continentCode: CONTINENT_OF[tenant.jurisdiction] ?? 'EU',
+      countryCode: tenant.jurisdiction,
     });
   }
 

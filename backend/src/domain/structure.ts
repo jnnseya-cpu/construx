@@ -7,6 +7,7 @@ import { ulid } from '../core/ids.ts';
 import { assertAggregateVersion, authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import * as stages from '../lifecycle/stages.ts';
 import { openInheritanceRegister } from './inheritance.ts';
+import { scopesForRoles } from '../identity/scopes.ts';
 import { openConversionWorkstreams, type WorkstreamType } from '../lifecycle/workstreams.ts';
 import {
   assertStartingPhase,
@@ -97,6 +98,84 @@ const COUNTRY_CODES = new Set<string>(values(COUNTRY));
  * that is the link the hierarchy is for, and without the check it was a foreign
  * key nobody enforced.
  */
+/**
+ * Give a new tenancy somewhere to file its first project.
+ *
+ * A verified tenancy came out of sign-up holding an enterprise and nothing
+ * else. To price the first job, a sole trader had to work out that a project
+ * lives in a portfolio, that a portfolio needs an `enterpriseId`, a
+ * `governanceModel` and a region, and fill in a form about none of which they
+ * had asked a question. That is where somebody trying the product closes the
+ * tab, and it sits between signing up and every piece of value the platform
+ * has.
+ *
+ * A project stays theirs to create and name — it is a real job at a real
+ * address and the platform would be inventing one. A portfolio is a filing
+ * concept they never asked for, so it is supplied, named after their own
+ * organisation, in their own region, to rename or add to.
+ *
+ * Idempotent by construction: a tenancy that already holds a portfolio gets
+ * nothing. It is called twice on purpose — once where a tenancy opens
+ * immediately, and once where it opens on its first payment — and calling it a
+ * third time costs a list.
+ */
+export function ensureFirstPortfolio(
+  platform: import('../platform.ts').Platform,
+  tenantId: string,
+  region: { continentCode: string; countryCode?: string },
+): { portfolioId: string } | null {
+  if (livePortfolios(platform.ledger, tenantId).length > 0) return null;
+
+  /*
+   * A tenancy waiting for its first month is not open, and nothing structural
+   * may be written on it — the paywall is a real rule and this is not the
+   * place to make an exception to it. Left for the moment the charge settles,
+   * which calls this again.
+   *
+   * Checked rather than caught: swallowing a refusal here would also swallow a
+   * suspended tenancy, a closed one, and any refusal added later, and sign-up
+   * would go on succeeding while quietly doing nothing.
+   */
+  if (platform.subscription(tenantId)?.status !== 'ACTIVE') return null;
+
+  const enterprise = platform.ledger.listByTenant(tenantId, 'Enterprise')[0];
+  if (!enterprise) return null;
+
+  // The founder's own hand, not the platform's. This is a structural act on
+  // their company and the chain should say who it belongs to — and it goes
+  // through the same authorisation a request would, which is the point of not
+  // fabricating a context with everything switched on.
+  const owner = platform
+    .users(tenantId)
+    .find((user) => user.status === 'ACTIVE' && user.roles.includes('ENTERPRISE_ADMIN'));
+  if (!owner) return null;
+
+  const auth: import('../identity/auth.ts').AuthContext = {
+    actorId: owner.id,
+    tenantId,
+    partyId: owner.partyId,
+    roles: owner.roles,
+    // The scopes their roles carry. An empty list is refused `projects:write`
+    // by the same check that protects a real request, which is how this was
+    // found rather than shipped.
+    scopes: scopesForRoles(owner.roles),
+    tokenId: 'provisioning',
+    mfaSatisfied: true,
+    regulatorAiEnabled: false,
+    expiresAt: Date.now(),
+  };
+  const name = String(enterprise.state.legalName ?? enterprise.state.name ?? platform.tenant(tenantId).legalName);
+
+  return createPortfolio(platform.context(auth, `${tenantId}-governance`, { source: 'SYSTEM' }), {
+    name: `${name} projects`,
+    enterpriseId: String(enterprise.state.id),
+    // What it is until they say otherwise: one company running its own work.
+    governanceModel: 'SINGLE_ENTITY',
+    continentCode: region.continentCode as Parameters<typeof createPortfolio>[1]['continentCode'],
+    ...(region.countryCode ? { countryCode: region.countryCode } : {}),
+  });
+}
+
 export function createPortfolio(
   ctx: EngineContext,
   input: {

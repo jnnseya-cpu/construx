@@ -3,6 +3,7 @@ import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
 import { DomainError, NotFoundError, ValidationError } from '../core/errors.ts';
 import { CURRENCIES, JURISDICTIONS } from '../domain/locale.ts';
+import { ensureFirstPortfolio } from '../domain/structure.ts';
 import type { Platform } from '../platform.ts';
 import { acusFromMinor, subscriptionAcuAllocationMinor } from '../billing/acu.ts';
 import { GROUP_LICENCE, PACKAGES, type PackageTier } from '../billing/seats.ts';
@@ -10,7 +11,25 @@ import type { AuthContext } from './auth.ts';
 import { attachCompany, createGroup, grantGroupRole, groupBySlug } from '../group/directory.ts';
 import type { Role } from './roles.ts';
 import { recordTrialTaken, resetTrials, trialGrantAllowed } from './trials.ts';
+import { scopesForRoles } from './scopes.ts';
 import { signFor, verifyFor } from './secrets.ts';
+
+/**
+ * The region each jurisdiction the platform holds rules for sits in.
+ *
+ * A portfolio must name its region, and a new customer names a jurisdiction
+ * rather than a continent. Written out in full rather than derived, because
+ * the set is the five in `JURISDICTIONS` and a table of two hundred countries
+ * to answer a question about five would be a second vocabulary to keep in step
+ * with the first.
+ */
+const CONTINENT_OF: Record<keyof typeof JURISDICTIONS, 'EU' | 'AM' | 'AF' | 'AS' | 'OC' | 'AN'> = {
+  GB: 'EU',
+  IE: 'EU',
+  AE: 'AS',
+  ZA: 'AF',
+  US: 'AM',
+};
 
 /**
  * Public registration.
@@ -424,6 +443,42 @@ export function verify(
   // Taken only if something was actually given. An organisation that arrived
   // after the month's allocation was spent has not had its trial.
   if (grantTrial && trialGrantMinor > 0) recordTrialTaken(record.email);
+
+  /*
+   * The one structural thing a new customer should not have to invent.
+   *
+   * A verified tenancy came out of this holding an enterprise and nothing
+   * else: no portfolio, no programme, no project. To price the first job, a
+   * sole trader had to work out that a project lives in a portfolio, that a
+   * portfolio needs an `enterpriseId` and a `governanceModel` and a region,
+   * and fill in a form about none of which they had asked a question. That is
+   * where somebody trying the product closes the tab, and it is not a small
+   * thing: it sits between signing up and every single piece of value the
+   * platform has.
+   *
+   * A project is still theirs to create and name — it is a real job with a
+   * real address and the platform would be inventing one. A portfolio is a
+   * filing concept they never asked for, so it is supplied, named after their
+   * own organisation and in their own region, for them to rename or add to.
+   *
+   * The region comes from the jurisdiction they gave, which is validated
+   * above against the five the platform holds rules for — so this mapping is
+   * complete rather than a guess, and a sixth jurisdiction cannot be added
+   * without this line failing to compile against it.
+   */
+  /*
+   * Somewhere to file the first project.
+   *
+   * Idempotent, and called twice on purpose. A free package opens here and
+   * gets its portfolio now; a paid one is AWAITING_PAYMENT and every
+   * structural command on it is correctly refused until the first month is
+   * paid, so it gets one the moment the charge settles. Trying to force it
+   * here would be bypassing the paywall to fix an onboarding problem.
+   */
+  ensureFirstPortfolio(platform, tenant.id, {
+    continentCode: CONTINENT_OF[record.jurisdiction] ?? 'EU',
+    countryCode: record.jurisdiction,
+  });
 
   // A group signup: the group exists from the first moment, with this
   // organisation as its first company and this person as its first group
