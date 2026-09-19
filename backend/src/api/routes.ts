@@ -12638,6 +12638,11 @@ export const ROUTES: Route[] = [
               // so — the rate history will not take it back as one of this
               // business's own.
               rateSource: { type: 'string', enum: ['OUR_RECORD', 'PERSON', 'MARKET_AI'] },
+              // The least the line costs at all. On a small job this is
+              // usually the figure that decides the price, and leaving it out
+              // of the schema would have the route silently refuse the one
+              // number the estimate needs most.
+              minimumChargeMinor: { type: 'number', minimum: 0 },
             },
             additionalProperties: false,
           },
@@ -12701,8 +12706,21 @@ export const ROUTES: Route[] = [
        */
       const context = projectContext(platform, ctx);
       authorise(context, 'BOQ_TAKEOFF', 'R');
-      const items = platform.ledger.list(ctx.params.projectId as string, 'BoQItem').map((record) => record.state);
+      const all = platform.ledger.list(ctx.params.projectId as string, 'BoQItem').map((record) => record.state);
+      // A superseded item is on the record and is not the measure. It is
+      // reported separately rather than mixed in: an estimate built off a
+      // retired quantity is the defect that retiring it exists to prevent.
+      const items = all.filter((item) => String(item.status ?? 'LIVE') !== 'SUPERSEDED');
+      const superseded = all.filter((item) => String(item.status ?? 'LIVE') === 'SUPERSEDED');
       return {
+        superseded: superseded.map((item) => ({
+          boqItemId: String(item.id),
+          costCode: String(item.costCode ?? ''),
+          description: String(item.description ?? ''),
+          packageId: String(item.packageId ?? ''),
+          supersededAt: item.supersededAt ?? null,
+          supersededReason: item.supersededReason ?? null,
+        })),
         items: items.map((item) => ({
           boqItemId: String(item.id),
           costCode: String(item.costCode ?? ''),
@@ -12726,6 +12744,22 @@ export const ROUTES: Route[] = [
         packages: [...new Set(items.map((item) => String(item.packageId ?? '')).filter(Boolean))],
       };
     },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/boq/supersede',
+    description:
+      'Retire a package’s measure: the items stay on the record and stop being the current measure, with a reason and ' +
+      'a name against them. Nothing is deleted — a quantity somebody priced against is a fact about what was believed ' +
+      'at the time',
+    schema: {
+      type: 'object',
+      required: ['packageId', 'reason'],
+      properties: { packageId: stringField, reason: { type: 'string', minLength: 5, maxLength: 500 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.supersedeMeasure(projectContext(platform, ctx), body<{ packageId: string; reason: string }>(ctx)),
   },
   {
     method: 'POST',

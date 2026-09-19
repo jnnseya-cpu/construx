@@ -66,6 +66,31 @@ www.{$CONSTRUX_DOMAIN} {
 		transport http {
 			response_header_timeout 120s
 		}
+
+		# Hold a request while the container is being replaced, rather than
+		# answering 502.
+		#
+		# A deploy recreates the container, and for the seconds between the old
+		# one stopping and the new one answering there is no upstream at all.
+		# Every request in that window came back 502, and the console printed
+		# *"This could not be read"* against eight panels at once — which reads
+		# as a broken record rather than as a thirty-second restart, and is the
+		# worst possible thing to show somebody halfway through pricing a job.
+		#
+		# One process extends the ledger at a time, so there is no overlapping
+		# old and new to route between and a true zero-downtime deploy is not
+		# available here. What is available is not failing the request the
+		# instant the socket refuses: Caddy retries for half a minute, which
+		# covers a warm restart end to end and turns the rest into a slow page
+		# instead of a wall of errors.
+		lb_try_duration 30s
+		lb_try_interval 500ms
+
+		# Retried on a refused connection, never on a request the application
+		# answered. A 5xx the platform itself produced is its own answer and
+		# replaying it would turn one failure into several — and a POST that
+		# reached the application must never be sent twice.
+		fail_duration 0s
 	}
 
 	# Compression on the way out. The console is plain ES modules and the API

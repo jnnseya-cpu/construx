@@ -79,6 +79,17 @@ export type ProposedRate = {
   /** The range, on a market view. An estimator prices inside a range, not at a point. */
   lowMinor?: number;
   highMinor?: number;
+  /**
+   * The least this item costs to do at all at the quantity measured.
+   *
+   * On a small job this is usually the number that decides the price, and the
+   * unit rate on its own is the wrong answer: 1.69m³ of pad excavation at
+   * £90/m³ is £152, and nobody brings an excavator to a churchyard for £152.
+   * Carried separately from the rate, and shown separately, because the two
+   * are different facts — one is what another cubic metre costs once you are
+   * there, the other is what being there costs.
+   */
+  minimumChargeMinor?: number;
   /** In the words an estimator would check it in. */
   basis: string;
 };
@@ -183,7 +194,14 @@ function measuredAlready(ctx: EngineContext, packageId: string): Array<Record<st
   return ctx.ledger
     .list(ctx.projectId, 'BoQItem')
     .map((record) => record.state)
-    .filter((state) => String(state.packageId ?? '') === packageId);
+    .filter(
+      (state) =>
+        // A superseded item is on the record and is not the measure any more,
+        // so it neither blocks a re-measure nor counts towards one. That is
+        // the whole point of being able to retire one: a package somebody has
+        // deliberately retired can be measured again.
+        String(state.packageId ?? '') === packageId && String(state.status ?? 'LIVE') !== 'SUPERSEDED',
+    );
 }
 
 /** The rates this business has actually committed, grouped by item and unit. */
@@ -306,6 +324,21 @@ async function marketRates(
         'and a high for the range you would expect to see, and state the basis in one sentence an estimator can ' +
         'argue with. Omit any item you cannot support a rate for rather than filling the row — an omitted line is ' +
         'corrected in seconds, and a confident wrong rate is not noticed until the job is lost or built at a loss. ' +
+        // The question nobody was asking, and the reason a month of work came
+        // back priced at a few hundred pounds. The quantities on a small job
+        // are tiny — 1.69m³ of excavation, 1.35m³ of concrete — and a unit
+        // rate is the marginal cost of one more once you are there. What it
+        // does not price is being there at all: the delivery, the minimum
+        // load, the mobilisation, the half day a two-man gang cannot sell to
+        // anybody else. The models were already reasoning about exactly this
+        // in their own basis sentences — *"small quantity surcharge"*,
+        // *"typical minimum volume charge"* — and then returning only the
+        // unit rate, because the unit rate was all that was asked for.
+        'Give a `minimumChargeMinor` for every item: the least the item costs to do at all at the quantity stated, ' +
+        'including delivery, minimum load, mobilisation and the smallest sensible visit — the figure below which no ' +
+        'subcontractor would take the work. On a small quantity this is usually the number that decides the price and ' +
+        'the unit rate is the wrong answer on its own. Where the quantity is large enough that quantity times rate ' +
+        'already covers turning up, return 0. ' +
         'All money in minor units, so £125.00 is 12500.',
       payload: {
         region: where,
@@ -334,6 +367,7 @@ async function marketRates(
                 subcontractMinor: { type: 'number' },
                 lowMinor: { type: 'number' },
                 highMinor: { type: 'number' },
+                minimumChargeMinor: { type: 'number' },
                 basis: { type: 'string' },
               },
               required: ['index', 'rateMinor', 'basis'],
@@ -422,6 +456,13 @@ async function marketRates(
      * screen tells them it was assumed.
      */
     const unsplit = split <= 0;
+    // Tolerant of what it is called, the way every other field here is. A
+    // reading that drops a number because the model named it `minimumCharge`
+    // rather than `minimumChargeMinor` is a silent nought, which is the
+    // failure this whole reading was rewritten to stop making.
+    const minimum = Math.round(
+      Number(answer.minimumChargeMinor ?? answer.minimumCharge ?? answer.minimumMinor ?? answer.minimum ?? 0) || 0,
+    );
     const low = Number(answer.lowMinor ?? 0);
     const high = Number(answer.highMinor ?? 0);
     rates.set(index, {
@@ -437,6 +478,11 @@ async function marketRates(
       newestOn: today,
       ...(low > 0 ? { lowMinor: Math.round(low) } : {}),
       ...(high > 0 ? { highMinor: Math.round(high) } : {}),
+      // Kept only where it is actually higher than the measured cost. A
+      // minimum below what the quantity already comes to is not a minimum,
+      // and carrying it would put a number on the screen that changes nothing
+      // and has to be explained.
+      ...(minimum > Math.round(allIn * (lines[index]?.quantity ?? 0)) ? { minimumChargeMinor: minimum } : {}),
       basis:
         `A model\u2019s view of the ${where} market on ${today}: ${String(answer.basis ?? 'no basis given')}` +
         (unsplit ? ' No split between labour, materials, plant and subcontract was given, so it is carried as direct works.' : ''),
@@ -745,6 +791,11 @@ function toMeasuredLine(line: ProposedLine): MeasuredLine {
           materialRateMinor: line.rate.materialRateMinor,
           plantRateMinor: line.rate.plantRateMinor,
           subcontractRateMinor: line.rate.subcontractRateMinor,
+          // The indicative price the panel shows has to be the price the
+          // acceptance would produce, minimum charges and all — a preview
+          // computed without them understates by exactly the amount the
+          // person is trying to find out about.
+          ...(line.rate.minimumChargeMinor ? { minimumChargeMinor: line.rate.minimumChargeMinor } : {}),
         }
       : {}),
   };
@@ -769,6 +820,12 @@ export type AcceptInput = {
      * business's own rates, and a reader can see which lines it priced.
      */
     rateSource?: MeasuredLine['rateSource'];
+    /**
+     * The least this line costs at all, where the quantity is too small for
+     * the rate to cover turning up. Kept or changed by the person, like the
+     * rate beside it.
+     */
+    minimumChargeMinor?: number;
   }>;
   estimate: {
     durationWeeks: number;
@@ -889,6 +946,7 @@ export async function acceptPackProposal(
         ...(line.plantRateMinor ? { plantRateMinor: line.plantRateMinor } : {}),
         ...(line.subcontractRateMinor ? { subcontractRateMinor: line.subcontractRateMinor } : {}),
         ...(line.rateSource ? { rateSource: line.rateSource } : {}),
+        ...(line.minimumChargeMinor ? { minimumChargeMinor: line.minimumChargeMinor } : {}),
       });
     }
   }

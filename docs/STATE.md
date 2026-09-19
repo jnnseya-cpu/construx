@@ -25146,3 +25146,89 @@ run leaves the bill exactly as it was.
 Re-measuring a revised drawing is a different package, because it is a
 different measure. Quietly replacing a bill somebody may already have priced
 against is not an option the platform takes on its own.
+
+### A unit rate does not price turning up
+
+A month's work on a churchyard wall came back quoted at a few hundred pounds,
+and the rates were not wrong. The quantities were tiny — 1.69m³ of pad
+excavation, 1.35m³ of GEN3, 0.34m³ of RC35 — and a unit rate is the marginal
+cost of one more of something *once you are there*. What it does not price is
+being there at all: the delivery, the minimum load the ready-mix truck charges
+for whether you take it or not, the mobilisation, the half day a two-man gang
+cannot sell to anybody else. 1.69m³ at £90/m³ is £152, and nobody brings an
+excavator to a churchyard for £152.
+
+`MeasuredLine.minimumChargeMinor` is the least a line costs to do at all, and
+`lineNetCostMinor` takes the greater of it and quantity-times-rate. The market
+ask now asks for it — the models were already reasoning about exactly this in
+their own basis sentences, *"small quantity surcharge"*, *"typical minimum
+volume charge"*, and then returning only the unit rate because the unit rate
+was all that was asked for. It is carried onto the proposal, filled into the
+acceptance form beside the rate for a person to keep or change, stored on the
+estimate line, and named in a warning wherever it is what carried the line.
+
+Two rules keep it honest. It never touches a line with no rate against it — a
+minimum charge there would replace a visible gap with a plausible number, and
+a plausible number is not questioned. And where it lifts a line, the uplift
+goes on in the proportions that line's own rates are in, so every head's total
+still reconciles to the lines under it and `netMeasuredMinor` still equals the
+sum of `lineNetCostMinor` across them — which is the invariant the quotation's
+apportionment depends on.
+
+### Weeks on site that nobody is paying for
+
+The other half of the same too-cheap quotation. Every time-related head had
+been excluded, because a form that treats a blank box as an exclusion makes
+excluding everything the path of least resistance — and a four-week job went
+out with nothing against welfare, supervision, logistics or site set-up.
+
+`priceEstimate` now warns when a job of two weeks or more prices not one
+time-related head: *somebody pays for those weeks, and on a fixed price with
+them out of it that somebody is this business.* A warning and not a refusal —
+a genuine one-visit job exists, and the estimator is the one who knows which
+this is.
+
+### Retiring a measure, without deleting one
+
+The duplicate-measure guard was right and it left somebody stuck: a bill
+holding six copies of the same three drawings, and a platform that would not
+let them run it again.
+
+`BOQITEM_SUPERSEDED` records that a package's measure no longer stands, with a
+reason and a name against it. The items stay on the chain — a quantity
+somebody priced against is a fact about what was believed at the time, and a
+bill that quietly loses lines is a bill whose history cannot be read. They
+leave `items` on the bill read-back and appear under `superseded`; the pack run
+stops counting them, so a retired package can be measured again. `aiAllowed:
+false`, and not as a formality: deciding that a measured quantity no longer
+stands is a commercial judgement with somebody's price on the other side of it.
+
+The door is **Retire a package's measure**, on Procurement beside *Price the
+bill*. A reason of fewer than five characters is refused: somebody reading the
+bill in a year needs to know whether the drawing changed or the run was
+repeated, and the two lead to different questions.
+
+### A restart is not a broken record
+
+Eight panels at once reading **"This could not be read — Request failed
+(502)"**, on a screen somebody was halfway through pricing a job on. Nothing
+was wrong with the record. A deploy recreates the container, and for the
+seconds between the old one stopping and the new one answering there is no
+upstream at all.
+
+One process extends the ledger at a time, so there is no overlapping old and
+new to route between and a true zero-downtime deploy is not available here.
+What is available is not failing the request the instant the socket refuses:
+Caddy holds a request for up to thirty seconds (`lb_try_duration`), which
+covers a warm restart end to end, and `fail_duration 0s` keeps that to refused
+connections — a 5xx the platform itself produced is its own answer and
+replaying it would turn one failure into several.
+
+The console does the rest. A **GET** that comes back 502, 503 or 504 is retried
+three times over about five seconds; a **POST** never is, because a request may
+have arrived, been acted on, and had its response lost on the way back, and
+there is no way to tell that apart from one that never landed. What survives
+all that says what it is: *the platform is restarting, nothing is wrong with
+the record and nothing has been lost.* The error body is also parsed
+defensively now — a gateway writes HTML or nothing, and parsing that as JSON
+surfaced a restart as `Unexpected token '<'`.

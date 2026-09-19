@@ -141,6 +141,40 @@ async function freshToken() {
   return token;
 }
 
+/**
+ * The statuses that mean *the gateway could not reach the platform*, which is
+ * not the same thing as the platform refusing.
+ *
+ * A deploy replaces the container, and for the seconds between the old one
+ * stopping and the new one answering there is no upstream at all. Every
+ * request in that window came back 502 and the console painted **"This could
+ * not be read"** against eight panels at once — which reads as a broken
+ * record, on a screen somebody was halfway through pricing a job on. It is a
+ * restart, and it says so now.
+ */
+const GATEWAY_DOWN = new Set([502, 503, 504]);
+
+/** How long to keep trying a read while the platform comes back, in ms. */
+const RESTART_BACKOFF = [700, 1500, 3000];
+
+/**
+ * Parse a body that is supposed to be problem+json and sometimes is not.
+ *
+ * A gateway that cannot reach the application writes its own error page, in
+ * HTML or in nothing at all. Parsing that as JSON throws a syntax error, and a
+ * restart then surfaces as `Unexpected token '<'` — which sends whoever reads
+ * it looking for a bug in the response handling rather than at a container
+ * coming back up.
+ */
+function problemFrom(text) {
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
 async function request(method, path, body, options = {}) {
   // Retrying a command must not create a second one, so the idempotency key is
   // fixed before the first attempt and reused across the refresh retry.
@@ -153,11 +187,43 @@ async function request(method, path, body, options = {}) {
     if (token) response = await send(method, path, body, attempt, token);
   }
 
+  /*
+   * Reads are retried while the platform restarts. Writes are not.
+   *
+   * A GET that never reached the application can be asked again with nothing
+   * at stake. A POST cannot: the request may have arrived, been acted on, and
+   * had its *response* lost on the way back, and there is no way to tell that
+   * apart from a request that never landed. The platform's idempotency keys
+   * make a deliberate retry safe, but that is the person's decision to take
+   * with the outcome in front of them — not something to do silently on their
+   * behalf with somebody's money at the other end of it.
+   */
+  if (method === 'GET' && GATEWAY_DOWN.has(response.status)) {
+    for (const wait of RESTART_BACKOFF) {
+      if (!GATEWAY_DOWN.has(response.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      response = await send(method, path, body, attempt, await freshToken());
+    }
+  }
+
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  const payload = problemFrom(text);
 
   if (!response.ok) {
     noticeEnrolmentRequired(payload, response.status);
+    if (GATEWAY_DOWN.has(response.status) && !payload.title) {
+      // Said as what it is. The record is intact and nothing has been lost;
+      // the platform is between processes.
+      throw new ApiError(
+        {
+          title: 'PLATFORM_RESTARTING',
+          detail:
+            'The platform is restarting and this could not be fetched. Nothing is wrong with the record and nothing ' +
+            'has been lost — reload in a moment.',
+        },
+        response.status,
+      );
+    }
     throw new ApiError(payload, response.status);
   }
   return payload;
@@ -199,7 +265,7 @@ async function download(path, body, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
+    const payload = problemFrom(text);
     noticeEnrolmentRequired(payload, response.status);
     throw new ApiError(payload, response.status);
   }
@@ -253,7 +319,7 @@ async function upload(path, file, options = {}) {
   }
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  const payload = problemFrom(text);
   if (!response.ok) throw new ApiError(payload, response.status);
   return payload;
 }

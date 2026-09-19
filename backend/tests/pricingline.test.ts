@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 import { createGateway } from '../src/api/gateway.ts';
+import { lineNetCostMinor, type MeasuredLine } from '../src/engines/maths/costModel.ts';
 import { rateLimiter } from '../src/api/middleware.ts';
 import * as structure from '../src/domain/structure.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
@@ -258,7 +259,11 @@ function reasoningStub(): AIProviderAdapter {
               rateMinor: 2_150,
               lowMinor: 1_900,
               highMinor: 2_600,
-              basis: 'Ready-mix GEN1 delivered, placed by hand.',
+              // And the number that actually decides a small price: 38m² of
+              // blinding at £21.50 is £817, and the ready-mix truck has a
+              // minimum load it charges for whether you take it or not.
+              minimumChargeMinor: 140_000,
+              basis: 'Ready-mix GEN1 delivered, placed by hand. One load minimum.',
             },
           ];
         }
@@ -515,6 +520,19 @@ describe('the pricing line, end to end over HTTP', () => {
     assert.ok(blinding?.rate, 'the all-in market rate was dropped');
     assert.equal(blinding.rate.source, 'MARKET_AI');
     assert.equal(blinding.rate.allInMinor, 2_150, 'an unsplit rate did not survive as the rate it is');
+    /*
+     * The figure that decides a small price, and the one nobody was asking
+     * for. A month's work on a churchyard wall came back priced at a few
+     * hundred pounds, and the rates were not wrong — the quantities were tiny
+     * and a unit rate is what one more of something costs once you are there.
+     * What it does not price is being there at all.
+     */
+    assert.equal(blinding.rate.minimumChargeMinor, 140_000, 'the minimum charge was dropped on the way back');
+
+    // And it is only carried where it is actually higher than the quantity at
+    // the rate. The rebar line comes to far more than any minimum, so a
+    // minimum on it would be a number on the screen that changes nothing.
+    assert.equal(rebar.rate.minimumChargeMinor, undefined);
 
     // And the lines nothing answered for stay unpriced and say so, rather
     // than arriving at nought — which is the answer that loses money.
@@ -578,6 +596,12 @@ describe('the pricing line, end to end over HTTP', () => {
             plantRateMinor: line.rate.plantRateMinor,
             subcontractRateMinor: line.rate.subcontractRateMinor,
             rateSource: line.rate.source,
+            // Kept as the run proposed it, the way the console's form carries
+            // it: the field is filled in already and the person keeps it or
+            // changes it. On a small job this is the number that decides the
+            // price, so a test that dropped it would be testing the arithmetic
+            // that produced the too-cheap quotation.
+            ...(line.rate.minimumChargeMinor ? { minimumChargeMinor: line.rate.minimumChargeMinor } : {}),
           }
         : { labourRateMinor: 4_500, materialRateMinor: 0, plantRateMinor: 3_200, subcontractRateMinor: 0, rateSource: 'PERSON' }),
     }));
@@ -643,6 +667,25 @@ describe('the pricing line, end to end over HTTP', () => {
     assert.equal(accepted.boqItemIds.length, proposal.lines.length, 'the bill does not hold every measured line');
     assert.ok(accepted.estimateId, 'no estimate was built');
     assert.ok(accepted.totalMinor > 0, 'the estimate priced at nothing');
+
+    /*
+     * The minimum carried the blinding line, and the estimate says so.
+     *
+     * 38m² at £21.50 is £817; the load minimum is £1,400. A model that prices
+     * this line at £817 has priced the concrete and not the lorry, and the
+     * difference is the whole reason a small job quoted off unit rates comes
+     * out too cheap to do.
+     */
+    const record = platform.ledger.get({ refType: 'Estimate', refId: accepted.estimateId });
+    const priced = (record?.state.lines as Array<Record<string, any>>) ?? [];
+    const blindingLine = priced.find((line) => String(line.description).startsWith('Plain in-situ concrete blinding'));
+    assert.ok(blindingLine, 'the blinding line is not on the estimate');
+    assert.equal(blindingLine.minimumChargeMinor, 140_000, 'the estimate did not keep the minimum charge');
+    assert.equal(
+      lineNetCostMinor(blindingLine as MeasuredLine),
+      140_000,
+      'the line was priced at quantity times rate when the minimum is higher',
+    );
     assert.ok(accepted.quotationId, 'the acceptance stopped short of the quotation');
     assert.equal(accepted.quotationNumberPending, true, 'a draft quotation was handed a number before it was issued');
   });
@@ -707,6 +750,55 @@ describe('the pricing line, end to end over HTTP', () => {
     // Refused *before* writing: the bill is exactly what it was.
     const boq = await call('GET', `/v1/projects/${projectId}/tender/boq`, { token: qsToken });
     assert.equal((boq.body.items ?? []).length, proposal.lines.length, 'the refused run still added to the bill');
+  });
+
+  it('lets a wrong measure be retired, and the package measured again', async () => {
+    /*
+     * The way out, and the reason there is no delete.
+     *
+     * The guard above is right and it left somebody stuck: a bill holding six
+     * copies of the same three drawings, and a platform that would not let
+     * them run it again. There has to be a way to say "that measure no longer
+     * stands" — and it must not be a way to make it never have existed. A
+     * quantity somebody priced against is a fact about what was believed at
+     * the time, and a bill that quietly loses lines is a bill whose history
+     * cannot be read.
+     */
+    const noReason = await call('POST', `/v1/projects/${projectId}/tender/boq/supersede`, {
+      token: qsToken,
+      body: { packageId, reason: 'no' },
+    });
+    assert.ok(noReason.status >= 400, 'a measure was retired without saying why');
+
+    const retired = await call('POST', `/v1/projects/${projectId}/tender/boq/supersede`, {
+      token: qsToken,
+      body: { packageId, reason: 'Drawings reissued at P03; the pad sizes changed and this measure is against P02.' },
+    });
+    assert.equal(retired.status, 201, retired.text);
+    assert.equal(retired.body.superseded.length, proposal.lines.length);
+
+    // Off the bill, still on the record, and saying why.
+    const boq = await call('GET', `/v1/projects/${projectId}/tender/boq`, { token: qsToken });
+    assert.equal((boq.body.items ?? []).length, 0, 'a retired measure is still being offered as the bill');
+    assert.equal((boq.body.superseded ?? []).length, proposal.lines.length, 'the retired items left the record');
+    assert.match(String(boq.body.superseded[0].supersededReason), /P03/);
+
+    // And the package can be run again, which is the point.
+    const rerun = await call('POST', `/v1/projects/${projectId}/tender/pack/price`, {
+      token: qsToken,
+      body: { packageId },
+    });
+    assert.equal(rerun.status, 201, rerun.text);
+    assert.equal(rerun.body.alreadyMeasured, null, 'a retired package still reads as already measured');
+
+    // Nothing is retired twice: the second attempt says there is nothing left
+    // standing rather than writing a second retirement over the first.
+    const again = await call('POST', `/v1/projects/${projectId}/tender/boq/supersede`, {
+      token: qsToken,
+      body: { packageId, reason: 'Trying to retire what is already retired.' },
+    });
+    assert.equal(again.status, 409, again.text);
+    assert.match(again.text, /NOTHING_TO_SUPERSEDE/);
   });
 
   it('writes a quotation whose rows are the works, and whose rows add up', async () => {

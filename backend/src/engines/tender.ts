@@ -48,6 +48,79 @@ export type TakeoffItem = {
 };
 
 /**
+ * Retire a package's measure, because it is no longer what the job is.
+ *
+ * There is no delete here and there will not be one. The record is append-only
+ * and a quantity somebody priced against is a fact about what was believed at
+ * the time — a bill that quietly loses items is a bill whose history cannot be
+ * read, which is the opposite of what this platform is for. What this does is
+ * record that those items are no longer the current measure, with a reason and
+ * a name against it. They stay on the chain.
+ *
+ * It exists because a real bill ended up holding the same three drawings
+ * measured six times over. Each run wrote its bill and then failed at the
+ * quotation step, reporting a failure over work that had succeeded, so pressing
+ * the button again was the obvious thing to do. Those causes are fixed and the
+ * wrong measure is still on the record; the honest way out is to say so, not to
+ * pretend it was never there.
+ *
+ * The other use is the ordinary one: a drawing is revised, the measure it
+ * produced no longer describes the job, and the package is measured again.
+ * Same act, same event, and the reason distinguishes them for whoever reads it
+ * afterwards.
+ */
+export function supersedeMeasure(
+  ctx: EngineContext,
+  input: { packageId: string; reason: string },
+): { superseded: string[]; packageId: string } {
+  // Updating what the bill says the job is. Not `D` — nothing is destroyed —
+  // and not `C`, because no new measure is created by this act.
+  authorise(ctx, 'BOQ_TAKEOFF', 'U');
+
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new DomainError(
+      'SUPERSEDE_REASON_REQUIRED',
+      'Say why this measure no longer stands. Somebody reading the bill in a year needs to know whether the drawing ' +
+        'changed or the run was repeated, and the two lead to different questions.',
+      422,
+    );
+  }
+
+  const live = ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .filter(
+      (record) =>
+        String(record.state.packageId ?? '') === input.packageId && String(record.state.status ?? 'LIVE') !== 'SUPERSEDED',
+    );
+
+  if (live.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_SUPERSEDE',
+      `${input.packageId} holds no measured item that still stands. Nothing to retire.`,
+      409,
+    );
+  }
+
+  const supersededAt = new Date().toISOString();
+  for (const record of live) {
+    write(ctx, {
+      eventType: 'BOQITEM_SUPERSEDED',
+      entity: { refType: 'BoQItem', refId: record.refId },
+      nextState: {
+        ...record.state,
+        status: 'SUPERSEDED',
+        supersededAt,
+        supersededBy: ctx.auth.actorId,
+        supersededReason: reason,
+      },
+    });
+  }
+
+  return { superseded: live.map((record) => record.refId), packageId: input.packageId };
+}
+
+/**
  * Drawing-to-estimate bridge: extract measurable quantities from 2D sheets or a
  * model. Most contractors still price from 2D long before a model is usable, so
  * this path is first-class rather than a fallback.

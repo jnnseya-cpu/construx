@@ -583,6 +583,26 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // --- Tender & procurement -------------------------------------------------
   def('TAKEOFF_COMPLETED', 'Takeoff', 'AI_EXECUTE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
   def('BOQITEM_CREATED_FROM_TAKEOFF', 'BoQItem', 'CREATE', 'PROCUREMENT', { aiAllowed: true, requiresEvidence: true }),
+  /*
+   * A measured item that is no longer the current measure.
+   *
+   * Not a delete, and there is no delete: the record is append-only and a
+   * quantity somebody priced against is a fact about what was believed at the
+   * time, whatever happened afterwards. This records that it has been
+   * superseded, by whom and why, and the item stays on the chain where a later
+   * reader can still find it.
+   *
+   * It exists because a real bill ended up holding the same three drawings
+   * measured six times over, from repeated runs that each failed at the
+   * quotation step after writing. The causes are fixed; the wrong measure is
+   * still on the record, and there has to be a way to say so that is not
+   * pretending it was never there.
+   *
+   * `aiAllowed: false`, and not as a formality. Deciding that a measured
+   * quantity no longer stands is a commercial judgement with somebody's price
+   * on the other side of it, and no agent mandate reaches it.
+   */
+  def('BOQITEM_SUPERSEDED', 'BoQItem', 'UPDATE', 'PROCUREMENT'),
   // T-WF-03. The schedule opens and takes items under one event, because its
   // whole life is the audit trail of how it was measured.
   def('BOQ_IMPORTED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),

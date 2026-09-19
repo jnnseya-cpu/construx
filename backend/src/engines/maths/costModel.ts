@@ -137,6 +137,27 @@ export type MeasuredLine = {
   /** A subcontract sum agreed firm is not indexed for inflation. */
   subcontractFixedPrice?: boolean;
   /**
+   * The least this item costs to do at all, however little of it there is.
+   *
+   * Every price book, every subcontractor's quotation and every estimator in
+   * the trade carries one, and this model did not — so a bill measuring
+   * 1.69m³ of pad excavation priced at £90/m³ came out at £152, and
+   * 1.35m³ of GEN3 at £280/m³ came out at £378. Nobody brings an excavator to
+   * a churchyard for £152. Nobody sends a ready-mix truck for £378: the truck
+   * has a minimum load and charges for it whether you take it or not.
+   *
+   * A unit rate is the marginal cost of one more of something once you are
+   * there. On a small job most of the cost is *being there at all* — the
+   * delivery, the mobilisation, the minimum load, the half day a two-man gang
+   * cannot sell to anybody else — and multiplying a marginal rate by a small
+   * quantity prices none of it. The line costs the greater of the two.
+   *
+   * Absent, nothing changes and the line costs quantity times rate, which is
+   * right wherever the quantity is large enough for the marginal rate to be
+   * the whole story.
+   */
+  minimumChargeMinor?: number;
+  /**
    * Where the rate against this line came from.
    *
    * Three provenances and they are not interchangeable. `OUR_RECORD` is a
@@ -166,13 +187,36 @@ export type MeasuredLine = {
  */
 export function lineNetCostMinor(line: MeasuredLine): number {
   const wasteFactor = 1 + (line.materialWastePercent ?? 0) / 100;
-  return (
+  const measured =
     line.quantity *
     ((line.labourRateMinor ?? 0) +
       (line.materialRateMinor ?? 0) * wasteFactor +
       (line.plantRateMinor ?? 0) +
-      (line.subcontractRateMinor ?? 0))
-  );
+      (line.subcontractRateMinor ?? 0));
+  // The greater of the two, and only where a rate exists at all. A line with
+  // no rate against it is unrated and must stay visibly unrated — a minimum
+  // charge on it would hide the missing rate behind a plausible number, which
+  // is the one thing an estimate may never do.
+  const minimum = line.minimumChargeMinor ?? 0;
+  if (measured <= 0 || minimum <= 0) return measured;
+  return Math.max(measured, minimum);
+}
+
+/**
+ * Whether the minimum charge is what this line actually costs, and by how
+ * much. Said out loud on the estimate rather than folded silently into a
+ * number nobody can reconcile against the rate beside it.
+ */
+export function lineMinimumApplied(line: MeasuredLine): { applied: boolean; measuredMinor: number; chargedMinor: number } {
+  const wasteFactor = 1 + (line.materialWastePercent ?? 0) / 100;
+  const measuredMinor =
+    line.quantity *
+    ((line.labourRateMinor ?? 0) +
+      (line.materialRateMinor ?? 0) * wasteFactor +
+      (line.plantRateMinor ?? 0) +
+      (line.subcontractRateMinor ?? 0));
+  const chargedMinor = lineNetCostMinor(line);
+  return { applied: chargedMinor > measuredMinor, measuredMinor, chargedMinor };
 }
 
 /** A resource paid by the week for as long as it is on site. */
@@ -382,15 +426,48 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
    */
   const unrated: string[] = [];
 
+  /** Lines the minimum charge carried rather than the rate. */
+  const atMinimum: string[] = [];
+
   for (const line of input.lines) {
     if (lineNetCostMinor(line) === 0) unrated.push(`${line.description} (${line.quantity} ${line.unit})`);
     const wasteFactor = 1 + (line.materialWastePercent ?? 0) / 100;
-    labour += line.quantity * (line.labourRateMinor ?? 0);
-    materials += line.quantity * (line.materialRateMinor ?? 0) * wasteFactor;
-    plant += line.quantity * (line.plantRateMinor ?? 0);
-    const sub = line.quantity * (line.subcontractRateMinor ?? 0);
+
+    /*
+     * Where a minimum charge carries the line, the uplift goes on in the same
+     * proportions the line's own rates are in.
+     *
+     * It has to go somewhere, and this is the only placement that keeps the
+     * head totals reconcilable: a line that is all subcontract lifts the
+     * subcontract head, a line that is half labour lifts labour by half. The
+     * alternative — one lump against preliminaries — would report a
+     * groundworks minimum as a site-wide cost and make every head's derivation
+     * untraceable back to the lines under it.
+     *
+     * The invariant that matters is that `netMeasured` equals the sum of
+     * `lineNetCostMinor` across the lines, because the quotation apportions a
+     * tender total back across those same lines. If the two arithmetics
+     * disagreed, the quotation would not add up to the estimate it came from.
+     */
+    const measured = lineMinimumApplied(line);
+    const lift = measured.applied && measured.measuredMinor > 0 ? measured.chargedMinor / measured.measuredMinor : 1;
+    if (measured.applied) atMinimum.push(`${line.description} (${line.quantity} ${line.unit})`);
+
+    labour += line.quantity * (line.labourRateMinor ?? 0) * lift;
+    materials += line.quantity * (line.materialRateMinor ?? 0) * wasteFactor * lift;
+    plant += line.quantity * (line.plantRateMinor ?? 0) * lift;
+    const sub = line.quantity * (line.subcontractRateMinor ?? 0) * lift;
     subcontract += sub;
     if (line.subcontractFixedPrice) subcontractFixed += sub;
+  }
+
+  if (atMinimum.length > 0) {
+    const shown = atMinimum.slice(0, 5).join('; ');
+    warnings.push(
+      `${atMinimum.length} line${atMinimum.length === 1 ? '' : 's'} ${atMinimum.length === 1 ? 'is' : 'are'} priced at ` +
+        `${atMinimum.length === 1 ? 'its' : 'their'} minimum charge rather than at quantity times rate — the quantity is ` +
+        `too small for the rate to cover turning up: ${shown}${atMinimum.length > 5 ? `; and ${atMinimum.length - 5} more` : ''}`,
+    );
   }
 
   if (unrated.length > 0) {
@@ -548,6 +625,34 @@ export function priceEstimate(input: CostModelInput): PricedEstimate {
   derivations.set('PROFIT', `${input.margin.profitPercent}% of cost plus overhead`);
 
   const tenderTotal = totalCost + overhead + profit;
+
+  /*
+   * Weeks on site that nobody is paying for.
+   *
+   * A head excluded is a head deliberately not in the offer, and that is a
+   * legitimate thing to say — about scaffolding somebody else provides, about
+   * a design the client holds. It is not a legitimate thing to say about
+   * *being on site for four weeks*. Somebody pays for the welfare unit, the
+   * supervision, the inductions and the site set-up for those four weeks, and
+   * on a fixed-price offer with them excluded that somebody is the contractor.
+   *
+   * This is what a quotation of a few hundred pounds for a month's work
+   * actually is. The measured rates were not the whole of the error — the
+   * time-related heads had all been excluded, because a form that treats a
+   * blank box as an exclusion makes excluding everything the path of least
+   * resistance. Said as a warning rather than a refusal: a genuine one-visit
+   * job with a fortnight's lead time between visits exists, and the estimator
+   * is the one who knows which this is.
+   */
+  const pricedByTheWeek = timeRelatedHeads.filter((head) => (amounts.get(head) ?? 0) > 0);
+  if (input.durationWeeks >= 2 && pricedByTheWeek.length === 0) {
+    warnings.push(
+      `${input.durationWeeks} weeks on site and not one time-related head is priced — ` +
+        `${timeRelatedHeads.map((head) => (costHead(head)?.label ?? head).toLowerCase()).join(', ')} are all excluded or unpriced. ` +
+        'Somebody pays for welfare, supervision and site set-up for those weeks, and on a fixed price with them out of it ' +
+        'that somebody is this business. Price the weeks or shorten the period.',
+    );
+  }
 
   // --- Presentation, and the honesty check ------------------------------------
   const omissions: CostHead[] = [];

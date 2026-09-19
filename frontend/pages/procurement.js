@@ -1434,6 +1434,12 @@ export async function procurement(root) {
                     })
                   : html`<div class="empty"><b>Nothing measured yet</b>Measure a drawing on Pipeline &amp; Bids, or enter
                       what you measured yourself below. Either way the quantities appear here ready to price.</div>`}
+                ${(boq?.superseded ?? []).length > 0
+                  ? html`<div class="notice" style="margin:11px 17px 0"><div>
+                      <b>${boq.superseded.length} retired item${boq.superseded.length === 1 ? '' : 's'}</b>
+                      — no longer the measure, still on the record. ${boq.superseded[0].supersededReason ?? ''}
+                    </div></div>`
+                  : ''}
                 <div class="actions" style="margin-top:12px">
                   ${raw(
                     commandBar([
@@ -1452,6 +1458,32 @@ export async function procurement(root) {
                           (boq?.items ?? []).length === 0
                             ? 'Nothing has been measured yet. An estimate prices measured lines; it does not invent them.'
                             : blockedReason('ESTIMATE_TENDER', 'C'),
+                      },
+                      /*
+                       * The way out of a bill that is wrong.
+                       *
+                       * There is no delete and there will not be one: a
+                       * quantity somebody priced against is a fact about what
+                       * was believed at the time, and a bill that quietly
+                       * loses items is a bill whose history cannot be read.
+                       * This records that a package's measure no longer
+                       * stands, with a reason against it, and the items stay
+                       * on the chain.
+                       *
+                       * Two things reach it. A drawing was revised, so the
+                       * measure it produced no longer describes the job. Or a
+                       * run was repeated and the bill holds the same sheets
+                       * measured twice — which happened, six times over, and
+                       * left somebody with no way to put it right.
+                       */
+                      {
+                        id: 'supersede-measure',
+                        label: 'Retire a package’s measure',
+                        permitted: can('BOQ_TAKEOFF', 'U') && (boq?.items ?? []).length > 0,
+                        reason:
+                          (boq?.items ?? []).length === 0
+                            ? 'Nothing is measured, so there is nothing to retire.'
+                            : blockedReason('BOQ_TAKEOFF', 'U'),
                       },
                     ]),
                   )}
@@ -1603,6 +1635,31 @@ export async function procurement(root) {
      * business has already committed — and where it cannot, it says so on the
      * proposal rather than opening another form.
      */
+    'supersede-measure': {
+      title: 'Retire a package’s measure',
+      intent:
+        'The items stay on the record and stop being the current measure. Nothing is deleted — a quantity somebody ' +
+        'priced against is a fact about what was believed at the time, and a bill that quietly loses lines is a bill ' +
+        'whose history cannot be read. Once retired, the package can be measured again.',
+      path: `/v1/projects/${projectId}/tender/boq/supersede`,
+      submitLabel: 'Retire this measure',
+      fields: [
+        {
+          name: 'packageId',
+          label: 'Package',
+          type: 'select',
+          options: (boq?.packages ?? []).map((name) => ({ value: name, label: name })),
+          hint: 'Every item still standing against this package is retired together — a half-retired measure is not a measure.',
+        },
+        {
+          name: 'reason',
+          label: 'Why it no longer stands',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Somebody reading the bill in a year needs to know whether the drawing changed or the run was repeated — the two lead to different questions.',
+        },
+      ],
+    },
     'price-pack': {
       title: 'Read and price the pack',
       intent:
@@ -1761,6 +1818,35 @@ export async function procurement(root) {
                   } Keep it or change it — it is a starting point, not this business's own rate.`
                 : `${line.sourceSheet ?? 'measured'} · all-in rate per ${line.unit}. Neither this business's record nor the market view could price it.`,
             },
+            /*
+             * The least this line costs at all, beside the rate.
+             *
+             * A month of work on a churchyard wall came back priced at a few
+             * hundred pounds, and the rates were not wrong — the quantities
+             * were tiny. 1.69m³ of pad excavation at £90/m³ is £152. Nobody
+             * brings an excavator to a churchyard for £152, and nobody sends a
+             * ready-mix truck for £378: the truck has a minimum load and
+             * charges for it whether you take it or not.
+             *
+             * A unit rate is what one more of something costs once you are
+             * there. On a small job most of the cost is being there at all.
+             * The model is asked for both and the line is priced at whichever
+             * is greater, so the figure that usually decides a small price is
+             * on the screen rather than absent from the arithmetic.
+             */
+            {
+              name: `minimum:${index}`,
+              label: '— least it costs at all',
+              type: 'number',
+              money: true,
+              required: false,
+              ...(line.rate?.minimumChargeMinor ? { value: line.rate.minimumChargeMinor / 100 } : {}),
+              hint: line.rate?.minimumChargeMinor
+                ? `At ${line.quantity} ${line.unit} the rate alone comes to ${money(
+                    Math.round(line.rate.allInMinor * line.quantity),
+                  )}, which does not cover turning up. The line is priced at whichever is greater.`
+                : 'Delivery, minimum load, mobilisation, the smallest sensible visit. Blank means quantity times rate is the whole price.',
+            },
             {
               name: `basis:${index}`,
               label: '— priced as',
@@ -1796,6 +1882,10 @@ export async function procurement(root) {
 
           const typed = Number(v[`rate:${index}`] ?? 0);
           const head = v[`basis:${index}`] || 'labourRateMinor';
+          // Kept or changed like the rate above it, and carried whichever way
+          // the rate itself went.
+          const minimumTyped = Number(v[`minimum:${index}`] ?? 0);
+          const minimum = minimumTyped > 0 ? { minimumChargeMinor: Math.round(minimumTyped) } : {};
 
           // A market view left exactly as the model gave it is a market view
           // somebody kept, and it keeps the model's own split across the cost
@@ -1810,6 +1900,7 @@ export async function procurement(root) {
               plantRateMinor: line.rate.plantRateMinor,
               subcontractRateMinor: line.rate.subcontractRateMinor,
               rateSource: 'MARKET_AI',
+              ...minimum,
             };
           }
 
@@ -1817,6 +1908,7 @@ export async function procurement(root) {
             draftId: line.draftId,
             index: line.index,
             ...(typed > 0 ? { [head]: typed, rateSource: 'PERSON' } : {}),
+            ...minimum,
           };
         }),
         estimate: (() => {

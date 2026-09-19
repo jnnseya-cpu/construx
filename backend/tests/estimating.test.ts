@@ -5,6 +5,7 @@ import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import {
   COST_HEADS,
   costHead,
+  lineNetCostMinor,
   priceEstimate,
   reprice,
   type CostModelInput,
@@ -751,5 +752,148 @@ describe('Funding modelled from the estimate itself', () => {
     assert.ok(definition);
     assert.equal(definition.entity, 'FundingModel');
     assert.equal(definition.aiAllowed, false, 'whether the business can fund a job is not a model’s call');
+  });
+});
+
+
+/**
+ * What a small job actually costs, which is not quantity times rate.
+ *
+ * A churchyard wall priced at a few hundred pounds for a month's work, off
+ * rates that were not wrong. 1.69m³ of pad excavation at £90/m³ is £152;
+ * nobody brings an excavator to a churchyard for £152. A unit rate is the
+ * marginal cost of one more of something once you are there, and on a small
+ * job almost all of the cost is being there at all: the delivery, the minimum
+ * load, the mobilisation, the half day a two-man gang cannot sell elsewhere.
+ */
+describe('the least a line costs at all', () => {
+  const line = (over: Partial<MeasuredLine> = {}): MeasuredLine => ({
+    description: 'Plain in-situ concrete blinding, 50mm thick',
+    unit: 'm3',
+    quantity: 1.35,
+    labourRateMinor: 8_000,
+    materialRateMinor: 20_000,
+    ...over,
+  });
+
+  it('prices the line at its minimum where the quantity is too small to cover turning up', () => {
+    // 1.35m³ at £280 is £378. The truck has a minimum load and charges for it.
+    assert.equal(lineNetCostMinor(line()), 37_800);
+    assert.equal(lineNetCostMinor(line({ minimumChargeMinor: 95_000 })), 95_000);
+  });
+
+  it('leaves a line alone where the quantity already carries it', () => {
+    // 40m³ at £280 is £11,200, which is well past any load minimum. A minimum
+    // that is lower than the measured cost is not a minimum and must not
+    // reduce anything.
+    assert.equal(lineNetCostMinor(line({ quantity: 40, minimumChargeMinor: 95_000 })), 1_120_000);
+  });
+
+  it('never puts a minimum on a line that carries no rate', () => {
+    /*
+     * The one case where this would do real damage. A line nobody has priced
+     * must stay visibly unpriced — the model reports it by name and refuses to
+     * carry it as nought. A minimum charge against it would replace a visible
+     * gap with a plausible number, and a plausible number is not questioned.
+     */
+    const unrated = { description: 'Something nobody priced', unit: 'nr', quantity: 4, minimumChargeMinor: 95_000 };
+    assert.equal(lineNetCostMinor(unrated), 0);
+
+    const priced = priceEstimate({
+      durationWeeks: 1,
+      lines: [unrated],
+      margin: { overheadPercent: 0, profitPercent: 0 },
+    });
+    assert.ok(
+      priced.warnings.some((warning) => warning.includes('no rate')),
+      'an unrated line with a minimum against it stopped being reported as unrated',
+    );
+  });
+
+  it('lifts the heads in the proportions the line is priced in, so the totals still reconcile', () => {
+    /*
+     * The uplift has to land somewhere, and the placement decides whether the
+     * estimate can be read. A line that is two-thirds materials lifts
+     * materials by two-thirds — one lump against preliminaries would report a
+     * groundworks minimum as a site-wide cost and make every head's derivation
+     * untraceable to the lines under it.
+     *
+     * And the invariant the quotation depends on: net measured equals the sum
+     * of the lines. The quotation apportions a tender total back across those
+     * same lines, so two arithmetics that disagreed would print a quotation
+     * that does not add up to its own total.
+     */
+    const lines = [line({ minimumChargeMinor: 95_000 }), line({ quantity: 40 })];
+    const priced = priceEstimate({
+      durationWeeks: 1,
+      lines,
+      margin: { overheadPercent: 0, profitPercent: 0 },
+    });
+
+    assert.equal(
+      priced.subtotals.netMeasuredMinor,
+      lines.reduce((sum, each) => sum + lineNetCostMinor(each), 0),
+      'the net measured total is not the sum of the lines it is made of',
+    );
+    const materials = priced.heads.find((head) => head.head === 'MATERIALS')!.amountMinor;
+    const labour = priced.heads.find((head) => head.head === 'DIRECT_WORKS')!.amountMinor;
+    assert.ok(materials > labour * 2, 'the uplift did not follow the mix the line is priced in');
+    assert.ok(
+      priced.warnings.some((warning) => warning.includes('minimum charge')),
+      'a line carried by its minimum was not said out loud',
+    );
+  });
+});
+
+/**
+ * Weeks on site that nobody is paying for.
+ *
+ * The other half of the same too-cheap quotation. Every time-related head had
+ * been excluded — because a form that treats a blank box as an exclusion makes
+ * excluding everything the path of least resistance — and a four-week job went
+ * out with nothing against welfare, supervision or site set-up.
+ */
+describe('a job with weeks on site and nothing priced by the week', () => {
+  const works: MeasuredLine[] = [
+    { description: 'Brickwork retaining wall', unit: 'm2', quantity: 6.37, labourRateMinor: 12_000, materialRateMinor: 10_000 },
+  ];
+
+  it('says so, on a job long enough for it to matter', () => {
+    const priced = priceEstimate({
+      durationWeeks: 4,
+      lines: works,
+      exclusions: [
+        { head: 'PRELIMINARIES', reason: 'Not in this offer' },
+        { head: 'SITE_MANAGEMENT', reason: 'Not in this offer' },
+        { head: 'LOGISTICS', reason: 'Not in this offer' },
+        { head: 'HEALTH_AND_SAFETY', reason: 'Not in this offer' },
+        { head: 'QUALITY', reason: 'Not in this offer' },
+      ],
+      margin: { overheadPercent: 5, profitPercent: 20 },
+    });
+
+    const said = priced.warnings.find((warning) => warning.includes('4 weeks on site'));
+    assert.ok(said, `nothing was said about four weeks with no prelims: ${JSON.stringify(priced.warnings)}`);
+    assert.match(said, /welfare, supervision and site set-up/);
+  });
+
+  it('says nothing about a single visit, because a one-visit job is a real thing', () => {
+    const priced = priceEstimate({
+      durationWeeks: 1,
+      lines: works,
+      exclusions: [{ head: 'PRELIMINARIES', reason: 'One visit, no establishment' }],
+      margin: { overheadPercent: 5, profitPercent: 20 },
+    });
+    assert.ok(!priced.warnings.some((warning) => warning.includes('weeks on site')));
+  });
+
+  it('says nothing once the weeks are priced', () => {
+    const priced = priceEstimate({
+      durationWeeks: 4,
+      lines: works,
+      timeRelated: [{ head: 'PRELIMINARIES', description: 'Welfare unit and set-up', weeklyRateMinor: 45_000, quantity: 1 }],
+      margin: { overheadPercent: 5, profitPercent: 20 },
+    });
+    assert.ok(!priced.warnings.some((warning) => warning.includes('weeks on site')));
   });
 });
