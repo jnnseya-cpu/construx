@@ -96,11 +96,54 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   const boqItems = ctx.ledger.list(ctx.projectId, 'BoQItem').map((record) => record.state);
   const estimates = ctx.ledger.list(ctx.projectId, 'Estimate').map((record) => record.state);
   const complete = estimates.filter((estimate) => ((estimate.omissions as string[] | undefined) ?? []).length === 0);
-  const invitation = ctx.ledger.list(ctx.projectId, 'TenderInvitation').map((record) => record.state).at(-1);
+  /*
+   * The invitation, wherever it actually lives.
+   *
+   * It does not live on the project, and cannot: an invitation arrives before
+   * there is a project, which is the whole point of a pipeline. Opportunities
+   * and their invitations are written on the tenant's governance chain, and a
+   * project created from one records the opportunity it came from.
+   *
+   * This read only looked at the project's own chain. On every real project
+   * there has ever been it found nothing, put the job on the PRICE road, and
+   * blocked every bid step behind *"No invitation is recorded on this
+   * project"* — including the compliance matrix, which is why **"Plan a
+   * response pack — nothing to act on yet"** was the answer on a project whose
+   * invitation was sitting on the pipeline board two screens away.
+   *
+   * Both chains, in that order: an invitation recorded directly against a
+   * project wins, because somebody put it there deliberately; otherwise the
+   * one belonging to the opportunity this project came from.
+   */
+  const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId })?.state;
+  const originOpportunityId = project?.originOpportunityId ? String(project.originOpportunityId) : null;
+  const invitation =
+    ctx.ledger.list(ctx.projectId, 'TenderInvitation').map((record) => record.state).at(-1) ??
+    (originOpportunityId
+      ? ctx.ledger
+          .list(`${ctx.tenantId}-governance`, 'TenderInvitation')
+          .map((record) => record.state)
+          .filter((state) => String(state.opportunityId ?? '') === originOpportunityId)
+          .at(-1)
+      : undefined);
   const analyses = ctx.ledger.list(ctx.projectId, 'ITTAnalysis');
   const packs = ctx.ledger.list(ctx.projectId, 'BidResponsePack').map((record) => record.state);
   const reviews = ctx.ledger.list(ctx.projectId, 'AssuranceReview');
-  const profile = ctx.ledger.get({ refType: 'CompanyProfile', refId: ctx.tenantId });
+  /*
+   * The company's own facts, by the id they are actually written under.
+   *
+   * `setCompanyProfile` writes `<tenantId>-profile`; this read asked for
+   * `<tenantId>` and therefore never found one. A business that had filled the
+   * form in was told, for ever, that **"this company's own facts are not
+   * recorded, so there is nothing to set a buyer's requirements against"** —
+   * and the compliance matrix, and everything behind it, stayed blocked.
+   *
+   * The same shape as the drawing register reading `file.kind` where the API
+   * publishes `classification.kind`: two names for one thing, a read that
+   * quietly returns nothing, and a screen that reports the absence as a fact
+   * about the customer's business rather than about the lookup.
+   */
+  const profile = ctx.ledger.get({ refType: 'CompanyProfile', refId: `${ctx.tenantId}-profile` });
 
   // Quotations are legal instruments and live on the company's own chain rather
   // than the project's, so they are read from there and matched by the estimate

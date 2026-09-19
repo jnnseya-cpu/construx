@@ -25308,3 +25308,42 @@ and the test now pins the error code a client branches on rather than the
 status the platform is free to choose. The payment cycle is the best-built part
 of this platform and the only journey so far to survive its first end-to-end
 run intact.
+
+### The bid road, over HTTP — and why it was never on it
+
+`backend/tests/bidroad.test.ts` drives the other road: register a pursuit,
+record an invitation with four deliverables, qualify it, decide to bid, convert
+it to a project, and read the flow back. Eight steps over the wire.
+
+It found the reason the bid road never worked, and both halves were in
+`bidflow.ts`.
+
+**The invitation was being looked for in the wrong place.** An opportunity and
+its invitation live on the tenant's governance chain, because an invitation
+arrives before there is a project — that is what a pipeline is. The flow read
+`TenderInvitation` off the *project's* chain, found none on every real project
+there has ever been, put every job on the PRICE road, and blocked every bid
+step behind *"No invitation is recorded on this project."* Reported in exactly
+those terms: **"Plan a response pack — Nothing to act on yet. This needs a
+compliance matrix to act against, and this project holds none."** The matrix
+could not exist, because the step before it could never leave BLOCKED. A
+converted project records `originOpportunityId`, so the link was there and
+simply not followed; the read now tries the project first and the originating
+opportunity second.
+
+**The company's own facts were being looked for under the wrong id.**
+`setCompanyProfile` writes `<tenantId>-profile`; the flow asked for
+`<tenantId>`. A business that had filled the form in was told for ever that
+*"this company's own facts are not recorded"*. It is the same shape as the
+drawing register publishing `classification.kind` while the console read
+`file.kind`: two names for one thing, a read that quietly returns nothing, and
+a screen that reports the absence as a fact about the customer's business
+rather than about the lookup. Neither is findable by a unit test of either
+side.
+
+Three fixture errors the platform refused correctly, worth recording because
+each is a rule doing its job: a qualification scored against factors that do
+not exist, a company profile with a capacity shape the engine does not read,
+and mandatory deliverables with no owner and no internal date — *"a mandatory
+deliverable with no owner, no source or no internal date is how a correctly
+priced bid is disqualified."*
