@@ -62,7 +62,20 @@ services:
       LEDGER_JOURNAL_PATH: /data/ledger.jsonl
       LEDGER_JOURNAL_FSYNC: 'true'
       EVIDENCE_STORE_PATH: /data/evidence
-      SITE_MEDIA_PATH: ${SITE_MEDIA_PATH:-/data/site-media}
+      # Hard-set, not inherited. An .env.demo copied from a live .env brings the
+      # live host paths with it, and a sandbox writing into the live evidence
+      # directory is the one thing this whole separation exists to prevent.
+      SITE_MEDIA_PATH: /data/site-media
+      # Its own address, so every link the sandbox generates points at the
+      # sandbox.
+      #
+      # Inherited, this is wrong either way: copied from .env.example it is
+      # http://localhost:8080, and copied from a live .env it is the live
+      # domain — so a verification link, an invitation or a share from the
+      # sandbox would send somebody to the real platform with a token that does
+      # not verify there. Derived from the hostname the gateway serves it on
+      # instead, which is the same value demo-up.sh writes into the site block.
+      PUBLIC_BASE_URL: https://${CONSTRUX_DEMO_DOMAIN:?set CONSTRUX_DEMO_DOMAIN to the hostname the sandbox is served on}
       # The two that make this a sandbox rather than a second live platform.
       # Overrides rather than defaults: a demo deployment that inherited
       # AI_MODE=production from a copied .env would quietly start spending real
@@ -70,6 +83,38 @@ services:
       # prevent.
       DEMO_TENANCY_ENABLED: 'true'
       AI_MODE: 'local'
+      #
+      # ------------------------------------------------------------------
+      # Every rail that reaches the outside world, cut.
+      #
+      # These are not tidiness. `.env.demo` is copied from somewhere, and the
+      # convenient thing to copy is the live `.env` — which carries working
+      # credentials for all of them. Each line below is an accident that has a
+      # name:
+      #
+      #   OBJECT_STORE_*   the sandbox ships its own journal snapshots into the
+      #                    live backup bucket, under the same prefix, and the
+      #                    backups of the real record are overwritten by a
+      #                    fictional one. This is the dangerous one.
+      #   SMTP_*           a visitor's action sends mail from the company's own
+      #                    address to a real inbox. The seeded tenancy returns
+      #                    its one-time codes in the response, so the sandbox
+      #                    needs no mail at all.
+      #   STRIPE_/KODA_    a payment rail live on a page anybody may press.
+      #
+      # Set to empty rather than removed: an unset variable falls through to
+      # whatever `env_file` supplied, and an empty one does not.
+      OBJECT_STORE_ENDPOINT: ''
+      OBJECT_STORE_BUCKET: ''
+      OBJECT_STORE_ACCESS_KEY_ID: ''
+      OBJECT_STORE_SECRET_ACCESS_KEY: ''
+      SMTP_HOST: ''
+      SMTP_USER: ''
+      SMTP_PASS: ''
+      STRIPE_SECRET_KEY: ''
+      STRIPE_WEBHOOK_SECRET: ''
+      KODA_SECRET_KEY: ''
+      KODA_WEBHOOK_SECRET: ''
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set a NEW GATEWAY_JWT_SECRET in .env.demo, never the live one}
       BUILD_COMMIT: ${BUILD_COMMIT:-}
     volumes:

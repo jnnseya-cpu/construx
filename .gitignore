@@ -10,3 +10,12 @@ data/
 # Captures are regenerated on demand by tools/walk.mjs
 frontend/landing-full.*
 frontend/shots/
+
+# Site blocks written on the host by deploy/demo-up.sh. They name a real
+# hostname for a real deployment; the script writes them and the Caddyfile
+# imports them, and neither belongs in the repository.
+deploy/conf.d/*.caddy
+
+# The sandbox's own environment, which holds its own signing secret.
+.env.demo
+.env.backup.*

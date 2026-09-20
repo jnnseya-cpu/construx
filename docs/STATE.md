@@ -25409,3 +25409,56 @@ false and is now accurate either way.
 sandbox stack has never been started and `DEMONSTRATION_URL` has never been
 set. Until both happen there is no public sandbox — the page is now honest
 about that rather than pointing at nothing.
+
+### The sandbox, as a deployment rather than a file nobody had run
+
+`deploy/compose.demo.yaml` existed for a fortnight and had never been started
+once. Reading it against what the host actually runs found that it could not
+have worked, and would have done damage if it had.
+
+**The gateway had no route to it.** The Caddyfile carries a site block for the
+live domain and for `www.`, and none for any other hostname — so a running
+sandbox container would have been unreachable whatever the compose file said.
+The block is still not in the Caddyfile, deliberately: a site block for a name
+with no DNS record makes Caddy ask a certificate authority for a certificate it
+cannot be issued, repeatedly, on every deployment that never wanted a sandbox.
+The Caddyfile now ends with `import /etc/caddy/conf.d/*.caddy`, the gateway
+mounts that directory writable, and a host with no sandbox has an empty one —
+a glob matching nothing is not an error where a missing `import` file is.
+
+**It would have inherited the live platform's outbound rails.** `.env.demo` is
+copied from somewhere and the convenient thing to copy is the live `.env`. The
+stack now cuts every one of them by name — `OBJECT_STORE_*`, `SMTP_*`,
+`STRIPE_*`, `KODA_*` — set to empty rather than removed, because an unset
+variable falls through to whatever `env_file` supplied. The object store is the
+dangerous one: the sandbox would have shipped its own journal snapshots into
+the live backup bucket under the same prefix, and the backups of the real
+record would have been overwritten by a fictional one.
+
+**Its links would have pointed at the live platform.** `PUBLIC_BASE_URL`
+inherited is wrong either way — `http://localhost:8080` from the example file,
+the live domain from a live one — so every verification link, invitation and
+share from the sandbox would have sent somebody to the real platform carrying a
+token that does not verify there. It is now derived from
+`CONSTRUX_DEMO_DOMAIN`, the same value the site block is written with.
+
+**`deploy/demo-up.sh`** is the missing half: one command that checks the
+secrets, builds and starts the stack, waits for `/readyz` on the loopback port,
+writes the site block, validates the gateway configuration before reloading it,
+waits for the public URL, then sets `DEMONSTRATION_URL` and restarts the live
+stack — taking a backup of `.env` first. Every step is idempotent. The check
+that matters is the first: it refuses to continue when `.env.demo` and `.env`
+share a `GATEWAY_JWT_SECRET`, because a session minted for a fictional sandbox
+identity would otherwise verify against the live platform. That is an
+authentication bypass assembled out of two individually correct deployments,
+and nothing but this check stands between the two.
+
+`docs/RUNBOOK.md` — *Bringing the public sandbox up* — has the DNS record, the
+three steps, what to do when the front door does not answer, and how to take it
+down again. Eight assertions in `backend/tests/deployment.test.ts` hold the
+three files in agreement, because the drift between them is what made the
+compose file useless in the first place and would have failed on the host at
+eleven at night rather than here.
+
+**Still requires a person:** the DNS record and running the script. Everything
+else is now code.

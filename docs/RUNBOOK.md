@@ -978,6 +978,107 @@ present and well-formed.
 
 ---
 
+## Bringing the public sandbox up
+
+The sandbox is a **second deployment of the same image on a second hostname**,
+with the seeded demonstration tenancy switched on and the AI on its local
+engines. It exists separately because `DEMO_TENANCY_ENABLED` opens an anonymous
+way into a tenancy, and that is wrong beside real customer records — which is
+also why the live site's `/demo` page says nothing about a sandbox until there
+is one to point at.
+
+### 1. The DNS record
+
+One record, pointing at the same address the live domain already points at.
+
+```
+Type   Name    Value                     TTL
+A      demo    <this host's IPv4>        300
+AAAA   demo    <this host's IPv6>        300     (only if the host has one)
+```
+
+`demo` is the convention and what `demo-up.sh` defaults to; any hostname works
+as long as `CONSTRUX_DEMO_DOMAIN` matches the record. Find the host's addresses
+with:
+
+```sh
+curl -s ifconfig.me          # IPv4
+curl -s -6 ifconfig.co       # IPv6, if any
+```
+
+Let it propagate before the next step. Caddy cannot be issued a certificate for
+a name that does not yet resolve to this host, and the issuance is rate-limited
+by the authority, so a premature run is worth avoiding rather than retrying.
+
+```sh
+dig +short demo.example.com   # must return the host's address
+```
+
+### 2. The sandbox's own environment
+
+```sh
+cd /srv/construx/app
+cp .env.example .env.demo
+printf 'GATEWAY_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env.demo
+```
+
+**Its own secret, never the live one.** A session minted for a fictional
+sandbox identity would otherwise verify against the live platform — an
+authentication bypass assembled out of two individually correct deployments.
+`demo-up.sh` refuses to continue if the two match, and refuses the published
+development default as well.
+
+Nothing else in `.env.demo` needs editing. `compose.demo.yaml` hard-sets the
+sandbox's paths, its own `PUBLIC_BASE_URL`, and cuts every outbound rail —
+object store, SMTP, Stripe, Koda — because the convenient thing to copy is the
+live `.env`, and a sandbox shipping its journal snapshots into the live backup
+bucket would overwrite the backups of the real record with a fictional one.
+
+### 3. One command
+
+```sh
+CONSTRUX_DEMO_DOMAIN=demo.example.com sh deploy/demo-up.sh
+```
+
+It checks the secrets, builds and starts the stack, waits for `/readyz` on the
+loopback port, writes the gateway's site block into `deploy/conf.d/`, validates
+the configuration, reloads the gateway, waits for `https://<demo domain>/readyz`,
+then sets `DEMONSTRATION_URL` in `.env` and restarts the live stack so its
+`/demo` page links to the sandbox. It takes a backup of `.env` before editing
+it, and every step is idempotent — running it again rebuilds and re-checks
+rather than creating a second anything.
+
+### If the front door does not answer
+
+The script exits 3 and says so. The container is healthy on its own port by
+that point, so it is the name or the certificate:
+
+```sh
+dig +short demo.example.com          # does it resolve to this host?
+docker logs -f construx-gateway      # watch the certificate being obtained
+curl -s http://127.0.0.1:8091/readyz # the sandbox itself, bypassing the gateway
+```
+
+### Taking it down
+
+```sh
+rm deploy/conf.d/demo.caddy
+docker exec construx-gateway caddy reload --config /etc/caddy/Caddyfile
+docker compose -f deploy/compose.demo.yaml --env-file .env.demo down
+```
+
+Then clear `DEMONSTRATION_URL` from `.env` and restart the live stack. The
+`/demo` page goes back to offering the guided session and the trial, and stops
+mentioning a sandbox — which is the correct page when there is not one.
+
+### Why it is not on the autodeploy timer
+
+`autodeploy.sh` tracks one branch and rebuilds one stack. The sandbox is a
+separate deployment with its own env file and its own secret, and folding it
+into the timer would mean the timer holding both — so a bad deploy could take
+out the sandbox and the live platform together. Re-run `demo-up.sh` when the
+sandbox should catch up; it rebuilds from the current checkout.
+
 ## What this deployment does not have
 
 Stated so it is not mistaken for an omission somebody can fix with a flag.

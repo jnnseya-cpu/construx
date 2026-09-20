@@ -64,6 +64,14 @@ services:
       CONSTRUX_TLS_EMAIL: ${CONSTRUX_TLS_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Extra site blocks this host serves, imported by the Caddyfile. Empty on
+      # a deployment with no sandbox, which is why the import is a glob: a
+      # missing file is a parse error and a glob matching nothing is not.
+      #
+      # Writable, because `deploy/demo-up.sh` writes the sandbox's block into
+      # it and then reloads the gateway. It holds configuration, never a
+      # secret: the block names a hostname and an upstream container.
+      - ./conf.d:/etc/caddy/conf.d
       # The certificate and its account key. On a volume, because losing them
       # means re-issuing on every restart and being rate-limited by the
       # authority for doing so.

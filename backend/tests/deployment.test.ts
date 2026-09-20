@@ -216,3 +216,140 @@ describe('errors name the domain this deployment actually serves', () => {
     assert.doesNotMatch(problem.detail ?? '', /ENOSPC|journal/);
   });
 });
+
+/**
+ * The sandbox, as a deployment rather than as a file nobody has run.
+ *
+ * `deploy/compose.demo.yaml` existed for a fortnight and was never started
+ * once. The public demonstration page described a sandbox "kept separately"
+ * while `DEMONSTRATION_URL` was empty, so a visitor read that one existed, went
+ * looking, and found nothing — reported in exactly those words: *loaded demo
+ * accounts are nowhere to be found.*
+ *
+ * Bringing it up needs three things to agree that live in three different
+ * files: the compose stack, the gateway's Caddyfile, and the script that joins
+ * them. Nothing checked that they did, which is how the compose file came to
+ * name a hostname the gateway had no site block for.
+ *
+ * Every assertion below is something that, if it drifted, would fail on the
+ * host at eleven at night rather than here.
+ */
+describe('the sandbox deployment', () => {
+  const demo = readFileSync(resolve(ROOT, 'deploy/compose.demo.yaml'), 'utf8');
+  const caddyfile = readFileSync(resolve(ROOT, 'deploy/Caddyfile'), 'utf8');
+  const gateway = readFileSync(resolve(ROOT, 'deploy/compose.gateway.yaml'), 'utf8');
+  const script = readFileSync(resolve(ROOT, 'deploy/demo-up.sh'), 'utf8');
+
+  it('is a separate stack, with its own project, container and volume', () => {
+    // Not an overlay on compose.yaml. A `docker compose down` in one must not
+    // be able to touch the other.
+    assert.match(demo, /^name: construx-demo$/m);
+    assert.match(demo, /container_name: construx-demo/);
+    assert.match(demo, /demo-ledger:\/data/);
+  });
+
+  it('cannot inherit a live signing secret by accident', () => {
+    /*
+     * The failure this refuses is an authentication bypass assembled out of two
+     * correct deployments: a session minted for a fictional sandbox identity
+     * verifying against the live platform, because both were reading the same
+     * GATEWAY_JWT_SECRET.
+     *
+     * Compose requires it to be set at all; the script refuses it when it is
+     * the same string as the live one, which compose cannot know.
+     */
+    assert.match(demo, /GATEWAY_JWT_SECRET: \$\{GATEWAY_JWT_SECRET:\?/);
+    assert.match(script, /DEMO_SECRET" = "\$LIVE_SECRET/);
+  });
+
+  it('cuts every rail that reaches the outside world', () => {
+    /*
+     * `.env.demo` gets copied from somewhere, and the convenient thing to copy
+     * is the live `.env` — which carries working credentials for all of these.
+     *
+     * The object store is the dangerous one: the sandbox would ship its own
+     * journal snapshots into the live backup bucket under the same prefix, and
+     * the backups of the real record would be overwritten by a fictional one.
+     */
+    for (const rail of [
+      'OBJECT_STORE_ENDPOINT',
+      'OBJECT_STORE_BUCKET',
+      'OBJECT_STORE_ACCESS_KEY_ID',
+      'OBJECT_STORE_SECRET_ACCESS_KEY',
+      'SMTP_HOST',
+      'SMTP_USER',
+      'SMTP_PASS',
+      'STRIPE_SECRET_KEY',
+      'STRIPE_WEBHOOK_SECRET',
+      'KODA_SECRET_KEY',
+      'KODA_WEBHOOK_SECRET',
+    ]) {
+      assert.match(
+        demo,
+        new RegExp(`^\\s+${rail}: ''$`, 'm'),
+        `${rail} is not cut in the sandbox stack, so an .env.demo copied from a live .env carries it`,
+      );
+    }
+  });
+
+  it('keeps the sandbox on its own paths and its own address', () => {
+    // Hard-set rather than interpolated. An inherited path puts a sandbox's
+    // writes into the live evidence directory; an inherited PUBLIC_BASE_URL
+    // sends every link the sandbox generates to the live platform, carrying a
+    // token that does not verify there.
+    assert.match(demo, /^\s+LEDGER_JOURNAL_PATH: \/data\/ledger\.jsonl$/m);
+    assert.match(demo, /^\s+EVIDENCE_STORE_PATH: \/data\/evidence$/m);
+    assert.match(demo, /^\s+SITE_MEDIA_PATH: \/data\/site-media$/m);
+    assert.match(demo, /PUBLIC_BASE_URL: https:\/\/\$\{CONSTRUX_DEMO_DOMAIN:\?/);
+    // And the script exports the variable that expression reads, or the stack
+    // refuses to start with a message about a variable nobody set by hand.
+    assert.match(script, /export CONSTRUX_DEMO_DOMAIN=/);
+  });
+
+  it('is a sandbox rather than a second live platform', () => {
+    assert.match(demo, /DEMO_TENANCY_ENABLED: 'true'/);
+    // Local engines, so a visitor on an open sign-in spends nothing.
+    assert.match(demo, /AI_MODE: 'local'/);
+  });
+
+  it('has a gateway that can actually serve it', () => {
+    /*
+     * The gap that made the compose file useless on its own: the Caddyfile had
+     * a site block for the live domain and for `www.`, and none for a sandbox
+     * hostname. A running container the gateway has no route to is a container
+     * nobody can reach.
+     *
+     * The block is not in the Caddyfile, deliberately — a site block for a name
+     * with no DNS record makes Caddy ask for a certificate it cannot be issued,
+     * on every deployment that never wanted a sandbox. It is imported from a
+     * directory instead, and a glob that matches nothing is not an error.
+     */
+    assert.match(caddyfile, /^import \/etc\/caddy\/conf\.d\/\*\.caddy$/m);
+    assert.match(gateway, /\.\/conf\.d:\/etc\/caddy\/conf\.d/);
+    // Writable: the script writes the block into it and reloads.
+    assert.ok(
+      !/\.\/conf\.d:\/etc\/caddy\/conf\.d:ro/.test(gateway),
+      'conf.d is mounted read-only, so demo-up.sh cannot write the site block',
+    );
+    assert.match(script, /conf\.d\/demo\.caddy/);
+    assert.match(script, /reverse_proxy construx-demo:8080/);
+  });
+
+  it('validates the gateway configuration before reloading it', () => {
+    // A reload with a bad file leaves the live site on the old config, which is
+    // the safe failure and also a silent one. Checked and reported instead.
+    assert.match(script, /caddy validate --config/);
+    assert.match(script, /caddy reload --config/);
+  });
+
+  it('tells the live platform where the sandbox is', () => {
+    /*
+     * The step whose absence started this. Without DEMONSTRATION_URL the live
+     * site offers the guided session and the trial and does not mention a
+     * sandbox — correct when there is none, and not what anybody wants once
+     * there is one.
+     */
+    assert.match(script, /DEMONSTRATION_URL=/);
+    assert.match(script, /\.env\.backup\./, 'the script edits .env without taking a backup first');
+  });
+});

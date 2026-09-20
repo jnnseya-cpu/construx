@@ -117,3 +117,18 @@ www.{$CONSTRUX_DOMAIN} {
 		format json
 	}
 }
+
+# Anything else this host serves, dropped in as a file.
+#
+# The sandbox is the reason this exists. It is a second deployment on a second
+# hostname (`deploy/compose.demo.yaml`), it is off on most hosts, and a site
+# block for a name with no DNS record makes Caddy ask a certificate authority
+# for a certificate it cannot be issued — repeatedly, and loudly, on a
+# deployment that never wanted a sandbox at all.
+#
+# So the block is not in this file. `deploy/demo-up.sh` writes it into
+# `conf.d/` on the host and reloads the gateway; a host with no sandbox has an
+# empty directory and this import matches nothing, which Caddy accepts without
+# complaint. The same door is open for anything else a particular host has to
+# serve, without a fork of this file.
+import /etc/caddy/conf.d/*.caddy
