@@ -25347,3 +25347,65 @@ not exist, a company profile with a capacity shape the engine does not read,
 and mandatory deliverables with no owner and no internal date — *"a mandatory
 deliverable with no owner, no source or no internal date is how a correctly
 priced bid is disqualified."*
+
+### The blog did not break — it ran out
+
+Reported from the live site: no post since 6 September 2026. The daily release
+was working perfectly. It draws from `TOPICS` in `site/visibility.ts`, which
+holds **nine** topics written into the source, publishes the first one that has
+no post yet, and when every topic is covered it publishes nothing and records a
+note saying so. The ninth was published on 6 September. Everything after that
+was a correct no-op.
+
+Three things were wrong, and none of them was the release.
+
+**The editorial supply was code.** A marketing operation that needs a new
+subject needed a deployment. `MARKETING_TOPIC_ADDED` records one instead: the
+nine in the source stay exactly as they are and seed the library,
+`allTopics()` is them plus everything added since, and **Add a topic** on SEO &
+content is the door. The checks that would hold a post back — title length,
+the keyword present in the title, no duplicate keyword — are applied when the
+topic is recorded rather than at six the next morning, because the person who
+could fix it is not at the keyboard then. `aiAllowed: false`: what this
+business publishes under its own name is a person's decision.
+
+**The note read like a clean run.** *"Every topic in the library is on the
+record; nothing new was published today, and nothing old was re-sent"* is true,
+and it was written once and then repeated unread every morning for a fortnight
+while the site went stale. It now says the library is empty, that nothing will
+publish tomorrow either, and what to do about it.
+
+**The sweep scored it green the whole time.** Every check asked what was
+already on the site; none asked whether anything more was coming. There is now
+an **Editorial supply** check, separate from Topic coverage on purpose — full
+coverage is a pass, and it is also exactly the state in which tomorrow's
+release publishes nothing. Freshness gave up eight of its twelve points to it:
+the two are the same failure at different moments, and only the earlier one can
+still be acted on.
+
+### A demonstration page that promised accounts there were none of
+
+Reported in the same breath: *"loaded demo accounts are nowhere to be found."*
+
+`/demo` was headed **"Try it now, or have somebody walk you through it"** with
+the standfirst *"Sign in as any role on a sandbox tenancy"* — on every
+deployment, whatever it offered. On the live platform there is no sandbox to
+sign into, correctly: `DEMO_TENANCY_ENABLED` is off beside real customer
+records and `/v1/console/session` is refused in production because it hands an
+anonymous caller a working token.
+
+Below the headline the page then described a sandbox "kept separately" with no
+address, because `DEMONSTRATION_URL` is empty until the sandbox stack in
+`deploy/compose.demo.yaml` is actually deployed and named. Advertising a thing
+and not providing it is worse than either alternative.
+
+Three states, three pages. Sandbox here: try it now. Sandbox elsewhere: try it
+there, with the link. Neither: the page does not mention a sandbox at all and
+offers the guided session and the trial, which are the two things that exist.
+The readiness entry said *"nothing on the public site says so"*, which was
+false and is now accurate either way.
+
+**Still outstanding, and it is a deployment rather than a code change:** the
+sandbox stack has never been started and `DEMONSTRATION_URL` has never been
+set. Until both happen there is no public sandbox — the page is now honest
+about that rather than pointing at nothing.

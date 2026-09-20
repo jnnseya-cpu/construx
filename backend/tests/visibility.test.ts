@@ -198,10 +198,45 @@ describe('the sweep reads the served site', () => {
     for (const check of ['Freshness', 'Topic coverage', 'Keyword coverage', 'Internal linking', 'Sitemap', 'Structured data']) {
       assert.equal(byCheck.get(check)!.ok, true, `${check}: ${byCheck.get(check)!.detail}`);
     }
+    /*
+     * And the one check a fully-published library deliberately does not pass.
+     *
+     * Every topic covered means the daily release has nothing left to write
+     * tomorrow. That is the state the site was actually in from 6 September
+     * 2026 — the ninth and last seeded topic published, the blog silently
+     * stopped, and this sweep reporting a perfect score throughout, because
+     * every check it ran asked what was already on the site and none asked
+     * whether anything more was coming.
+     */
+    const supply = byCheck.get('Editorial supply')!;
+    assert.equal(supply.ok, false, supply.detail);
+    assert.match(supply.detail, /Add a topic/);
+
     const signal = visibility.signalScore(findings);
     const earned = findings.filter((finding) => finding.ok).reduce((sum, finding) => sum + finding.weight, 0);
     assert.equal(signal.score, earned);
-    assert.ok(signal.score >= 90, `${signal.score}`);
+    // Short of full marks by at least the supply weight. Not pinned to an
+    // exact number: hero imagery fails in a test run because the images are
+    // not served, which is an artefact of the environment rather than of the
+    // site, and pinning the total would make this test about that instead.
+    assert.ok(signal.score <= 100 - supply.weight, `${signal.score}`);
+    assert.ok(signal.score >= 80, `${signal.score}`);
+    assert.match(signal.summary, /Editorial supply/);
+  });
+
+  it('passes editorial supply once the library has something left to write', () => {
+    const platform = new Platform();
+    const { actor } = operator(platform);
+    visibility.generateLibrary(platform, actor);
+    visibility.addTopic(platform, actor, {
+      title: 'What a retention release actually has to prove',
+      keyword: 'retention release',
+      tag: 'Commercial',
+    });
+    const byCheck = new Map(visibility.seoSweep(platform).map((finding) => [finding.check, finding]));
+    const supply = byCheck.get('Editorial supply')!;
+    assert.equal(supply.ok, true, supply.detail);
+    assert.match(supply.detail, /1 topic still to write/);
   });
 
   it('catches a sitemap that leaks a draft, because it reads the sitemap it would serve', () => {
@@ -437,7 +472,7 @@ describe('the daily release: once a day, by the record', () => {
     visibility.generateLibrary(platform, actor);
     const release = await visibility.runDailyRelease(platform, actor, { trigger: 'OPERATOR' });
     assert.equal(release.published, null);
-    assert.match(release.note, /nothing new was published today, and nothing old was re-sent/);
+    assert.match(release.note, /nothing will be published tomorrow either|ADD A TOPIC/);
     assert.equal(release.sent.length + release.failed.length, 0);
   });
 
@@ -519,7 +554,7 @@ describe('through the gateway', () => {
     const before = await call('GET', '/v1/site/visibility', token);
     assert.equal(before.status, 200, JSON.stringify(before.body));
     assert.equal(typeof before.body.signal.score, 'number');
-    assert.equal(before.body.sweep.length, 12);
+    assert.equal(before.body.sweep.length, 13);
     assert.equal(before.body.topics.length, 9);
 
     const composed = await call('POST', '/v1/site/posts/compose', token, { topic: 'Composed over HTTP', keywords: ['http composition'], publish: true });

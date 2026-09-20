@@ -1787,9 +1787,30 @@ export function demo(input: DemoInput): string {
     },
     `${pageHead({
       eyebrow: 'Demonstration',
-      title: 'Try it now, or have somebody walk you through it',
-      standfirst:
-        'No signup and no card. Sign in as any role on a sandbox tenancy — the platform enforces what each of them may see, exactly as it does for a customer.',
+      /*
+       * The promise has to match what is actually on the other side of it.
+       *
+       * This said "Try it now … sign in as any role on a sandbox tenancy"
+       * whatever the deployment offered — including on the live platform,
+       * where there is no sandbox to sign into and correctly so. A visitor
+       * read the headline, looked for the accounts, and found none, which is
+       * exactly what was reported: "loaded demo accounts are nowhere to be
+       * found."
+       *
+       * Three states, three headlines. Sandbox here: try it now. Sandbox
+       * elsewhere: try it there. No sandbox: say what is actually offered,
+       * which is a guided session and a trial, and promise nothing else.
+       */
+      title: input.available
+        ? 'Try it now, or have somebody walk you through it'
+        : input.demonstrationUrl
+          ? 'Try it on the sandbox, or have somebody walk you through it'
+          : 'Have somebody walk you through it, or start your own record',
+      standfirst: input.available
+        ? 'No signup and no card. Sign in as any role on a sandbox tenancy — the platform enforces what each of them may see, exactly as it does for a customer.'
+        : input.demonstrationUrl
+          ? 'No signup and no card. The sandbox is a separate deployment, because the accounts on this one are real companies\u2019 records.'
+          : 'A guided session on a real programme, or your own trial record. This address is the live platform and the accounts on it belong to real companies, so there is no open sign-in here.',
     })}
 
 ${
@@ -1879,7 +1900,22 @@ ${
 </section>
 
 ${bookingSection}`
-    : `<section class="prose">
+    : `${/*
+       * Two different pages, depending on whether there is a sandbox to send
+       * anybody to.
+       *
+       * There was one page, and it described a sandbox kept "separately" with
+       * no address on it, because `DEMONSTRATION_URL` is empty until somebody
+       * deploys the sandbox stack and names it. So a visitor read that a
+       * sandbox exists, looked for it, and found nothing — reported in exactly
+       * those words: "loaded demo accounts are nowhere to be found."
+       *
+       * Advertising a thing and then not providing it is worse than either
+       * alternative. With an address, say where it is. Without one, do not
+       * mention it: offer the two things that do exist.
+       */
+      input.demonstrationUrl
+        ? `<section class="prose">
   <div class="wrap">
     <div class="callout">
       <p>
@@ -1887,15 +1923,20 @@ ${bookingSection}`
         This is the live platform, and the accounts on it are real companies' records. The sandbox anybody may sign
         into and write to is kept separately, which is the only arrangement under which both can be true at once.
       </p>
-      ${
-        input.demonstrationUrl
-          ? `<p><a class="btn" href="${esc(input.demonstrationUrl)}">Open the sandbox <span aria-hidden="true">→</span></a></p>`
-          : ''
-      }
+      <p><a class="btn" href="${esc(input.demonstrationUrl)}">Open the sandbox <span aria-hidden="true">→</span></a></p>
     </div>
     <p>A guided session shows the same platform on a real programme, and a trial gives you your own record in it.</p>
   </div>
-</section>
+</section>`
+        : `<section class="prose">
+  <div class="wrap">
+    <p>
+      Two ways to see it. A <b>guided session</b> walks the platform on a real programme, with somebody answering
+      questions as they come up. A <b>trial</b> gives you your own record in it — your drawings, your rates, your
+      quotation at the end of it — with nothing to uninstall if you decide against.
+    </p>
+  </div>
+</section>`}
 
 ${bookingSection}`
 }

@@ -208,6 +208,99 @@ export const TOPICS: readonly Topic[] = [
   { id: 'governance', title: 'The golden thread that detects its own tampering', keyword: 'golden thread', tag: 'Governance', features: ['audit', 'autopilot', 'copilot'] },
 ];
 
+/**
+ * The catalogue as it stands: the nine in the source, plus every topic a person
+ * has added since.
+ *
+ * The nine above are the seed and are not touched. What they were not is a
+ * supply: the daily release published one a day until the ninth, and then
+ * published nothing, for ever, with the only record of it a note on a release
+ * nobody reads. The site stopped on 6 September 2026 and nothing anywhere said
+ * why — the same silent nought that has cost this project a week, in a
+ * different corner of it.
+ *
+ * Added topics come after the seeded ones, in the order they were recorded, so
+ * the release keeps its documented behaviour of taking the first uncovered
+ * topic in the list.
+ */
+export function allTopics(platform: Platform): Topic[] {
+  const added = platform.ledger
+    .list(BLOG_PROJECT_ID, 'MarketingTopic')
+    .map((record) => record.state as unknown as Topic)
+    .sort((a, b) => String((a as Topic & { addedAt?: string }).addedAt ?? '').localeCompare(String((b as Topic & { addedAt?: string }).addedAt ?? '')));
+  // A recorded topic whose keyword matches a seeded one would have the release
+  // skip it for ever, because coverage is keyed on the keyword. Dropped here
+  // rather than at the point of writing, so a seed added later cannot silently
+  // orphan a topic somebody recorded before it existed.
+  const seeded = new Set(TOPICS.map((topic) => topic.keyword.trim().toLowerCase()));
+  return [...TOPICS, ...added.filter((topic) => !seeded.has(topic.keyword.trim().toLowerCase()))];
+}
+
+/** Record a subject for the blog to write about. */
+export function addTopic(
+  platform: Platform,
+  actor: PostActor,
+  input: { title: string; keyword: string; tag: string },
+): { topic: Topic } {
+  const title = input.title.trim();
+  const keyword = input.keyword.trim();
+  const tag = input.tag.trim();
+
+  // The same gates `composePost` applies, applied at the point the topic is
+  // recorded rather than the day the release tries to use it. A topic that
+  // cannot produce a publishable post is a day the blog does not publish, and
+  // the person who would have to fix it is not at the keyboard at 06:00.
+  if (title.length < 10 || title.length > 80) {
+    throw new DomainError('TITLE_LENGTH', 'A title is between ten and eighty characters — the page title check refuses anything longer.', 422);
+  }
+  if (keyword.length < 3 || keyword.length > 40) {
+    throw new DomainError('KEYWORD_LENGTH', 'The phrase this post is meant to be found by is between three and forty characters.', 422);
+  }
+  if (!title.toLowerCase().includes(keyword.toLowerCase())) {
+    throw new DomainError(
+      'KEYWORD_NOT_IN_TITLE',
+      `The title has to contain "${keyword}". A post whose title does not carry its own keyword is held by its own checks on the morning it is written, and nobody is watching at six o'clock.`,
+      422,
+    );
+  }
+  if (tag.length < 2 || tag.length > 40) throw new DomainError('TAG_REQUIRED', 'File it under something, in two to forty characters.', 422);
+
+  const existing = allTopics(platform).find((topic) => topic.keyword.trim().toLowerCase() === keyword.toLowerCase());
+  if (existing) {
+    throw new DomainError(
+      'TOPIC_ALREADY_RECORDED',
+      `"${existing.title}" is already in the library under that phrase. Two topics on one keyword compete with each other for the same search.`,
+      409,
+    );
+  }
+
+  const topic: Topic & { addedAt: string; addedBy: string } = {
+    id: `topic-${ulid()}`,
+    title,
+    keyword,
+    tag,
+    // Composed from the feature catalogue, like the seeded topics that carry no
+    // written article. A person who wants specific prose writes the post itself
+    // from the compose form; this is the supply for the daily release.
+    features: [],
+    addedAt: new Date().toISOString(),
+    addedBy: actor.refId,
+  };
+
+  platform.ledger.commit({
+    tenantId: PLATFORM_TENANT_ID,
+    projectId: BLOG_PROJECT_ID,
+    actor,
+    source: 'WEB',
+    correlationId: topic.id,
+    eventType: 'MARKETING_TOPIC_ADDED',
+    entity: { refType: 'MarketingTopic', refId: topic.id },
+    nextState: topic as unknown as Record<string, unknown>,
+  });
+
+  return { topic };
+}
+
 /** The post that covers a topic, if one is on the record. Published first. */
 function postForTopic(platform: Platform, topic: Topic): BlogPost | undefined {
   const matching = posts(platform).filter((post) => post.keyword.trim().toLowerCase() === topic.keyword.toLowerCase());
@@ -215,7 +308,7 @@ function postForTopic(platform: Platform, topic: Topic): BlogPost | undefined {
 }
 
 export function topicCoverage(platform: Platform): Array<Topic & { covered: boolean; post?: { id: string; slug: string; status: BlogPost['status'] } }> {
-  return TOPICS.map((topic) => {
+  return allTopics(platform).map((topic) => {
     const post = postForTopic(platform, topic);
     return {
       ...topic,
@@ -422,7 +515,7 @@ export function generateLibrary(
 ): { created: ComposeResult[]; skipped: Array<{ topic: string; because: string }> } {
   const created: ComposeResult[] = [];
   const skipped: Array<{ topic: string; because: string }> = [];
-  for (const topic of TOPICS) {
+  for (const topic of allTopics(platform)) {
     const existing = postForTopic(platform, topic);
     if (existing) {
       skipped.push({ topic: topic.id, because: `Already on the record as /blog/${existing.slug} (${existing.status.toLowerCase()}).` });
@@ -741,7 +834,8 @@ export async function runDailyRelease(
   const existing = releaseFor(platform, day);
   if (existing) return { ...existing, alreadyRun: true };
 
-  const next = TOPICS.find((topic) => postForTopic(platform, topic) === undefined);
+  const library = allTopics(platform);
+  const next = library.find((topic) => postForTopic(platform, topic) === undefined);
   let published: MarketingRelease['published'] = null;
   let note: string;
   let sent: Distribution[] = [];
@@ -749,7 +843,21 @@ export async function runDailyRelease(
   let skipped: MarketingRelease['skipped'] = [];
 
   if (!next) {
-    note = 'Every topic in the library is on the record; nothing new was published today, and nothing old was re-sent.';
+    /*
+     * The library is empty, and this is the sentence that has to make somebody
+     * act.
+     *
+     * The old wording — "every topic in the library is on the record; nothing
+     * new was published today" — is true and reads like a clean run. It was
+     * written on the day the ninth topic was published and then repeated,
+     * unread, every morning for a fortnight while the site went stale. A note
+     * that describes a stopped blog in the tone of a successful one is worse
+     * than no note.
+     */
+    note =
+      `The library is empty: all ${library.length} topic${library.length === 1 ? '' : 's'} already have a post, so nothing ` +
+      'was published today and nothing will be published tomorrow either. ' +
+      'ADD A TOPIC on Growth — the release has nothing to write about until somebody does.';
   } else {
     const composed = composePost(platform, actor, { topic: next.title, keywords: [next.keyword], tag: next.tag }, next);
     if (composed.outcome !== 'PUBLISHED') {
@@ -1046,8 +1154,18 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
     },
     {
       check: 'Freshness',
+      /*
+       * Eight of this check's twelve points went to `Editorial supply` below.
+       *
+       * The two are the same failure at different moments. Freshness fires
+       * once the newest post is a fortnight old, by which time the damage is
+       * done and the only available action is to have published something a
+       * fortnight ago. Supply fires the day the library runs dry, which is the
+       * day something can still be done about it. Weighting the warning above
+       * the post-mortem is the point.
+       */
       ok: ageDays <= FRESHNESS_DAYS,
-      weight: 12,
+      weight: 4,
       detail:
         newest === ''
           ? 'Nothing is published.'
@@ -1055,11 +1173,37 @@ export function seoSweep(platform: Platform, now: Date = new Date()): SweepFindi
     },
     {
       check: 'Topic coverage',
-      ok: covered === TOPICS.length,
+      ok: covered === coverage.length,
       weight: 12,
-      detail: `${covered} of ${TOPICS.length} topics have a published post${
-        covered === TOPICS.length ? '.' : `; uncovered: ${coverage.filter((topic) => !topic.covered).map((topic) => topic.id).join(', ')}.`
+      detail: `${covered} of ${coverage.length} topics have a published post${
+        covered === coverage.length ? '.' : `; uncovered: ${coverage.filter((topic) => !topic.covered).map((topic) => topic.id).join(', ')}.`
       }`,
+    },
+    {
+      /*
+       * Whether the daily release has anything left to write about tomorrow.
+       *
+       * Separate from coverage on purpose, because they are opposite goods and
+       * conflating them hides both. Full coverage is a pass — every subject the
+       * business cares about has a page. Full coverage is also the exact
+       * condition in which the release publishes nothing tomorrow, and the day
+       * after, until somebody notices the site has gone stale.
+       *
+       * That happened. The ninth and last seeded topic was published on 6
+       * September 2026 and the blog stopped, while this sweep reported a
+       * perfect score throughout — because every check it ran was about what is
+       * already on the site and none was about whether anything more was
+       * coming.
+       */
+      check: 'Editorial supply',
+      ok: coverage.length > covered,
+      weight: 8,
+      detail:
+        coverage.length === 0
+          ? 'The library is empty, so the daily release has nothing to publish. Add a topic on SEO & content.'
+          : coverage.length === covered
+            ? `Every one of the ${coverage.length} topics has a post, so tomorrow's release publishes nothing and the site starts ageing. It reads as abandoned after ${FRESHNESS_DAYS} days. Add a topic on SEO & content.`
+            : `${coverage.length - covered} topic${coverage.length - covered === 1 ? '' : 's'} still to write, so the release has ${coverage.length - covered} more day${coverage.length - covered === 1 ? '' : 's'} of material.`,
     },
     {
       check: 'hreflang',

@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { POST_PAGES, SITE_PAGES } from '../src/site/index.ts';
+import * as pages from '../src/site/pages.ts';
 import { Platform } from '../src/platform.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 
@@ -275,8 +276,42 @@ describe('the demonstration surface in production', () => {
     for (const leak of ['DEMO_TENANCY_ENABLED', 'NODE_ENV', 'this deployment', 'Somebody has set']) {
       assert.ok(!text.includes(leak), `the public demonstration page says "${leak}"`);
     }
-    assert.match(text, /sandbox is not on this address/i);
+    /*
+     * And the half that was wrong: it described a sandbox kept "separately"
+     * with no address anywhere on the page, because DEMONSTRATION_URL is empty
+     * until the sandbox stack is actually deployed and named. A visitor read
+     * that a sandbox exists, went looking, and found nothing — reported in
+     * exactly those words: "loaded demo accounts are nowhere to be found."
+     *
+     * With no address, the page does not mention a sandbox at all. It offers
+     * the two things that do exist.
+     */
+    assert.ok(
+      !/sandbox/i.test(text),
+      'the page advertises a sandbox it has no address for, which is how a visitor is sent looking for nothing',
+    );
     assert.match(text, /guided session/i);
+    assert.match(text, /trial/i);
+  });
+
+  /** The least a demonstration page needs to render. Nothing here is asserted on. */
+  const demoInput = (): pages.DemoInput => ({
+    available: false,
+    seeded: [],
+    clean: [],
+    programme: 'A seeded programme',
+    availability: { minutes: 30, days: [], note: 'No slots are open.' },
+  });
+
+  it('points at the sandbox where there is one to point at', () => {
+    // The other branch, rendered directly, because the served page reads the
+    // deployment's own empty setting. With an address the page says where the
+    // sandbox is and links to it — which is the whole reason the setting
+    // exists, and was never exercised.
+    const withUrl = pages.demo({ ...demoInput(), demonstrationUrl: 'https://sandbox.example.test' });
+    assert.match(withUrl, /sandbox is not on this address/i);
+    assert.match(withUrl, /https:\/\/sandbox\.example\.test/);
+    assert.match(withUrl, /Open the sandbox/i);
   });
 
   it('refuses to list demonstration identities when the demonstration is switched off', async () => {

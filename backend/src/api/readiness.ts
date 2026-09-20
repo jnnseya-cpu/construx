@@ -224,7 +224,10 @@ export function readiness(now = new Date()): Readiness {
         ? 'Switched off, which is the default. No sandbox identity exists to be signed into.' +
           (config.demonstrationUrl
             ? ` The public site sends visitors to the sandbox at ${config.demonstrationUrl} instead.`
-            : ' Nothing on the public site says so: a visitor is offered the guided session and the trial. Run the sandbox as its own deployment and name it in DEMONSTRATION_URL to send people there.')
+            : ' DEMONSTRATION_URL is empty, so the public site offers the guided session and the trial and does not ' +
+              'mention a sandbox at all. It used to describe one it had no address for, which is how a visitor came ' +
+              'to report that the demonstration accounts were nowhere to be found. Run the sandbox as its own ' +
+              'deployment (deploy/compose.demo.yaml) and name it here to send people there.')
         : production
           ? 'Open in production: any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Right for a public sandbox; wrong beside real customer records.'
           : 'Open. Any visitor can sign into the seeded demonstration as any role.',

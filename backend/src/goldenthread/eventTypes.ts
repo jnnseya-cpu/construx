@@ -1353,6 +1353,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // The marketing agent's daily release: what it published, where it sent it,
   // and what it found nothing to do about. One per UTC day, by construction.
   def('MARKETING_RELEASE_RUN', 'MarketingRelease', 'CREATE', 'GOVERNANCE', { creates: true }),
+  /*
+   * A subject for the blog to write about, added by a person.
+   *
+   * The daily release draws from a catalogue of nine topics written in the
+   * source. It published one a day until the ninth, and then — correctly and
+   * silently — published nothing for ever. The only record that said so was a
+   * note on a release nobody reads, and the site simply stopped, which is how
+   * a blog dies without anybody deciding to kill it.
+   *
+   * A marketing operation that needs a new subject should not need a
+   * deployment. The nine in the source stay exactly as they are and seed the
+   * library; this is how it grows afterwards.
+   *
+   * `aiAllowed: false`. What this business chooses to publish under its own
+   * name is a person's decision, and an agent that could add its own topic
+   * could write the site's editorial line.
+   */
+  def('MARKETING_TOPIC_ADDED', 'MarketingTopic', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('NEWSLETTER_DELIVERY_RECORDED', 'NewsletterDelivery', 'CREATE', 'GOVERNANCE'),
   // A message the relay accepted and a downstream server bounced later. The
   // platform reads no mailbox, so the bounce arrives by an operator or a relay

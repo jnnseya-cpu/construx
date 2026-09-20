@@ -24762,6 +24762,31 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/site/marketing/topics',
+    description:
+      'Add a subject for the daily release to write about. The nine in the source seed the library; this is how it ' +
+      'grows, without a deployment',
+    schema: {
+      type: 'object',
+      required: ['title', 'keyword', 'tag'],
+      properties: {
+        title: { type: 'string', minLength: 10, maxLength: 80 },
+        keyword: { type: 'string', minLength: 3, maxLength: 40 },
+        tag: { type: 'string', minLength: 2, maxLength: 40 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      operatorOnly(ctx, 'add a marketing topic');
+      return visibility.addTopic(
+        platform,
+        { refType: 'User', refId: auth(ctx).actorId },
+        body<{ title: string; keyword: string; tag: string }>(ctx),
+      );
+    },
+  },
+  {
+    method: 'POST',
     pattern: '/v1/site/marketing/library',
     description: 'One published post per topic that has none. A topic already on the record is skipped',
     schema: { type: 'object', properties: {}, additionalProperties: false },

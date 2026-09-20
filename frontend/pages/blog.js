@@ -101,6 +101,37 @@ const COMMANDS = {
         .filter(Boolean),
     }),
   }),
+  /*
+   * Where the library grows.
+   *
+   * The daily release draws from a catalogue of nine topics written into the
+   * source. It published one a day until the ninth, on 6 September 2026, and
+   * then published nothing — correctly, and in silence. There was no way for a
+   * person to give it another subject without a deployment, which is the
+   * actual defect: the editorial supply for a daily blog was code.
+   */
+  topic: () => ({
+    title: 'Add a topic for the blog to write about',
+    intent:
+      'The daily release publishes the first topic in the library that has no post yet. When every topic has one it ' +
+      'publishes nothing — which is right, and is why the library needs feeding. The checks that hold a post back are ' +
+      'applied here instead, so a topic that could never be published is refused now rather than at six in the morning.',
+    path: '/v1/site/marketing/topics',
+    submitLabel: 'Add it to the library',
+    fields: [
+      {
+        name: 'title',
+        label: 'Title',
+        hint: 'Ten to eighty characters, and it must contain the phrase below — a title that does not carry its own keyword is held by its own check.',
+      },
+      {
+        name: 'keyword',
+        label: 'The phrase it should be found by',
+        hint: 'What a buyer would actually type. Three to forty characters, and not one the library already covers.',
+      },
+      { name: 'tag', label: 'Filed under', hint: 'Commercial, Governance, Handover, Design & BIM — or something new.' },
+    ],
+  }),
   library: () => ({
     title: 'Generate marketing library',
     intent:
@@ -244,6 +275,7 @@ export async function blog(root) {
         intent: `${position.summary} A model may draft; only a person publishes, and a post is refused publication while any check is failing. The marketing agent composes from the feature catalogue and may publish what it composes.`,
         actions: commandBar([
           { id: 'generate', label: generatorLabel, permitted: true, tone: 'primary' },
+          { id: 'topic', label: 'Add a topic', permitted: true },
           { id: 'library', label: 'Generate marketing library', permitted: true },
           { id: 'release', label: "Run today's release", permitted: true },
           { id: 'draft', label: 'Ask for a draft', permitted: true },
@@ -703,6 +735,18 @@ export async function blog(root) {
       const result = await command(generatorSpec(vis));
       if (result) {
         reportCompose(result);
+        await draw();
+      }
+      return;
+    }
+    if (id === 'topic') {
+      const result = await command(COMMANDS.topic());
+      if (result) {
+        toast(
+          'Topic added',
+          `"${result.topic.title}" is in the library. The next release publishes it.`,
+          'ok',
+        );
         await draw();
       }
       return;

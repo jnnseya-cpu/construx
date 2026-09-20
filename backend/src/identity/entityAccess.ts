@@ -705,6 +705,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // announcement address is the operator's own list, configured, not a person.
   SitePostDistribution: { area: 'PLATFORM_ADMINISTRATION' },
   MarketingRelease: { area: 'PLATFORM_ADMINISTRATION' },
+  // A subject the blog is to write about. The operator's own record, like the
+  // posts and the releases it feeds — no customer tenancy has one.
+  MarketingTopic: { area: 'PLATFORM_ADMINISTRATION' },
   NewsletterDelivery: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   NewsletterSuppression: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'LEGAL_L4' },
   // A support request. Classified under ENTERPRISE_STRUCTURE rather than
