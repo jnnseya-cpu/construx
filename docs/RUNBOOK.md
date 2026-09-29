@@ -714,6 +714,7 @@ being relied on before dropping it.
 | `GATEWAY_JWT_SECRET` | a real secret | Every token is forgeable |
 | `PUBLIC_BASE_URL` | the https origin | Signed links in email go out over cleartext |
 | `AI_MODE` | `production` | Engines run deterministically with no provider spend |
+| `MARKETING_RELEASE_ENABLED` | `true`, if you want a blog | Nothing is ever published except by hand. Off is the default and a correct state; it is listed because a deployment sat three weeks with a stale blog and no other sign of it. See below |
 
 `assertProductionSafety()` checks all of these at boot and writes each failure
 to stderr. It warns rather than exits, deliberately: a platform that refuses to
@@ -753,6 +754,72 @@ tenancy with twelve identities. Know exactly what it does before setting it:
 The boot banner's `Demo` line reports which tenancy is serving, whether it was
 seeded or adopted, and what is left in the wallet. Read it after switching this
 on.
+
+### Arming the daily content release
+
+Off by default, and the reason the blog stopped: `MARKETING_RELEASE_ENABLED`
+defaults to `false`, `startMarketingSchedule` returns on the first line of every
+tick while it is, and a deployment that has never set it has never published a
+post except by somebody pressing **Run today's release** on *SEO & content* by
+hand. Readiness reports it as *Content release · NOT_SET* and the release card
+says so in red, but nothing arms it on your behalf — a marketing agent that
+armed itself at boot would publish from a laptop, a CI run and a restored
+backup.
+
+**1. Append to `.env` on the host.** The same file every other setting lives in:
+`/srv/construx/app/.env`, gitignored, read by compose through `env_file:
+../.env`. Append, never rewrite.
+
+```bash
+cd /srv/construx/app
+cat >> .env <<'SETTINGS'
+
+# The daily content release.
+MARKETING_RELEASE_ENABLED=true
+# UTC weekdays it may run on. 1 = Monday … 7 = Sunday. Empty is every day.
+MARKETING_RELEASE_DAYS=1,3,5
+SETTINGS
+```
+
+Check it went in once and only once — a second `MARKETING_RELEASE_ENABLED` lower
+in the file is the one that wins:
+
+```bash
+grep -c '^MARKETING_RELEASE_ENABLED=' .env   # must print 1
+```
+
+**2. Restart the stack so the process reads it.** `.env` is read at boot, and
+autodeploy fires on a new commit rather than on an edited file — so an `.env`
+change with no push does nothing until something restarts. Use the same compose
+invocation autodeploy uses, so the container comes back with the same overlays:
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml                --env-file .env up -d
+```
+
+On a host running the gateway rather than an existing proxy, substitute
+`-f deploy/compose.gateway.yaml` for `compose.edge.yaml`. Never both.
+
+**3. Confirm it, on the platform rather than in the file.** *System → readiness*
+should now read *Content release · CONFIGURED* and name the hour and the days,
+and the release card on *SEO & content* should say `Armed: runs at 08:00 UTC on
+Monday, Wednesday, Friday`. If it still says the timer is not armed, the process
+did not restart or a second assignment lower in `.env` overrode the first.
+
+**Set the days to match how fast the library is fed.** The release takes one
+topic per run and correctly publishes nothing once every topic is covered, so the
+catalogue is the supply: nineteen written topics is nineteen days of blog at
+daily cadence and then a stale site again, or about six weeks at `1,3,5`. *SEO &
+content* carries both numbers — **last published**, in days, and **material left
+to publish** — and the sweep's *Editorial supply* check fails while there is
+nothing left to write, which is the earliest point at which it can still be
+acted on.
+
+**Nothing is announced unless a channel is keyed.** With `MARKETING_RELEASE_ENABLED`
+on and none of `MARKETING_ANNOUNCE_TO`, `LINKEDIN_ACCESS_TOKEN` or
+`X_ACCESS_TOKEN` set, each post is composed, published and served on the site and
+nobody is told it exists — readiness reports that as `DEGRADED` rather than as
+configured, and the boot log carries the same warning.
 
 ---
 
