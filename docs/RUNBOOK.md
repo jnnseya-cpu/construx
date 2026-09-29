@@ -800,6 +800,36 @@ docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml               
 On a host running the gateway rather than an existing proxy, substitute
 `-f deploy/compose.gateway.yaml` for `compose.edge.yaml`. Never both.
 
+**2a. Check the container is running code that knows about these variables.**
+`MARKETING_RELEASE_DAYS` was added at the same time as the readiness entry, so a
+container built from an older commit reads `MARKETING_RELEASE_ENABLED` and
+ignores the days entirely — it would publish every day, and readiness would have
+no *Content release* row to show. `docker compose up -d` without `--build`
+restarts the existing image; it does not rebuild one. Compare what is running
+against what the branch says:
+
+```bash
+curl -s "http://127.0.0.1:${CONSTRUX_HOST_PORT:-8080}/readyz"   # "commit": "…"
+git rev-parse HEAD
+```
+
+Different, or `unknown`? Let the timer catch up (`systemctl list-timers
+construx-deploy`), or force the build now:
+
+```bash
+systemctl start construx-deploy    # the same script the timer runs
+```
+
+The boot log states both halves of the setting, and is the fastest read:
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml \
+               --env-file .env logs --tail=120 construx | grep -i 'Marketing'
+```
+
+`content release at 08:00 UTC, on UTC weekdays 1,3,5 (1 = Monday)` is the line
+you want. `content release disabled` means the process did not read the value.
+
 **3. Confirm it, on the platform rather than in the file.** *System → readiness*
 should now read *Content release · CONFIGURED* and name the hour and the days,
 and the release card on *SEO & content* should say `Armed: runs at 08:00 UTC on

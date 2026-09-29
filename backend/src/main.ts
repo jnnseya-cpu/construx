@@ -825,8 +825,17 @@ process.stdout.write(
     }
   Marketing    ${
       config.marketing.releaseEnabled
-        ? `daily release at ${config.marketing.releaseHourUtc}:00 UTC`
-        : 'daily release disabled (set MARKETING_RELEASE_ENABLED=true to arm it; the button on SEO & Content still works)'
+        ? // The days as well as the hour. Without them this line reads "daily
+          // release at 8:00 UTC" on a deployment set to Monday, Wednesday and
+          // Friday — which is the boot log disagreeing with the readiness
+          // screen about the same setting, and the log is what an operator
+          // reads first after a restart.
+          `content release at ${config.marketing.releaseHourUtc}:00 UTC, ${
+            config.marketing.releaseDaysUtc.length === 0
+              ? 'every day'
+              : `on UTC weekday${config.marketing.releaseDaysUtc.length === 1 ? '' : 's'} ${config.marketing.releaseDaysUtc.join(',')} (1 = Monday)`
+          }`
+        : 'content release disabled (set MARKETING_RELEASE_ENABLED=true to arm it; the button on SEO & Content still works)'
     }
   Billing      ${
       config.billing.collectionEnabled
