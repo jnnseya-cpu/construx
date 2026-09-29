@@ -206,6 +206,441 @@ export const TOPICS: readonly Topic[] = [
   { id: 'design', title: 'A drawing register with supersession and the RFI trail', keyword: 'drawing register', tag: 'Design & BIM', features: ['design', 'audit', 'autopilot'] },
   { id: 'handover', title: 'A handover pack that starts on day one', keyword: 'handover pack', tag: 'Handover', features: ['handover', 'audit', 'enterprise'] },
   { id: 'governance', title: 'The golden thread that detects its own tampering', keyword: 'golden thread', tag: 'Governance', features: ['audit', 'autopilot', 'copilot'] },
+
+  /*
+   * Ten more, each written rather than composed.
+   *
+   * The nine above were the capability map. These are the specific rules this
+   * platform enforces that a contractor loses money by not knowing — which is
+   * the only kind of post worth writing: an article about the minimum charge
+   * that reads like the article about drawing registers is an article nobody
+   * quotes and no answer engine has any reason to prefer.
+   *
+   * Every one of them came out of a real defect or a real refusal in this
+   * codebase rather than out of a keyword tool, which is why each can say
+   * something specific enough to be worth reading.
+   */
+  {
+    id: 'minimumcharge',
+    title: 'Why a unit rate prices a small job too cheap',
+    keyword: 'unit rate',
+    tag: 'Estimating',
+    features: ['commercial', 'audit'],
+    article: {
+      standfirst:
+        'A unit rate is what one more of something costs once you are there. On a small job almost all of the cost is being there at all.',
+      metaDescription:
+        'A unit rate prices the concrete and not the lorry. Why small quantities need a minimum charge, and what happens to a quotation that leaves it out.',
+      body: [
+        'A unit rate is the most useful number in estimating and the most dangerous one on a small job. It answers a ' +
+          'precise question — what does one more cubic metre cost, once the gang is on site and the machine is ' +
+          'working — and it answers nothing at all about the cost of getting there. On a job with four hundred cubic ' +
+          'metres of dig that distinction does not matter, because the mobilisation is a rounding error against the ' +
+          'measure. On a job with 1.7 cubic metres it is the entire price.',
+        '1.7m³ of pad excavation at £90 a cubic metre is £152. Nobody brings a machine and a banksman to a churchyard ' +
+          'for £152. 1.35m³ of GEN3 at £280 is £378, and the ready-mix lorry has a minimum load which it charges for ' +
+          'whether you take it or not. Price a garden room, a boundary wall or a single pad off unit rates alone and ' +
+          'the quotation comes out too cheap to deliver — not because the rates were wrong, but because they were ' +
+          'answering a different question.',
+        '## What a minimum charge actually covers',
+        'The delivery. The minimum load. The half day a two-man gang cannot sell to anybody else. The plant hire that ' +
+          'comes in day units whether you need six hours or two. The trip to the tip. The setting out. Every one of ' +
+          'those is a real invoice and none of them scales with the measure.',
+        'Any estimator who has priced small works knows this and prices it in their head. What they rarely do is ' +
+          'write it down in a way that survives being handed to somebody else, or to a spreadsheet, or to software — ' +
+          'and that is where it gets lost. A rate library holds rates. It has nowhere to put "and the least this ' +
+          'costs at all is four hundred pounds".',
+        '## Pricing the line at whichever is greater',
+        'CONSTRUX holds both against every measured line: the rate, and the least the item costs to do at all at the ' +
+          'quantity measured. The line is priced at whichever is greater, and where the minimum carried it the ' +
+          'estimate says so by name rather than folding it silently into a number nobody can reconcile against the ' +
+          'rate beside it.',
+        'Two rules keep it honest. It never touches a line with no rate against it — a minimum charge there would ' +
+          'replace a visible gap with a plausible number, and a plausible number is not questioned. And where it ' +
+          'lifts a line, the uplift goes on in the proportions that line is already priced in, so a groundworks ' +
+          'minimum stays in groundworks rather than appearing as a site-wide cost nobody can trace.',
+        '## Where the number comes from',
+        'From the same place as the rate. Where the business has priced the work before, its own committed rates ' +
+          'answer both questions. Where it has not, the market view it asks for includes the minimum — and both are ' +
+          'labelled as a market view everywhere they appear, kept out of the rate history, and put in front of a ' +
+          'person to keep or change before anything is sent to a customer.',
+        'It is one field. On a small-works contractor pricing two jobs a week, it is the difference between a ' +
+          'quotation that makes money and one that wins. The demonstration project prices a churchyard retaining ' +
+          'wall end to end if you want to watch it happen.',
+      ],
+    },
+  },
+  {
+    id: 'preliminaries',
+    title: 'Preliminaries are a weekly cost, not a percentage',
+    keyword: 'preliminaries',
+    tag: 'Estimating',
+    features: ['commercial', 'programme', 'audit'],
+    article: {
+      standfirst:
+        'Price preliminaries as a percentage of the works and a programme that slips eight weeks is eight weeks of cost nobody recovers.',
+      metaDescription:
+        'Preliminaries are weeks on site multiplied by a weekly rate. Why the percentage method loses money when the programme moves, and what to price instead.',
+      body: [
+        'Preliminaries are the commonest place an estimate quietly loses money, and the reason is a method rather than ' +
+          'a rate. Priced as a percentage of the measured works — eight per cent, twelve, whatever the last job came ' +
+          'out at — they become a number that moves when the works move and stays still when the programme does. That ' +
+          'is exactly backwards. The welfare unit, the site manager, the safety adviser, the accommodation, the ' +
+          'utilities and the gate all cost the same per week whether the works are cheap or dear, and every one of ' +
+          'them costs more when the job runs long.',
+        'A programme that slips eight weeks on a percentage-priced tender is eight weeks of welfare, supervision and ' +
+          'hire that nobody has recovered and nobody can point at. The estimate was never wrong about the total; it ' +
+          'was wrong about what the total depended on.',
+        '## The right shape',
+        'A weekly rate, a duration, and a quantity. Two site managers for twenty weeks is a different number from one ' +
+          'for forty, and both are computable from a programme rather than from last year\u2019s percentage. When the ' +
+          'duration changes the preliminaries change with it, which is the whole point — a re-priced programme should ' +
+          'move the prelims automatically or the estimate is lying about its own sensitivity.',
+        'CONSTRUX prices every time-related head this way: preliminaries, site management, logistics, health and ' +
+          'safety and quality each take a weekly rate and a number of weeks, and the percentage of works comes out as ' +
+          'an output for benchmarking rather than going in as an input. That single reversal is what makes a tender ' +
+          'answer the question "what happens if this takes six weeks longer" without anybody rebuilding it. The weekly ' +
+          'rates sit in the same cost model as the measured heads, which is set out on how it works.',
+        '## The failure it catches',
+        'There is a worse version of the same mistake, and it is commoner: excluding the time-related heads ' +
+          'altogether. A blank box on a form is easy to leave blank, and an estimating tool that treats blank as ' +
+          'excluded will happily produce a four-week job with nothing at all against welfare, supervision or site ' +
+          'set-up. Somebody pays for those four weeks, and on a fixed price with them out of the offer that somebody ' +
+          'is the contractor.',
+        'So a job of two weeks or more that prices not one time-related head is warned about by name. A genuine ' +
+          'one-visit job exists and the warning is not a refusal — the estimator is the one who knows which this is. ' +
+          'What the platform will not do is let a month of work go out priced as though nobody had to be there. A ' +
+          'prolongation argument in adjudication turns on exactly this: what the time-related costs were per week, ' +
+          'and whether anybody priced them in the first place.',
+      ],
+    },
+  },
+  {
+    id: 'paymentnotice',
+    title: 'The payment notice that decides who owes what',
+    keyword: 'payment notice',
+    tag: 'Commercial',
+    features: ['commercial', 'contracts', 'audit'],
+    article: {
+      standfirst:
+        'Miss the notice and the notified sum becomes payable in full, whatever the work was worth. It is the cheapest money in construction to lose.',
+      metaDescription:
+        'A payment notice deadline under the Construction Act is computed from the contract, not remembered. What a missed one costs, and how to stop missing one.',
+      body: [
+        'The payment notice is the most expensive piece of admin in UK construction. Under the Housing Grants, ' +
+          'Construction and Regeneration Act the payer has a fixed window to say what it considers due, and a payer ' +
+          'who misses it becomes liable for the notified sum — the figure the other side applied for — regardless of ' +
+          'what the work was actually worth. No argument about measurement survives a missed deadline, because the ' +
+          'deadline is the argument.',
+        'Every contractor in the country either has been caught by this or knows somebody who has. It is not a ' +
+          'technical dispute and it is not about quality of work. It is a date, and it was in a diary.',
+        '## Why it keeps happening',
+        'Because the date is computed rather than given. It depends on the due date, which depends on the ' +
+          'application date, which depends on the contract terms — and then the pay-less notice sits a further ' +
+          'number of days before the final date for payment, which is itself a count from the due date. Four ' +
+          'arithmetic steps, on a different contract for every job, done by somebody with eleven other things on.',
+        'A calendar reminder is not a control. It is a copy of the arithmetic, made once, by hand, and never checked ' +
+          'against the contract again.',
+        '## Computing it once, from the contract',
+        'CONSTRUX generates the whole statutory cycle from the contract terms: the due date, the payment notice ' +
+          'deadline and the final date for payment, for every period, in one act. Every application submitted ' +
+          'inherits the period it falls in, so the notice deadline arrives attached to the application rather than ' +
+          'living in somebody\u2019s head. A schedule whose notice deadline fell after its own final date for ' +
+          'payment would be refused, because it is a schedule nobody can comply with.',
+        '## And the rules on either side of it',
+        'Certification is where a valuation becomes a debt, so it is separated from whoever applied — not by role but ' +
+          'by person, because a small business stacks roles on one person as a matter of course and separation ' +
+          'between job titles is not separation at all. Nothing can be certified above what was applied for. Nothing ' +
+          'can be paid above what was certified, in one payment or in two. A certificate cannot be paid twice.',
+        'None of that is clever. All of it is the kind of rule that only holds if something other than memory is ' +
+          'holding it. What holds it here is a hash-chained record of every application, notice, certificate and ' +
+          'payment in the cycle, in the order they happened.',
+      ],
+    },
+  },
+  {
+    id: 'payless',
+    title: 'Writing a pay less notice that survives',
+    keyword: 'pay less notice',
+    tag: 'Commercial',
+    features: ['contracts', 'commercial', 'audit'],
+    article: {
+      standfirst:
+        'A pay less notice reading "defects" is a notice a tribunal disregards. The basis is the notice; the sum is just a number on it.',
+      metaDescription:
+        'A pay less notice under s.111 needs the sum considered due and the basis on which it was calculated. What "basis" has to mean, and why most notices fail on it.',
+      body: [
+        'A pay less notice is the payer\u2019s one lawful route to paying less than the notified sum, and section 111 ' +
+          'sets two conditions on it: it must be in time, and it must state the sum considered due together with the ' +
+          'basis on which that sum was calculated. The first condition is a date and people do generally get it ' +
+          'right. The second is a sentence, and it is where notices fail.',
+        '"Defects" is not a basis. Neither is "incomplete works", "as discussed" or "see attached". A basis is the ' +
+          'calculation: which items, measured at what, against what, and why the difference. A notice that does not ' +
+          'contain one is a notice the other side can treat as ineffective, which puts the payer back where they ' +
+          'started — liable for the full notified sum.',
+        '## What a basis looks like',
+        '"Blockwork to grid 4–7 rejected at joint inspection on 24 November and to be rebuilt; £38,000 of the sum ' +
+          'applied for is against work that will be taken down." That is arguable. Somebody on the other side can ' +
+          'agree with it, dispute the measure, or produce the inspection record. It names the work, the event, the ' +
+          'date and the money.',
+        'The test is simple and it is worth applying before anything goes out: could the other side answer this? If ' +
+          'the only possible response is "answer what?", the notice has not done its job.',
+        '## Holding the standard mechanically',
+        'CONSTRUX refuses a pay-less notice whose basis is shorter than twenty characters. That is a crude rule and ' +
+          'it is deliberately crude — it does not judge the quality of the reasoning, it simply makes the one-word ' +
+          'notice impossible to issue by accident at half past five on the deadline. Everything else about the notice ' +
+          'is computed: the date it is due by, which period it belongs to, and what the notified sum was.',
+        'The notice itself lands on the same record as the application it answers and the certificate beside it, so ' +
+          'the sequence is readable a year later without anybody reconstructing it from an inbox. That matters more ' +
+          'than it sounds. Most payment disputes are not disagreements about the work. They are disagreements about ' +
+          'what was said, when, and whether it arrived in time. Each notice carries a content hash, so the version the ' +
+          'other side received is the version that can be checked a year later.',
+      ],
+    },
+  },
+  {
+    id: 'marketrate',
+    title: 'A market rate is not one of your own rates',
+    keyword: 'market rate',
+    tag: 'Estimating',
+    features: ['commercial', 'audit', 'copilot'],
+    article: {
+      standfirst:
+        'A guess that becomes history is a guess that gets more confident every time it is reused. The two have to be told apart, permanently.',
+      metaDescription:
+        'When a model proposes a market rate it is a starting point, not evidence. Why it must be labelled, ranged, and kept out of your own rate history for ever.',
+      body: [
+        'A market rate and one of your own rates are different kinds of fact, and an estimating system that stores ' +
+          'them in the same place will eventually price a job off the first while believing it is the second. That is ' +
+          'not a hypothetical. It is the natural end state of any tool that lets a proposed number become a recorded ' +
+          'one without marking the difference.',
+        'Your own rate is evidence: it is what this business actually committed on a past estimate, on a job that was ' +
+          'won or lost at that number. A market rate is a view — useful, often good, and not a thing anybody stood ' +
+          'behind. The moment the second is filed as the first, every later job proposes it as "our rate", and the ' +
+          'guess compounds. Three years on nobody remembers it was ever a guess.',
+        '## Three rules that keep them apart',
+        'First, the record answers before the market does. Where the business has priced something like this before, ' +
+          'its own median answers — even a thin one, because what this company charges beats what somebody charges. ' +
+          'The market is asked only about the lines nothing in the record can answer, which also keeps the call small ' +
+          'and the charge proportionate.',
+        'Second, a market view is labelled as one everywhere it appears and carries a range rather than a point. An ' +
+          'estimator prices inside a range; a single figure invites a confidence the number does not deserve.',
+        'Third, and this is the one that makes the other two safe: a rate a model proposed is kept out of the rate ' +
+          'history permanently. A person who keeps it has accepted it and the estimate line records that they did — ' +
+          'but it never comes back next year looking like something the business priced. The acceptance is itself an ' +
+          'event in the golden thread, so who took the number and when is readable afterwards.',
+        '## What the model is actually asked',
+        'The measured item, its unit, its quantity and the region, with the answer joined back by the position in the ' +
+          'list rather than by the words. That last detail matters more than it should: an earlier version matched ' +
+          'the answer to the question on the description text, and a real model paraphrases what it is shown, so ' +
+          'every rate it returned was dropped and the screen reported that the market had no view of twenty-two ' +
+          'lines it had just taken a view on.',
+        'It is also asked what the item costs at all at that quantity — the minimum below which no subcontractor ' +
+          'would take the work — because on a small job that is usually the figure that decides the price. A provider ' +
+          'that stops answering is reported on platform status rather than quietly producing nothing.',
+      ],
+    },
+  },
+  {
+    id: 'costheads',
+    title: 'The cost heads an estimate quietly omits',
+    keyword: 'cost heads',
+    tag: 'Estimating',
+    features: ['commercial', 'audit'],
+    article: {
+      standfirst:
+        'A tender with nothing against waste is not a tender with no waste in it. The difference is found at final account.',
+      metaDescription:
+        'Twenty cost heads, each priced on the basis it actually has. Why a head with nothing against it must be reported as unpriced rather than carried as nought.',
+      body: [
+        'Every estimating package has a list of cost heads and the list is not the interesting part. What loses money ' +
+          'is a head with nothing against it, carried as zero, in a tender that adds up perfectly. A tender with ' +
+          'nothing against waste is not a tender with no waste in it. It is a tender that will discover the skips at ' +
+          'final account, at somebody\u2019s expense, and the somebody is decided by whose name is on the price.',
+        'The distinction that matters is between a head that is nought because it was deliberately excluded and a ' +
+          'head that is nought because nobody looked at it. Arithmetically they are identical. Commercially they are ' +
+          'opposites — one is a qualification the customer can read, the other is a hole.',
+        '## Priced, excluded, or an omission',
+        'CONSTRUX gives every one of its twenty heads three possible states rather than a number. Priced. Excluded, ' +
+          'with the wording that will appear in the tender as a qualification. Or an omission — neither priced nor ' +
+          'excluded — and an estimate carrying one is reported as incomplete rather than totalled as though it were ' +
+          'finished. A quotation cannot be drawn from an estimate that carries an omission at all.',
+        'That refusal is the whole feature. An estimate that adds up is not the same as an estimate that is complete, ' +
+          'and every tool that only checks the arithmetic will let the second pass as the first.',
+        '## Which heads are even expected',
+        'Not all twenty, on every job. A sole trader pricing a £3,000 bathroom has no commissioning, no temporary ' +
+          'works design and no site management establishment, and a model that reported fifteen omissions on that job ' +
+          'would be ignored inside a week — taking the four that do matter with it. So each head carries the smallest ' +
+          'job it is expected on, and the band is taken from what the works are worth.',
+        'That banding has a trap in it worth knowing about. Taken from the works as priced, it moves while an ' +
+          'estimator is still typing rates in — so a bill that is half rated bands smaller than the job is, names ' +
+          'three heads to settle, and then names four different ones the moment the rates arrive. A warning that ' +
+          'changes under the person answering it is not a warning, it is a trap, and the band has to come from what ' +
+          'the record says the job is worth rather than from a bill still being filled in. The twenty heads, their ' +
+          'bases and the three states each one can be in are listed on how it works.',
+      ],
+    },
+  },
+  {
+    id: 'quotationrows',
+    title: 'What a quotation should never show the customer',
+    keyword: 'quotation',
+    tag: 'Commercial',
+    features: ['commercial', 'handover', 'audit'],
+    article: {
+      standfirst:
+        'The customer buys the works at a price. Overhead, profit and cost are how the price was built, and none of the three belongs on the page.',
+      metaDescription:
+        'A quotation shows the works, the quantities, the money and the qualifications. Why the build-up stays off it, and why the rows must sum to the total exactly.',
+      body: [
+        'A quotation is an offer to do named work for a stated sum, and almost every way of getting one wrong comes ' +
+          'from putting the build-up on it. The customer is buying the works at a price. How that price was arrived ' +
+          'at — the labour rate, the overhead recovery, the profit percentage, the cost before margin — is the ' +
+          'business\u2019s own commercial position, and a quotation that discloses it has handed the other side the ' +
+          'negotiation.',
+        'The worst version of this is not a printed margin line. It is an exclusion. A quotation that reads "Not ' +
+          'included — Overhead" and "Not included — Profit" tells a client what the business does not intend to ' +
+          'charge them. It sounds absurd written down, and it is exactly what a system produces when the estimate\u2019s ' +
+          'heads are listed on a form where a blank box means excluded and the margin heads are in the list.',
+        '## The four things that do belong',
+        'The works, described as they were measured. The quantities. The money. And the qualifications — every head ' +
+          'stated as an exclusion, in the wording the estimate recorded, so the customer reads what is not in the ' +
+          'offer rather than assuming. Those qualifications are the customer’s copy of what the estimate recorded, and ' +
+          'they are the first thing an adjudicator would read.',
+        '## And the rows have to add up',
+        'A quotation whose lines do not sum to its own total is the first thing a client\u2019s surveyor finds, and it ' +
+          'costs more credibility than the error is worth. Where a tender total is apportioned across measured lines, ' +
+          'each line\u2019s share should be its share of the cost, using the same arithmetic the estimate used, with ' +
+          'the rounding remainder carried onto the last line rather than dropped.',
+        'There is a related trap in the presentation. A measured item described properly under NRM2 runs well past ' +
+          'eighty characters — "Excavation for two number pad foundations, commencing from existing ground level, ' +
+          'maximum depth not exceeding 2.00m" is a hundred and eight — and a document that uses the description as a ' +
+          'row label will either refuse it or truncate it. Truncating is the worse of the two: the description is ' +
+          'what the customer is being offered, and a quotation that shortens it offers something else, with nothing ' +
+          'on the page to say anything was removed. Every issued quotation carries a content hash, so the document a ' +
+          'customer holds can be checked against the one that was sent.',
+      ],
+    },
+  },
+  {
+    id: 'cdp',
+    title: 'The Central Digital Platform and your bid readiness',
+    keyword: 'Central Digital Platform',
+    tag: 'Bidding',
+    features: ['contracts', 'audit', 'enterprise'],
+    article: {
+      standfirst:
+        'Since April 2026 a below-threshold award means registering and holding a unique identifier. The underlying problem is older: your own facts live in fifteen places.',
+      metaDescription:
+        'The Central Digital Platform changed what an SME contractor must hold to bid public work. What it asks for, and why a maintained record beats a folder of PDFs.',
+      body: [
+        'The Central Digital Platform is the supplier information service behind the Procurement Act 2023, reached ' +
+          'through the enhanced Find a Tender service that launched in February 2025. From 1 April 2026 a supplier ' +
+          'awarded a notifiable below-threshold contract must be registered on it and hold a unique identifier, which ' +
+          'appears in the contract details notice. The thresholds are £12,000 for central government and £30,000 for ' +
+          'sub-central, which puts most small works squarely inside it.',
+        'Registration itself is not difficult and it is a one-off. What it exposes is the older problem underneath: ' +
+          'for most SME contractors, the facts a buyer asks for are not held anywhere in particular. Turnover by ' +
+          'year, net assets, insurance limits and expiry dates, accreditations, trades self-delivered, regions ' +
+          'worked, the industries actually delivered in, concurrent project capacity — each of them exists, in a folder, in an accountant\u2019s email, on ' +
+          'a certificate somebody photographed. They get re-typed into every portal, and they drift.',
+        '## Why that costs real work',
+        'Because it is re-typed under deadline. A pre-qualification questionnaire filled in at eleven at night from ' +
+          'last year\u2019s answers is how a firm declares an insurance limit that expired in March, or a turnover ' +
+          'figure that no longer matches the filed accounts. Neither is dishonest. Both are disqualifying.',
+        '## A maintained record, not a folder',
+        'CONSTRUX holds the company\u2019s own verified facts once, as a record with a version on it, and sets a ' +
+          'buyer\u2019s requirements against them rather than against a memory of them. A compliance matrix is ' +
+          'produced from a confirmed reading of the invitation, line by line, with the source document and clause ' +
+          'against each requirement — so an answer can be traced back to what was actually asked rather than to what ' +
+          'somebody thought was asked. The reading, its confirmation and every change to it are events in the golden ' +
+          'thread.',
+        'And the deliverables register holds what has to go back: every item, whether it is mandatory, its page ' +
+          'limit, its format, who owns it and the internal date it is due. A mandatory deliverable with no owner and ' +
+          'no internal date is how a correctly priced bid gets disqualified, and it is the most avoidable loss in ' +
+          'the industry.',
+      ],
+    },
+  },
+  {
+    id: 'takeoff',
+    title: 'Reading a drawing into an NRM2 take-off',
+    keyword: 'NRM2 take-off',
+    tag: 'Estimating',
+    features: ['design', 'commercial', 'copilot'],
+    article: {
+      standfirst:
+        'A machine can measure what is dimensioned on a sheet. What it must not do is turn a reading into a bill without a person confirming it.',
+      metaDescription:
+        'An NRM2 take-off read off a drawing by a model, confirmed by a surveyor, and traced to the sheet and revision it came from. Where the line sits and why.',
+      body: [
+        'An NRM2 take-off is a measurement discipline before it is a document: rules about what is measured, in what ' +
+          'unit, and what is deemed included. A machine reading a drawing can do the arithmetic part of that well — ' +
+          'finding the dimensioned quantities on a sheet and reporting them against the rule applied. What it cannot ' +
+          'do is carry the responsibility for the answer, and that distinction decides how the whole thing should be ' +
+          'built.',
+        'So the reading arrives as a draft. Every item carries the sheet it was measured from, the rule applied and ' +
+          'how confident the reading was, and nothing becomes a bill item until a surveyor confirms it. The ' +
+          'confirmation is not an apology for the automation. It is the reason the resulting number is defensible ' +
+          'two years later, when somebody asks where it came from. The sheet, the rule and the specification the rule ' +
+          'came from are named alongside the confirmation.',
+        '## What the reading is allowed to leave out',
+        'Anything that would require an assumption. A reading that reports only what is dimensioned or scalable on ' +
+          'the sheet, and says separately what it omitted and why, is far more useful than one that fills every row. ' +
+          'An omitted line is corrected in seconds. A confident wrong quantity is not noticed until the job is built ' +
+          'at a loss.',
+        'The same applies to whole sheets. A pack of five where one could not be read and the screen shows four is a ' +
+          'pack silently mispriced, so an unreadable drawing is named rather than skipped.',
+        '## Traceable to the sheet and the revision',
+        'Every measured item keeps the drawing and revision it came off. That is what makes a re-issue manageable: ' +
+          'when a sheet goes to P03 the measure taken against P02 no longer describes the job, and the items it ' +
+          'produced can be retired — recorded as superseded with a reason, never deleted, because a quantity ' +
+          'somebody priced against is a fact about what was believed at the time.',
+        'A bill that quietly loses lines is a bill whose history cannot be read, which is the opposite of what a ' +
+          'measurement record is for. A superseded item keeps its content hash, so a price given against P02 can still ' +
+          'be checked against the sheet it was measured from.',
+      ],
+    },
+  },
+  {
+    id: 'separation',
+    title: 'Separation of duties on a payment certificate',
+    keyword: 'separation of duties',
+    tag: 'Governance',
+    features: ['commercial', 'audit', 'enterprise'],
+    article: {
+      standfirst:
+        'Separation between roles is not separation between people. A small business stacks roles on one person as a matter of course.',
+      metaDescription:
+        'The person who applied for a payment should not certify it. Why a permission matrix does not achieve that, and what a sole trader does instead.',
+      body: [
+        'Separation of duties is the oldest control in commercial administration and the easiest to implement wrongly ' +
+          'in software. The usual approach is a permission matrix: one role may submit an application, another may ' +
+          'certify it, and the system enforces the boundary between them. That is separation between roles, and it is ' +
+          'not the same thing as separation between people.',
+        'A small contractor stacks roles on one person as a matter of course — the same individual is the quantity ' +
+          'surveyor and the commercial director, because there are eleven people in the business. Give that ' +
+          'identity both roles and the matrix is satisfied while the control has evaporated: one person can apply ' +
+          'for a payment and turn it into a debt with nobody else in the loop. Certification is the moment a ' +
+          'valuation becomes money owed, and it is precisely the moment a second pair of eyes is worth having.',
+        '## Enforced against the person, not the title',
+        'CONSTRUX records who submitted an application and refuses to let that identity certify it, whatever roles ' +
+          'they hold. The same rule applies to a quotation: the person who priced the job does not approve the ' +
+          'document that goes to the customer. It is a hard refusal rather than an override with a note, because an ' +
+          'override is taken every time by exactly the person the control exists to stop. The rule lives in the ' +
+          'permission model rather than in a screen, so it holds on the api exactly as it holds in the console.',
+        '## And the sole trader',
+        'There is one exception and it is not a softening. On a business where no other active identity holds ' +
+          'payment authority, the remedy the refusal names — assign it to somebody else — names nobody. A sole ' +
+          'trader was not being held to the control, they were stopped by it permanently, and could not certify a ' +
+          'payment on their own business at all.',
+        'So the act proceeds, and the certificate carries in its own words that one person did both and that nobody ' +
+          'else could have. That is a truthful record of a real constraint, which is worth considerably more than ' +
+          'either pretending the control held or refusing to let a one-person business invoice. It is also the kind of ' +
+          'record an adjudicator can read, which is the only test that finally matters.',
+      ],
+    },
+  },
 ];
 
 /**
@@ -923,6 +1358,9 @@ export function startMarketingSchedule(
     if (running || !config.marketing.releaseEnabled) return;
     const now = new Date();
     if (now.getUTCHours() !== config.marketing.releaseHourUtc) return;
+    // Which days are eligible. Empty means every day, as it always did.
+    const days = config.marketing.releaseDaysUtc;
+    if (days.length > 0 && !days.includes(now.getUTCDay() === 0 ? 7 : now.getUTCDay())) return;
     if (releaseFor(platform, releaseDay(now))) return;
 
     running = true;
@@ -1365,7 +1803,7 @@ export type VisibilityPosition = {
   releases: {
     today: MarketingRelease | null;
     recent: MarketingRelease[];
-    schedule: { enabled: boolean; hourUtc: number };
+    schedule: { enabled: boolean; hourUtc: number; /** Eligible UTC weekdays, 1 = Monday. Empty is every day. */ daysUtc: number[] };
   };
   posts: Array<{
     id: string;
@@ -1418,7 +1856,11 @@ export function visibilityPosition(platform: Platform, now: Date = new Date()): 
     releases: {
       today: all.find((release) => release.day === today) ?? null,
       recent: all.slice(0, 7),
-      schedule: { enabled: config.marketing.releaseEnabled, hourUtc: config.marketing.releaseHourUtc },
+      schedule: {
+        enabled: config.marketing.releaseEnabled,
+        hourUtc: config.marketing.releaseHourUtc,
+        daysUtc: [...config.marketing.releaseDaysUtc],
+      },
     },
     posts: posts(platform).map((post) => {
       const engagement = post.status === 'PUBLISHED' ? engagementFor(post.slug) : { shares: 0, clicks: 0 };

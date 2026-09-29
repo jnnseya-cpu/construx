@@ -100,6 +100,20 @@ export function readiness(now = new Date()): Readiness {
     ['ANTHROPIC', config.ai.anthropicKey],
   ] as const;
   const keyed = providers.filter(([, key]) => key !== '').map(([name]) => name);
+  // The release hour, printed the way an operator reads a clock, and the days
+  // it is eligible on. Empty is every day, which is what unset has always meant.
+  const hour = String(config.marketing.releaseHourUtc).padStart(2, '0');
+  const dayNames = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const cadence =
+    config.marketing.releaseDaysUtc.length === 0
+      ? 'every day'
+      : config.marketing.releaseDaysUtc
+          .map((day) => dayNames[day])
+          .filter((name): name is string => name !== undefined && name !== '')
+          .join(', ');
+  // Somewhere for a published post to be announced. Any one of the three is enough.
+  const announced =
+    config.marketing.announceTo !== '' || config.marketing.linkedinAccessToken !== '' || config.marketing.xAccessToken !== '';
 
   const capabilities: Capability[] = [
     {
@@ -405,6 +419,39 @@ export function readiness(now = new Date()): Readiness {
           ? 'Armed with no relay configured — issues are recorded and never delivered.'
           : `Armed. A weekly issue goes to verified, opted-in recipients as ${config.newsletter.fromAddress}, each with a signed one-click unsubscribe.`,
       env: ['NEWSLETTER_ENABLED', 'NEWSLETTER_FROM_ADDRESS', 'NEWSLETTER_SEND_DAY_UTC', 'NEWSLETTER_SEND_HOUR_UTC'],
+    },
+    /*
+     * The daily release, which is the one switch on this list whose "off" state
+     * nothing else on the platform admitted to.
+     *
+     * A deployment with `MARKETING_RELEASE_ENABLED` unset publishes nothing,
+     * ever. Every other surface reads healthy: the site serves, the library
+     * compiles, the growth position renders, and the blog quietly stops at
+     * whatever date somebody last pressed the button by hand. That is exactly
+     * how three weeks passed with no post and no warning anywhere — the
+     * capability list this module exists to be did not mention marketing at all.
+     *
+     * So it is named here, with the hour and the days, because an operator who
+     * cannot find the switch cannot turn it on.
+     */
+    {
+      key: 'site.marketing',
+      label: 'Content release',
+      critical: false,
+      state: !config.marketing.releaseEnabled ? 'NOT_SET' : announced ? 'CONFIGURED' : 'DEGRADED',
+      detail: !config.marketing.releaseEnabled
+        ? `Switched off. The timer never runs, so no post is composed and no post is published — the blog stays at whatever was last released by hand, however long ago that was. Set MARKETING_RELEASE_ENABLED to arm it for ${hour}:00 UTC.`
+        : announced
+          ? `Armed for ${hour}:00 UTC, ${cadence}. One post per run at most, taken from the next uncovered topic and idempotent by date, so a restart inside the release hour cannot publish twice.`
+          : `Armed for ${hour}:00 UTC, ${cadence}, with no distribution channel configured. Each post is composed, recorded and served on the site, and nobody is told it exists.`,
+      env: [
+        'MARKETING_RELEASE_ENABLED',
+        'MARKETING_RELEASE_HOUR_UTC',
+        'MARKETING_RELEASE_DAYS',
+        'MARKETING_ANNOUNCE_TO',
+        'LINKEDIN_ACCESS_TOKEN',
+        'X_ACCESS_TOKEN',
+      ],
     },
     {
       key: 'gateway.ratelimit',

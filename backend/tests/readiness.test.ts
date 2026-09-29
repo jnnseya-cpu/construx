@@ -187,6 +187,27 @@ describe('half-configured is reported as its own state', () => {
     assert.deepEqual(report.blocking, expected);
   });
 
+  it('reports the daily content release, because an unarmed timer is otherwise invisible', () => {
+    // The defect this exists for: a deployment with the release switch unset
+    // publishes nothing for weeks while every other panel reads healthy — the
+    // site serves, the library compiles, the growth position renders. The
+    // capability list is where an operator looks for a switch they cannot find,
+    // and marketing was not on it at all.
+    const release = readiness().capabilities.find((c) => c.key === 'site.marketing');
+
+    assert.ok(release, 'the daily content release is absent from the capability list');
+    assert.ok(release.env.includes('MARKETING_RELEASE_ENABLED'), 'the switch is not named, so it cannot be found');
+    assert.ok(release.env.includes('MARKETING_RELEASE_HOUR_UTC'));
+    // Not critical: a deployment that publishes nothing is safe, it is simply
+    // not growing. It is on the list so the state can be seen, not to block.
+    assert.equal(release.critical, false);
+    assert.ok(['CONFIGURED', 'NOT_SET', 'DEGRADED'].includes(release.state));
+    // Whatever this process's state is, the detail has to say what follows from
+    // it — the symptom the operator is looking at, not just the flag's value.
+    if (release.state === 'NOT_SET') assert.match(release.detail, /Switched off/);
+    else assert.match(release.detail, /Armed/);
+  });
+
   it('carries the boot warnings unchanged rather than rewording them', () => {
     // Two voices on one question is how a platform ends up telling an operator
     // different things in the log and on the screen.

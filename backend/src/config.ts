@@ -1658,8 +1658,24 @@ export const config = {
    */
   marketing: {
     releaseEnabled: bool('MARKETING_RELEASE_ENABLED', false),
-    /** UTC hour the daily release runs. Once a day, idempotent by date. */
+    /** UTC hour the release runs. Once a day at most, idempotent by date. */
     releaseHourUtc: num('MARKETING_RELEASE_HOUR_UTC', 8),
+    /**
+     * Which UTC weekdays it may run on. 1 = Monday … 7 = Sunday. Empty is every
+     * day, which is what it did before this existed and what it still does
+     * unset.
+     *
+     * It exists because the supply is finite and the cadence was not a choice.
+     * The library holds a fixed number of written topics; the release takes one
+     * a day and then correctly publishes nothing, so a catalogue of nineteen is
+     * nineteen days of blog and then a stale site again. `1,3,5` is the same
+     * nineteen topics spread over six weeks. Nothing about the release changes
+     * — it is still once per day at most, still keyed on the record — this only
+     * says which days are eligible.
+     */
+    releaseDaysUtc: list('MARKETING_RELEASE_DAYS')
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 1 && day <= 7),
     /** A LinkedIn Community Management API token with `w_organization_social`, and the organisation it posts as. */
     linkedinAccessToken: str('LINKEDIN_ACCESS_TOKEN', ''),
     linkedinOrgId: str('LINKEDIN_ORG_ID', ''),

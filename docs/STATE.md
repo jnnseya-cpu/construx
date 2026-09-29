@@ -25462,3 +25462,79 @@ eleven at night rather than here.
 
 **Still requires a person:** the DNS record and running the script. Everything
 else is now code.
+
+### The release was never armed, and nothing anywhere said so
+
+Reported again, nine days later: *"the last blog created was 23 days ago."* Same
+date, 6 September. The section above — *The blog did not break, it ran out* —
+opens with "the daily release was working perfectly", and that sentence was
+wrong. It was reasoning about `runDailyRelease` rather than about the timer that
+calls it, and the timer had never run.
+
+`config.marketing.releaseEnabled` is `bool('MARKETING_RELEASE_ENABLED', false)`,
+and `startMarketingSchedule` returns on the first line of every tick while it is
+false. So the nine posts dated 6 September were one press of **Generate
+marketing library** by hand, and the release has published nothing on any day of
+its own accord — on this deployment or any other.
+
+Three separate things had to be true for that to go unnoticed for three weeks,
+and each is now false.
+
+**Nothing on the readiness list mentioned marketing.** `grep -c marketing
+src/api/readiness.ts` returned one, an unrelated comment. The module whose whole
+purpose is to tell an operator what this deployment has configured did not name
+the switch, so a deployment publishing nothing read as healthy on the one screen
+built to say otherwise. There is now a `site.marketing` capability — *Daily
+content release* — reporting `NOT_SET` when the switch is off with the symptom
+attached rather than the flag's value ("nothing publishes on its own … the blog
+stays at whatever was last released by hand"), `DEGRADED` when it is armed with
+no distribution channel configured, and naming
+`MARKETING_RELEASE_ENABLED`, `MARKETING_RELEASE_HOUR_UTC`, `MARKETING_ANNOUNCE_TO`,
+`LINKEDIN_ACCESS_TOKEN` and `X_ACCESS_TOKEN`. Not critical — a deployment that
+publishes nothing is safe, it is simply not growing — and on the list so the
+state can be seen.
+
+**The console said it in grey, below the fold.** The *Daily release* card
+carried one line of `metric-sub`: "Timer not armed on this deployment". It is
+now a `notice bad` that names the variable and says what follows from it, and
+the same card carries the two numbers that were computable from the position all
+along and rendered nowhere: **last published**, in days, badged red past a week,
+and **material left to publish**, which is the same figure as days of supply
+because the release takes one topic a day.
+
+**The library was a list a human had to feed.** The previous fix — `addTopic`,
+`MARKETING_TOPIC_ADDED` — put a door in, and a door is not supply. `TOPICS` now
+holds **nineteen**, the original nine plus ten written in full: the minimum
+charge, preliminaries as a weekly cost, the payment notice, the pay less notice,
+a market rate against your own, the twenty cost heads, what a quotation must
+never show, the Central Digital Platform, reading a drawing into an NRM2
+take-off, and separation of duties against the person rather than the title.
+Every one of them is an account of a real refusal or a real defect in this
+codebase, several of them found this month by the journey tests, and each carries
+its own standfirst, meta description and body rather than being composed from the
+feature catalogue.
+
+Writing them found two defects in the prose that the gate catches and a person
+would not: two meta descriptions at 165 and 170 characters against a 160 ceiling,
+which held those two topics at `HELD_BY_CHECKS` and left the library publishing
+seventeen of nineteen, and ten articles carrying fewer than the two internal
+links the sweep requires. Both are fixed in the prose, not by relaxing the gate.
+`visibility.test.ts` derives its counts from `TOPICS.length` now rather than
+asserting nine, which is what made a growing catalogue break tests that were
+right about the behaviour and wrong about the number.
+
+**And the cadence was not a choice.** Nineteen topics at one a day is nineteen
+days of blog and then a stale site again — the same failure, three weeks later.
+`MARKETING_RELEASE_DAYS` names the UTC weekdays the release is eligible on,
+1 = Monday, empty meaning every day, which is exactly what it did before this
+existed and still does unset. `1,3,5` is the same nineteen topics spread over six
+weeks. The gate is the newsletter's, in the same shape: a day the release is not
+eligible on produces no release *at all* rather than an empty one, because an
+empty run would consume that date's idempotency key. The days appear on the
+release card, on the readiness detail, and on the position's `schedule`.
+
+**Still requires a person, and it is one line:** `MARKETING_RELEASE_ENABLED=true`
+on the deployment, with `MARKETING_RELEASE_DAYS` set to whatever rate the library
+is actually being fed at. Nothing in this change publishes anything while the
+first is unset — correctly, because a marketing agent that armed itself at boot
+would publish from a laptop, a CI run and a restored backup.

@@ -30,10 +30,10 @@ import { draw } from '../app.js';
  * label says "requests" everywhere it appears, because a number that is honest
  * about what it measures is worth more than a bigger one nobody can defend.
  *
- * Above the posts sits the site read as a whole: a sweep of eleven things a
+ * Above the posts sits the site read as a whole: a sweep of thirteen things a
  * crawler, a link preview and a search result actually look for, read off the
  * rendered pages; the reach the pages have had; the channels a post can be
- * sent to and which are configured; the eight topics the site should cover
+ * sent to and which are configured; the topics the site should cover
  * and which do; the daily release and what it did; and what the marketing
  * agent recommends doing next. The generator composes a post from the feature
  * catalogue — sentences the product already publishes about itself — and may
@@ -104,11 +104,17 @@ const COMMANDS = {
   /*
    * Where the library grows.
    *
-   * The daily release draws from a catalogue of nine topics written into the
-   * source. It published one a day until the ninth, on 6 September 2026, and
-   * then published nothing — correctly, and in silence. There was no way for a
+   * The daily release draws from a catalogue of topics written into the source.
+   * It published one a day until the ninth, on 6 September 2026, and then
+   * published nothing — correctly, and in silence. There was no way for a
    * person to give it another subject without a deployment, which is the
    * actual defect: the editorial supply for a daily blog was code.
+   *
+   * Two things came out of that. This form, so a subject can be added without a
+   * deployment; and ten more written topics in the catalogue, so a deployment
+   * that nobody feeds still has material. Neither helps while the timer is
+   * unarmed, which is why that now says so in red on the release card and on
+   * the platform's own readiness list.
    */
   topic: () => ({
     title: 'Add a topic for the blog to write about',
@@ -135,7 +141,7 @@ const COMMANDS = {
   library: () => ({
     title: 'Generate marketing library',
     intent:
-      'One published post per topic that has none — eight topics, each with the phrase a buyer would type. A topic ' +
+      'One published post per topic that has none, each with the phrase a buyer would type. A topic ' +
       'already on the record, published or in draft, is skipped and named, so pressing this twice writes nothing twice.',
     path: '/v1/site/marketing/library',
     submitLabel: 'Generate the library',
@@ -212,6 +218,8 @@ const COMMANDS = {
 const STATUS_TONE = { PUBLISHED: 'ok', DRAFT: 'info', WITHDRAWN: 'muted' };
 const BAND_TONE = { STRONG: 'ok', WORKABLE: 'warn', WEAK: 'bad' };
 const SEVERITY_TONE = { HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
+/** Indexed the way the release reads a weekday: 1 = Monday … 7 = Sunday. */
+const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const AUTHOR_LABEL = { HUMAN: 'written by a person', AI_DRAFTED: 'drafted by a model', MARKETING_AGENT: 'composed by the marketing agent' };
 
 /** Held outside `blog()` so an audit survives the redraw that follows a publish. */
@@ -266,6 +274,22 @@ export async function blog(root) {
   const covered = topics.filter((topic) => topic.covered).length;
   const byPostId = new Map((vis?.posts ?? []).map((entry) => [entry.id, entry]));
   const generatorLabel = vis?.generator?.mode === 'AI' ? 'Generate a draft' : 'Generate & publish';
+
+  // How long since anything was published, and how much is left to publish.
+  //
+  // Both were on this screen already and neither could be seen. The timer being
+  // unarmed was one line of grey text on a card below the fold, and "how many
+  // days of material are left" was a sentence inside the sweep. So a deployment
+  // published nine posts on one afternoon and then nothing for three weeks, and
+  // every panel on this page reported a healthy site — because on every measure
+  // it took, it was one.
+  const lastPublishedAt = (vis?.posts ?? [])
+    .filter((post) => post.status === 'PUBLISHED' && post.publishedAt)
+    .map((post) => post.publishedAt)
+    .sort()
+    .at(-1);
+  const daysSincePublished = lastPublishedAt ? Math.floor((Date.now() - Date.parse(lastPublishedAt)) / 86_400_000) : null;
+  const supply = topics.length - covered;
 
   render(
     root,
@@ -434,10 +458,39 @@ export async function blog(root) {
             </div>
             <div class="card">
               <h2>Daily release</h2>
-              <div class="metric-sub" style="margin:8px 0 12px">
-                ${vis.releases.schedule.enabled
-                  ? `Armed: runs at ${String(vis.releases.schedule.hourUtc).padStart(2, '0')}:00 UTC every day.`
-                  : 'Timer not armed on this deployment (MARKETING_RELEASE_ENABLED). The button above runs it by hand, once per day.'}
+              ${vis.releases.schedule.enabled
+                ? html`<div class="metric-sub" style="margin:8px 0 12px">
+                    Armed: runs at ${String(vis.releases.schedule.hourUtc).padStart(2, '0')}:00 UTC
+                    ${(vis.releases.schedule.daysUtc ?? []).length === 0
+                      ? 'every day'
+                      : `on ${(vis.releases.schedule.daysUtc ?? []).map((day) => DAY_NAMES[day]).join(', ')}`}.
+                  </div>`
+                : html`<div class="notice bad" style="margin:8px 0 12px">
+                    <div>
+                      <b>The timer is not armed on this deployment, so nothing publishes on its own.</b><br />
+                      Set <code>MARKETING_RELEASE_ENABLED</code> to run it at
+                      ${String(vis.releases.schedule.hourUtc).padStart(2, '0')}:00 UTC daily. Until then the only posts that appear
+                      are the ones somebody presses "Run today's release" for.
+                    </div>
+                  </div>`}
+              <div class="row">
+                <span class="lbl">Last published</span>
+                <span class="val"
+                  >${daysSincePublished === null
+                    ? badge('never', 'warn')
+                    : daysSincePublished === 0
+                      ? badge('today', 'ok')
+                      : badge(`${daysSincePublished} day${daysSincePublished === 1 ? '' : 's'} ago`, daysSincePublished > 7 ? 'bad' : daysSincePublished > 2 ? 'warn' : 'ok')}</span
+                >
+              </div>
+              <div class="row" style="margin-bottom:12px">
+                <span class="lbl">Material left to publish</span>
+                <span class="val"
+                  >${badge(
+                    supply === 0 ? 'nothing written' : `${supply} topic${supply === 1 ? '' : 's'} · ${supply} release${supply === 1 ? '' : 's'}`,
+                    supply === 0 ? 'bad' : supply < 5 ? 'warn' : 'ok',
+                  )}</span
+                >
               </div>
               ${vis.releases.today
                 ? html`<div class="notice ${raw(vis.releases.today.published ? 'ok' : 'info')}" style="margin-bottom:10px">

@@ -179,7 +179,7 @@ describe('the sweep reads the served site', () => {
     assert.equal(byCheck.get('Freshness')!.ok, false);
     assert.match(byCheck.get('Freshness')!.detail, new RegExp(`${visibility.FRESHNESS_DAYS + 1} days ago`));
     assert.equal(byCheck.get('Topic coverage')!.ok, false);
-    assert.match(byCheck.get('Topic coverage')!.detail, /0 of 9/);
+    assert.match(byCheck.get('Topic coverage')!.detail, new RegExp(`0 of ${visibility.TOPICS.length}`));
     assert.equal(byCheck.get('Keyword coverage')!.ok, false);
     assert.equal(byCheck.get('Internal linking')!.ok, false);
 
@@ -507,6 +507,52 @@ describe('the daily release: once a day, by the record', () => {
       marketing.releaseHourUtc = savedHour;
     }
   });
+
+  it('runs only on an eligible weekday, and every day when none is named', async () => {
+    // The cadence exists because the supply is finite. A library of nineteen
+    // written topics is nineteen days of daily blog and then a stale site, and
+    // the only lever was the hour. This is the one that matters: a day the
+    // release is not eligible on must produce no release at all, not a release
+    // that publishes nothing — an empty run would consume the day's idempotency
+    // key and stop the eligible day working.
+    const savedEnabled = marketing.releaseEnabled;
+    const savedHour = marketing.releaseHourUtc;
+    const savedDays = marketing.releaseDaysUtc;
+    const today = new Date().getUTCDay() === 0 ? 7 : new Date().getUTCDay();
+    const notToday = today === 7 ? 1 : today + 1;
+    try {
+      marketing.releaseEnabled = true;
+      marketing.releaseHourUtc = new Date().getUTCHours();
+
+      const skipped = new Platform();
+      operator(skipped);
+      marketing.releaseDaysUtc = [notToday];
+      const idle = visibility.startMarketingSchedule(skipped);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      idle.stop();
+      assert.equal(visibility.releases(skipped).length, 0, 'not an eligible day: no release was recorded at all');
+
+      const eligible = new Platform();
+      operator(eligible);
+      marketing.releaseDaysUtc = [today, notToday];
+      const armed = visibility.startMarketingSchedule(eligible);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      armed.stop();
+      assert.equal(visibility.releases(eligible).length, 1, 'an eligible day runs');
+
+      const always = new Platform();
+      operator(always);
+      marketing.releaseDaysUtc = [];
+      const daily = visibility.startMarketingSchedule(always);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      daily.stop();
+      assert.equal(visibility.releases(always).length, 1, 'no day named means every day, as it did before this existed');
+    } finally {
+      marketing.releaseEnabled = savedEnabled;
+      marketing.releaseHourUtc = savedHour;
+      marketing.releaseDaysUtc = savedDays;
+    }
+  });
 });
 
 describe('through the gateway', () => {
@@ -555,7 +601,7 @@ describe('through the gateway', () => {
     assert.equal(before.status, 200, JSON.stringify(before.body));
     assert.equal(typeof before.body.signal.score, 'number');
     assert.equal(before.body.sweep.length, 13);
-    assert.equal(before.body.topics.length, 9);
+    assert.equal(before.body.topics.length, visibility.TOPICS.length);
 
     const composed = await call('POST', '/v1/site/posts/compose', token, { topic: 'Composed over HTTP', keywords: ['http composition'], publish: true });
     assert.equal(composed.status, 201, JSON.stringify(composed.body));
@@ -566,7 +612,7 @@ describe('through the gateway', () => {
 
     const library = await call('POST', '/v1/site/marketing/library', token, {});
     assert.equal(library.status, 201);
-    assert.equal(library.body.created.length, 9);
+    assert.equal(library.body.created.length, visibility.TOPICS.length);
 
     const release = await call('POST', '/v1/site/marketing/release', token, {});
     assert.equal(release.status, 201);
@@ -585,7 +631,7 @@ describe('through the gateway', () => {
     const after = await call('GET', '/v1/site/visibility', token);
     assert.ok(after.body.signal.score > before.body.signal.score, `${before.body.signal.score} → ${after.body.signal.score}`);
     assert.equal(after.body.releases.today.id, release.body.id);
-    assert.equal(after.body.posts.length, 10);
+    assert.equal(after.body.posts.length, visibility.TOPICS.length + 1, 'the library, plus the one composed by hand');
     assert.ok(after.body.posts.every((post: { kit: unknown[] }) => post.kit.length === 5));
   });
 });
