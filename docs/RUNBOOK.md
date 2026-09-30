@@ -888,6 +888,113 @@ journalctl -u construx-deploy --since "2 hours ago" --no-pager | tail -60
 - **The deploy log says it rolled back** — the new image never reached
   `/readyz`; the reason is in step 2 of the container it tried.
 
+## www does not work and the apex does
+
+`https://construxvg.com` serves and `https://www.construxvg.com` gives a
+browser error. It is almost never DNS. It is the certificate.
+
+**Why the redirect is not the fix on its own.** A redirect is HTTP, and HTTP
+happens after the TLS handshake. A proxy presenting a certificate issued for the
+apex, asked for the `www.` name, fails the handshake before it can send a `301`
+anywhere. The name has to be *on the certificate* first, and a proxy that
+obtains certificates automatically still only requests the names it has site
+blocks for. So the fix is always: add the name to the site block, reload, then
+redirect.
+
+**This deployment's front door is not in this repository.** `deploy/Caddyfile`
+carries a `www.` block, and autodeploy does not use it — it runs
+`-f deploy/compose.yaml -f deploy/compose.edge.yaml`, which joins a proxy that
+was already on the host. That proxy owns the domain, the certificate and the
+redirect. Find it:
+
+```bash
+docker network inspect construx-edge --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}'
+docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}'
+```
+
+Everything on that network except `construx` is a candidate; the one publishing
+`0.0.0.0:443` is the front door.
+
+### Caddy
+
+Add the name to the existing site block, or give it its own:
+
+```caddy
+www.construxvg.com {
+        redir https://construxvg.com{uri} permanent
+}
+```
+
+```bash
+docker exec <proxy> caddy validate --config /etc/caddy/Caddyfile
+docker exec <proxy> caddy reload  --config /etc/caddy/Caddyfile
+```
+
+Validate before reloading. A Caddyfile that does not parse takes the running
+configuration with it, and the apex goes down alongside the name that was
+already broken.
+
+### nginx with certbot
+
+The certificate has to be reissued to cover both names — editing `server_name`
+alone changes nothing about what is presented:
+
+```bash
+certbot --nginx -d construxvg.com -d www.construxvg.com
+nginx -t && nginx -s reload
+```
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name www.construxvg.com;
+    return 301 https://construxvg.com$request_uri;
+}
+```
+
+### Traefik (including Coolify and Dokploy)
+
+The router rule is where the name list lives:
+
+```
+Host(`construxvg.com`) || Host(`www.construxvg.com`)
+```
+
+In Coolify or Dokploy, put both hostnames in the application's Domains field,
+comma separated, and redeploy. Traefik requests the certificate from the rule,
+so a name absent from the rule is a name absent from the certificate.
+
+### Then point the platform at the apex
+
+With `www.` redirecting, `PUBLIC_BASE_URL` should be the apex, so links go
+straight there instead of taking a redirect on every sign-in email, webhook
+quote and payment return:
+
+```bash
+cd /srv/construx/app
+grep -n '^PUBLIC_BASE_URL=' .env          # exactly one line, and it should be the apex
+docker compose -f deploy/compose.yaml -f deploy/compose.edge.yaml \
+               --env-file .env up -d
+```
+
+Blog posts already published carry whatever `PUBLIC_BASE_URL` was when they were
+written. Those canonicals keep working through the redirect, and a search engine
+consolidates them onto the apex; there is nothing to rewrite.
+
+### Confirming it
+
+```bash
+curl -sSI https://www.construxvg.com/ | head -3     # 301, and no TLS error
+curl -sS  https://construxvg.com/readyz             # the commit this deployment runs
+openssl s_client -connect www.construxvg.com:443 -servername www.construxvg.com \
+  </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 'Subject Alternative Name'
+```
+
+The last one is the check that matters: both names have to appear in the
+certificate's SAN list. Then *System → Operations → Open the public address*
+reports the apex and the `www.` name separately, and readiness carries the same
+finding on **Public address**.
+
 ## State-hash discrepancies on replay
 
 Every event carries three hashes: the state before, the state after, and

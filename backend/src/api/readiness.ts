@@ -1,4 +1,5 @@
 import { assertProductionSafety, config, environmentReport, isProduction } from '../config.ts';
+import { lastSelfReach } from '../ops/selfreach.ts';
 import { signingPosition } from '../identity/secrets.ts';
 import { parseTrustedProxies } from './clientaddress.ts';
 
@@ -100,6 +101,9 @@ export function readiness(now = new Date()): Readiness {
     ['ANTHROPIC', config.ai.anthropicKey],
   ] as const;
   const keyed = providers.filter(([, key]) => key !== '').map(([name]) => name);
+  // What the last journey out through DNS, the proxy and the certificate
+  // found. Undefined before anything has opened the front door this boot.
+  const reach = lastSelfReach();
   // The release hour, printed the way an operator reads a clock, and the days
   // it is eligible on. Empty is every day, which is what unset has always meant.
   const hour = String(config.marketing.releaseHourUtc).padStart(2, '0');
@@ -515,17 +519,34 @@ export function readiness(now = new Date()): Readiness {
       key: 'public.url',
       label: 'Public address',
       critical: true,
-      state: config.publicBaseUrl.startsWith('https://')
-        ? 'CONFIGURED'
-        : config.publicBaseUrl.startsWith('http://localhost')
+      // Two questions, and this used to answer only the first. "Is the value an
+      // https origin" is a string check; "does that origin answer, and does the
+      // other form of the name answer" is a journey out through DNS, the proxy
+      // and the certificate. `checkSelfReach` runs that journey at boot and
+      // stores the finding, so reading it here costs nothing and turns a
+      // deployment whose front door is half broken from CONFIGURED into what it
+      // actually is.
+      state: !config.publicBaseUrl.startsWith('https://')
+        ? config.publicBaseUrl.startsWith('http://localhost')
           ? 'NOT_SET'
-          : 'DEGRADED',
+          : 'DEGRADED'
+        : reach && !reach.ok
+          ? 'DEGRADED'
+          : reach?.sibling && !reach.sibling.ok
+            ? 'DEGRADED'
+            : 'CONFIGURED',
       detail: config.publicBaseUrl.startsWith('https://')
         ? `Links the platform sends — sign-in, invitations, unsubscribe, payment returns — and the webhook endpoints quoted to ` +
-          `card and mobile-money providers are all built on ${config.publicBaseUrl}. Being set is not the same as working: this ` +
-          `says the value is an https origin, not that the host resolves or holds a certificate for that exact name. ` +
-          `"Open the public address" answers that, and a "www." host that was never given a DNS record passes this check and ` +
-          `fails that one.`
+          `card and mobile-money providers are all built on ${config.publicBaseUrl}. ` +
+          (reach === undefined
+            ? 'Being set is not the same as working, and nothing has opened it yet this boot. "Open the public address" on the ' +
+              'Operations screen resolves it, opens it and reads back which build answered.'
+            : !reach.ok
+              ? `${reach.because}${reach.remedy ? ` ${reach.remedy}` : ''}`
+              : reach.sibling && !reach.sibling.ok
+                ? `The address itself works. ${reach.sibling.because}${reach.sibling.remedy ? ` ${reach.sibling.remedy}` : ''}`
+                : `Checked ${reach.checkedAt}: it resolves, terminates TLS and answers as this build` +
+                  `${reach.sibling ? `, and ${reach.sibling.host} ${reach.sibling.state === 'DNS_MISSING' ? 'is not published' : 'serves too'}` : ''}.`)
         : config.publicBaseUrl.startsWith('http://localhost')
           ? 'Still the local default, so every link the platform emails points at the machine it is running on.'
           : 'Not https. Signed links, including unsubscribe tokens, would be readable in transit and leaked to every hop a mail client follows.',

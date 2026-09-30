@@ -25538,3 +25538,57 @@ on the deployment, with `MARKETING_RELEASE_DAYS` set to whatever rate the librar
 is actually being fed at. Nothing in this change publishes anything while the
 first is unset — correctly, because a marketing agent that armed itself at boot
 would publish from a laptop, a CI run and a restored backup.
+
+### The hostname nobody configured, which half the world types anyway
+
+Reported from the live site: *"www.construxvg.com is not working, only
+construxvg.com — and all blog and other internal links are www."*
+
+Both names resolve, to the same address. So this was never DNS. It is the
+certificate: a proxy presenting one issued for the apex, asked for the `www.`
+name, fails the handshake before any HTTP happens — which is why a redirect is
+not a fix on its own, and why the name has to be on the certificate first.
+
+Three separate things let it run:
+
+**The `www.` block is in a file this deployment does not load.**
+`deploy/Caddyfile` has carried a `www.` redirect since the invitation-link
+failure that prompted it. Autodeploy runs `-f deploy/compose.yaml -f
+deploy/compose.edge.yaml`, and `compose.edge.yaml` joins a proxy that was
+already on the host. That proxy owns the domain, the certificate and the
+redirect. `deploy/env-check.sh` already said so in a comment. Nobody acted on
+it, because nothing failed.
+
+**`selfreach` checked one origin.** It resolves `PUBLIC_BASE_URL`, opens it,
+reads back which build answered, and separates DNS from TLS from the wrong
+deployment — it is a good check and it asked about one hostname. A deployment
+whose base URL is the apex passes it completely while the `www.` name answers
+nothing, and the people walking into that are the ones who typed the address
+rather than clicked a link. It now probes the other form of the same name too:
+`www.` added, or `www.` removed. **DNS decides whether the name is expected to
+work**, which avoids a judgement this module cannot make correctly — a public
+suffix list is the only way to tell `construx.co.uk` from `app.construx.com`,
+and there are no runtime dependencies to get one from. A name with no address
+record is reported as an absence. A name that resolves and then refuses the
+handshake is a dead front door and reported as a fault, whatever the base URL
+is doing. A `301` counts as serving, because the redirect is the recommended
+arrangement and must not read as broken.
+
+**Readiness said CONFIGURED for a front door that was half down.** The
+`public.url` entry was a string check — is the value an https origin — and its
+own detail admitted the gap: *"a www. host that was never given a DNS record
+passes this check and fails that one"*. It now reads the stored `checkSelfReach`
+finding, so a base URL that does not answer, or a sibling that does not, reports
+`DEGRADED` with the reason and the remedy attached. The Operations screen shows
+the two names as separate notices.
+
+`docs/RUNBOOK.md` — *www does not work and the apex does* — carries the fix for
+Caddy, nginx with certbot, and Traefik including Coolify and Dokploy, the
+command that identifies which of them owns 443 on this host, and the
+`openssl s_client` one-liner that settles it by reading the certificate's SAN
+list rather than by guessing.
+
+**Still requires a person:** the proxy change and, once `www.` redirects,
+pointing `PUBLIC_BASE_URL` at the apex so links stop taking a redirect on every
+sign-in email and payment return. Already-published posts keep their canonicals
+and reach the apex through the redirect; nothing needs rewriting.

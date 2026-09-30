@@ -1,4 +1,5 @@
 import { promises as dns } from 'node:dns';
+import { isIP } from 'node:net';
 import { config } from '../config.ts';
 
 /**
@@ -85,6 +86,43 @@ export type SelfReach = {
    */
   addresses: string[];
   checkedAt: string;
+  /**
+   * The other form of the same name — `www.` added, or `www.` removed.
+   *
+   * Absent where there is no sensible other form: a local address, an IP
+   * literal, or a lookup that was not asked for.
+   */
+  sibling?: SiblingReach;
+};
+
+/**
+ * The hostname nobody configured, which half the world types anyway.
+ *
+ * `PUBLIC_BASE_URL` is one origin and the check above is about that one. A
+ * deployment can pass it completely while `www.` of the same name answers
+ * nothing — and that is not a cosmetic gap. Somebody types it, a customer
+ * pastes it into a signature, an old card links it, a search result still
+ * carries it; and if the platform's own base URL is the `www.` form while the
+ * certificate covers only the apex, every blog canonical, every sitemap entry
+ * and every emailed link is pointing at a host that refuses the handshake.
+ *
+ * DNS decides whether the name is expected to work, which avoids a guess this
+ * module has no way to make correctly. A name with no address record is a
+ * deliberate absence and reported as such. A name that resolves — to this
+ * deployment's own address, usually, because somebody added the record years
+ * ago — and then does not serve is a dead front door, and it is reported as a
+ * fault however healthy `PUBLIC_BASE_URL` is.
+ */
+export type SiblingReach = {
+  /** The origin that was probed. */
+  url: string;
+  host: string;
+  /** `DNS_MISSING` means nobody points this name here. That is a choice, not a fault. */
+  state: SelfReachState;
+  ok: boolean;
+  because: string;
+  remedy?: string;
+  addresses: string[];
 };
 
 const LOCAL = /^(localhost|127\.|0\.0\.0\.0|\[::1\]|::1$)/i;
@@ -127,12 +165,21 @@ export type Lookup = (host: string, family: 4 | 6) => Promise<string[]>;
 const RESOLVE: Lookup = async (host, family) =>
   family === 4 ? await dns.resolve4(host) : await dns.resolve6(host);
 
-export async function checkSelfReach(
-  now = new Date(),
-  fetchImpl: typeof fetch = fetch,
-  lookup: Lookup = RESOLVE,
+/**
+ * One origin, end to end: resolve it, open it, read back which build answered.
+ *
+ * Split out from `checkSelfReach` so the same journey can be run against the
+ * `www.` counterpart without a second, drifting copy of it. The wording here is
+ * written for `PUBLIC_BASE_URL`, which is what the caller below re-states for
+ * the sibling — the facts are identical, the consequences are not.
+ */
+async function probe(
+  origin: string,
+  now: Date,
+  fetchImpl: typeof fetch,
+  lookup: Lookup,
 ): Promise<SelfReach> {
-  const baseUrl = config.publicBaseUrl.replace(/\/+$/, '');
+  const baseUrl = origin.replace(/\/+$/, '');
   const thisBuild = config.buildCommit || 'unknown';
   const checkedAt = now.toISOString();
   const base = { baseUrl, thisBuild, checkedAt, addresses: [] as string[] };
@@ -275,6 +322,120 @@ export async function checkSelfReach(
     because: `${host} resolves, terminates TLS and answers as this deployment. Links in email, the webhook endpoints and ` +
       'payment redirects all reach this process.',
   };
+}
+
+/**
+ * The same origin with `www.` put on or taken off, or null where there is no
+ * such thing.
+ *
+ * No attempt is made to work out whether the name *ought* to exist. A public
+ * suffix list is the only correct way to tell `construx.co.uk` from
+ * `app.construx.com`, this platform carries no runtime dependencies, and a
+ * hand-rolled label count gets one of those two wrong. DNS answers the question
+ * properly and for free: a name nobody has published has no address record, and
+ * that is reported as an absence rather than as a fault.
+ */
+export function siblingOrigin(baseUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  const host = url.hostname;
+  if (host === '' || LOCAL.test(host) || isIP(host) || isIP(host.replace(/^\[|\]$/g, ''))) return null;
+  const other = host.startsWith('www.') ? host.slice(4) : `www.${host}`;
+  if (other === '' || other === host || !other.includes('.')) return null;
+  url.hostname = other;
+  url.pathname = '';
+  url.search = '';
+  url.hash = '';
+  return url.origin;
+}
+
+/** The sibling's own facts, said in terms of what a dead second front door costs. */
+async function probeSibling(
+  origin: string,
+  primaryHost: string,
+  now: Date,
+  fetchImpl: typeof fetch,
+  lookup: Lookup,
+): Promise<SiblingReach> {
+  const found = await probe(origin, now, fetchImpl, lookup);
+  const host = new URL(origin).hostname;
+  const at = found.addresses.join(', ');
+  const common = {
+    url: origin,
+    host,
+    state: found.state,
+    addresses: found.addresses,
+  };
+
+  if (found.state === 'DNS_MISSING') {
+    return {
+      ...common,
+      ok: true,
+      because: `${host} has no address record, so nobody is being sent there. Only ${primaryHost} is published.`,
+    };
+  }
+  if (found.state === 'REACHED' || found.state === 'OTHER_BUILD' || found.state === 'NOT_READY') {
+    // It answers. Whose build answered is the primary check's business; what
+    // matters here is that a person typing this name reaches something.
+    return {
+      ...common,
+      ok: found.state === 'REACHED',
+      because:
+        found.state === 'REACHED'
+          ? `${host} resolves and serves, directly or by redirect. Somebody typing it, or following an old link that ` +
+            'carries it, gets to this deployment.'
+          : `${host} resolves and answers, but ${found.state === 'OTHER_BUILD' ? 'as a different build' : 'not as ready'}.`,
+      ...(found.remedy ? { remedy: found.remedy } : {}),
+    };
+  }
+
+  // It resolves and it does not serve. This is the one worth shouting about.
+  const tls = found.state === 'TLS_FAILED';
+  return {
+    ...common,
+    ok: false,
+    because:
+      `${host} resolves to ${at} and ${tls ? 'presents a certificate that is not valid for that name' : 'nothing answered there'}. ` +
+      'Somebody published that record, so somebody is being sent there — from a typed address, a business card, an old ' +
+      'search result or a link somebody pasted — and every one of them gets a browser error rather than this site. ' +
+      (tls ? 'This is the "ERR_SSL_PROTOCOL_ERROR" a visitor sees.' : ''),
+    remedy:
+      tls
+        ? `Add ${host} to the site block that already serves ${primaryHost} so the proxy requests a certificate covering ` +
+          `both, then reload it. Redirecting ${host} to ${primaryHost} still needs that certificate: the redirect is HTTP, ` +
+          'and the handshake happens first.'
+        : `The name resolves, so the proxy has no site block for ${host}, or routes it somewhere that is not running. Add ` +
+          `it alongside ${primaryHost}.`,
+  };
+}
+
+export async function checkSelfReach(
+  now = new Date(),
+  fetchImpl: typeof fetch = fetch,
+  lookup: Lookup = RESOLVE,
+): Promise<SelfReach> {
+  const primary = await probe(config.publicBaseUrl, now, fetchImpl, lookup);
+
+  // Only worth asking once the base URL itself is a real public name. There is
+  // nothing to say about the `www.` form of a value that is unset, malformed or
+  // pointed at this machine.
+  if (primary.state === 'NOT_CONFIGURED' || primary.state === 'LOCAL') return primary;
+  const other = siblingOrigin(primary.baseUrl);
+  if (other === null) return primary;
+
+  let sibling: SiblingReach;
+  try {
+    sibling = await probeSibling(other, new URL(primary.baseUrl).hostname, now, fetchImpl, lookup);
+  } catch {
+    // The second opinion must never cost the first one. A sibling probe that
+    // throws leaves the primary finding exactly as it was.
+    return primary;
+  }
+  return { ...primary, sibling };
 }
 
 /**

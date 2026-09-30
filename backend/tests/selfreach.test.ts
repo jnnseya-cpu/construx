@@ -151,12 +151,111 @@ describe('whether the public address reaches this deployment', () => {
   });
 
   it('strips a trailing slash rather than requesting a double one', async () => {
-    let asked = '';
+    const asked: string[] = [];
     const spy = (async (url: string) => {
-      asked = String(url);
+      asked.push(String(url));
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
     }) as unknown as typeof fetch;
     await at('https://construx.example/', () => checkSelfReach(new Date(), spy, resolving('203.0.113.10')));
-    assert.equal(asked, 'https://construx.example/readyz');
+    // The base URL is asked first. The second call is the `www.` counterpart,
+    // which is the subject of the suite below.
+    assert.equal(asked[0], 'https://construx.example/readyz');
+  });
+});
+
+/**
+ * The hostname nobody configured, which half the world types anyway.
+ *
+ * Reported from the live site: *"www.construxvg.com is not working, only
+ * construxvg.com"* — on a deployment whose every blog canonical, sitemap entry
+ * and emailed link was built on the `www.` form. The check above passed
+ * throughout, because it only ever asked about one origin.
+ *
+ * DNS decides whether the other name is expected to work. A name nobody
+ * published is an absence; a name that resolves and then refuses the handshake
+ * is a dead front door, and somebody is walking into it.
+ */
+describe('the other form of the same name', () => {
+  /** Answers for one hostname and fails the handshake for the other. */
+  function servingOnly(goodHost: string): typeof fetch {
+    return (async (url: string) => {
+      if (new URL(String(url)).hostname === goodHost) {
+        return new Response(JSON.stringify({ commit: config.buildCommit || 'unknown' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const error = new TypeError('fetch failed');
+      (error as { cause?: { code: string } }).cause = { code: 'ERR_TLS_CERT_ALTNAME_INVALID' };
+      throw error;
+    }) as unknown as typeof fetch;
+  }
+
+  it('fails the www host that resolves to this deployment and refuses the handshake', async () => {
+    const reach = await at('https://construx.example', () =>
+      checkSelfReach(new Date(), servingOnly('construx.example'), resolving('203.0.113.10')),
+    );
+
+    // The base URL itself is fine, which is exactly how this hid.
+    assert.equal(reach.state, 'REACHED');
+    assert.equal(reach.ok, true);
+
+    const sibling = reach.sibling;
+    assert.ok(sibling, 'no sibling was checked at all');
+    assert.equal(sibling.host, 'www.construx.example');
+    assert.equal(sibling.state, 'TLS_FAILED');
+    assert.equal(sibling.ok, false);
+    assert.match(sibling.because, /ERR_SSL_PROTOCOL_ERROR/);
+    // The remedy has to say that redirecting is not a way around the
+    // certificate, because that is the wrong turn people take here.
+    assert.match(sibling.remedy ?? '', /site block that already serves construx\.example/);
+    assert.match(sibling.remedy ?? '', /handshake happens first/);
+  });
+
+  it('treats a www host nobody published as an absence rather than a fault', async () => {
+    const reach = await at('https://construx.example', () =>
+      checkSelfReach(new Date(), servingOnly('construx.example'), async (host, family) =>
+        host.startsWith('www.') ? [] : ['203.0.113.10'].filter(() => family === 4),
+      ),
+    );
+
+    assert.equal(reach.ok, true);
+    assert.equal(reach.sibling?.state, 'DNS_MISSING');
+    assert.equal(reach.sibling?.ok, true, 'a name nobody published is not a fault');
+    assert.match(reach.sibling?.because ?? '', /no address record/);
+  });
+
+  it('checks the apex when the base URL is the www form, which is the reported case', async () => {
+    // PUBLIC_BASE_URL on the www name and a certificate covering only the
+    // apex: the base URL fails, and the apex is named as the one that works.
+    const reach = await at('https://www.construx.example', () =>
+      checkSelfReach(new Date(), servingOnly('construx.example'), resolving('203.0.113.10')),
+    );
+
+    assert.equal(reach.state, 'TLS_FAILED');
+    assert.equal(reach.ok, false);
+    assert.equal(reach.sibling?.host, 'construx.example');
+    assert.equal(reach.sibling?.state, 'REACHED');
+    assert.equal(reach.sibling?.ok, true);
+  });
+
+  it('accepts a redirect as serving, because a 301 to the apex is a working front door', async () => {
+    // `probe` follows redirects, so a www that 301s to the apex answers 200 on
+    // /readyz. That is the recommended arrangement and must not read as broken.
+    const reach = await at('https://construx.example', () =>
+      checkSelfReach(new Date(), answering(200, { commit: config.buildCommit || 'unknown' }), resolving('203.0.113.10')),
+    );
+
+    assert.equal(reach.sibling?.state, 'REACHED');
+    assert.equal(reach.sibling?.ok, true);
+    assert.match(reach.sibling?.because ?? '', /directly or by redirect/);
+  });
+
+  it('asks about nothing when there is no other form to ask about', async () => {
+    const local = await at('http://localhost:8080', () => checkSelfReach(new Date(), failing('ECONNREFUSED')));
+    assert.equal(local.sibling, undefined, 'localhost has no www form worth probing');
+
+    const unset = await at('', () => checkSelfReach(new Date(), failing('ECONNREFUSED')));
+    assert.equal(unset.sibling, undefined);
   });
 });

@@ -241,6 +241,24 @@ export async function system(root) {
                 </div>`
               : ''
           }
+          ${
+            // The other form of the same name. Reported separately because it
+            // fails separately: a deployment whose base URL is perfect can
+            // still have a second hostname pointed at it that answers nothing,
+            // and the people walking into it are the ones who typed the address
+            // rather than clicking a link the platform sent.
+            ready.publicAddress?.sibling
+              ? html`<div class="notice ${raw(ready.publicAddress.sibling.ok ? 'ok' : 'bad')}" style="margin-top:10px">
+                  <div>
+                    <b>${ready.publicAddress.sibling.host}</b> — ${ready.publicAddress.sibling.because}
+                    ${ready.publicAddress.sibling.remedy ? html`<br /><b>Next:</b> ${ready.publicAddress.sibling.remedy}` : ''}
+                    ${ready.publicAddress.sibling.addresses?.length
+                      ? html`<br /><span class="metric-sub">Resolves to ${ready.publicAddress.sibling.addresses.join(', ')}.</span>`
+                      : ''}
+                  </div>
+                </div>`
+              : ''
+          }
         </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn quiet sm" id="check-reach">Open the public address now</button>
