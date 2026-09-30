@@ -25621,18 +25621,26 @@ answer for whoever types it. The same state on the *sibling* is a pass — a `ww
 that redirects onto the apex is the arrangement being aimed at. One fact, two
 verdicts, decided by which name is being asked about.
 
-**Both halves are now done on the host.** `PUBLIC_BASE_URL` is
-`https://construxvg.com`, the redirect stays, and the ledger held zero
-`PASSKEY_REGISTERED` events — so nobody lost a credential, which is the answer
-this deployment was always going to give: none could have been registered while
-the relying-party id named a host the browser never stayed on. Already-published
-posts keep their `www.` canonicals and reach the apex through the `301`; nothing
-was rewritten.
+**Both halves are now done on the host, and then the direction was chosen
+deliberately.** The first pass made the apex canonical with `www.` redirecting
+onto it. The operator's decision was the other way round: `www.construxvg.com`
+is the main address, because that is the form already carried by every published
+post, every internal link and everything printed off-platform. So the two Caddy
+blocks were swapped — the apex now answers `301` to `www.`, and `www.` serves —
+and `PUBLIC_BASE_URL` is `https://www.construxvg.com`. The ledger held zero
+`PASSKEY_REGISTERED` events throughout, which is the answer this deployment was
+always going to give: none could have been registered while the relying-party id
+named a host the browser never stayed on.
+
+**Which way round is canonical is not the platform's decision to make.** Either
+works. What must hold is the pair below — the serving origin and
+`PUBLIC_BASE_URL` naming the same host, and the other name answering with a
+redirect and therefore with a certificate of its own.
 
 The pair is worth stating as one rule, because each half alone is a broken
-deployment. **The name a browser ends up on and the name `PUBLIC_BASE_URL`
-carries have to be the same name**, and every other hostname pointed at the
-deployment has to answer — with a redirect, and therefore with a certificate.
+deployment, and the rule is the same whichever name is chosen. **The name a
+browser ends up on and the name `PUBLIC_BASE_URL` carries have to be the same
+name**, and every other hostname pointed at the deployment has to answer — with a redirect, and therefore with a certificate.
 Serving one name and advertising another passes every check that asks "does this
 reach the platform" and fails silently on the two that matter: an exact-match
 origin comparison, and anybody who types the address instead of clicking a link.

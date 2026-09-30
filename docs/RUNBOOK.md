@@ -888,10 +888,19 @@ journalctl -u construx-deploy --since "2 hours ago" --no-pager | tail -60
 - **The deploy log says it rolled back** — the new image never reached
   `/readyz`; the reason is in step 2 of the container it tried.
 
-## www does not work and the apex does
+## One hostname works and the other does not
 
-`https://construxvg.com` serves and `https://www.construxvg.com` gives a
+One of `construxvg.com` / `www.construxvg.com` serves and the other gives a
 browser error. It is almost never DNS. It is the certificate.
+
+**Which one is canonical is a decision, not a default.** This deployment serves
+`www.construxvg.com` and redirects the apex onto it, because the `www.` form is
+what every published post, internal link and printed card already carries. The
+opposite arrangement is equally valid. What is *not* valid is either name
+failing, or `PUBLIC_BASE_URL` naming a different host from the one that serves —
+see *Then point the platform at the serving host* below for what that second one
+breaks. Read every `www.`/apex pair here as "the name that serves" and "the
+other one".
 
 **Why the redirect is not the fix on its own.** A redirect is HTTP, and HTTP
 happens after the TLS handshake. A proxy presenting a certificate issued for the
@@ -977,16 +986,29 @@ In Coolify or Dokploy, put both hostnames in the application's Domains field,
 comma separated, and redeploy. Traefik requests the certificate from the rule,
 so a name absent from the rule is a name absent from the certificate.
 
-### Then point the platform at the apex
+### Then point the platform at the serving host
 
-This half is not tidying. **`PUBLIC_BASE_URL` left on the `www.` form breaks
-passkeys outright.** `relyingParty()` in `backend/src/identity/passkeys.ts`
-derives both the WebAuthn origin and the relying-party id from it. A browser
-compares the origin as an exact string, and `www.construxvg.com` is not a
-registrable suffix of `construxvg.com` — the apex is not a subdomain of the
-`www.` name, it is the other way round. So with the base URL on `www.` and the
-site serving on the apex, every passkey registration and every passkey sign-in
-fails. The apex works for both names; the `www.` form works for one.
+This half is not tidying. **`PUBLIC_BASE_URL` naming a host other than the one
+that serves breaks passkeys outright.** `relyingParty()` in `backend/src/identity/passkeys.ts`
+derives both the WebAuthn origin and the relying-party id from it, and a browser
+compares the origin as an exact string. Name one host and serve another and
+every passkey registration and every passkey sign-in fails.
+
+The relying-party id has a second trap in it. Left to itself it is the serving
+hostname, so a site on `www.` binds its passkeys to `www.` alone — never the
+apex, never a later `app.` subdomain — and changing the id afterwards invalidates
+every credential already registered. WebAuthn permits the id to be a registrable
+suffix of the origin instead, so set `AUTH_PASSKEY_RP_ID` to the domain itself
+and the credentials cover every hostname under it:
+
+```
+PUBLIC_BASE_URL=https://www.construxvg.com
+AUTH_PASSKEY_RP_ID=construxvg.com
+```
+
+A value that is not the serving host or a dot-suffix of it is refused and the
+host is used, because a wrong id fails at somebody's sign-in rather than at
+boot.
 
 Before changing it, check whether any passkey was ever registered — changing the
 relying-party id invalidates existing ones, and that would be a real loss rather
