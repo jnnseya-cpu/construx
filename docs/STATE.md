@@ -25588,7 +25588,42 @@ command that identifies which of them owns 443 on this host, and the
 `openssl s_client` one-liner that settles it by reading the certificate's SAN
 list rather than by guessing.
 
-**Still requires a person:** the proxy change and, once `www.` redirects,
-pointing `PUBLIC_BASE_URL` at the apex so links stop taking a redirect on every
-sign-in email and payment return. Already-published posts keep their canonicals
-and reach the apex through the redirect; nothing needs rewriting.
+**Fixed on the host.** `app-caddy-1` — a Caddy belonging to a Koda deployment,
+whose `/root/koda/app/Caddyfile` had grown to hold every site on the box —
+gained one appended block redirecting `www.` to the apex. `www.construxvg.com`
+now answers `301` with the name in its certificate's SAN list. The six other
+sites behind that proxy were untouched, which is the only way to work in a file
+somebody else's production depends on: append, validate, reload, never restart.
+
+### A base URL that answers only by being redirected
+
+Fixing `www.` exposed the half underneath it. `PUBLIC_BASE_URL` was
+`https://www.construxvg.com`, and with the redirect in place that value now
+resolves, terminates TLS, answers `200` on `/readyz` and reports the right
+commit — a clean pass on every question `checkSelfReach` asked, including the
+sibling check added the same day.
+
+It is still wrong, and not cosmetically. **`relyingParty()` derives the WebAuthn
+origin and the relying-party id from `PUBLIC_BASE_URL`.** A browser compares the
+origin as an exact string, and `www.construxvg.com` is not a registrable suffix
+of `construxvg.com` — the apex is not a subdomain of the `www.` name. So while
+the base URL named `www.` and the site served on the apex, no passkey could be
+registered and none could be used. The apex covers both names; the `www.` form
+covers one.
+
+`probe` uses `redirect: 'follow'`, which is right for "does this reach the
+platform" and is exactly what hid this. It now compares the origin it asked for
+against the one the response came back from, and reports `REDIRECTED` when they
+differ: not reachable-with-a-caveat but a fault, with the passkey consequence
+named in it and a remedy that says to move `PUBLIC_BASE_URL` to the origin that
+actually serves **and keep the redirect**, because the `www.` name still has to
+answer for whoever types it. The same state on the *sibling* is a pass — a `www.`
+that redirects onto the apex is the arrangement being aimed at. One fact, two
+verdicts, decided by which name is being asked about.
+
+**Still requires a person:** setting `PUBLIC_BASE_URL=https://construxvg.com` and
+restarting. `docker exec construx sh -c 'grep -c PASSKEY_REGISTERED
+/data/ledger.jsonl'` says first whether anybody holds a passkey that the change
+would invalidate; zero is the expected answer on a deployment where they could
+never have worked. Already-published posts keep their canonicals and reach the
+apex through the redirect; nothing needs rewriting.

@@ -905,7 +905,20 @@ redirect.
 carries a `www.` block, and autodeploy does not use it — it runs
 `-f deploy/compose.yaml -f deploy/compose.edge.yaml`, which joins a proxy that
 was already on the host. That proxy owns the domain, the certificate and the
-redirect. Find it:
+redirect.
+
+**On this host that proxy is `app-caddy-1`, and it is shared.** Its Caddyfile is
+`/root/koda/app/Caddyfile` — a Koda deployment's file that grew to hold every
+site on the box: `construxvg.com`, `nichefinderhq.com`, `etablix.com`,
+`bitripay.com` with its `admin.` and `api.` hosts, and the Koda domain itself.
+CONSTRUX is a guest in it. **Changes here are additive only**: append a site
+block, never edit or reorder somebody else's, and never
+`docker restart app-caddy-1` — that drops all of them while it comes back.
+`caddy reload` is graceful, and a configuration that fails `caddy validate` is
+refused with the running one left serving, which is what makes this safe to do
+on a live box.
+
+Find it:
 
 ```bash
 docker network inspect construx-edge --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}'
@@ -966,9 +979,30 @@ so a name absent from the rule is a name absent from the certificate.
 
 ### Then point the platform at the apex
 
-With `www.` redirecting, `PUBLIC_BASE_URL` should be the apex, so links go
-straight there instead of taking a redirect on every sign-in email, webhook
-quote and payment return:
+This half is not tidying. **`PUBLIC_BASE_URL` left on the `www.` form breaks
+passkeys outright.** `relyingParty()` in `backend/src/identity/passkeys.ts`
+derives both the WebAuthn origin and the relying-party id from it. A browser
+compares the origin as an exact string, and `www.construxvg.com` is not a
+registrable suffix of `construxvg.com` — the apex is not a subdomain of the
+`www.` name, it is the other way round. So with the base URL on `www.` and the
+site serving on the apex, every passkey registration and every passkey sign-in
+fails. The apex works for both names; the `www.` form works for one.
+
+Before changing it, check whether any passkey was ever registered — changing the
+relying-party id invalidates existing ones, and that would be a real loss rather
+than a tidy-up:
+
+```bash
+docker exec construx sh -c 'grep -c PASSKEY_REGISTERED /data/ledger.jsonl' || echo 0
+```
+
+Zero means nobody has one, which is the expected answer on a deployment where
+they could never have worked. Anything else: the people holding them must
+re-register after the change, and they should be told before it happens rather
+than after.
+
+Then the links, which go straight there instead of taking a redirect on every
+sign-in email, webhook quote and payment return:
 
 ```bash
 cd /srv/construx/app
@@ -990,8 +1024,9 @@ openssl s_client -connect www.construxvg.com:443 -servername www.construxvg.com 
   </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 'Subject Alternative Name'
 ```
 
-The last one is the check that matters: both names have to appear in the
-certificate's SAN list. Then *System → Operations → Open the public address*
+The last one is the check that matters: the name has to appear in the
+certificate's SAN list — Caddy issues a separate certificate per site block, so
+a `www.`-only block correctly shows only `DNS:www.construxvg.com` there. Then *System → Operations → Open the public address*
 reports the apex and the `www.` name separately, and readiness carries the same
 finding on **Public address**.
 

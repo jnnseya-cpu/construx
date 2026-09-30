@@ -251,6 +251,64 @@ describe('the other form of the same name', () => {
     assert.match(reach.sibling?.because ?? '', /directly or by redirect/);
   });
 
+  it('fails a base URL that only answers by redirecting somewhere else', async () => {
+    // The live case. PUBLIC_BASE_URL was the www form, the proxy redirected
+    // www to the apex, and every check passed: it resolved, it terminated TLS,
+    // it answered 200, it reported the right build. Meanwhile passkeys could
+    // not work at all, because WebAuthn takes the relying-party id from this
+    // host and the apex is not a subdomain of www.
+    const redirectingTo = (async (url: string) => {
+      const target = new URL(String(url));
+      target.hostname = target.hostname.replace(/^www\./, '');
+      const answer = new Response(JSON.stringify({ commit: config.buildCommit || 'unknown' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+      // What a followed redirect leaves behind: the final URL, not the asked one.
+      Object.defineProperty(answer, 'url', { value: target.toString() });
+      return answer;
+    }) as unknown as typeof fetch;
+
+    const reach = await at('https://www.construx.example', () =>
+      checkSelfReach(new Date(), redirectingTo, resolving('203.0.113.10')),
+    );
+
+    assert.equal(reach.state, 'REDIRECTED');
+    assert.equal(reach.ok, false, 'a base URL that redirects elsewhere is not a working base URL');
+    assert.match(reach.because, /passkey registration and sign-in fail/);
+    assert.match(reach.remedy ?? '', /Set PUBLIC_BASE_URL to https:\/\/construx\.example/);
+    // And it must not tell anybody to remove the redirect: the www name still
+    // has to answer for whoever types it.
+    assert.match(reach.remedy ?? '', /Keep the redirect/);
+  });
+
+  it('passes the sibling that redirects, because that is what the second name is for', async () => {
+    // The same fact, opposite verdict. The apex is the base URL and serves
+    // directly; www redirects onto it, which is the arrangement to aim for.
+    const apexDirect = (async (url: string) => {
+      const asked = new URL(String(url));
+      const final = new URL(String(url));
+      final.hostname = final.hostname.replace(/^www\./, '');
+      const answer = new Response(JSON.stringify({ commit: config.buildCommit || 'unknown' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+      Object.defineProperty(answer, 'url', { value: asked.hostname.startsWith('www.') ? final.toString() : asked.toString() });
+      return answer;
+    }) as unknown as typeof fetch;
+
+    const reach = await at('https://construx.example', () =>
+      checkSelfReach(new Date(), apexDirect, resolving('203.0.113.10')),
+    );
+
+    assert.equal(reach.state, 'REACHED');
+    assert.equal(reach.ok, true);
+    assert.equal(reach.sibling?.host, 'www.construx.example');
+    assert.equal(reach.sibling?.state, 'REDIRECTED');
+    assert.equal(reach.sibling?.ok, true, 'a www that redirects to the apex is a working front door');
+    assert.equal(reach.sibling?.remedy, undefined, 'nothing to remedy on a name that is doing its job');
+  });
+
   it('asks about nothing when there is no other form to ask about', async () => {
     const local = await at('http://localhost:8080', () => checkSelfReach(new Date(), failing('ECONNREFUSED')));
     assert.equal(local.sibling, undefined, 'localhost has no www form worth probing');

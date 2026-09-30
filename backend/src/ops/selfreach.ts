@@ -66,6 +66,15 @@ export type SelfReachState =
   | 'UNREACHABLE'
   /** It resolves and answers, and the certificate does not cover this name. */
   | 'TLS_FAILED'
+  /**
+   * It answers, and only after sending the browser to a different origin.
+   *
+   * Healthy on every measure a follow-redirects fetch takes, and wrong for
+   * everything derived from the value: WebAuthn compares the origin as an exact
+   * string and derives the relying-party id from the same host, so a base URL
+   * that redirects is a passkey that cannot be registered or used.
+   */
+  | 'REDIRECTED'
   | 'NOT_READY'
   | 'OTHER_BUILD'
   | 'REACHED';
@@ -276,6 +285,42 @@ async function probe(
     };
   }
 
+  // Where the request actually ended up.
+  //
+  // `redirect: 'follow'` is right for asking "does this reach the platform",
+  // and it is exactly what hides the fault this catches: a base URL that 301s
+  // to another origin answers 200, reports the correct build, and passes every
+  // other test here — while the browser never stays on the name the value
+  // holds. Emailed links take a needless hop, canonicals disagree with the
+  // origin serving them, and passkeys do not work at all, because WebAuthn
+  // compares the origin as an exact string and takes the relying-party id from
+  // the same host.
+  //
+  // `response.url` is empty on a synthesised Response, so an absent value is
+  // treated as "not known to have moved" rather than as a redirect.
+  let landedOn = '';
+  try {
+    landedOn = response.url === '' ? '' : new URL(response.url).origin;
+  } catch {
+    landedOn = '';
+  }
+  const requested = new URL(baseUrl).origin;
+  if (landedOn !== '' && landedOn !== requested) {
+    return {
+      ...resolved,
+      state: 'REDIRECTED',
+      ok: false,
+      because:
+        `${requested} answers, and only by redirecting to ${landedOn}. PUBLIC_BASE_URL names the origin this platform ` +
+        'believes it is served on, and it is not the one a browser ends up on. Every emailed link takes a needless hop, ' +
+        'every canonical URL points somewhere other than the page serving it, and passkey registration and sign-in fail ' +
+        'outright — WebAuthn matches the origin as an exact string and derives the relying-party id from the same host.',
+      remedy:
+        `Set PUBLIC_BASE_URL to ${landedOn}, which is the origin that actually serves, and restart. Keep the redirect: ` +
+        `${requested} should go on answering for anybody who types it.`,
+    };
+  }
+
   let answeredBy: string | undefined;
   try {
     const body = (await response.json()) as { commit?: string };
@@ -378,18 +423,18 @@ async function probeSibling(
       because: `${host} has no address record, so nobody is being sent there. Only ${primaryHost} is published.`,
     };
   }
-  if (found.state === 'REACHED' || found.state === 'OTHER_BUILD' || found.state === 'NOT_READY') {
-    // It answers. Whose build answered is the primary check's business; what
-    // matters here is that a person typing this name reaches something.
+  // Redirecting is what the second name is *supposed* to do, so `REDIRECTED`
+  // is a pass here and a fault on the base URL. Same fact, opposite verdicts.
+  if (found.state === 'REACHED' || found.state === 'REDIRECTED' || found.state === 'OTHER_BUILD' || found.state === 'NOT_READY') {
+    const serving = found.state === 'REACHED' || found.state === 'REDIRECTED';
     return {
       ...common,
-      ok: found.state === 'REACHED',
-      because:
-        found.state === 'REACHED'
-          ? `${host} resolves and serves, directly or by redirect. Somebody typing it, or following an old link that ` +
-            'carries it, gets to this deployment.'
-          : `${host} resolves and answers, but ${found.state === 'OTHER_BUILD' ? 'as a different build' : 'not as ready'}.`,
-      ...(found.remedy ? { remedy: found.remedy } : {}),
+      ok: serving,
+      because: serving
+        ? `${host} resolves and serves, directly or by redirect. Somebody typing it, or following an old link that ` +
+          'carries it, gets to this deployment.'
+        : `${host} resolves and answers, but ${found.state === 'OTHER_BUILD' ? 'as a different build' : 'not as ready'}.`,
+      ...(!serving && found.remedy ? { remedy: found.remedy } : {}),
     };
   }
 
