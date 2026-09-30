@@ -25621,9 +25621,18 @@ answer for whoever types it. The same state on the *sibling* is a pass — a `ww
 that redirects onto the apex is the arrangement being aimed at. One fact, two
 verdicts, decided by which name is being asked about.
 
-**Still requires a person:** setting `PUBLIC_BASE_URL=https://construxvg.com` and
-restarting. `docker exec construx sh -c 'grep -c PASSKEY_REGISTERED
-/data/ledger.jsonl'` says first whether anybody holds a passkey that the change
-would invalidate; zero is the expected answer on a deployment where they could
-never have worked. Already-published posts keep their canonicals and reach the
-apex through the redirect; nothing needs rewriting.
+**Both halves are now done on the host.** `PUBLIC_BASE_URL` is
+`https://construxvg.com`, the redirect stays, and the ledger held zero
+`PASSKEY_REGISTERED` events — so nobody lost a credential, which is the answer
+this deployment was always going to give: none could have been registered while
+the relying-party id named a host the browser never stayed on. Already-published
+posts keep their `www.` canonicals and reach the apex through the `301`; nothing
+was rewritten.
+
+The pair is worth stating as one rule, because each half alone is a broken
+deployment. **The name a browser ends up on and the name `PUBLIC_BASE_URL`
+carries have to be the same name**, and every other hostname pointed at the
+deployment has to answer — with a redirect, and therefore with a certificate.
+Serving one name and advertising another passes every check that asks "does this
+reach the platform" and fails silently on the two that matter: an exact-match
+origin comparison, and anybody who types the address instead of clicking a link.
