@@ -867,6 +867,33 @@ export const config = {
     jwtSecretPrevious: str('GATEWAY_JWT_SECRET_PREVIOUS', ''),
 
     /**
+     * The WebAuthn relying-party id, when it should be broader than the host.
+     *
+     * Unset, `relyingParty()` uses the hostname from `PUBLIC_BASE_URL`, which is
+     * correct and narrow: a deployment served on `www.example.com` gets the
+     * relying-party id `www.example.com`, and the passkeys registered under it
+     * work on that one hostname and nowhere else — not on the apex, not on a
+     * future `app.` subdomain. Changing the id later invalidates every
+     * credential already registered, so the choice is only free before anybody
+     * has one.
+     *
+     * A relying-party id may be the origin's own host or any registrable suffix
+     * of it, so `example.com` is valid for a site served on `www.example.com`
+     * and covers every subdomain at once. Working out which suffix is
+     * *registrable* needs a public suffix list — the only way to tell
+     * `example.co.uk` from `app.example.com` — and this platform carries no
+     * runtime dependencies to get one from. It is also a fact the operator
+     * already knows: it is the domain they bought.
+     *
+     * So it is stated rather than guessed, and validated rather than trusted:
+     * a value that is not the host or a dot-suffix of it is refused and the
+     * host is used, because a wrong relying-party id does not fail loudly, it
+     * fails as "that credential belongs to a different site" at the moment
+     * somebody tries to sign in.
+     */
+    passkeyRpId: str('AUTH_PASSKEY_RP_ID', ''),
+
+    /**
      * How many wrong codes one challenge accepts before it dies.
      *
      * A one-time code is six hex characters — sixteen million of them — and
@@ -1782,65 +1809,114 @@ export function foreignSenderDomain(
 }
 
 /** Warn loudly rather than fail silently when production is misconfigured. */
-export function assertProductionSafety(): string[] {
-  const warnings: string[] = [];
+/**
+ * How loudly a warning deserves to be said.
+ *
+ * `assertProductionSafety` grew into one flat list of thirty-odd strings, and
+ * `ops/watch.ts` raised a CRITICAL security notice — sent regardless of
+ * notification preferences — whenever any of them was present. Two of those
+ * strings report *fail-safe* states: an unset `AI_PROVIDER_CLEARANCE` caps
+ * every vendor at INTERNAL and therefore refuses **more**, and an unset Redis
+ * URL only matters on a deployment running several replicas. `.env.example`
+ * says of the first, in as many words, "That is the safe state, not a broken
+ * one" — and an operator was nonetheless emailed that it made their deployment
+ * "less safe than it looks".
+ *
+ * That is not a wording problem. It is the mechanism by which the next notice
+ * gets ignored, and this codebase has already written the argument down once,
+ * against the off-host backup: a warning that is learned and scrolled past
+ * takes the one after it with it. The live proof arrived the same morning — an
+ * operator cleared the alert by setting a clearance line that made the
+ * deployment both less capable and more exposed.
+ *
+ * So severity is recorded where the warning is raised, by the person who knows
+ * why it exists, rather than inferred later from its text. One list, two
+ * severities, still one source of truth.
+ *
+ * - `UNSAFE` — a real exposure or a real loss, and the screen does not show it:
+ *   a forgeable signing secret, a ledger in memory, evidence in the clear, a
+ *   demonstration tenancy on live records, `NODE_ENV` off production.
+ * - `ADVISORY` — fail-safe, conditional on a deployment shape this one may not
+ *   have, or a feature that is simply not wired up. Worth printing at boot and
+ *   showing on readiness. Never worth a security email.
+ */
+export type WarningSeverity = 'UNSAFE' | 'ADVISORY';
+
+export type ProductionWarning = { text: string; severity: WarningSeverity };
+
+/**
+ * Every warning with its severity attached.
+ *
+ * `assertProductionSafety()` below returns the same list as plain strings, in
+ * the same order, because the boot banner and the readiness report want exactly
+ * that and neither should change. This is for the caller that has to decide
+ * whether to wake somebody up.
+ */
+export function productionSafetyWarnings(): ProductionWarning[] {
+  const found: ProductionWarning[] = [];
+  const unsafe = (text: string): void => {
+    found.push({ text, severity: 'UNSAFE' });
+  };
+  const advise = (text: string): void => {
+    found.push({ text, severity: 'ADVISORY' });
+  };
   if (config.env === 'production') {
     if (config.auth.jwtSecret === 'construx-development-secret') {
-      warnings.push('GATEWAY_JWT_SECRET is still the development default');
+      unsafe('GATEWAY_JWT_SECRET is still the development default');
     }
     if (config.auth.jwtSecretPrevious.split(',').map((value) => value.trim()).includes(config.auth.jwtSecret)) {
-      warnings.push('GATEWAY_JWT_SECRET_PREVIOUS contains the current secret — the rotation has not happened, the old value is still what signs everything');
+      unsafe('GATEWAY_JWT_SECRET_PREVIOUS contains the current secret — the rotation has not happened, the old value is still what signs everything');
     }
     if (config.auth.jwtSecretPrevious.split(',').map((value) => value.trim()).includes('construx-development-secret')) {
-      warnings.push('GATEWAY_JWT_SECRET_PREVIOUS still accepts the published development default — anything signed under it verifies until it is dropped');
+      unsafe('GATEWAY_JWT_SECRET_PREVIOUS still accepts the published development default — anything signed under it verifies until it is dropped');
     }
     if (config.evidence.storePath === '') {
-      warnings.push(
+      advise(
         'EVIDENCE_STORE_PATH is unset — the platform records evidence hashes but holds no files, so a chain is only as good as whoever still has the original',
       );
     }
     if (config.signing.privateKeyPem === '') {
-      warnings.push(
+      advise(
         'SIGNING_PRIVATE_KEY_PEM is unset — the platform cannot witness a signature, and every signing request will be refused',
       );
     }
     if (config.ledger.journalPath === '') {
       // The loudest thing this function says, because it is the only one that
       // loses the entire record rather than degrading a feature.
-      warnings.push(
+      unsafe(
         'LEDGER_JOURNAL_PATH is unset — the ledger is in memory only and EVERY RECORD IS LOST ON RESTART',
       );
     }
     if (!config.ledger.fsync) {
-      warnings.push('LEDGER_JOURNAL_FSYNC is disabled — events may be acknowledged before reaching the disk');
+      unsafe('LEDGER_JOURNAL_FSYNC is disabled — events may be acknowledged before reaching the disk');
     }
     if (config.evidence.masterKey === '' && config.evidence.storePath !== '') {
-      warnings.push(
+      unsafe(
         'EVIDENCE_MASTER_KEY is unset — evidence is stored in the clear, so a stolen volume or a backup copy is a readable archive of every customer\'s site photographs, signed instructions and scanned contracts',
       );
     }
     if (config.demo.enabled) {
-      warnings.push(
+      unsafe(
         'DEMO_TENANCY_ENABLED is on in production — any anonymous visitor can sign into the demonstration tenancy and spend its AI wallet. Set it to false on a deployment holding real customer records',
       );
     }
     if (config.ledger.postgresMode === 'off' && config.postgres.host !== '') {
-      warnings.push(
+      advise(
         'POSTGRES_HOST is set and LEDGER_POSTGRES_MODE is off — the database is configured and the ledger is not being shipped to it',
       );
     }
     {
       const raw = (process.env.LEDGER_POSTGRES_MODE ?? '').trim().toLowerCase();
       if (raw !== '' && raw !== 'off' && raw !== 'mirror' && raw !== 'primary' && raw !== 'follower') {
-        warnings.push(`LEDGER_POSTGRES_MODE is "${raw}", which is not off, mirror, primary or follower — the ledger store is off`);
+        advise(`LEDGER_POSTGRES_MODE is "${raw}", which is not off, mirror, primary or follower — the ledger store is off`);
       }
     }
     if (config.ai.mode !== 'production') {
-      warnings.push(`AI_MODE is "${config.ai.mode}" in a production environment`);
+      advise(`AI_MODE is "${config.ai.mode}" in a production environment`);
     }
-    if (!config.auth.required) warnings.push('GATEWAY_REQUIRE_AUTH is disabled in production');
+    if (!config.auth.required) unsafe('GATEWAY_REQUIRE_AUTH is disabled in production');
     if (config.platform.operatorEmail === '') {
-      warnings.push(
+      advise(
         'PLATFORM_OPERATOR_EMAIL is unset — if this deployment has no operator yet, nobody can sign in and no tenancy can be created',
       );
     }
@@ -1852,14 +1928,14 @@ export function assertProductionSafety(): string[] {
       ['AI_PERCEPTION_PROVIDER', config.ai.perceptionProvider],
     ] as const) {
       if (!['OPENAI', 'GEMINI', 'ANTHROPIC'].includes(value)) {
-        warnings.push(`${key} is "${value}", which is not a provider this platform can call — the default is being used instead`);
+        advise(`${key} is "${value}", which is not a provider this platform can call — the default is being used instead`);
       }
     }
     // Set but unusable is worse than unset here, because unset is an announced
     // state ("semantic search is off") and this one looks configured while
     // every embedding call is refused.
     if (config.ai.embeddingProvider !== '' && !['OPENAI', 'GEMINI'].includes(config.ai.embeddingProvider)) {
-      warnings.push(
+      advise(
         `AI_EMBEDDING_PROVIDER is "${config.ai.embeddingProvider}", which publishes no embedding endpoint this ` +
           'platform can call — semantic search is off. Set OPENAI or GEMINI, or leave it unset',
       );
@@ -1869,12 +1945,12 @@ export function assertProductionSafety(): string[] {
     // contract, a claim or safety material will be refused at the point of use.
     // Better said at boot than discovered by a user mid-command.
     if (Object.keys(config.ai.providerClearance).length === 0 && config.ai.mode === 'production') {
-      warnings.push(
+      advise(
         `AI_PROVIDER_CLEARANCE is unset — every provider is capped at ${config.ai.defaultClearance}, so any AI request carrying commercial, safety or legally privileged records will be refused. Set it once the data processing agreement with each vendor is in place.`,
       );
     }
     if (config.rateLimit.redisUrl === '') {
-      warnings.push(
+      advise(
         'GATEWAY_RATE_LIMIT_REDIS_URL is unset — rate limits are per-process, so N replicas enforce N times the configured limit',
       );
     }
@@ -1882,33 +1958,33 @@ export function assertProductionSafety(): string[] {
     // key without one is the dangerous half: checkout opens, the customer pays,
     // and there is nothing that can verify the notification saying so.
     if (config.stripe.secretKey !== '' && config.stripe.webhookSecret === '') {
-      warnings.push(
+      advise(
         'STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not — card payments would be taken and never credited, so the checkout route stays disabled until both are present',
       );
     }
     if (config.stripe.webhookSecret !== '' && config.stripe.secretKey === '') {
-      warnings.push('STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not — no checkout can be opened');
+      advise('STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not — no checkout can be opened');
     }
     // A live key against a test webhook secret, or the reverse. Stripe prefixes
     // its keys, so this one mistake is catchable before a customer finds it.
     if (config.stripe.secretKey.startsWith('sk_test_')) {
-      warnings.push('STRIPE_SECRET_KEY is a test key on a production deployment — no real payment can be taken');
+      advise('STRIPE_SECRET_KEY is a test key on a production deployment — no real payment can be taken');
     }
     // The same half-configured trap on the mobile-money rail.
     if (config.koda.secretKey !== '' && config.koda.webhookSecret === '') {
-      warnings.push(
+      advise(
         'KODA_SECRET_KEY is set but KODA_WEBHOOK_SECRET is not — mobile-money payments would be taken and never credited, so the checkout route stays disabled until both are present',
       );
     }
     if (config.koda.webhookSecret !== '' && config.koda.secretKey === '') {
-      warnings.push('KODA_WEBHOOK_SECRET is set but KODA_SECRET_KEY is not — no mobile-money checkout can be opened');
+      advise('KODA_WEBHOOK_SECRET is set but KODA_SECRET_KEY is not — no mobile-money checkout can be opened');
     }
     // The AI price is a range with two ends, and they have to be the right way
     // round. Inverted, the ladder would charge the largest consumers the most
     // and the smallest the least — the opposite of the rule, and invisible,
     // because every rung still clears the profit floor and nothing fails.
     if (config.billing.maxMarkupMultiplier < config.billing.markupMultiplier) {
-      warnings.push(
+      advise(
         `ACU_MAX_MARKUP_MULTIPLIER (${config.billing.maxMarkupMultiplier}) is below ACU_MARKUP_MULTIPLIER ` +
           `(${config.billing.markupMultiplier}) — the AI price range is inverted, so heavy consumers are charged more than light ` +
           'ones. The floor still holds, so nothing sells at a loss; the ladder is simply upside down.',
@@ -1919,7 +1995,7 @@ export function assertProductionSafety(): string[] {
     // refuses it — but at the point of payment, which is far too late to find
     // out. Say so at boot instead.
     if (config.koda.secretKey !== '' && !(config.koda.usdPerGbp > 0)) {
-      warnings.push(
+      advise(
         config.koda.usdPerGbp === 0
           ? 'KODA_SECRET_KEY is set but KODA_USD_PER_GBP is not — mobile-money settlements have no rate to convert at and will be ' +
             'refused. Set it to the rate you are prepared to settle at; there is deliberately no default, because a rate nobody ' +
@@ -1928,18 +2004,18 @@ export function assertProductionSafety(): string[] {
       );
     }
     if (config.newsletter.enabled && !config.smtp.host) {
-      warnings.push('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
+      advise('NEWSLETTER_ENABLED is on but SMTP_HOST is unset — issues will be recorded, not delivered');
     }
     if (config.marketing.releaseEnabled && !config.marketing.linkedinAccessToken && !config.marketing.xAccessToken && !config.marketing.announceTo) {
-      warnings.push('MARKETING_RELEASE_ENABLED is on with no distribution channel configured — the daily release will publish and tell nobody');
+      advise('MARKETING_RELEASE_ENABLED is on with no distribution channel configured — the daily release will publish and tell nobody');
     }
     if (config.marketing.linkedinAccessToken !== '' && config.marketing.linkedinOrgId === '') {
-      warnings.push('LINKEDIN_ACCESS_TOKEN is set without LINKEDIN_ORG_ID — LinkedIn has no organisation to post as');
+      advise('LINKEDIN_ACCESS_TOKEN is set without LINKEDIN_ORG_ID — LinkedIn has no organisation to post as');
     }
     if (config.newsletter.enabled && config.publicBaseUrl.startsWith('http://')) {
       // Unsubscribe links carry a signed token. Over http they are readable in
       // transit, and a mail client following one leaks it to every hop.
-      warnings.push('PUBLIC_BASE_URL is not https — unsubscribe links would be sent over cleartext');
+      unsafe('PUBLIC_BASE_URL is not https — unsubscribe links would be sent over cleartext');
     }
     for (const [key, address] of [
       ['NEWSLETTER_FROM_ADDRESS', config.newsletter.fromAddress],
@@ -1947,7 +2023,7 @@ export function assertProductionSafety(): string[] {
     ] as const) {
       const foreign = foreignSenderDomain(address, config.publicBaseUrl);
       if (foreign) {
-        warnings.push(
+        advise(
           `${key} sends as "${foreign.sender}" but this deployment serves "${foreign.origin}" — ` +
             'mail from it will fail SPF unless that domain authorises this sender',
         );
@@ -1955,7 +2031,7 @@ export function assertProductionSafety(): string[] {
     }
   }
   if (config.smtp.host && config.smtp.pass === '' && config.smtp.user !== '') {
-    warnings.push('SMTP_USER is set without SMTP_PASS — authentication will fail');
+    advise('SMTP_USER is set without SMTP_PASS — authentication will fail');
   }
 
   // The check that had to live outside the block above, and why.
@@ -1995,7 +2071,7 @@ export function assertProductionSafety(): string[] {
     if (config.auth.jwtSecret !== 'construx-development-secret') looksPublic.push('a deployment-specific signing secret is set');
 
     if (looksPublic.length >= 2) {
-      warnings.push(
+      unsafe(
         `NODE_ENV is "${config.env}", not "production", on a deployment that looks live (${looksPublic.join('; ')}). ` +
           'While it stays that way the login route returns the one-time sign-in code to any anonymous caller for any ' +
           'address, and POST /v1/console/session hands out a working access token with no credential at all. Every ' +
@@ -2004,5 +2080,17 @@ export function assertProductionSafety(): string[] {
     }
   }
 
-  return warnings;
+  return found;
+}
+
+/**
+ * The same warnings as plain strings, in the same order.
+ *
+ * Unchanged on purpose: the boot banner prints these, the readiness report
+ * carries them verbatim, and the platform agent reads them. None of those three
+ * is deciding whether to wake anybody, so none of them needs the severity — and
+ * changing what they receive would be a wide edit in service of nothing.
+ */
+export function assertProductionSafety(): string[] {
+  return productionSafetyWarnings().map((warning) => warning.text);
 }

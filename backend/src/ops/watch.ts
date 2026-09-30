@@ -1,6 +1,6 @@
 import { statfsSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { assertProductionSafety, config } from '../config.ts';
+import { config, productionSafetyWarnings } from '../config.ts';
 import { counters } from '../api/telemetry.ts';
 import { ping, scannerAddress, scannerConfigured } from '../evidence/scanner.ts';
 import { entriesByCodePrefix, outboxPosition, queue } from '../notifications/outbox.ts';
@@ -236,17 +236,33 @@ export const WATCH_RULES: WatchRule[] = [
     // A setting is exactly as unset at 09:30 as it was at 09:00. Told once,
     // again if a different setting goes wrong, and once when it is fixed.
     standing: true,
-    // Reuses `assertProductionSafety` rather than restating its rules. One
+    // Reuses `productionSafetyWarnings` rather than restating its rules. One
     // source of truth for what "unsafe" means, read by the boot banner and by
     // this; a second copy here would drift and the drift would be silent.
+    //
+    // **Only the UNSAFE half raises this.** It used to raise on every string the
+    // function returned, which put an unset `AI_PROVIDER_CLEARANCE` — a setting
+    // whose absence makes the platform refuse *more* — into a CRITICAL notice
+    // sent regardless of notification preferences, under the heading "less safe
+    // than it looks". An operator cleared that alert by writing a clearance line
+    // that lowered a vendor below the default, which switched off every drawing
+    // measurement on the deployment. The alert caused the outage it was
+    // ostensibly protecting against.
+    //
+    // The advisory ones are not hidden: they are on the boot banner, they are on
+    // the readiness report, and they are counted in the detail here so a reader
+    // of this rule can see there are others. They simply do not wake anybody.
     observe: () => {
-      const warnings = assertProductionSafety();
+      const all = productionSafetyWarnings();
+      const unsafe = all.filter((warning) => warning.severity === 'UNSAFE');
+      const advisory = all.length - unsafe.length;
+      const also = advisory === 0 ? '' : ` (${advisory} advisory setting${advisory === 1 ? '' : 's'} on readiness, none of them a risk)`;
       return {
         judged: true,
-        breached: warnings.length > 0,
-        value: warnings.length,
+        breached: unsafe.length > 0,
+        value: unsafe.length,
         threshold: 0,
-        detail: warnings.length === 0 ? 'Nothing unsafe' : warnings.join('; '),
+        detail: unsafe.length === 0 ? `Nothing unsafe${also}` : `${unsafe.map((warning) => warning.text).join('; ')}${also}`,
       };
     },
   },

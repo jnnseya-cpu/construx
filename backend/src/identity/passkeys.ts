@@ -387,7 +387,36 @@ export function relyingParty(): { id: string; origin: string; name: string } {
     // A base URL that will not parse is a deployment fault, not a request
     // fault. Registration below refuses rather than guessing a host.
   }
-  return { id: host, origin, name: 'CONSTRUX' };
+  return { id: rpIdFor(host), origin, name: 'CONSTRUX' };
+}
+
+/**
+ * The relying-party id: the configured one where it is legal, otherwise the host.
+ *
+ * A deployment served on `www.example.com` gets the id `www.example.com` unless
+ * it says otherwise, and passkeys registered under that id work on that one
+ * hostname and nowhere else. `AUTH_PASSKEY_RP_ID=example.com` widens it to every
+ * subdomain, which is what a deployment wants the moment it has more than one.
+ *
+ * Validated rather than trusted, and the validation is the whole point. WebAuthn
+ * permits an id that is the origin's host or a registrable suffix of it, and
+ * nothing else; a value outside that is rejected by the *browser*, so the
+ * failure arrives as a ceremony that will not start, or as "that credential
+ * belongs to a different site" on a sign-in months later. Falling back to the
+ * host keeps passkeys working on a deployment that mistyped this.
+ *
+ * The suffix test is deliberately strict about the dot. `notexample.com` ends
+ * with `example.com` as a string and is a different registration entirely, so a
+ * bare `endsWith` here would be the same class of bug as a `startsWith` origin
+ * check — the one the exact-match comparison above exists to avoid.
+ */
+export function rpIdFor(host: string): string {
+  const configured = config.auth.passkeyRpId.trim().toLowerCase().replace(/\.$/, '');
+  if (configured === '') return host;
+  const lower = host.toLowerCase();
+  if (configured === lower) return configured;
+  if (lower.endsWith(`.${configured}`) && configured.includes('.')) return configured;
+  return host;
 }
 
 // --- Registration ------------------------------------------------------------

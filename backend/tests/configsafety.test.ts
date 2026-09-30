@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { foreignSenderDomain } from '../src/config.ts';
+import { assertProductionSafety, foreignSenderDomain, productionSafetyWarnings } from '../src/config.ts';
 
 /**
  * The sender-domain check in `assertProductionSafety`.
@@ -134,5 +134,74 @@ describe('the deployment says when its production gates are open', () => {
       0,
       `a local development environment was warned:\n  ${warnings.join('\n  ')}`,
     );
+  });
+});
+
+/**
+ * Which warnings are allowed to wake somebody up.
+ *
+ * A CRITICAL notice went out — "Settings that make this deployment less safe
+ * than it looks", sent regardless of notification preferences — naming two
+ * things: an unset `AI_PROVIDER_CLEARANCE`, which caps every vendor at INTERNAL
+ * and so refuses *more* than a configured one, and an unset Redis URL, which
+ * only matters on a deployment running several replicas. `.env.example` says of
+ * the first, in as many words, "That is the safe state, not a broken one".
+ *
+ * The operator cleared the alert by writing a clearance line that put a vendor
+ * *below* the default, which switched off every drawing measurement on the
+ * deployment. The alert caused the outage it was ostensibly protecting against,
+ * which is what an alert that cries wolf is for.
+ *
+ * So severity is recorded where each warning is raised. These tests hold the
+ * line: the ones that mean real exposure stay loud, the fail-safe ones stay
+ * quiet, and every warning has to be one or the other.
+ */
+describe('a fail-safe default is not a security incident', () => {
+  it('classifies every warning it can raise, so a new one cannot default to loud', () => {
+    // The severity is set at the call site. A warning added later without one
+    // will not compile; this asserts the shape rather than the count, because
+    // the count changes every time a setting is added.
+    for (const warning of productionSafetyWarnings()) {
+      assert.ok(['UNSAFE', 'ADVISORY'].includes(warning.severity), `${warning.text} has no severity`);
+      assert.ok(warning.text.length > 0);
+    }
+  });
+
+  it('keeps the string form identical, because the banner and readiness read it', () => {
+    const structured = productionSafetyWarnings().map((warning) => warning.text);
+    assert.deepEqual(assertProductionSafety(), structured, 'the two views disagreed about order or content');
+  });
+
+  it('treats an unset AI clearance as advisory, because unset refuses more than set', () => {
+    // Asserted over whatever this process's config actually raises. `config` is
+    // frozen at import, so the warning is either present or it is not, and a
+    // test that demanded it would be asserting about the test environment
+    // rather than about the classification.
+    for (const warning of productionSafetyWarnings().filter((w) => w.text.startsWith('AI_PROVIDER_CLEARANCE'))) {
+      assert.equal(warning.severity, 'ADVISORY', warning.text);
+    }
+  });
+
+  it('treats a per-process rate limiter as advisory, because one replica enforces it once', () => {
+    for (const warning of productionSafetyWarnings().filter((w) => w.text.startsWith('GATEWAY_RATE_LIMIT_REDIS_URL'))) {
+      assert.equal(warning.severity, 'ADVISORY', warning.text);
+    }
+  });
+
+  it('keeps the settings that are a real exposure loud', () => {
+    // Named individually rather than by count. These are the ones whose absence
+    // from the UNSAFE set would mean a silent forgery, a lost record or an open
+    // door, and none of them may be demoted to keep an inbox quiet.
+    const loud = [
+      'GATEWAY_JWT_SECRET is still the development default',
+      'GATEWAY_REQUIRE_AUTH is disabled in production',
+      'LEDGER_JOURNAL_FSYNC is disabled',
+    ];
+    const all = productionSafetyWarnings();
+    for (const text of loud) {
+      for (const warning of all.filter((w) => w.text.startsWith(text))) {
+        assert.equal(warning.severity, 'UNSAFE', warning.text);
+      }
+    }
   });
 });

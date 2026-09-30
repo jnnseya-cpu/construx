@@ -32,6 +32,7 @@ import {
   parseAuthenticatorData,
   passkeysFor,
   relyingParty,
+  rpIdFor,
   resetPasskeys,
   revokePasskey,
   verifyAssertion,
@@ -1072,5 +1073,83 @@ describe('device binding, enforced by the gateway', () => {
     // And it is a human act by an actor with a name, never an agent's.
     const revocation = after.find((event) => event.eventType === 'DEVICE_REVOKED')!;
     assert.equal(revocation.actor.refType, 'User');
+  });
+});
+
+/**
+ * Which hostnames a registered passkey will work on.
+ *
+ * Unset, the relying-party id is the host from `PUBLIC_BASE_URL`, so a
+ * deployment served on `www.example.com` binds its passkeys to that one name —
+ * not the apex, not a later `app.` subdomain — and changing the id afterwards
+ * invalidates every credential already registered. `AUTH_PASSKEY_RP_ID` widens
+ * it to the registrable domain, which WebAuthn permits and which no amount of
+ * string handling can derive without a public suffix list.
+ *
+ * The validation is the part worth testing. An id the browser rejects does not
+ * fail at boot; it fails as a ceremony that will not start, or as "that
+ * credential belongs to a different site" at a sign-in months later.
+ */
+describe('the relying-party id a passkey is bound to', () => {
+  const auth = config.auth as { passkeyRpId: string };
+  const original = auth.passkeyRpId;
+
+  function withRpId<T>(value: string, run: () => T): T {
+    auth.passkeyRpId = value;
+    try {
+      return run();
+    } finally {
+      auth.passkeyRpId = original;
+    }
+  }
+
+  it('uses the host when nothing is configured', () => {
+    withRpId('', () => {
+      assert.equal(rpIdFor('www.example.com'), 'www.example.com');
+      assert.equal(rpIdFor('example.com'), 'example.com');
+    });
+  });
+
+  it('widens to the registrable domain, which is the point of setting it', () => {
+    withRpId('example.com', () => {
+      // Served on www, credentials usable on the apex and every subdomain.
+      assert.equal(rpIdFor('www.example.com'), 'example.com');
+      assert.equal(rpIdFor('app.example.com'), 'example.com');
+      assert.equal(rpIdFor('example.com'), 'example.com');
+    });
+  });
+
+  it('refuses a suffix that is a different registration, not a parent', () => {
+    // `notexample.com`.endsWith('example.com') is true and they are unrelated
+    // domains. A bare endsWith here is the same bug class as a startsWith
+    // origin check — the one the exact-match comparison exists to avoid.
+    withRpId('example.com', () => {
+      assert.equal(rpIdFor('notexample.com'), 'notexample.com', 'a string suffix is not a domain suffix');
+    });
+  });
+
+  it('refuses an unrelated domain and keeps passkeys working on the host', () => {
+    withRpId('somewhere-else.com', () => {
+      assert.equal(rpIdFor('www.example.com'), 'www.example.com');
+    });
+  });
+
+  it('refuses a bare public suffix, which would claim every domain under it', () => {
+    withRpId('com', () => {
+      assert.equal(rpIdFor('www.example.com'), 'www.example.com', 'a single label is never a relying party');
+    });
+  });
+
+  it('is case and trailing-dot insensitive, because a hostname is', () => {
+    withRpId('  Example.COM. ', () => {
+      assert.equal(rpIdFor('WWW.example.com'), 'example.com');
+    });
+  });
+
+  it('is what relyingParty() actually publishes', () => {
+    withRpId('', () => {
+      const rp = relyingParty();
+      assert.equal(rp.id, new URL(rp.origin).hostname);
+    });
   });
 });

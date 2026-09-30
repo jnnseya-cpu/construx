@@ -25636,3 +25636,64 @@ deployment has to answer — with a redirect, and therefore with a certificate.
 Serving one name and advertising another passes every check that asks "does this
 reach the platform" and fails silently on the two that matter: an exact-match
 origin comparison, and anybody who types the address instead of clicking a link.
+
+### A fail-safe default is not a security incident
+
+An operator was emailed a `CRITICAL` notice — *"Settings that make this
+deployment less safe than it looks"*, sent regardless of notification
+preferences — naming two things: an unset `AI_PROVIDER_CLEARANCE`, which caps
+every vendor at `INTERNAL` and therefore refuses **more** than a configured one,
+and an unset Redis URL, which only matters on a deployment running several
+replicas. `.env.example` says of the first, in as many words, *"That is the safe
+state, not a broken one."*
+
+The `configuration` rule in `ops/watch.ts` raised on every string
+`assertProductionSafety()` returned. That was one flat list of thirty-two, mixing
+a forgeable signing secret and a ledger in memory with a payment rail that is
+half-keyed and correctly disabled.
+
+**The alert then caused the outage it was ostensibly protecting against.** The
+operator cleared it by writing the example line out of `.env.example` —
+`ANTHROPIC:LEGAL_L4,OPENAI:INTERNAL,GEMINI:PUBLIC` — which is a syntax
+illustration, not a configuration. `sensitivityOf()` starts at `INTERNAL` as its
+floor, so there is no such thing as a `PUBLIC` AI request; `GEMINI:PUBLIC` meant
+Gemini could receive nothing at all, and Gemini is the perception provider.
+Every drawing measurement, title block read and scan transcription on that
+deployment was refused from the next restart. Meanwhile the ceiling on the
+reasoning provider was unchanged, so nothing was gained.
+
+Severity is now recorded where each warning is raised, by the code that knows
+why it exists, rather than inferred afterwards from its text — a prefix list in
+`watch.ts` would have been a second copy of the rules, and the drift would have
+been silent. `productionSafetyWarnings()` returns `{ text, severity }`;
+`assertProductionSafety()` returns the same strings in the same order, because
+the boot banner, the readiness report and the platform agent all want exactly
+that and none of them is deciding whether to wake somebody. Ten warnings are
+`UNSAFE` — the development signing secret and both rotation faults, an in-memory
+ledger, `fsync` off, evidence in the clear, a demonstration tenancy on live
+records, authentication disabled, a cleartext base URL carrying unsubscribe
+tokens, and `NODE_ENV` off production on a deployment that looks live. The other
+twenty-two are `ADVISORY`: fail-safe, conditional on a deployment shape this one
+may not have, or a feature simply not wired up. They stay on the boot banner and
+on readiness, and are counted in the rule's detail so nobody thinks they were
+hidden. They no longer wake anybody.
+
+### Which hostnames a passkey is bound to
+
+`relyingParty()` took the WebAuthn relying-party id from `PUBLIC_BASE_URL`'s
+hostname, which is correct and narrow: a deployment served on `www.` binds its
+passkeys to that one name and nowhere else — not the apex, not a later `app.`
+subdomain — and changing the id afterwards invalidates every credential already
+registered. That makes it free to decide exactly once, before anybody holds one.
+
+WebAuthn permits an id that is the origin's host *or a registrable suffix of it*,
+so a site served on `www.example.com` may use `example.com` and cover every
+subdomain at once. Which suffix is registrable cannot be derived here — telling
+`example.co.uk` from `app.example.com` needs a public suffix list and there are
+no runtime dependencies to get one from — and it is a fact the operator already
+knows, so `AUTH_PASSKEY_RP_ID` is stated rather than guessed. It is validated
+rather than trusted: a value that is not the host or a dot-suffix of it falls
+back to the host, because a wrong relying-party id does not fail at boot, it
+fails as *"that credential belongs to a different site"* at somebody's sign-in
+months later. `notexample.com` is not a suffix of `example.com`, and a single
+label is never a relying party.
