@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { analyticsCspHosts, analyticsEnabled, analyticsScriptTag, consentBanner, measurementIds } from '../src/site/analytics.ts';
+import { config } from '../src/config.ts';
 import { page } from '../src/site/layout.ts';
 import { POST_PAGES, render } from '../src/site/index.ts';
 import { absolute } from '../src/site/layout.ts';
@@ -156,5 +157,118 @@ describe('blog posts have addresses, which is what makes them countable', () => 
     // There is no route for an unknown slug, so it never reaches a renderer —
     // it 404s through the ordinary not-found path instead.
     assert.throws(() => render('/blog/not-a-real-post', {} as never, {} as never));
+  });
+});
+
+/**
+ * Which Google product the id actually is.
+ *
+ * `GTM-WSXF4Z8F` is a Tag Manager container. `G-XXXXXXX` is a Google tag. Both
+ * are issued by the same vendor from the same console, both pass the same
+ * identifier check, and they need different scripts — so a container pasted
+ * into the Google tag setting used to load `gtag/js`, which measures nothing,
+ * reports no error, and leaves Tag Assistant unable to connect. Silence that
+ * looks like success is the worst failure a measurement setting can have.
+ *
+ * The loader is a browser file, so it is exercised here against a fake DOM
+ * rather than asserted about by reading its source. A grep would pass on a
+ * branch that never runs.
+ */
+describe('a Tag Manager container is not a Google tag', () => {
+  /** Run `frontend/analytics.js` against a minimal DOM and report what it loaded. */
+  async function runLoader(ids: { meta?: string; google?: string }, consent: string | null) {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const vm = await import('node:vm');
+
+    const injected: string[] = [];
+    const store = new Map<string, string>();
+    if (consent !== null) store.set('construx-measurement-consent', consent);
+
+    const scriptTag = {
+      getAttribute: (name: string) =>
+        name === 'data-meta-pixel' ? (ids.meta ?? '') : name === 'data-google-tag' ? (ids.google ?? '') : null,
+    };
+    const element = () => ({
+      set src(value: string) {
+        injected.push(value);
+      },
+      async: false,
+      setAttribute: () => {},
+    });
+
+    const sandbox: Record<string, unknown> = {
+      document: {
+        currentScript: scriptTag,
+        createElement: element,
+        head: { appendChild: () => {} },
+        getElementById: () => null,
+        addEventListener: () => {},
+        readyState: 'complete',
+      },
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+      },
+      location: { pathname: '/pricing', search: '' },
+      Date,
+      Object,
+      JSON,
+      setTimeout,
+      encodeURIComponent,
+    };
+    sandbox.window = sandbox;
+
+    const source = readFileSync(resolve(import.meta.dirname, '../../frontend/analytics.js'), 'utf8');
+    vm.runInNewContext(source, sandbox);
+    return { injected, sandbox };
+  }
+
+  it('loads gtm.js for a container, not gtag/js', async () => {
+    const { injected } = await runLoader({ google: 'GTM-WSXF4Z8F' }, 'granted');
+
+    assert.ok(
+      injected.some((src) => src === 'https://www.googletagmanager.com/gtm.js?id=GTM-WSXF4Z8F'),
+      `the container was not loaded; injected: ${JSON.stringify(injected)}`,
+    );
+    assert.ok(!injected.some((src) => src.includes('/gtag/js')), 'a container was loaded as a Google tag');
+  });
+
+  it('pushes the container start signal, without which no trigger fires', async () => {
+    const { sandbox } = await runLoader({ google: 'GTM-WSXF4Z8F' }, 'granted');
+    const layer = (sandbox as { dataLayer?: Array<Record<string, unknown>> }).dataLayer ?? [];
+
+    assert.ok(
+      layer.some((entry) => entry['event'] === 'gtm.js' && typeof entry['gtm.start'] === 'number'),
+      'the container loaded and would fire nothing',
+    );
+  });
+
+  it('still loads gtag/js for a Google tag, which is the other half of the fix', async () => {
+    const { injected } = await runLoader({ google: 'G-ABC1234567' }, 'granted');
+
+    assert.ok(injected.some((src) => src.startsWith('https://www.googletagmanager.com/gtag/js?id=G-ABC1234567')));
+    assert.ok(!injected.some((src) => src.includes('/gtm.js')), 'a Google tag was loaded as a container');
+  });
+
+  it('loads neither until consent is given', async () => {
+    const { injected } = await runLoader({ google: 'GTM-WSXF4Z8F', meta: '1661323175615863' }, null);
+    assert.deepEqual(injected, [], 'a vendor script loaded before anybody answered the banner');
+  });
+
+  it('loads nothing at all when the answer was no', async () => {
+    const { injected } = await runLoader({ google: 'GTM-WSXF4Z8F', meta: '1661323175615863' }, 'denied');
+    assert.deepEqual(injected, [], 'a vendor script loaded after a refusal');
+  });
+
+  it('accepts a real container id through the same validator as a Google tag', () => {
+    const google = config.analytics as { googleTagId: string };
+    const original = google.googleTagId;
+    try {
+      google.googleTagId = 'GTM-WSXF4Z8F';
+      assert.equal(measurementIds().google, 'GTM-WSXF4Z8F');
+    } finally {
+      google.googleTagId = original;
+    }
   });
 });

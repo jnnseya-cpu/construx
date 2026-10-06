@@ -1575,7 +1575,20 @@ export const config = {
   analytics: {
     /** Meta (Facebook) pixel id. Digits. */
     metaPixelId: str('ANALYTICS_META_PIXEL_ID', ''),
-    /** Google tag id — `G-XXXXXXX` for GA4, `GT-XXXXXXX` for a Google tag. */
+    /**
+     * Google tag or Tag Manager container.
+     *
+     * `G-XXXXXXX` for GA4 and `GT-XXXXXXX` for a Google tag both load gtag.js;
+     * `GTM-XXXXXXX` is a Tag Manager container and loads gtm.js instead. The
+     * loader decides from the prefix, because the two are different products
+     * from the same console and pasting one where the other belongs used to
+     * measure nothing without reporting an error.
+     *
+     * A container's own tags are still subject to this site's content-security
+     * policy, which admits googletagmanager.com and the two beacon hosts and
+     * nothing else. A container is not a way around the measurement decisions
+     * already made here.
+     */
     googleTagId: str('ANALYTICS_GOOGLE_TAG_ID', ''),
 
     /**

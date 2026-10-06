@@ -48,6 +48,28 @@ import { config } from '../config.ts';
  * unaffected by ad blockers. That is not built.
  */
 
+/*
+ * The Tag Manager `<noscript>` iframe is deliberately absent.
+ *
+ * Google's install instructions pair the container script with an iframe to
+ * `ns.html` for visitors without JavaScript. It is not here and must not be
+ * added, for a reason that outranks the measurement it would recover:
+ * **a `<noscript>` iframe cannot be consent-gated.** There is no script to hold
+ * it back, so it loads for everybody the instant the page renders — which is
+ * exactly the "reporting while the banner is still on screen" that this whole
+ * module is built to prevent, and under PECR it is the part that is actually
+ * unlawful rather than merely untidy.
+ *
+ * It would also be refused on arrival: every policy this platform serves ends
+ * `frame-ancestors 'none'` and declares no `frame-src`, so with `default-src
+ * 'none'` the frame is blocked before it loads. Adding the markup would produce
+ * a console error on every page view and measure nobody.
+ *
+ * The population it recovers is visitors who have JavaScript disabled, who
+ * cannot be asked for consent and therefore cannot lawfully be measured. The
+ * correct number of them to report is zero.
+ */
+
 /** Hosts the vendors serve their scripts from. */
 const SCRIPT_HOSTS = 'https://connect.facebook.net https://www.googletagmanager.com';
 

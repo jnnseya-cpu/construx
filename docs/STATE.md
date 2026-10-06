@@ -25766,3 +25766,41 @@ perfectly healthy.
 event type exists in the sender and nothing calls it yet, because the conversion
 worth optimising a cold campaign against is the registration, and a second event
 competing for the same optimisation is how an ad set learns the wrong thing.
+
+### A container is not a tag
+
+`frontend/analytics.js` loaded `gtag/js` for whatever `ANALYTICS_GOOGLE_TAG_ID`
+held. The identifier check accepts `GTM-WSXF4Z8F` quite happily — three letters,
+a hyphen, alphanumerics — so a Tag Manager container configured there loaded the
+Google tag script, measured nothing, reported no error, and left Tag Assistant
+unable to connect. Silence that looks like success is the worst failure a
+measurement setting can have, and the two products come from the same console,
+which is precisely why somebody pastes one where the other belongs.
+
+The loader now decides from the prefix: `GTM-` loads `gtm.js` and pushes the
+container's own `gtm.start` signal, without which the container loads and fires
+no trigger — the same silence by a different route. `G-`, `GT-` and `AW-` take
+gtag.js as before. Events follow the same split: a container has no `gtag`, so
+they reach it as `dataLayer` pushes keyed on the event name, which is what
+somebody types into a Tag Manager trigger.
+
+Tested against a fake DOM in `node:vm` rather than by reading the source, because
+a grep passes on a branch that never runs. Six assertions: the container loads
+`gtm.js` and not `gtag/js`, the start signal is pushed, a Google tag still loads
+`gtag/js` and not `gtm.js`, and neither loads at all before consent or after a
+refusal.
+
+**The `<noscript>` iframe Google pairs with the container is deliberately
+absent, and must stay absent.** It cannot be consent-gated — there is no script
+to hold it back — so it loads for everybody the instant the page renders, which
+is the "reporting while the banner is still on screen" the whole module exists
+to prevent, and is the part of PECR that is actually unlawful rather than untidy.
+It would also be refused on arrival: every policy here ends `frame-ancestors
+'none'` and declares no `frame-src` under `default-src 'none'`. The population it
+recovers is visitors with JavaScript disabled, who cannot be asked for consent
+and therefore cannot lawfully be measured. The correct number to report is zero.
+
+A container's tags remain subject to this site's content-security policy, which
+admits googletagmanager.com and the two beacon hosts and nothing else. A
+container is not a way around the measurement decisions already made here, and
+anybody adding a tag to it should be told so before they wonder why it is blocked.

@@ -38,6 +38,23 @@
   var GOOGLE = tag.getAttribute('data-google-tag') || '';
   if (!META && !GOOGLE) return;
 
+  /**
+   * Whether the Google id is a Tag Manager container rather than a Google tag.
+   *
+   * `GTM-XXXXXXX` is a container: a different script, a different bootstrap and
+   * a different way of receiving events. `G-`, `GT-` and `AW-` are Google tags
+   * and take gtag.js. Both are issued by the same vendor from the same console,
+   * which is exactly why somebody pastes one where the other belongs.
+   *
+   * **A container's own tags are still subject to this site's content-security
+   * policy.** The policy admits googletagmanager.com and the two beacon hosts
+   * and nothing else, so a container configured to load a third vendor's script
+   * will have that script blocked. That is the policy working, not a fault —
+   * but it means a container is not a way around the measurement decisions this
+   * site has already made, and anybody adding a tag should be told so.
+   */
+  var IS_CONTAINER = /^GTM-/i.test(GOOGLE);
+
   var KEY = 'construx-measurement-consent';
 
   /**
@@ -88,16 +105,33 @@
     }
 
     if (GOOGLE) {
+      // The dataLayer is shared by both Google products and has to exist before
+      // either script runs, because both of them drain whatever is already in it.
       window.dataLayer = window.dataLayer || [];
-      window.gtag = function () {
-        window.dataLayer.push(arguments);
-      };
-      window.gtag('js', new Date());
-      // The page path only. No query string: the site's own links carry a
-      // package name, and there is no reason to hand more than the page.
-      window.gtag('config', GOOGLE, { page_path: location.pathname });
 
-      inject('https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GOOGLE));
+      if (IS_CONTAINER) {
+        // Tag Manager. A different product from the Google tag, with a different
+        // script and a different bootstrap, and the reason this branch exists:
+        // the id validator accepts GTM-XXXXXXX quite happily, so a container id
+        // configured here used to load gtag/js, which silently measures nothing
+        // — no error, no tag, and a Tag Assistant that never connects.
+        //
+        // `gtm.start` is the container's own start signal. Without it the
+        // container loads and fires no trigger, which is the same silence by a
+        // different route.
+        window.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' });
+        inject('https://www.googletagmanager.com/gtm.js?id=' + encodeURIComponent(GOOGLE));
+      } else {
+        window.gtag = function () {
+          window.dataLayer.push(arguments);
+        };
+        window.gtag('js', new Date());
+        // The page path only. No query string: the site's own links carry a
+        // package name, and there is no reason to hand more than the page.
+        window.gtag('config', GOOGLE, { page_path: location.pathname });
+
+        inject('https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(GOOGLE));
+      }
     }
 
     replay();
@@ -130,7 +164,16 @@
   function send(name, params) {
     var meta = MAP[name];
     if (META && meta && window.fbq) window.fbq('track', meta, params || {});
-    if (GOOGLE && window.gtag) window.gtag('event', name, params || {});
+    if (!GOOGLE) return;
+    if (IS_CONTAINER) {
+      // A container has no gtag. Events reach it as dataLayer pushes, and the
+      // tags inside it are triggered on the event name — so the name here is
+      // what somebody types into a Tag Manager trigger, and renaming it breaks
+      // their container rather than this file.
+      if (window.dataLayer) window.dataLayer.push(Object.assign({ event: name }, params || {}));
+    } else if (window.gtag) {
+      window.gtag('event', name, params || {});
+    }
   }
 
   /**
