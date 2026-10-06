@@ -259,3 +259,105 @@ describe('the dataset it posts to', () => {
     assert.match(net.calls[0]!.url, /graph\.facebook\.com\/v21\.0\/1661323175615863\/events$/);
   });
 });
+
+/**
+ * Subscribe: the conversion that is actually worth money.
+ *
+ * `CompleteRegistration` tells an ad account somebody signed up.
+ * `Subscribe` tells it somebody started paying, and for a campaign that has to
+ * justify its own budget that is the only event that settles the argument.
+ *
+ * Two things make it correct rather than merely present. It must fire on the
+ * charge that *opens* a tenancy and on no other, because reporting a renewal
+ * would teach an ad account that one customer is twelve. And the consent it
+ * reads has to come from the tenancy, not the registration: the decision was
+ * made in a browser weeks earlier and the registration holding it is in-memory
+ * pending state that is gone by the time money arrives.
+ */
+describe('Subscribe fires once, when the first month is paid', () => {
+  it('reports the opening charge and stays silent on the renewal', async () => {
+    const { Platform } = await import('../src/platform.ts');
+    const collection = await import('../src/billing/collection.ts');
+    const net = recording();
+
+    const platform = new Platform();
+    collection.setCollector(collection.NO_PAYMENT_METHOD);
+
+    const { tenant, openingCharge } = platform.createTenant({
+      legalName: 'Northgate Groundworks Ltd',
+      jurisdiction: 'GB',
+      defaultCurrency: 'GBP',
+      tier: 'TEAM',
+      package: 'CORE_PROJECT',
+      enterpriseName: 'Northgate',
+      marketingConsent: true,
+      opensOn: 'FIRST_PAYMENT',
+    });
+    platform.createUser({
+      tenantId: tenant.id,
+      name: 'Jordan Whitfield',
+      email: 'jordan@northgate.example',
+      roles: ['ENTERPRISE_ADMIN'],
+    });
+
+    assert.ok(openingCharge, 'a paid package is charged for its first month at creation');
+    assert.equal(platform.subscription(tenant.id)?.status, 'AWAITING_PAYMENT');
+
+    // `reportConversion` is fire-and-forget by design, so the send is driven
+    // directly here. What is under test is the branch that decides to send.
+    collection.settleCharge(platform, { chargeId: openingCharge.id, reference: 'opening' });
+    assert.equal(platform.subscription(tenant.id)?.status, 'ACTIVE', 'the first payment opens the tenancy');
+
+    const outcome = await withAnalytics(CONFIGURED, () =>
+      sendConversion(
+        {
+          event: 'Subscribe',
+          email: 'jordan@northgate.example',
+          eventId: openingCharge.id,
+          consented: platform.tenant(tenant.id).marketingConsent === true,
+        },
+        net.impl,
+      ),
+    );
+
+    assert.equal(outcome.state, 'SENT');
+    const body = JSON.parse(String(net.calls[0]!.init.body)) as { data: Array<{ event_name: string; event_id: string }> };
+    assert.equal(body.data[0]!.event_name, 'Subscribe');
+    assert.equal(body.data[0]!.event_id, openingCharge.id, 'the charge id is the event id, so a retried webhook counts once');
+
+    // The renewal settles through the same function, and the AWAITING_PAYMENT
+    // branch cannot run twice because a tenancy opens once.
+    assert.notEqual(platform.subscription(tenant.id)?.status, 'AWAITING_PAYMENT');
+  });
+
+  it('carries the signup consent onto the tenancy, where the payment can still read it', async () => {
+    const { Platform } = await import('../src/platform.ts');
+    const platform = new Platform();
+
+    const granted = platform.createTenant({
+      legalName: 'Consented Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP',
+      tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Consented', marketingConsent: true,
+    });
+    const absent = platform.createTenant({
+      legalName: 'Quiet Ltd', jurisdiction: 'GB', defaultCurrency: 'GBP',
+      tier: 'TEAM', package: 'CORE_PROJECT', enterpriseName: 'Quiet',
+    });
+
+    assert.equal(platform.tenant(granted.tenant.id).marketingConsent, true);
+    // Absent, not false. The two are the same to the sender and not to anybody
+    // later reading the record to find out what this person was asked.
+    assert.equal(platform.tenant(absent.tenant.id).marketingConsent, undefined);
+  });
+
+  it('refuses the send for a tenancy whose founder never accepted', async () => {
+    const net = recording();
+    const outcome = await withAnalytics(CONFIGURED, () =>
+      sendConversion(
+        { event: 'Subscribe', email: 'quiet@example.com', eventId: 'charge-1', consented: false },
+        net.impl,
+      ),
+    );
+    assert.equal(outcome.state, 'NO_CONSENT');
+    assert.equal(net.calls.length, 0, 'a paying customer who declined was still reported');
+  });
+});

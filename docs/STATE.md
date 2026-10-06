@@ -25762,10 +25762,35 @@ set, because a forgotten test code is an account that reports nothing and looks
 perfectly healthy.
 
 **Still requires a person:** generating the token in Events Manager and setting
-`ANALYTICS_META_CAPI_TOKEN`. **Not built:** `Subscribe` on first payment — the
-event type exists in the sender and nothing calls it yet, because the conversion
-worth optimising a cold campaign against is the registration, and a second event
-competing for the same optimisation is how an ad set learns the wrong thing.
+`ANALYTICS_META_CAPI_TOKEN`.
+
+### Subscribe, and why it fires exactly once
+
+`CompleteRegistration` tells an ad account somebody signed up. `Subscribe` tells
+it somebody started paying, and for a campaign that has to justify its own
+budget that is the event which settles the argument. It is now reported from
+`billing/collection.ts`, inside the `AWAITING_PAYMENT` branch of `settleCharge`.
+
+**Inside that branch is what makes it *first* payment rather than every
+payment.** A tenancy opens once; the branch runs only on the charge that opens
+it. A renewal settles through the same function and reports nothing, which is
+correct — reporting monthly would teach an ad account that one customer is
+twelve, and it would optimise for whoever renews most often rather than for
+whoever buys.
+
+**Consent is read from the tenancy, not the registration, and that forced a
+change.** The decision is made once, in a browser, at signup; the conversion it
+governs happens when the first month is paid, which can be weeks later. The
+registration carrying it is pending state held in memory and is gone by then. So
+`marketingConsent` is now a field on `Tenant`, carried through `verify()` exactly
+as `referralCode` already was, written into the `TENANT_CREATED` state so it
+survives a replay, and absent rather than `false` where nobody accepted — the
+two are the same to the sender and not to anybody later reading the record to
+find out what this person was actually asked.
+
+The charge id is the event id: unique, already idempotent against a retried
+webhook, and not a secret — it identifies a payment, not a person. The address
+is the founder's, which is the one that registered.
 
 ### A container is not a tag
 

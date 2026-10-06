@@ -431,6 +431,11 @@ export function verify(
     // credits a partner is the one the person actually arrived on — not
     // whatever link happened to be open when they finished verifying.
     referralCode: record.referralCode,
+    // Carried for the same reason, and it has to be: the Subscribe conversion
+    // fires when the first month is paid, which can be weeks later, and the
+    // registration holding this decision is in-memory pending state that will
+    // be gone by then.
+    ...(record.marketingConsent === true ? { marketingConsent: true } : {}),
     // A stranger on a paid package has proved an address and nothing else.
     // The tenancy waits for its first month; a free package opens now.
     opensOn: 'FIRST_PAYMENT',

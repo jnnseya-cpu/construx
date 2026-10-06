@@ -163,6 +163,18 @@ export type Tenant = {
    * programme computes commission by matching against it.
    */
   referralCode?: string;
+  /**
+   * Whether the founder accepted measurement when they signed up.
+   *
+   * Recorded here for the same reason `referralCode` is: the decision is made
+   * once, in a browser, at the moment of signup — and the conversion it governs
+   * can happen weeks later, when the first month is paid. The registration that
+   * carried it is pending state held in memory and is gone by then.
+   *
+   * It governs one thing: whether `site/conversions.ts` may report this
+   * tenancy's conversions to an advertising network. Absent is a refusal.
+   */
+  marketingConsent?: boolean;
 };
 
 export type PlatformUser = {
@@ -449,6 +461,8 @@ export class Platform {
      * worth seeing.
      */
     referralCode?: string;
+    /** The founder's measurement choice, carried from the registration. */
+    marketingConsent?: boolean;
     /**
      * When a paid package opens.
      *
@@ -486,6 +500,9 @@ export class Platform {
       enterpriseId,
       createdAt: new Date().toISOString(),
       referralCode: input.referralCode?.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '') || undefined,
+      // Explicit true only. `?? false` would write a refusal as a decision, and
+      // the two are the same to the sender but not to an auditor reading this.
+      ...(input.marketingConsent === true ? { marketingConsent: true } : {}),
     };
     this.#tenants.set(tenantId, tenant);
 

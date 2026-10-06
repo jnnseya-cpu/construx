@@ -4,6 +4,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import type { Platform } from '../platform.ts';
 import { ensureFirstPortfolio } from '../domain/structure.ts';
+import { reportConversion } from '../site/conversions.ts';
 import { PACKAGES, type PackageTier } from './seats.ts';
 import { subscriptionPriceMinor } from '../group/agreement.ts';
 import { groupOfTenant } from '../group/directory.ts';
@@ -483,6 +484,35 @@ export function settleCharge(
       continentCode: CONTINENT_OF[tenant.jurisdiction] ?? 'EU',
       countryCode: tenant.jurisdiction,
     });
+
+    /*
+     * The conversion that is actually worth money.
+     *
+     * Inside the AWAITING_PAYMENT branch on purpose, which is what makes it
+     * *first* payment rather than every payment: a tenancy opens once, and the
+     * branch only runs on the charge that opens it. A renewal settles through
+     * the same function and reports nothing, which is correct — Subscribe
+     * means somebody started paying, and reporting it monthly would teach an
+     * ad account that one customer is twelve.
+     *
+     * The consent decision is read from the tenancy rather than the
+     * registration. The person chose weeks ago, in a browser, and the
+     * registration that carried it is pending state held in memory; by the time
+     * money arrives it is gone. Absent is a refusal.
+     *
+     * The administrator's address is the one that registered, and the charge id
+     * is the event id — unique, already idempotent against a retried webhook,
+     * and not a secret: it identifies a payment, not a person.
+     */
+    const founder = platform.users(charge.tenantId).find((user) => user.roles.includes('ENTERPRISE_ADMIN'));
+    if (founder) {
+      reportConversion({
+        event: 'Subscribe',
+        email: founder.email,
+        eventId: charge.id,
+        consented: tenant.marketingConsent === true,
+      });
+    }
   }
 
   // Back on, if nothing else is outstanding. A tenancy with two unpaid periods
