@@ -25705,3 +25705,64 @@ back to the host, because a wrong relying-party id does not fail at boot, it
 fails as *"that credential belongs to a different site"* at somebody's sign-in
 months later. `notexample.com` is not a suffix of `example.com`, and a single
 label is never a relying party.
+
+### The conversion the pixel cannot see
+
+`site/analytics.ts` runs the Meta pixel on the public site and deliberately not
+inside `/app`, because a page view from there hands an advertising network a
+customer's commercial position — which projects they run, how fast they are
+moving. That decision stands, and it has a cost the module already admitted to
+in its own header: the click to the signup form is the last measurable step, and
+a confirmed registration cannot be attributed from the browser.
+
+With paid acquisition starting, that cost stopped being theoretical. Every ad
+reports worse than it performed, and an account optimised against a number
+missing its own conversions is worse than one with no number: it is confidently
+wrong and spends in the direction of the error.
+
+`site/conversions.ts` closes it server-side. `verify()` — the moment a proven
+registration becomes a tenancy — reports `CompleteRegistration` to Meta's
+Conversions API, carrying the registration id as the `event_id` so a browser
+event for the same signup is deduplicated rather than double-counted.
+
+Four rules shape it, and three are refusals.
+
+**Consent decides, and consent was given in a browser.** Ad-network conversions
+are not necessary to provide the service, so under UK GDPR and PECR they need
+consent — the same consent the pixel waits for. A server has no special
+permission. The decision is therefore captured at registration
+(`marketingConsent`, read from the consent store by the signup form and posted
+with it) and carried on the record; the sender refuses anything without an
+explicit `true`. Absent is a refusal, not a default. **There is no configuration
+that overrides this**, and the test that matters asserts no request reached the
+network — a `NO_CONSENT` outcome with the request already sent would be a breach
+reported as a refusal.
+
+**Only a hashed address leaves.** SHA-256 of the trimmed, lower-cased email, and
+nothing else of the person: no name, no organisation, no package, no amount, no
+project. Normalised the way Meta normalises and no further — stripping Gmail
+dots or `+` tags here would produce a hash matching nothing, because Meta hashes
+what its other sources gave it unchanged.
+
+**A failure must never reach the customer.** This runs after the tenancy exists
+and the person is already signed in. Every path is caught, nothing throws, and
+`reportConversion` is deliberately not awaited: a tenancy that exists must not
+wait on an advertising network and must never fail because of one.
+
+**No retry queue, and that is a decision rather than an omission.** A conversion
+is worth sending once, promptly; replaying one days later reports it against the
+wrong attribution window and distorts the thing it measures. Failures are named
+on readiness so a refused token is visible, which is the fault worth acting on.
+
+The token is a credential: server-side only, never in a browser, never in the
+readiness detail, and sent as an `Authorization` header rather than in the query
+string where every proxy between here and Meta would log it. Readiness reports
+`analytics.conversions` as `DEGRADED` while `ANALYTICS_META_TEST_EVENT_CODE` is
+set, because a forgotten test code is an account that reports nothing and looks
+perfectly healthy.
+
+**Still requires a person:** generating the token in Events Manager and setting
+`ANALYTICS_META_CAPI_TOKEN`. **Not built:** `Subscribe` on first payment — the
+event type exists in the sender and nothing calls it yet, because the conversion
+worth optimising a cold campaign against is the registration, and a second event
+competing for the same optimisation is how an ad set learns the wrong thing.

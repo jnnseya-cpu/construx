@@ -1577,6 +1577,43 @@ export const config = {
     metaPixelId: str('ANALYTICS_META_PIXEL_ID', ''),
     /** Google tag id — `G-XXXXXXX` for GA4, `GT-XXXXXXX` for a Google tag. */
     googleTagId: str('ANALYTICS_GOOGLE_TAG_ID', ''),
+
+    /**
+     * The Conversions API: the same conversions, sent from here instead of a
+     * browser.
+     *
+     * The pixel stops at the door. It runs on the public site and deliberately
+     * not inside `/app`, so the click to the signup form is the last thing it
+     * can see — and the event that actually matters, a verified registration
+     * becoming a tenancy, happens on this side where no pixel runs. Without
+     * this, every ad reports worse than it performed, and the account is
+     * optimised against a number that is missing its own conversions.
+     *
+     * Server-to-server is also simply more accurate: it is unaffected by ad
+     * blockers, by Safari's storage limits and by somebody closing the tab
+     * before a beacon fires.
+     *
+     * **The token is a credential and never reaches a browser.** It is read
+     * here, used in `site/conversions.ts`, and appears in no response, no
+     * markup and no readiness detail.
+     */
+    metaCapiToken: str('ANALYTICS_META_CAPI_TOKEN', ''),
+    /**
+     * The dataset the events belong to. Empty means the pixel id, which is what
+     * Events Manager shows for a dataset created from a pixel — the common case
+     * — so one variable covers most deployments.
+     */
+    metaDatasetId: str('ANALYTICS_META_DATASET_ID', ''),
+    /**
+     * Events Manager's test code. Set it and every event is routed to the Test
+     * Events tab instead of counting, which is how a deployment proves the wiring
+     * without putting fictional conversions into a live ad account. Unset in
+     * production, deliberately: a forgotten test code is an account that reports
+     * nothing and looks fine.
+     */
+    metaTestEventCode: str('ANALYTICS_META_TEST_EVENT_CODE', ''),
+    /** Graph API version. Pinned, because an unpinned version changes under you. */
+    metaGraphVersion: str('ANALYTICS_META_GRAPH_VERSION', 'v21.0'),
   },
 
   /**

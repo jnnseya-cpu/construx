@@ -7521,6 +7521,12 @@ export const ROUTES: Route[] = [
         // reported as unattributed rather than dropped, because a typo in
         // somebody's link is a fact worth seeing.
         referralCode: { type: 'string', minLength: 3, maxLength: 32 },
+        // The measurement choice made on the public site, sent by the form so
+        // the server knows whether it may report this conversion to an
+        // advertising network. The decision belongs to the person, is made in a
+        // browser, and the server has no other way to learn it. Absent is a
+        // refusal — see `site/conversions.ts`.
+        marketingConsent: { type: 'boolean' },
       },
       additionalProperties: false,
     },

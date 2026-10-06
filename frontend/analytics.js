@@ -161,6 +161,23 @@
   // whether measurement is configured, consented to, or loaded at all.
   window.construxTrack = track;
 
+  /**
+   * The stored measurement choice, for the signup form.
+   *
+   * True only on an explicit grant. The server reports a verified registration
+   * to the Conversions API — a conversion the pixel cannot see, because the
+   * pixel does not run inside the console — and it has no way to learn this
+   * decision except from the form that carries it. Absent, unanswered and
+   * declined all return false, which is the only safe default for a flag that
+   * governs whether somebody is named to an advertising network.
+   *
+   * Undefined where measurement is not configured at all, because this whole
+   * file returns before here. A caller therefore tests the function exists.
+   */
+  window.construxConsent = function () {
+    return stored() === 'granted';
+  };
+
   // ------------------------------------------------------------ the banner
 
   var banner = document.getElementById('consent');

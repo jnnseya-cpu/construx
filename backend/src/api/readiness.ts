@@ -1,5 +1,6 @@
 import { assertProductionSafety, config, environmentReport, isProduction } from '../config.ts';
 import { lastSelfReach } from '../ops/selfreach.ts';
+import * as conversions from '../site/conversions.ts';
 import { signingPosition } from '../identity/secrets.ts';
 import { parseTrustedProxies } from './clientaddress.ts';
 
@@ -560,8 +561,36 @@ export function readiness(now = new Date()): Readiness {
       detail:
         config.analytics.metaPixelId === '' && config.analytics.googleTagId === ''
           ? 'No tag is loaded on the public site, so no third party sees a visitor.'
-          : 'A tag is loaded on the public site. It is not loaded inside the console — delivery data is never handed to an analytics vendor.',
+          : 'A tag is loaded on the public site, behind a consent gate: nothing loads until somebody accepts. It is not loaded inside the console — delivery data is never handed to an analytics vendor.',
       env: ['ANALYTICS_META_PIXEL_ID', 'ANALYTICS_GOOGLE_TAG_ID'],
+    },
+    {
+      key: 'analytics.conversions',
+      label: 'Conversions API',
+      critical: false,
+      // Not critical — a deployment reporting no conversions is safe, it is
+      // simply spending its advertising budget against a number that is missing
+      // its own best events. It is on the list because that failure is silent:
+      // the ads keep running, the pixel keeps reporting clicks, and the only
+      // symptom is a cost per acquisition that looks worse than the truth.
+      state: !conversions.conversionsConfigured()
+        ? 'NOT_SET'
+        : config.analytics.metaTestEventCode !== ''
+          ? 'DEGRADED'
+          : 'CONFIGURED',
+      detail: !conversions.conversionsConfigured()
+        ? 'No token or dataset. The pixel stops at the signup form, so a verified registration — the conversion that ' +
+          'matters — is never reported, and every ad reads worse than it performed.'
+        : config.analytics.metaTestEventCode !== ''
+          ? `Sending to dataset ${conversions.datasetId()} with a test event code set, so every conversion lands in ` +
+            'Events Manager’s Test Events tab and none of them counts. Correct while proving the wiring; clear it ' +
+            'before the spend starts.'
+          : `A verified registration is reported to dataset ${conversions.datasetId()} as CompleteRegistration, with a ` +
+            'hashed address and nothing else, and only where that person accepted measurement. The event id is the ' +
+            'registration id, so a browser event for the same signup is counted once.',
+      // The token is deliberately absent from this list's *values* everywhere,
+      // as the module header requires; naming the variable is documentation.
+      env: ['ANALYTICS_META_CAPI_TOKEN', 'ANALYTICS_META_DATASET_ID', 'ANALYTICS_META_TEST_EVENT_CODE', 'ANALYTICS_META_GRAPH_VERSION'],
     },
   ];
 

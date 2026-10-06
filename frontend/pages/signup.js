@@ -238,6 +238,18 @@ function wire(packages, structures) {
     const referral = new URLSearchParams(location.search).get('ref')?.trim();
     if (referral) input.referralCode = referral.slice(0, 32);
 
+    // The measurement choice this person made on the public site.
+    //
+    // Carried because the server reports a verified registration to Meta's
+    // Conversions API — the conversion the pixel cannot see, because the pixel
+    // deliberately does not run inside the console — and consent for that was
+    // given to a banner in this browser, not to the server. Sent only when it
+    // is an explicit grant. `construxConsent` is undefined on a deployment with
+    // no measurement configured at all, which is the same answer as a refusal.
+    if (typeof window.construxConsent === 'function' && window.construxConsent()) {
+      input.marketingConsent = true;
+    }
+
     try {
       const receipt = await api.post('/v1/signup', input, { anonymous: true });
       // The receipt's own words. It is deliberately non-committal about whether

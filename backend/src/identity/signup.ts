@@ -1,3 +1,4 @@
+import { reportConversion } from '../site/conversions.ts';
 import { randomBytes } from 'node:crypto';
 import { config } from '../config.ts';
 import { ulid } from '../core/ids.ts';
@@ -153,6 +154,16 @@ export type Registration = {
   structure?: AccountStructure;
   /** The referral code the signup link carried, if any. Fixed at registration. */
   referralCode?: string;
+  /**
+   * Whether this person accepted measurement cookies on the public site.
+   *
+   * Carried here because the decision is made in a browser and the conversion
+   * is reported from the server, and the server has no other way to know. Absent
+   * means no — a registration made before this existed, or one where the banner
+   * was never answered, is not consent, and `site/conversions.ts` refuses to
+   * report it.
+   */
+  marketingConsent?: boolean;
   status: RegistrationStatus;
   createdAt: string;
   expiresAt: string;
@@ -242,6 +253,15 @@ export function register(
      * is looking at the numbers.
      */
     referralCode?: string;
+    /**
+     * The measurement choice this person made on the public site.
+     *
+     * Read from the consent store by the signup form and posted with the rest.
+     * Anything but an explicit `true` is treated as a refusal, which is the only
+     * safe default for a flag that governs whether an advertising network is
+     * told about somebody.
+     */
+    marketingConsent?: boolean;
   },
 ): { receipt: RegistrationReceipt; outcome: 'NEW' | 'ALREADY_REGISTERED'; registration?: Registration; token?: string } {
   const email = normaliseEmail(input.email);
@@ -305,6 +325,9 @@ export function register(
     package: input.package,
     structure: input.structure ?? 'COMPANY',
     referralCode: input.referralCode?.trim() || undefined,
+    // Explicit true, or nothing. `?? false` would record a refusal as a
+    // decision; absent is absent, and both are refusals to the sender.
+    ...(input.marketingConsent === true ? { marketingConsent: true } : {}),
     status: 'PENDING_VERIFICATION',
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + VERIFICATION_TTL_MINUTES * 60_000).toISOString(),
@@ -516,6 +539,24 @@ export function verify(
   record.userId = user.id;
   // The token is spent. Keeping it would leave a second working link.
   tokenHashes.delete(record.id);
+
+  // The conversion the pixel cannot see.
+  //
+  // This is the moment a click became a tenancy, and it happens here rather
+  // than in a browser — the pixel runs on the public site and deliberately not
+  // inside the console, so without this every ad reports worse than it
+  // performed. Reported only where the person accepted measurement, carrying a
+  // hashed address and nothing else, and deliberately not awaited: a tenancy
+  // that exists must not wait on an advertising network, and must never fail
+  // because of one. `reportConversion` cannot throw.
+  reportConversion({
+    event: 'CompleteRegistration',
+    email: record.email,
+    // The id the browser would use for the same conversion, so Meta counts one.
+    eventId: record.id,
+    consented: record.marketingConsent === true,
+    at: new Date(record.verifiedAt),
+  });
 
   return {
     registration: record,
