@@ -25829,3 +25829,71 @@ A container's tags remain subject to this site's content-security policy, which
 admits googletagmanager.com and the two beacon hosts and nothing else. A
 container is not a way around the measurement decisions already made here, and
 anybody adding a tag to it should be told so before they wonder why it is blocked.
+
+### The win-rate position
+
+The BidCraft business plan names one discipline worth taking outright:
+*"baseline the client's prior win rate before engaging — unproven uplift is
+unsellable."* It is right, and a platform can hold that discipline where a
+consultant has to remember it.
+
+`winRatePosition` in `domain/learning.ts` is a projection over
+`BID_OUTCOME_RECORDED` events that `recordBidOutcome` already writes. **Nothing
+in it appends anything**, which is what lets it be added to a deployment that
+has been running for a year and immediately report that year's history. It is
+computed on every request and never stored, for the reason `calibrationSignals`
+beside it gives: a stored win rate is a second copy of a conclusion that moves
+every time an outcome is recorded, and the one somebody trusts would be
+whichever screen they opened.
+
+Four properties, three of them refusals.
+
+**A no-bid is not a loss.** An opportunity declined at the bid/no-bid gate never
+competed. Folding those in would make a disciplined business — one that walks
+away from work it cannot win — look like a losing one, and it is the easiest
+possible way to compute a number that is wrong in the direction nobody checks.
+Only settled bids are counted, which is also what a buyer means by the question.
+
+**A win is read from the outcome, not the stage.** A won bid stays at `BID`
+until somebody converts it to a project, which is a separate act with its own
+record, so counting `CONVERTED` would undercount by every job won and not yet
+started.
+
+**Too few bids publishes no rate at all.** Two wins from three is 67%, and a
+business quoting that to a buyer is quoting noise. Below five settled bids a
+segment reports its counts and withholds the percentage, naming why —
+deliberately a higher bar than `MIN_OBSERVATIONS`, because three bids is enough
+to propose a lesson somebody then argues about and not enough to publish a
+figure.
+
+**No baseline is invented.** Given a date, the position reports the rate either
+side of it and the movement in points. Given none, it says so and uses nothing —
+the oldest record is not a baseline, because that date is when somebody started
+recording outcomes rather than when anything changed, and an uplift measured
+from it would be measuring the arrival of the record.
+
+Segmented by client, sector, value band and source, each under the same
+withholding rule. Reachable at `GET /v1/pipeline/win-rate` and on the pipeline
+screen beside the no-bid discipline panel — the doors test refuses a read route
+with no console door, and rightly caught this one before it shipped.
+
+**Not built, deliberately:** anything that learns across tenancies. The plan's
+price-to-win engine accumulates *"which prices won at which scores on which
+frameworks"* across every client and calls it a data network effect. Here that
+would be one customer's commercial position pricing their competitor's bid, and
+tenant isolation is a settled decision. Per-tenant price intelligence already
+exists in `calibrationSignals`, which reads the winning price a buyer disclosed
+on a loss; that is the honest version and it is enough.
+
+### A pre-existing failure, recorded rather than fixed
+
+`paywall.test.ts` — *"a paid package, paid by card through Stripe"* — fails in
+this container with `TypeError: fetch failed` from `stripeRequest`. It is
+unrelated to the win-rate work and fails identically on a clean tree, which was
+checked rather than assumed. The cause is that the test drives
+`createCheckoutSession`, which makes a real outbound call to `api.stripe.com`;
+the network policy in this environment refuses it. That is an environmental
+failure and also a genuine weakness in the test: a unit test that depends on
+reaching a third party is a test that fails for reasons that have nothing to do
+with the code. Recorded here, not touched — uncontrolled scope creates
+regressions.

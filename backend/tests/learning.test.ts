@@ -585,3 +585,191 @@ describe('the loop closes on the estimate', () => {
     assert.match(outlook.reading, /nothing to say about it yet/);
   });
 });
+
+/**
+ * The win-rate position — whether this business is winning, and whether that
+ * is changing.
+ *
+ * A read model over `BID_OUTCOME_RECORDED` events that `recordBidOutcome`
+ * already writes. Nothing here appends anything, which is what lets it be
+ * added to a deployment that has been running for a year and immediately
+ * report its history.
+ *
+ * Four properties, and three of them are refusals.
+ *
+ * **A no-bid is not a loss.** An opportunity declined at the gate never
+ * competed. Folding those in would make a disciplined business — one that
+ * walks away from work it cannot win — look like a losing one, and it is the
+ * easiest possible way to compute a number that is wrong in the direction
+ * nobody checks.
+ *
+ * **A win is read from the outcome, not the stage.** A won bid stays at `BID`
+ * until somebody converts it to a project, so counting `CONVERTED` would
+ * undercount by every job won and not yet started.
+ *
+ * **Too few bids publishes no rate at all.** Two wins from three is 67%, and a
+ * business quoting that to a buyer is quoting noise.
+ *
+ * **No baseline is invented.** An uplift measured from the oldest record is
+ * measuring when somebody started recording, not when anything changed.
+ */
+describe('the win-rate position', () => {
+  /** A fresh tenancy, so the counts are this suite's and nobody else's. */
+  async function bidding() {
+    const p = new Platform();
+    const s = await seedDemoProject(p);
+    const bd = () => p.context(s.users.qs!.auth, `${s.tenantId}-governance`, { source: 'WEB' });
+    const owner = () => p.context(s.users.owner!.auth, `${s.tenantId}-governance`, { source: 'WEB' });
+
+    const put = (input: {
+      title: string;
+      clientName?: string;
+      sectorType?: structure.SectorType;
+      valueMinor?: number;
+      source?: string;
+      bid: boolean;
+      outcome?: learning.BidOutcome;
+      decidedOn?: string;
+    }) => {
+      const { opportunityId } = business.registerOpportunity(bd(), {
+        title: input.title,
+        clientName: input.clientName ?? 'Calderdale Metropolitan Borough Council',
+        sectorType: input.sectorType ?? 'TRANSPORT',
+        estimatedValueMinor: input.valueMinor ?? 100_000_000,
+        source: input.source ?? 'Tender portal',
+      });
+      business.qualifyOpportunity(bd(), opportunityId, scores(3));
+      business.decideBidNoBid(owner(), opportunityId, {
+        bid: input.bid,
+        rationale: input.bid ? 'Priced and pursued' : 'Outside our geography and we would be making up the price',
+      });
+      if (input.outcome) {
+        learning.recordBidOutcome(bd(), opportunityId, {
+          outcome: input.outcome,
+          decidedOn: input.decidedOn ?? '2027-04-01',
+        } as Parameters<typeof learning.recordBidOutcome>[2]);
+      }
+      return opportunityId;
+    };
+
+    return { p, s, bd, owner, put };
+  }
+
+  it('does not count a no-bid as a loss', async () => {
+    const { bd, put } = await bidding();
+    // Three won, one lost, and four walked away from. A business that declines
+    // four jobs it cannot win has a 75% win rate, not 43%.
+    for (const n of [1, 2, 3]) put({ title: `Won ${n}`, bid: true, outcome: 'WON' });
+    put({ title: 'Lost 1', bid: true, outcome: 'LOST' });
+    for (const n of [1, 2, 3, 4]) put({ title: `Declined ${n}`, bid: false });
+
+    const position = learning.winRatePosition(bd());
+
+    assert.equal(position.overall.settled, 4, 'a declined opportunity was counted as a bid');
+    assert.equal(position.overall.won, 3);
+    assert.equal(position.overall.lost, 1);
+  });
+
+  it('withholds a rate below the threshold rather than publishing noise', async () => {
+    const { bd, put } = await bidding();
+    put({ title: 'Won', bid: true, outcome: 'WON' });
+    put({ title: 'Won again', bid: true, outcome: 'WON' });
+    put({ title: 'Lost', bid: true, outcome: 'LOST' });
+
+    const position = learning.winRatePosition(bd());
+
+    assert.equal(position.overall.settled, 3);
+    assert.equal(position.overall.won, 2);
+    // Two from three is 67%. It must not appear.
+    assert.equal(position.overall.rate, null, 'a rate was published from three bids');
+    assert.match(position.summary, /too few to publish a rate/);
+    assert.ok(position.limits.some((line) => line.includes('5')), 'the threshold was not named');
+  });
+
+  it('publishes a rate once there are enough, and counts a win from the outcome not the stage', async () => {
+    const { bd, put } = await bidding();
+    for (const n of [1, 2, 3]) put({ title: `Won ${n}`, bid: true, outcome: 'WON' });
+    for (const n of [1, 2]) put({ title: `Lost ${n}`, bid: true, outcome: 'LOST' });
+
+    const position = learning.winRatePosition(bd());
+
+    assert.equal(position.overall.settled, 5);
+    assert.equal(position.overall.rate, 60);
+    // None of the three wins has been converted to a project. Reading the stage
+    // would have reported nil.
+    assert.equal(position.overall.won, 3, 'a won bid was missed because it is not yet a project');
+  });
+
+  it('states the movement either side of a baseline, and invents one for nobody', async () => {
+    const { bd, put } = await bidding();
+    // Before: one win in five. After: four in five.
+    put({ title: 'Old win', bid: true, outcome: 'WON', decidedOn: '2027-01-10' });
+    for (const n of [1, 2, 3, 4]) put({ title: `Old loss ${n}`, bid: true, outcome: 'LOST', decidedOn: '2027-01-20' });
+    for (const n of [1, 2, 3, 4]) put({ title: `New win ${n}`, bid: true, outcome: 'WON', decidedOn: '2027-06-01' });
+    put({ title: 'New loss', bid: true, outcome: 'LOST', decidedOn: '2027-06-02' });
+
+    const withBaseline = learning.winRatePosition(bd(), { baselineOn: '2027-03-31' });
+    assert.ok(withBaseline.baseline);
+    assert.equal(withBaseline.baseline.before.settled, 5);
+    assert.equal(withBaseline.baseline.before.rate, 20);
+    assert.equal(withBaseline.baseline.after.settled, 5);
+    assert.equal(withBaseline.baseline.after.rate, 80);
+    assert.equal(withBaseline.baseline.movementPoints, 60);
+    assert.match(withBaseline.summary, /up 60 points since 2027-03-31/);
+
+    // Without a date there is no baseline, and the oldest record is not used as
+    // one — that date is when somebody started recording, not when the way of
+    // working changed.
+    const without = learning.winRatePosition(bd());
+    assert.equal(without.baseline, null);
+    assert.ok(without.limits.some((line) => line.includes('No baseline date')));
+  });
+
+  it('segments by client, sector, value and source, and withholds the thin ones', async () => {
+    const { bd, put } = await bidding();
+    for (const n of [1, 2, 3, 4]) {
+      put({ title: `Northgate ${n}`, clientName: 'Northgate Homes', bid: true, outcome: n === 4 ? 'LOST' : 'WON' });
+    }
+    put({ title: 'Northgate 5', clientName: 'Northgate Homes', bid: true, outcome: 'WON' });
+    put({ title: 'One-off', clientName: 'Riverside Trust', bid: true, outcome: 'LOST' });
+
+    const position = learning.winRatePosition(bd());
+
+    const northgate = position.byClient.find((entry) => entry.key === 'Northgate Homes');
+    assert.ok(northgate);
+    assert.equal(northgate.settled, 5);
+    assert.equal(northgate.rate, 80);
+    assert.equal(northgate.withheld, undefined);
+
+    const riverside = position.byClient.find((entry) => entry.key === 'Riverside Trust');
+    assert.ok(riverside);
+    assert.equal(riverside.rate, null, 'a rate was published from one bid');
+    assert.match(riverside.withheld ?? '', /noise rather than a rate/);
+
+    // The other three breakdowns are populated from the same records.
+    assert.ok(position.bySector.length > 0);
+    assert.ok(position.byValueBand.length > 0);
+    assert.ok(position.bySource.length > 0);
+  });
+
+  it('says plainly when there is nothing to report', async () => {
+    const { bd } = await bidding();
+    const position = learning.winRatePosition(bd());
+
+    assert.equal(position.overall.settled, 0);
+    assert.equal(position.overall.rate, null);
+    assert.equal(position.summary, 'No settled bids on the record.');
+    assert.ok(position.limits.some((line) => line.includes('including the losses')));
+  });
+
+  it('writes nothing, which is what lets it be added to a running deployment', async () => {
+    const { p, bd, put } = await bidding();
+    for (const n of [1, 2, 3, 4, 5]) put({ title: `Bid ${n}`, bid: true, outcome: 'WON' });
+
+    const before = p.ledger.size;
+    learning.winRatePosition(bd(), { baselineOn: '2027-01-01' });
+    learning.winRatePosition(bd());
+
+    assert.equal(p.ledger.size, before, 'reading the win rate appended to the ledger');
+  });
+});

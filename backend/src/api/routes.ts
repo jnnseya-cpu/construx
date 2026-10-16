@@ -12951,6 +12951,19 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/pipeline/win-rate',
+    readOnly: true,
+    description:
+      'Whether this business is winning, and whether that is changing: the settled win rate overall and by client, sector, value band and source, with the movement either side of a baseline date. A no-bid is not a loss, and a segment with too few settled bids reports no rate rather than a number that is noise',
+    handler: (platform, ctx) =>
+      learning.winRatePosition(tenantContext(platform, ctx), {
+        // Optional, and absent means no uplift is stated — the oldest record
+        // is deliberately not used as a baseline.
+        ...(ctx.query.get('baselineOn') ? { baselineOn: ctx.query.get('baselineOn') as string } : {}),
+      }),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/calibration/lessons',
     readOnly: true,
     description: 'Every proposed, promoted, refused and retired calibration, and what a promoted one of each kind changes',

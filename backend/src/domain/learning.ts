@@ -203,6 +203,14 @@ type OpportunityState = {
   stage: OpportunityStage;
   qualification?: { scores?: Record<string, number> };
   outcome?: RecordedOutcome;
+  /**
+   * Read for the win-rate position's segments. Both are already written by
+   * `business.ts` at registration; neither is new, and neither is required —
+   * an opportunity logged before somebody filled them in still counts in the
+   * overall rate and is simply absent from those two breakdowns.
+   */
+  sectorType?: string;
+  source?: string;
 };
 
 /**
@@ -976,5 +984,226 @@ export function calibratedOutlook(
         : lesson === null
           ? `${observed.reading} Not promoted, so it is reported and applied to nothing.`
           : `${observed.reading} ${lesson.reference} was promoted by ${lesson.promotedBy}: ${lesson.rationale}`,
+  };
+}
+
+// --- The win-rate position ----------------------------------------------------
+
+/**
+ * Below this, a segment reports no rate at all.
+ *
+ * Separate from `MIN_OBSERVATIONS` and larger on purpose. Three bids is enough
+ * to propose a lesson somebody then argues about; it is not enough to publish a
+ * percentage. Two wins out of three is 67%, and a business that quoted that
+ * figure to a buyer would be quoting noise — so a thin segment is named and its
+ * rate is withheld rather than computed and caveated.
+ */
+const MIN_FOR_A_RATE = 5;
+
+/** Where a bid sits by size. Bands, because one contractor's large is another's week. */
+const VALUE_BANDS: Array<{ label: string; upToMinor: number }> = [
+  { label: 'Under £250k', upToMinor: 25_000_000 },
+  { label: '£250k – £1m', upToMinor: 100_000_000 },
+  { label: '£1m – £5m', upToMinor: 500_000_000 },
+  { label: '£5m and above', upToMinor: Number.POSITIVE_INFINITY },
+];
+
+export type WinRateTally = {
+  /** Settled bids: won plus lost. A no-bid never competed and is not here. */
+  settled: number;
+  won: number;
+  lost: number;
+  /** Percent, to one place. Null where there is too little to say. */
+  rate: number | null;
+  valueBidMinor: number;
+  valueWonMinor: number;
+};
+
+export type WinRateSegment = WinRateTally & {
+  key: string;
+  /** Why this segment is thin, where it is. Empty on a segment that reports a rate. */
+  withheld?: string;
+};
+
+export type WinRatePosition = {
+  overall: WinRateTally;
+  /**
+   * The same tally either side of a stated date.
+   *
+   * The whole reason this exists. An uplift nobody baselined is an uplift
+   * nobody can prove, and "we lifted their win rate" is unsellable without the
+   * before. Null when no date was given, with the reason in `limits` — the
+   * position does not invent a baseline out of whatever the oldest record
+   * happens to be, because that date is an artefact of when somebody started
+   * typing rather than when anything changed.
+   */
+  baseline: {
+    on: string;
+    before: WinRateTally;
+    after: WinRateTally;
+    /** Percentage points, after minus before. Null while either side is thin. */
+    movementPoints: number | null;
+  } | null;
+  byClient: WinRateSegment[];
+  bySector: WinRateSegment[];
+  byValueBand: WinRateSegment[];
+  bySource: WinRateSegment[];
+  /** What the record cannot answer, said rather than left as a short list. */
+  limits: string[];
+  summary: string;
+};
+
+function tally(entries: OpportunityState[]): WinRateTally {
+  const won = entries.filter((entry) => entry.outcome!.outcome === 'WON');
+  const lost = entries.filter((entry) => entry.outcome!.outcome === 'LOST');
+  const settled = won.length + lost.length;
+  // The price we actually tendered where it was recorded, falling back to the
+  // estimate the pursuit carried. `recordBidOutcome` already does this
+  // substitution when it writes the outcome, so reading it here agrees with
+  // what the record says rather than recomputing a different number.
+  const valueOf = (list: OpportunityState[]) =>
+    list.reduce((sum, entry) => sum + (entry.outcome!.ourPriceMinor ?? entry.estimatedValueMinor ?? 0), 0);
+
+  return {
+    settled,
+    won: won.length,
+    lost: lost.length,
+    rate: settled >= MIN_FOR_A_RATE ? Number(((won.length / settled) * 100).toFixed(1)) : null,
+    valueBidMinor: valueOf([...won, ...lost]),
+    valueWonMinor: valueOf(won),
+  };
+}
+
+function segment(entries: OpportunityState[], keyOf: (entry: OpportunityState) => string | undefined): WinRateSegment[] {
+  const groups = new Map<string, OpportunityState[]>();
+  for (const entry of entries) {
+    const key = keyOf(entry);
+    // An opportunity with the field unset is absent from this breakdown and
+    // still counts in the overall rate. Bucketing it as "Unknown" would invent
+    // a segment nobody bids in.
+    if (key === undefined || key.trim() === '') continue;
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+
+  return [...groups.entries()]
+    .map(([key, group]) => {
+      const counted = tally(group);
+      return {
+        key,
+        ...counted,
+        ...(counted.rate === null
+          ? {
+              withheld:
+                `${counted.settled} settled bid${counted.settled === 1 ? '' : 's'} — under ${MIN_FOR_A_RATE}, ` +
+                'so a percentage here would be noise rather than a rate.',
+            }
+          : {}),
+      };
+    })
+    .sort((a, b) => b.settled - a.settled || a.key.localeCompare(b.key));
+}
+
+function bandOf(entry: OpportunityState): string | undefined {
+  const value = entry.outcome?.ourPriceMinor ?? entry.estimatedValueMinor;
+  if (value === undefined || value <= 0) return undefined;
+  return VALUE_BANDS.find((band) => value <= band.upToMinor)?.label;
+}
+
+/**
+ * Whether this business is winning, and whether that is changing.
+ *
+ * A projection, computed on every request and never stored — the same rule
+ * `calibrationSignals` runs under, and for the same reason: a stored win rate
+ * is a second copy of a conclusion that moves every time an outcome is
+ * recorded, and the one somebody trusts would be whichever screen they opened.
+ *
+ * **It reads the outcome, not the stage.** A won bid leaves the opportunity at
+ * `BID` until somebody converts it to a project, which is a separate act with
+ * its own record — so counting `CONVERTED` would undercount wins by every bid
+ * that was won and not yet started. `BID_OUTCOME_RECORDED` is the fact; the
+ * stage is a consequence of it.
+ *
+ * **A no-bid is not a loss.** An opportunity declined at the bid/no-bid gate
+ * never competed, and folding those in would make a disciplined business — one
+ * that walks away from work it cannot win — look like a losing one. Only
+ * settled bids are counted, which is also what a buyer means by the question.
+ *
+ * Nothing here writes. Every figure is read from `BID_OUTCOME_RECORDED` events
+ * that `recordBidOutcome` already appends, so this can be added to a deployment
+ * that has been running for a year and immediately report its history.
+ */
+export function winRatePosition(ctx: EngineContext, input: { baselineOn?: string } = {}): WinRatePosition {
+  authorise(ctx, 'BUSINESS_DEVELOPMENT', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const settled = opportunitiesOf(ctx).filter((entry) => entry.outcome !== undefined);
+  const overall = tally(settled);
+  const limits: string[] = [];
+
+  let baseline: WinRatePosition['baseline'] = null;
+  if (input.baselineOn) {
+    const on = input.baselineOn.slice(0, 10);
+    // Decided on the day of the baseline counts as before it. The date is the
+    // line a change was drawn at, and a bid settled that morning was bid under
+    // the old way of working.
+    const before = tally(settled.filter((entry) => entry.outcome!.decidedOn <= on));
+    const after = tally(settled.filter((entry) => entry.outcome!.decidedOn > on));
+    baseline = {
+      on,
+      before,
+      after,
+      movementPoints:
+        before.rate === null || after.rate === null ? null : Number((after.rate - before.rate).toFixed(1)),
+    };
+    if (baseline.movementPoints === null) {
+      limits.push(
+        `Too few settled bids on one side of ${on} to state a movement: ${before.settled} before and ` +
+          `${after.settled} after, against the ${MIN_FOR_A_RATE} a rate needs. The counts are shown; the uplift is not.`,
+      );
+    }
+  } else {
+    limits.push(
+      'No baseline date was given, so no uplift is stated. The oldest record is not used as one — that date is when ' +
+        'somebody started recording outcomes, not when anything changed, and an uplift measured from it would be ' +
+        'measuring the arrival of the record.',
+    );
+  }
+
+  if (overall.settled === 0) {
+    limits.push(
+      'No bid outcome has been recorded, so there is no win rate. Record how each bid ended — including the losses, ' +
+        'which are the half that carries the winning price and the feedback.',
+    );
+  } else if (overall.rate === null) {
+    limits.push(
+      `${overall.settled} settled bid(s) on the record, against the ${MIN_FOR_A_RATE} a published rate needs.`,
+    );
+  }
+
+  const unpriced = settled.filter(
+    (entry) => (entry.outcome!.ourPriceMinor ?? entry.estimatedValueMinor ?? 0) <= 0,
+  ).length;
+  if (unpriced > 0) {
+    limits.push(
+      `${unpriced} settled bid(s) carry no price, so they count in the rate and contribute nothing to the value won.`,
+    );
+  }
+
+  const summary =
+    overall.settled === 0
+      ? 'No settled bids on the record.'
+      : overall.rate === null
+        ? `${overall.won} won of ${overall.settled} settled — too few to publish a rate.`
+        : `${overall.rate}% of ${overall.settled} settled bids won` +
+          `${baseline?.movementPoints === null || baseline === null ? '' : `, ${baseline.movementPoints >= 0 ? 'up' : 'down'} ${Math.abs(baseline.movementPoints)} points since ${baseline.on}`}.`;
+
+  return {
+    overall,
+    baseline,
+    byClient: segment(settled, (entry) => entry.clientName),
+    bySector: segment(settled, (entry) => entry.sectorType),
+    byValueBand: segment(settled, bandOf),
+    bySource: segment(settled, (entry) => entry.source),
+    limits,
+    summary,
   };
 }

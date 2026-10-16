@@ -715,10 +715,14 @@ function matrixDetail(analysis, waivers, addenda) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
+  const [criteria, summary, discipline, winRate, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
+    // Whether the business is actually winning, and whether that is changing.
+    // Tenant-scoped and read-only: a projection over the outcomes already
+    // recorded against each opportunity, computed on every request.
+    api.get('/v1/pipeline/win-rate').catch((error) => ({ error })),
     // The company's own verified facts — everything the radar is allowed to
     // assert on a bid. Held here rather than on a settings page because this is
     // where somebody discovers the radar filtered them out of a job.
@@ -1132,6 +1136,67 @@ export async function pipeline(root) {
           <div class="metric-sub">${money(summary.wonValueMinor)} converted to projects.</div>
         </div>
       </div>
+
+      ${
+        // The win rate, and only where the record can carry one. A percentage
+        // from three bids is noise, and the position withholds it rather than
+        // printing it with a caveat nobody reads — so this panel shows the
+        // count and the reason instead.
+        winRate && !winRate.error
+          ? html`<div class="card" style="margin-bottom:14px">
+              <h2>Win rate ${winRate.overall.rate === null ? badge('not enough yet', 'neutral') : badge(`${winRate.overall.rate}%`, winRate.overall.rate >= 25 ? 'ok' : 'warn')}</h2>
+              <p class="metric-sub" style="margin-bottom:10px">${winRate.summary}</p>
+              <div class="grid g4">
+                <div class="card">
+                  <h2>Settled bids</h2>
+                  <div class="metric">${winRate.overall.settled}</div>
+                  <div class="metric-sub">${winRate.overall.won} won, ${winRate.overall.lost} lost. A no-bid never competed and is not counted.</div>
+                </div>
+                <div class="card">
+                  <h2>Value won</h2>
+                  <div class="metric good">${money(winRate.overall.valueWonMinor)}</div>
+                  <div class="metric-sub">Of ${money(winRate.overall.valueBidMinor)} bid.</div>
+                </div>
+                ${
+                  winRate.baseline
+                    ? html`<div class="card">
+                        <h2>Since ${winRate.baseline.on}</h2>
+                        <div class="metric ${raw(winRate.baseline.movementPoints === null ? '' : winRate.baseline.movementPoints >= 0 ? 'good' : 'bad')}">
+                          ${winRate.baseline.movementPoints === null ? '—' : `${winRate.baseline.movementPoints >= 0 ? '+' : ''}${winRate.baseline.movementPoints} pts`}
+                        </div>
+                        <div class="metric-sub">
+                          ${winRate.baseline.before.settled} before, ${winRate.baseline.after.settled} after.
+                        </div>
+                      </div>`
+                    : ''
+                }
+              </div>
+              ${
+                winRate.byClient.length > 0
+                  ? html`<div style="margin-top:12px">
+                      ${table({
+                        head: ['Client', 'Settled', 'Won', 'Rate', 'Value won'],
+                        rows: winRate.byClient.slice(0, 8).map((entry) => [
+                          entry.key,
+                          String(entry.settled),
+                          String(entry.won),
+                          entry.rate === null ? badge('withheld', 'neutral') : `${entry.rate}%`,
+                          money(entry.valueWonMinor),
+                        ]),
+                      })}
+                    </div>`
+                  : ''
+              }
+              ${
+                winRate.limits.length > 0
+                  ? html`<div class="notice info" style="margin-top:12px"><div>
+                      ${winRate.limits.map((line) => html`<div>${line}</div>`)}
+                    </div></div>`
+                  : ''
+              }
+            </div>`
+          : ''
+      }
 
       ${
         Object.keys(summary.byStage ?? {}).length > 0
