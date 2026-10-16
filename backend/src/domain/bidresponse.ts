@@ -1,7 +1,14 @@
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
-import { complianceMatrix, liveWaivers, type MatrixLine, type RequirementWaiver, type StoredITTAnalysis } from './itt.ts';
+import {
+  complianceMatrix,
+  liveWaivers,
+  type MatrixLine,
+  type RequirementWaiver,
+  type ResponseLimit,
+  type StoredITTAnalysis,
+} from './itt.ts';
 import { approvedOn, standingOf, type EvidenceClaim } from './evidenceclaim.ts';
 import { openImpacts, type AddendumImpact } from './addendum.ts';
 // One direction only. The red team reads the pack out of the ledger itself
@@ -74,6 +81,15 @@ export type BidSection = {
   owner: string;
   mandatory: boolean;
   status: BidSectionStatus;
+  /**
+   * How long the buyer said this answer may be, carried from the matrix line.
+   *
+   * On the section rather than looked up at the gate, so the limit a submission
+   * was written against is the limit it is checked against. An addendum that
+   * changes a limit already invalidates the section through `staleSections`,
+   * which is the mechanism that exists for exactly this.
+   */
+  limit?: ResponseLimit;
   /** Paragraphs. Absent until a pass writes it. */
   body?: string[];
   words?: number;
@@ -176,6 +192,7 @@ export function planBidResponse(
       owner: String(line.owner),
       mandatory: line.mandatory,
       status: 'PLANNED' as const,
+      ...(line.responseLimit ? { limit: line.responseLimit } : {}),
     }));
 
   if (sections.length === 0) {
@@ -287,12 +304,24 @@ export async function writeNextSection(
         category: line?.category ?? '',
         mandatory: next.mandatory,
         respondingRole: next.owner,
+        // Given to the writer rather than only checked afterwards. A pass that
+        // produces 1,400 words against a 1,000-word limit is a pass somebody
+        // pays for and then has to cut by hand, and the cut is where the
+        // answer loses the thing it was scoring on.
+        ...(next.limit ? { limit: next.limit } : {}),
         constraint:
           'Answer the requirement and nothing else. State no figure, no completion percentage, no customer name and no ' +
           'past project you have not been given — an invented reference in a submission is a false statement to a buyer ' +
           'and grounds for disqualification. Where a number would help, describe the method instead and name what the ' +
           'bid team must insert. Write in the first person plural, in British English, as a contractor answering a ' +
-          'client. Do not restate the question.',
+          'client. Do not restate the question.' +
+          (next.limit?.words
+            ? ` The buyer states a limit of ${next.limit.words} words (${next.limit.statedAs}); anything past it is ` +
+              'not read, so answer within it rather than writing long and leaving somebody to cut it.'
+            : '') +
+          (next.limit?.pages && !next.limit.words
+            ? ` The buyer states a limit of ${next.limit.pages} page(s) (${next.limit.statedAs}); write to fit it.`
+            : ''),
       },
     },
     // The draft is state and is written below under its own event. Returning
@@ -352,6 +381,149 @@ export async function writeNextSection(
   };
 }
 
+/**
+ * Cut one section to the length the buyer stated.
+ *
+ * This exists because the gate below needs a way forward. A check that refuses
+ * a submission for being 300 words long with nothing on the screen that can
+ * shorten it is not a gate, it is a dead end — and a dead end on the return
+ * date is how somebody decides the check is the problem and goes round it.
+ *
+ * It rewrites rather than truncates. Cutting the last 300 words off an answer
+ * leaves it ending mid-argument, which is precisely the damage the limit does
+ * when it is ignored; what has to go is whichever 300 words carry least of the
+ * answer, and deciding that is the work.
+ *
+ * Refuses rather than saves when the rewrite comes back still over: the section
+ * is left exactly as it was, so a failed cut cannot quietly make the submission
+ * worse. The pass is charged either way, because the provider did the work —
+ * and saying so is better than a silent retry loop somebody pays for anyway.
+ */
+export async function shortenSection(
+  ctx: EngineContext,
+  input: { packId: string; key: string },
+): Promise<{ pack: BidResponsePack; section: BidSection; wordsRemoved: number; acuConsumed: number }> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. The record of what was sent must stay what was sent.`,
+      409,
+    );
+  }
+
+  const section = pack.sections.find((entry) => entry.key === input.key);
+  if (!section) {
+    throw new DomainError('BID_SECTION_NOT_FOUND', `${pack.reference} has no section ${input.key}`, 404);
+  }
+  const limit = section.limit?.words;
+  if (limit === undefined) {
+    throw new DomainError(
+      'BID_SECTION_NO_LIMIT',
+      `${input.key} carries no stated word limit, so there is nothing to cut it to. Shortening prose nobody ` +
+        'constrained is an editorial decision, not a check.',
+      422,
+    );
+  }
+  const body = section.body ?? [];
+  const words = body.join(' ').split(/\s+/).filter(Boolean).length;
+  if (body.length === 0) {
+    throw new DomainError('BID_SECTION_UNWRITTEN', `${input.key} has not been written yet.`, 409);
+  }
+  if (words <= limit) {
+    throw new DomainError(
+      'BID_SECTION_WITHIN_LIMIT',
+      `${input.key} is ${words} words against a limit of ${limit}. It already fits, and a pass that cut it further ` +
+        'would be spending money to throw away an answer that scores.',
+      409,
+    );
+  }
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    // Not the drafting task type. The prompt, the input and what a quote is
+    // being asked to price are all different from writing a section.
+    taskType: 'bid_response_shorten',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'BidResponsePack', refId: pack.id }],
+    request: {
+      task:
+        'Cut one section of a construction tender submission to a stated word limit. Return JSON with `body`: an ' +
+        'array of paragraph strings.',
+      payload: {
+        requirement: section.deliverable,
+        limitWords: limit,
+        statedAs: section.limit!.statedAs,
+        currentWords: words,
+        body,
+        constraint:
+          `This answer is ${words} words and the buyer allows ${limit}. Return it at or under ${limit} words. Keep ` +
+          'every commitment, figure, name and date exactly as written — none of them may be changed, softened or ' +
+          'dropped, because they are what the submission is promising. Remove restatement of the question, ' +
+          'generalities and anything the answer does not need. Do not truncate: the answer must still end where it ' +
+          'means to. Add nothing that is not already there.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: {
+      code: 'NO_REASONING_PROVIDER',
+      message:
+        'This deployment is running the local stand-in, which reasons about nothing. It cannot cut a tender ' +
+        'submission to length without deciding what the answer can lose. Configure a reasoning provider and set ' +
+        'AI_MODE=live.',
+    },
+  });
+
+  const output = result.output as { body?: unknown };
+  const cut = Array.isArray(output.body) ? output.body.map((line) => String(line).trim()).filter(Boolean) : [];
+  const cutWords = cut.join(' ').split(/\s+/).filter(Boolean).length;
+
+  if (cut.length === 0) {
+    throw new DomainError(
+      'BID_SECTION_UNUSABLE',
+      `The model returned no prose for ${input.key}. The section is unchanged.`,
+      502,
+    );
+  }
+  if (cutWords > limit) {
+    throw new DomainError(
+      'BID_SECTION_STILL_OVER',
+      `The rewrite came back at ${cutWords} words against a limit of ${limit}. ${input.key} is unchanged — a cut ` +
+        'that does not fit is not an improvement, and overwriting the answer with it would lose the version that at ' +
+        'least reads properly. Run it again, or cut it by hand.',
+      502,
+    );
+  }
+
+  const shortened: BidSection = {
+    ...section,
+    body: cut,
+    words: cutWords,
+    // Not reset to HUMAN and not left as it was found: the prose that goes to
+    // the buyer is now what this pass produced, and the record says so.
+    authorship: 'AI_DRAFTED',
+    ...(result.provider ? { provider: result.provider } : {}),
+    ...(result.modelClass ? { modelClass: result.modelClass } : {}),
+    writtenAt: new Date().toISOString(),
+  };
+
+  const next: BidResponsePack = {
+    ...pack,
+    sections: pack.sections.map((entry) => (entry.key === input.key ? shortened : entry)),
+    passes: pack.passes + 1,
+  };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_SECTION_WRITTEN',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next as unknown as Record<string, unknown>,
+  });
+
+  return { pack: next, section: shortened, wordsRemoved: words - cutWords, acuConsumed: result.acuConsumed };
+}
+
 export type BidCompleteness = {
   ready: boolean;
   /** Deliverables with no written response. Each one is a rejection. */
@@ -383,6 +555,36 @@ export type BidCompleteness = {
    * somebody set by hand and would cost a re-analysis nobody needs.
    */
   staleSections: Array<{ key: string; deliverable: string; addendum: string; detail: string }>;
+  /**
+   * Sections longer than the buyer said they may be.
+   *
+   * A hard gate, for the same reason a missing mandatory response is one. The
+   * standard instruction on a stated word limit is that anything past it is not
+   * read — so a 1,300-word answer to a 1,000-word question is not marked down by
+   * 30%, it is marked on 1,000 words that now end mid-argument, and on a
+   * pass/fail question that is the bid. It is also the cheapest check on this
+   * list and the one most reliably discovered too late, by whoever is pasting
+   * sections into the template on the last afternoon.
+   */
+  overLimit: Array<{
+    key: string;
+    deliverable: string;
+    mandatory: boolean;
+    words: number;
+    limitWords: number;
+    overBy: number;
+    statedAs: string;
+  }>;
+  /**
+   * Sections carrying a page limit, reported rather than checked.
+   *
+   * Words per page depends on a template this platform does not hold. A limit
+   * enforced against an invented conversion would refuse a submission that
+   * fits, which is worse than not checking — so the limit is put in front of
+   * whoever lays the pack out, and the pack says plainly that nothing verified
+   * it. This is named in `docs/STATE.md` under what is not built.
+   */
+  pageLimited: Array<{ key: string; deliverable: string; pages: number; words: number; statedAs: string }>;
   written: number;
   total: number;
   summary: string;
@@ -452,27 +654,84 @@ export function bidCompleteness(
       detail: materialBy.get(section.key)!.detail,
     }));
 
+  /*
+   * The stated limit, against what is actually written.
+   *
+   * Counted from the prose rather than trusted from `section.words`, because a
+   * section edited by hand through the sections route sets its own count and a
+   * check that trusted the stored number would be checking whatever was last
+   * written into the record rather than the answer. Same split rule as the
+   * model's own counter: whitespace-separated tokens.
+   *
+   * Every drafted section, waived or not — unlike `unanswered`, which excludes
+   * a waived one. The difference is real. An unanswered waived requirement is
+   * prose nobody is writing; a written one whose requirement was waived
+   * afterwards is prose that is still in the pack, still counted in `written`,
+   * and still read by the buyer. Excluding it would make the waiver a way of
+   * carrying an over-length answer through the gate.
+   */
+  const drafted = pack.sections.filter(
+    (section) => section.status === 'DRAFTED' && (section.body ?? []).length > 0,
+  );
+  const lengthOf = (section: BidSection): number =>
+    (section.body ?? []).join(' ').split(/\s+/).filter(Boolean).length;
+
+  const overLimit = drafted
+    .filter((section) => section.limit?.words !== undefined && lengthOf(section) > section.limit.words)
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      mandatory: section.mandatory,
+      words: lengthOf(section),
+      limitWords: section.limit!.words!,
+      overBy: lengthOf(section) - section.limit!.words!,
+      statedAs: section.limit!.statedAs,
+    }));
+
+  const pageLimited = drafted
+    .filter((section) => section.limit?.pages !== undefined)
+    .map((section) => ({
+      key: section.key,
+      deliverable: section.deliverable,
+      pages: section.limit!.pages!,
+      words: lengthOf(section),
+      statedAs: section.limit!.statedAs,
+    }));
+
+  const ready =
+    unanswered.length === 0 &&
+    undated.length === 0 &&
+    lapsedEvidence.length === 0 &&
+    staleSections.length === 0 &&
+    overLimit.length === 0;
+
   return {
-    ready:
-      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0 && staleSections.length === 0,
+    ready,
     unanswered,
     undated,
     waived,
     lapsedEvidence,
     staleSections,
+    overLimit,
+    pageLimited,
     written,
     total: pack.sections.length,
     summary:
-      unanswered.length === 0 && undated.length === 0 && lapsedEvidence.length === 0 && staleSections.length === 0
+      ready
         ? `${written} of ${pack.sections.length} deliverables answered` +
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
-          ', every stated deadline dated and every claim still evidenced on the return date.'
+          ', every stated deadline dated, every claim still evidenced on the return date' +
+          (pageLimited.length > 0
+            ? `, and ${pageLimited.length} section(s) carrying a page limit nothing here can count`
+            : ', and every stated word limit respected') +
+          '.'
         : `${written} of ${pack.sections.length} answered` +
           (unanswered.length > 0 ? `, ${unanswered.length} outstanding` : '') +
           (waived.length > 0 ? `, ${waived.length} waived` : '') +
           (undated.length > 0 ? `, ${undated.length} deadline(s) undated` : '') +
           (lapsedEvidence.length > 0 ? `, ${lapsedEvidence.length} claim(s) evidenced by something that lapses first` : '') +
           (staleSections.length > 0 ? `, ${staleSections.length} answering a requirement an addendum has changed` : '') +
+          (overLimit.length > 0 ? `, ${overLimit.length} longer than the buyer allows` : '') +
           '.',
   };
 }
@@ -518,6 +777,18 @@ export function issueBidResponse(
           ? `${completeness.staleSections.length} section(s) answer a requirement an addendum has since changed: ` +
             `${completeness.staleSections.map((entry) => `${entry.key} (${entry.addendum})`).join(', ')}. ` +
             'A response that answers the old wording perfectly scores nothing. '
+          : '') +
+        (completeness.overLimit.length > 0
+          ? `${completeness.overLimit.length} section(s) are longer than the buyer allows: ` +
+            `${completeness.overLimit
+              .map(
+                (entry) =>
+                  `${entry.key} is ${entry.words} words against ${entry.limitWords} (${entry.statedAs}), ` +
+                  `${entry.overBy} over`,
+              )
+              .join('; ')}. ` +
+            'An evaluator does not mark the extra words down — the instruction is that anything past the limit is ' +
+            'not read, so the answer is scored on where it happens to stop. Cut it to length. '
           : '') +
         (completeness.lapsedEvidence.length > 0
           ? `${completeness.lapsedEvidence.length} claim(s) rest on evidence that expires before ${pack.returnBy.slice(0, 10)}, ` +

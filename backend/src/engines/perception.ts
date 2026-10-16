@@ -415,7 +415,10 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'Read this invitation to tender. Report its reference, the client, and the return deadline exactly as ' +
       'stated. List every requirement the bidder must satisfy, each with its own reference from the document, ' +
       'its category, whether it is mandatory (pass/fail) or scored, its weighting where one is given, the ' +
-      'evidence demanded, and any date earlier than the return. Separately list every deliverable that must be ' +
+      'evidence demanded, and any date earlier than the return. Where the document states how long the answer ' +
+      'may be — a word count, a page count, a number of sides of A4 — report it as `wordLimit` or `pageLimit` ' +
+      'with the wording it is stated in, because anything past a stated limit is usually not read at all. ' +
+      'Report no limit where none is stated rather than a conventional one. Separately list every deliverable that must be ' +
       'returned, with its format, page limit, whether a signature or bond is required, and the channel it goes ' +
       'back through. Report the commercial terms it states — contract form, liquidated damages, bond, ' +
       'retention, payment period, design liability. Quote the document rather than summarising it, and omit ' +
@@ -452,6 +455,9 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
               weightingPercent: { type: ['number', 'null'] },
               evidenceRequired: { type: 'string' },
               dueBy: { type: ['string', 'null'] },
+              wordLimit: { type: ['number', 'null'] },
+              pageLimit: { type: ['number', 'null'] },
+              limitStatedAs: { type: ['string', 'null'] },
             },
             required: ['reference', 'category', 'requirement', 'mandatory', 'evidenceRequired'],
           },
@@ -1346,6 +1352,27 @@ export async function confirm(
       ...(requirement.weightingPercent != null ? { weightingPercent: Number(requirement.weightingPercent) } : {}),
       evidenceRequired: String(requirement.evidenceRequired ?? ''),
       ...(requirement.dueBy ? { dueBy: String(requirement.dueBy) } : {}),
+      // A limit is carried only where a number came back. `statedAs` falls back
+      // to a sentence built from the number rather than being left empty: the
+      // refusal quotes it, and a refusal that quotes nothing is the one somebody
+      // decides to override.
+      ...(requirement.wordLimit != null || requirement.pageLimit != null
+        ? {
+            responseLimit: {
+              ...(requirement.wordLimit != null ? { words: Math.round(Number(requirement.wordLimit)) } : {}),
+              ...(requirement.pageLimit != null ? { pages: Math.round(Number(requirement.pageLimit)) } : {}),
+              statedAs: String(
+                requirement.limitStatedAs ??
+                  [
+                    requirement.wordLimit != null ? `${Math.round(Number(requirement.wordLimit))} words` : '',
+                    requirement.pageLimit != null ? `${Math.round(Number(requirement.pageLimit))} pages` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(', '),
+              ),
+            },
+          }
+        : {}),
     }));
 
     const terms = read.terms ?? {};

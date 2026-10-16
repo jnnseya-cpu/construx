@@ -1012,6 +1012,63 @@ export async function pipeline(root) {
                   ]),
                   empty: 'No response pack yet. Plan one from a compliance matrix below.',
                 })}
+                ${
+                  /*
+                   * The stated limit, and the two different things it can mean.
+                   *
+                   * A word limit is checked and refuses the issue, so it is
+                   * shown as a refusal with the door that fixes it beside it —
+                   * a gate with nothing on the screen that can clear it is a
+                   * dead end on the return date.
+                   *
+                   * A page limit is not checked, because words per page depends
+                   * on a template this platform does not hold and a limit
+                   * enforced against an invented conversion would refuse a
+                   * submission that fits. It is put in front of whoever lays
+                   * the pack out, and it says plainly that nothing verified it.
+                   */
+                  (() => {
+                    const over = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.overLimit ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    const paged = (bidPacks.packs ?? []).flatMap((pack) =>
+                      (pack.completeness?.pageLimited ?? []).map((entry) => ({ pack, entry })),
+                    );
+                    if (over.length === 0 && paged.length === 0) return '';
+                    return html`
+                      ${over.length === 0
+                        ? ''
+                        : html`<div class="notice bad" style="margin-top:11px"><div>
+                            <b>${over.length} section(s) are longer than the buyer allows.</b>
+                            An evaluator does not mark the extra words down — the standard instruction is that
+                            anything past the limit is not read, so the answer is scored on wherever it happens to
+                            stop. The pack will not issue until they fit.
+                            ${over.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.words} words against ${entry.limitWords}
+                                (${entry.statedAs}), ${entry.overBy} over${entry.mandatory ? ', mandatory' : ''}.
+                                <button class="btn sm" data-shorten="${entry.key}" data-pack="${pack.id}">
+                                  Cut it to length
+                                </button>
+                              </div>`,
+                            )}
+                          </div></div>`}
+                      ${paged.length === 0
+                        ? ''
+                        : html`<div class="notice info" style="margin-top:11px"><div>
+                            <b>${paged.length} section(s) carry a page limit nothing here can count.</b>
+                            Words per page depends on the template the pack is laid out in, which this platform does
+                            not hold — so this is the buyer's limit put in front of whoever lays it out, and it is
+                            not checked. Nobody should read it as having been verified.
+                            ${paged.map(
+                              ({ pack, entry }) => html`<div style="margin-top:6px">
+                                ${pack.reference} · ${entry.key} — ${entry.statedAs}, currently ${entry.words} words.
+                              </div>`,
+                            )}
+                          </div></div>`}
+                    `;
+                  })()
+                }
               `}
       </section>
 
@@ -2529,6 +2586,41 @@ export async function pipeline(root) {
     } finally {
       open.disabled = false;
       open.textContent = 'Open';
+    }
+  });
+
+  /*
+   * Cutting one section to length.
+   *
+   * A button per over-length section rather than a command form, because there
+   * is nothing to ask: the pack and the section are what the refusal named, and
+   * the limit is the buyer's. It is an AI pass and it is charged, so the press
+   * says what it is doing and the result says what came off.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-shorten]');
+    if (!button || !projectId) return;
+
+    button.disabled = true;
+    button.textContent = 'Cutting…';
+    try {
+      const result = await api.post(
+        `/v1/projects/${projectId}/bid-responses/${button.dataset.pack}/sections/${button.dataset.shorten}/shorten`,
+        {},
+      );
+      toast(
+        `${button.dataset.shorten} cut to length`,
+        `${result.wordsRemoved} words removed, now ${result.section.words} against the buyer’s limit. ` +
+          `${result.acuConsumed} ACUs.`,
+        'ok',
+      );
+      await draw();
+    } catch (error) {
+      // A cut that came back still over leaves the section exactly as it was,
+      // and the message says so — it is a refusal, not a failure to save.
+      toast('Not cut', error.detail ?? error.message ?? 'The section is unchanged.', 'err');
+      button.disabled = false;
+      button.textContent = 'Cut it to length';
     }
   });
 

@@ -851,6 +851,19 @@ const ITT_ANALYSIS_SCHEMA = {
           weightingPercent: { type: 'number', minimum: 0, maximum: 100 },
           evidenceRequired: { type: 'string' },
           dueBy: stringField,
+          // How long the answer may be, where the invitation says. Checked at
+          // issue for words; carried and reported for pages, which cannot be
+          // counted from prose.
+          responseLimit: {
+            type: 'object',
+            required: ['statedAs'],
+            properties: {
+              words: { type: 'integer', minimum: 1 },
+              pages: { type: 'integer', minimum: 1 },
+              statedAs: { type: 'string', minLength: 1, maxLength: 300 },
+            },
+            additionalProperties: false,
+          },
         },
         additionalProperties: false,
       },
@@ -4165,6 +4178,22 @@ export const ROUTES: Route[] = [
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       bidresponse.writeNextSection(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/shorten',
+    description:
+      'Cut one section to the word limit the buyer stated. Rewrites rather than truncates, and refuses without saving if the rewrite is still over — the issue check refuses an over-length section, and a gate with no way forward is a dead end on the return date',
+    // Its own task type, not the drafting one. A quote identifies a route by
+    // the task it declares, and cutting an answer to length is a different
+    // prompt against a different input from writing one from a requirement.
+    ai: { engine: 'TENDER', taskType: 'bid_response_shorten', capability: 'REASONING' },
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidresponse.shortenSection(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        key: ctx.params.key as string,
+      }),
   },
   {
     method: 'POST',

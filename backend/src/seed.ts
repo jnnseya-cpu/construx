@@ -576,6 +576,10 @@ async function ensureDemonstrationExtrasInner(platform: Platform): Promise<{ tim
           mandatory: true,
           weightingPercent: 25,
           evidenceRequired: 'Technical submission, 20 pages, with an outline construction programme',
+          // A page limit: carried, put in front of whoever lays the pack out,
+          // and deliberately not checked — words per page depends on a template
+          // the platform does not hold.
+          responseLimit: { pages: 20, statedAs: 'Technical submission, maximum 20 pages of A4' },
         },
         {
           reference: 'ITT-3.7',
@@ -632,6 +636,8 @@ async function ensureDemonstrationExtrasInner(platform: Platform): Promise<{ tim
           mandatory: false,
           weightingPercent: 10,
           evidenceRequired: 'Completed social value schedule with measurable commitments',
+          // A word limit: checked exactly, and the issue is refused over it.
+          responseLimit: { words: 1000, statedAs: 'Maximum 1,000 words per social value question' },
         },
         {
           reference: 'ITT-7.3',

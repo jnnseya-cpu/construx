@@ -25992,7 +25992,67 @@ tenancy with a settled bid against a named client — that is, on the first scre
 that had anything to show — and an empty pipeline is exactly the state it was
 written against.
 
-**What is not built:** the answer-against-limit check. A tender section with a
-stated word or page limit is still issuable over it; `BidSection.words` exists and
-`bidCompleteness` is where the refusal belongs. It is the third of the three
-BidCraft pieces and it is not started.
+### The stated limit
+
+The third BidCraft piece, and the one the platform was closest to already
+having. `TenderDeliverable.pageLimit` had been read off invitations and recorded
+since the intake engine was built, and **nothing checked it** — which is exactly
+the failure that type's own comment describes: *"conflating them is why the page
+limit is discovered on the last afternoon."* It was discovered on the last
+afternoon, by whoever was pasting sections into the template.
+
+A stated word limit is not a style note. The standard instruction is that
+anything past it is not read, so a 1,300-word answer to a 1,000-word question is
+not marked down by 30% — it is marked on 1,000 words that now end mid-argument,
+and on a pass/fail question that is the bid. It is also the cheapest check on the
+completeness list.
+
+`ResponseLimit` (`words?`, `pages?`, `statedAs`) sits on `ITTRequirement`, is
+carried onto the matrix line, and is inherited by the `BidSection` that answers
+it — on the section rather than looked up at the gate, so the limit a submission
+was written against is the limit it is checked against. The ITT reading asks for
+it and is told to report no limit where none is stated rather than a conventional
+one; the hand-entered analysis route takes it too. `statedAs` carries the buyer's
+own wording, so a disputed limit is settled by quotation rather than by argument
+about what the platform extracted.
+
+**A word limit is a gate.** `bidCompleteness.overLimit` names every section past
+its limit with the count, the limit, the overrun and the quotation, and
+`issueBidResponse` refuses. Counted from the prose rather than from the stored
+`section.words`, because a check that trusted the stored number would be checking
+the record rather than the answer.
+
+**A page limit is reported and never enforced.** `pageLimited` puts it in front
+of whoever lays the pack out and says plainly that nothing verified it. Words per
+page depends on a template this platform does not hold, and a limit enforced
+against an invented conversion would refuse a submission that fits — which is
+worse than not checking, because it is wrong in a direction nobody can argue
+with. **This is the one half of the limit check that is deliberately not built.**
+
+**Every drafted section is checked, waived or not.** `unanswered` excludes a
+waived requirement and should: nobody is writing it. The length check does not,
+and the distinction is real — prose already written is still in the pack, still
+counted in `written`, and still read by the buyer, so a waiver granted over it
+cannot be the thing that carries an over-length answer through. The first
+implementation excluded it and the test for it is what found that.
+
+**The gate has a way forward.** `shortenSection` rewrites one section to fit,
+under its own task type (`bid_response_shorten`) rather than the drafting one,
+because a quote identifies a route by the task it declares and `quote.test.ts`
+refuses two routes sharing one — which is what caught the first version. It
+rewrites rather than truncates: cutting the last 300 words off an answer leaves
+it ending mid-argument, which is the same damage the limit does when it is
+ignored. It refuses *without saving* when the rewrite comes back still over, so a
+failed cut cannot quietly make the submission worse. It refuses a section with no
+stated word limit at all — shortening prose nobody constrained is an editorial
+decision, not a check. The writer is also told the limit up front, so the usual
+case is that the refusal never fires.
+
+A gate with nothing on the screen that can clear it is a dead end, and a dead end
+on the return date is how somebody decides the check is the problem and goes
+round it. On the pipeline screen the word limit appears as a refusal with the
+button that fixes it beside it, and the page limit as a notice that says nothing
+checked it.
+
+The demo invitation carries both: ITT-3.4 a 20-page limit, ITT-6.5 a 1,000-word
+one. A field recorded and never exercised is how the first one got missed.

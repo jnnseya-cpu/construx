@@ -60,6 +60,31 @@ export const REQUIREMENT_CATEGORIES = [
 
 export type RequirementCategory = (typeof REQUIREMENT_CATEGORIES)[number];
 
+/**
+ * How long the buyer said the answer may be.
+ *
+ * A stated limit is not a style note. An evaluator marking a 1,200-word answer
+ * against a 1,000-word limit does not mark the extra 200 words down — the
+ * standard instruction is that anything past the limit is not read, and on a
+ * mandatory question that is a nil score on prose somebody spent a week
+ * writing. It is also the one constraint that is cheap to check and almost
+ * never checked, because it is discovered on the last afternoon by whoever is
+ * pasting the sections into the template.
+ *
+ * `words` is checkable and is checked. `pages` is carried and reported and is
+ * deliberately **not** turned into a word count: words per page depends on a
+ * template this platform does not hold, and a limit enforced against an
+ * invented conversion would refuse a submission that fits.
+ *
+ * `statedAs` is the buyer's own wording, so a disputed limit is settled by
+ * quotation rather than by argument about what the platform extracted.
+ */
+export type ResponseLimit = {
+  words?: number;
+  pages?: number;
+  statedAs: string;
+};
+
 export type ITTRequirement = {
   reference: string;
   category: RequirementCategory;
@@ -72,6 +97,8 @@ export type ITTRequirement = {
   evidenceRequired: string;
   /** When it must be in, if earlier than the return date. */
   dueBy?: string;
+  /** How long the answer may be, where the invitation says. */
+  responseLimit?: ResponseLimit;
 };
 
 /** Where the platform can already prove a requirement from its own records. */
@@ -130,6 +157,8 @@ export type MatrixLine = {
   evidenceHeld?: string;
   status: MatrixStatus;
   dueBy?: string;
+  /** Carried from the requirement, so the pack that answers it inherits it. */
+  responseLimit?: ResponseLimit;
 };
 
 /**
@@ -310,6 +339,7 @@ export function analyseITT(
       // it a gap would bury the real gaps under everything nobody automated.
       status: held ? 'SATISFIED' : probe ? 'GAP' : 'UNKNOWN',
       dueBy: requirement.dueBy,
+      responseLimit: requirement.responseLimit,
     };
   });
 
