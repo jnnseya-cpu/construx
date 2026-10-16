@@ -657,6 +657,24 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_RESPONSE_PLANNED', 'BidResponsePack', 'CREATE', 'PROCUREMENT'),
   def('BID_RESPONSE_SECTION_WRITTEN', 'BidResponsePack', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_RESPONSE_ISSUED', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
+
+  /*
+   * The answer library — qualitative answers kept and improved across bids.
+   *
+   * `aiAllowed: false` on every one of them, including the capture. A model may
+   * draft a bid section today and that is recorded on the section; what goes
+   * into the library is a decision about what this business says about itself
+   * under its own name, on every bid, for years. That is a person's.
+   *
+   * `BID_ANSWER_USED` exists so the library can be judged rather than admired.
+   * An answer with eleven uses and two wins is worse than the blank page it
+   * replaced, and nothing says so unless the uses are on the record.
+   */
+  def('BID_ANSWER_CAPTURED', 'BidAnswer', 'CREATE', 'PROCUREMENT', { creates: true }),
+  def('BID_ANSWER_APPROVED', 'BidAnswer', 'APPROVE', 'PROCUREMENT'),
+  def('BID_ANSWER_REVISED', 'BidAnswer', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ANSWER_RETIRED', 'BidAnswer', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ANSWER_USED', 'BidAnswer', 'UPDATE', 'PROCUREMENT'),
   // Reading the whole tender document set: what is missing, what nobody owns,
   // what two people own, and what the contract actually says.
   //

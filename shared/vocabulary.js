@@ -509,6 +509,32 @@ export const PRICING_BASIS = opts([
 ]);
 
 /**
+ * What a tender requirement is asking for.
+ *
+ * The compliance matrix classifies every requirement it reads out of an
+ * invitation onto this list, and the answer library files its answers against
+ * the same one — because the only reason to classify a requirement is to find
+ * what the business has already said about that kind of requirement. Two lists
+ * would mean an answer filed under `SOCIAL_VALUE` that no social-value
+ * requirement could ever find.
+ *
+ * `backend/src/domain/itt.ts` holds the codes the type is derived from, and
+ * `backend/tests/vocabulary.test.ts` asserts the two agree.
+ */
+export const REQUIREMENT_CATEGORY = opts([
+  ['QUALIFICATION', 'Qualification'],
+  ['TECHNICAL', 'Technical'],
+  ['COMMERCIAL', 'Commercial'],
+  ['INSURANCE', 'Insurance'],
+  ['HEALTH_AND_SAFETY', 'Health and safety'],
+  ['QUALITY', 'Quality'],
+  ['ENVIRONMENTAL', 'Environmental'],
+  ['SOCIAL_VALUE', 'Social value'],
+  ['PROGRAMME', 'Programme'],
+  ['SUBMISSION', 'Submission'],
+]);
+
+/**
  * The console screens a decision can be sent to.
  *
  * ## Why this is here rather than only in the sidebar

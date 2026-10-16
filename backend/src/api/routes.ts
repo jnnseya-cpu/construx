@@ -138,6 +138,8 @@ import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as clauselibrary from '../domain/clauselibrary.ts';
+import * as answers from '../domain/answers.ts';
+import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
 import * as pricelineage from '../domain/pricelineage.ts';
@@ -12948,6 +12950,117 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.query.get('today') ?? undefined,
       ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/answers',
+    description: 'Capture a qualitative bid answer into the library, as a draft. Approved by somebody else before it is offered to anybody',
+    schema: {
+      type: 'object',
+      required: ['title', 'category', 'body'],
+      properties: {
+        title: { type: 'string', minLength: 6, maxLength: 200 },
+        category: { type: 'string', enum: [...REQUIREMENT_CATEGORIES] },
+        body: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        tags: { type: 'array', items: { type: 'string', maxLength: 48 } },
+        origin: {
+          type: 'object',
+          properties: {
+            packId: { type: 'string' },
+            sectionKey: { type: 'string' },
+            opportunityId: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        // Carried rather than laundered: a model may have drafted the section
+        // this was taken from, and that travels with the answer.
+        authorship: { type: 'string', enum: ['HUMAN', 'AI_DRAFTED'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => answers.captureAnswer(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/answers/:answerId/approve',
+    description: 'Approve an answer for reuse. Never the person who captured it — what goes in the library is what this business claims on every bid that takes it',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      answers.approveAnswer(tenantContext(platform, ctx), ctx.params.answerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/answers/:answerId/revise',
+    description: 'Replace an answer with a better one. The old version is superseded rather than overwritten, because the version that went to a buyer is a promise that was made',
+    schema: {
+      type: 'object',
+      required: ['body', 'reason'],
+      properties: {
+        body: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        reason: { type: 'string', minLength: 12, maxLength: 600 },
+        title: { type: 'string', minLength: 6, maxLength: 200 },
+        tags: { type: 'array', items: { type: 'string', maxLength: 48 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      answers.reviseAnswer(tenantContext(platform, ctx), ctx.params.answerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/answers/:answerId/retire',
+    description: 'Take an answer out of use without taking it off the record',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      answers.retireAnswer(tenantContext(platform, ctx), ctx.params.answerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/answers/:answerId/used',
+    description: 'Record that an answer went out on a bid, and the buyer’s mark where they gave one. The half that lets the library be judged rather than admired',
+    schema: {
+      type: 'object',
+      required: ['packId', 'sectionKey'],
+      properties: {
+        packId: { type: 'string', minLength: 1 },
+        sectionKey: { type: 'string', minLength: 1 },
+        opportunityId: { type: 'string' },
+        scorePercent: { type: 'number', minimum: 0, maximum: 100 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      answers.recordAnswerUse(tenantContext(platform, ctx), ctx.params.answerId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/answers',
+    readOnly: true,
+    description:
+      'The answer library: every qualitative answer this business keeps, what it has scored where a buyer disclosed a mark, and what is captured but not yet approved',
+    handler: (platform, ctx) =>
+      answers.answerLibrary(tenantContext(platform, ctx), {
+        ...(ctx.query.get('category') ? { category: ctx.query.get('category') as never } : {}),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/answers/offer/:category',
+    readOnly: true,
+    description:
+      'What the library has for a requirement category — candidates and how they have scored. A starting point, never a section: nothing here writes an answer into a bid',
+    handler: (platform, ctx) =>
+      answers.offerAnswers(tenantContext(platform, ctx), ctx.params.category as never),
   },
   {
     method: 'GET',

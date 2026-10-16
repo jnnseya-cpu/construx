@@ -4,7 +4,7 @@ import { badge, date, html, humanise, money, notice, pct, positionReport, raw, r
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
-import { SECTOR_GROUPED, today } from '../lib/enums.js';
+import { REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
@@ -72,6 +72,16 @@ const MATRIX_TONE = { SATISFIED: 'ok', GAP: 'bad', UNKNOWN: 'warn' };
 // waiting for somebody, and an expired one has been relied on since it stopped
 // being true.
 const CLAIM_TONE = { APPROVED: 'ok', PENDING: 'warn', EXPIRED: 'bad', REJECTED: 'bad' };
+
+/*
+ * A superseded answer is not a failed one.
+ *
+ * It is the version that went out before a better one was written, and it is
+ * kept because the version a buyer read is a promise this business made. So it
+ * reads as neutral rather than as a warning: the only answer anybody needs to
+ * act on is one captured and still waiting for a second person to approve it.
+ */
+const ANSWER_TONE = { APPROVED: 'ok', DRAFT: 'warn', SUPERSEDED: '', RETIRED: 'bad' };
 
 /**
  * A status is not a verdict.
@@ -715,7 +725,7 @@ function matrixDetail(analysis, waivers, addenda) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, winRate, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
+  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -723,6 +733,10 @@ export async function pipeline(root) {
     // Tenant-scoped and read-only: a projection over the outcomes already
     // recorded against each opportunity, computed on every request.
     api.get('/v1/pipeline/win-rate').catch((error) => ({ error })),
+    // The answer library: what this business says about itself, kept across
+    // bids. Tenant-scoped, because an answer is a company fact rather than a
+    // project one — the same social-value commitment answers every bid.
+    api.read('/v1/pipeline/answers', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
     // The company's own verified facts — everything the radar is allowed to
     // assert on a bid. Held here rather than on a settings page because this is
     // where somebody discovers the radar filtered them out of a job.
@@ -781,6 +795,38 @@ export async function pipeline(root) {
           .get(`/v1/projects/${projectId}/assurance/${latestReviewId}`)
           .catch(() => null)
       : null;
+
+  /*
+   * The sections a library answer can be recorded against.
+   *
+   * The pack register carries counts, not sections, so recording a use would
+   * otherwise mean typing a matrix reference — and a typed reference is how one
+   * section becomes two rows that no median can be taken across. The packs
+   * still open are read in full instead, so the chooser can only offer a
+   * section that exists. There are rarely more than two or three open at once,
+   * and an issued pack is excluded: an answer cannot first go out on a
+   * submission that has already gone.
+   */
+  const openPacks = (bidPacks?.packs ?? []).filter((pack) => pack.status !== 'ISSUED');
+  const packSections = projectId
+    ? (
+        await Promise.all(
+          openPacks.map((pack) =>
+            api
+              .get(`/v1/projects/${projectId}/bid-responses/${pack.id}`)
+              .then((full) =>
+                (full.sections ?? []).map((section) => ({
+                  value: `${pack.id}::${section.key}`,
+                  label: `${pack.reference} · ${section.key} — ${section.title}`,
+                })),
+              )
+              // A pack that will not open is left out rather than offered as an
+              // option that cannot be submitted.
+              .catch(() => []),
+          ),
+        )
+      ).flat()
+    : [];
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -1112,6 +1158,97 @@ export async function pipeline(root) {
         }
       </div>
 
+      <!--
+        The answer library.
+
+        The qualitative half of a public bid carries 40–60% of the score, and
+        the answers that earned it are thrown away after every submission — so
+        the next bid writes the same social-value commitment from nothing, and
+        nobody can say which version of it scored.
+
+        Nothing on this panel writes an answer into a bid. Pressing "What do we
+        have" returns candidates and the mark each one earned, and the section
+        is still written by a person. That absence is the design: an answer
+        pasted unchanged into forty bids is boilerplate, a buyer reading their
+        fourth identical submission marks it as such, and the library converges
+        on a permanent 3/5 — which is the failure it was built to fix.
+      -->
+      <div class="card pad0" style="margin-bottom:14px">
+        <h2 style="padding:15px 17px 0">The answer library</h2>
+        <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+          ${library?.error ? 'The answer library could not be read.' : (library?.summary ?? '')}
+          What this business says about itself, kept between bids with the mark each version earned where the buyer
+          disclosed one. An answer is approved by somebody other than whoever captured it, because what sits here is
+          what the company claims on every bid that takes it. Nothing is offered until it is approved, nothing is
+          deleted, and nothing is pasted into a submission — a buyer reading their fourth identical answer marks it as
+          their fourth identical answer.
+        </p>
+        <div style="padding:11px 17px 0">
+          ${raw(commandBar([
+            { id: 'capture-answer', label: 'Capture an answer',
+              permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'approve-answer', label: 'Approve for reuse',
+              permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+            // A revision creates a record rather than editing one, so it is
+            // gated on C exactly as the capture is — the same verb the server
+            // authorises it under.
+            { id: 'revise-answer', label: 'Revise', tone: 'quiet',
+              permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'record-answer-use', label: 'Record a use and its mark', tone: 'quiet',
+              permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
+            { id: 'retire-answer', label: 'Retire', tone: 'quiet',
+              permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+          ]))}
+        </div>
+
+        <!--
+          A lookup, not a position: the library cannot say what it has until
+          somebody says which requirement they are answering. The options are
+          the categories the compliance matrix itself classifies requirements
+          onto, read from the shared vocabulary, so this can never offer a
+          category no requirement could carry.
+        -->
+        <div class="actions" style="padding:11px 17px 0;align-items:flex-end">
+          <div class="field" style="margin:0;min-width:240px">
+            <label for="answer-category">Answering which requirement?</label>
+            <select id="answer-category">
+              ${REQUIREMENT_CATEGORY.map((option) => html`<option value="${option.value}">${option.label}</option>`)}
+            </select>
+          </div>
+          <button class="btn sm" id="answer-offer-go">What do we have</button>
+        </div>
+        <div id="answer-offer" style="padding:0 17px"></div>
+
+        ${table({
+          headers: ['Ref', 'Category', 'Answer', 'Words', 'Used', 'Median mark', 'Version', 'Standing'],
+          align: ['', '', '', 'num', 'num', 'num', 'num', ''],
+          rows: (library?.answers ?? []).map((answer) => [
+            answer.reference,
+            humanise(answer.category),
+            answer.title,
+            String(answer.words),
+            String(answer.useCount),
+            answer.medianScorePercent === null
+              ? html`<span style="font-size:12px;color:var(--text-3)">no mark given</span>`
+              : pct(answer.medianScorePercent, 0),
+            `v${answer.version}`,
+            badge(humanise(answer.status), ANSWER_TONE[answer.status] ?? ''),
+          ]),
+          empty: 'Nothing in the library yet',
+          emptyDetail:
+            'Capture the answers that worked while somebody still remembers they worked. The submission that scored ' +
+            '92 last month is the one worth keeping, and it is already written.',
+        })}
+
+        ${
+          (library?.limits ?? []).length > 0
+            ? html`<div class="notice info" style="margin:11px 17px 15px"><div>
+                ${library.limits.map((line) => html`<div>${line}</div>`)}
+              </div></div>`
+            : ''
+        }
+      </div>
+
       <div class="grid g4" style="margin-bottom:14px">
         <div class="card">
           <h2>Declined</h2>
@@ -1175,7 +1312,8 @@ export async function pipeline(root) {
                 winRate.byClient.length > 0
                   ? html`<div style="margin-top:12px">
                       ${table({
-                        head: ['Client', 'Settled', 'Won', 'Rate', 'Value won'],
+                        headers: ['Client', 'Settled', 'Won', 'Rate', 'Value won'],
+                        align: ['', 'num', 'num', 'num', 'num'],
                         rows: winRate.byClient.slice(0, 8).map((entry) => [
                           entry.key,
                           String(entry.settled),
@@ -2394,6 +2532,78 @@ export async function pipeline(root) {
     }
   });
 
+  /*
+   * What the library has for one requirement category.
+   *
+   * A lookup rather than a position: the library cannot answer until somebody
+   * says which requirement they are answering, so it is a chooser and a press
+   * rather than a tenth panel loaded on every visit.
+   *
+   * Every candidate is shown in full, with the mark it earned. There is no
+   * button on any of them that puts the text into a bid, and there is no
+   * endpoint behind one either. Copying it is a person's act, done knowing what
+   * they are copying — and the note under the heading says what happens to a
+   * buyer reading their fourth identical answer.
+   */
+  const offer = root.querySelector('#answer-offer');
+  const offerButton = root.querySelector('#answer-offer-go');
+  if (offer && offerButton) {
+    offerButton.addEventListener('click', async () => {
+      const category = root.querySelector('#answer-category')?.value;
+      if (!category) return;
+
+      offerButton.disabled = true;
+      offerButton.textContent = 'Reading…';
+      try {
+        const result = await api.read(
+          `/v1/pipeline/answers/offer/${category}`,
+          'ESTIMATE_TENDER',
+          'COMMERCIAL_L3',
+        );
+        render(
+          offer,
+          html`<div style="margin-top:11px">
+            <div class="notice info" style="margin:0 0 10px"><div>${result.note}</div></div>
+            ${
+              result.candidates.length === 0
+                ? ''
+                : html`<div class="split-list">
+                    ${result.candidates.map(
+                      (candidate) => html`<div style="padding:10px 0;border-top:1px solid var(--line)">
+                        <div class="actions" style="justify-content:space-between;align-items:baseline">
+                          <b>${candidate.reference} · ${candidate.title}</b>
+                          <span style="font-size:12px;color:var(--text-3)">
+                            v${candidate.version} · ${candidate.words} words · used ${candidate.useCount}×
+                            ${
+                              candidate.medianScorePercent === null
+                                ? ' · no mark disclosed'
+                                : ` · median ${pct(candidate.medianScorePercent, 0)}`
+                            }
+                          </span>
+                        </div>
+                        ${candidate.tags.length > 0
+                          ? html`<div style="margin:4px 0">${candidate.tags.map((tag) => badge(tag, ''))}</div>`
+                          : ''}
+                        ${candidate.body.map(
+                          (paragraph) => html`<p style="margin:6px 0;font-size:13px;line-height:1.55">${paragraph}</p>`,
+                        )}
+                      </div>`,
+                    )}
+                  </div>`
+            }
+          </div>`,
+        );
+      } catch (error) {
+        // A denial is shown as a denial. An empty panel here would read as
+        // "the library has nothing", which is a different statement.
+        render(offer, notice(`The library could not be read: ${error.message}`, 'err'));
+      } finally {
+        offerButton.disabled = false;
+        offerButton.textContent = 'What do we have';
+      }
+    });
+  }
+
   wireLookups(root, [
     {
       id: 'submission-readiness',
@@ -2649,6 +2859,151 @@ export async function pipeline(root) {
         { name: 'reason', label: 'Why', type: 'text' },
       ],
       transform: ({ claimId, ...rest }) => rest,
+    },
+
+    /*
+     * The answer library — five doors, and no sixth.
+     *
+     * There is deliberately no "insert into section" command. The library
+     * offers candidates and the mark each earned; a person writes the section.
+     * An answer pasted unchanged into forty bids is boilerplate, and a library
+     * that pasted would converge on a permanent 3/5 — the failure it exists to
+     * fix. "Record a use" is how the platform finds out an answer went out,
+     * because whether somebody actually worked from one is a fact only they
+     * have.
+     */
+    'capture-answer': {
+      title: 'Capture an answer',
+      intent:
+        'Keep what this business said, while somebody still remembers it worked. It arrives as a draft and is offered ' +
+        'to nobody until a second person approves it — what sits in the library is what the company claims on every ' +
+        'bid that takes it.',
+      path: '/v1/pipeline/answers',
+      submitLabel: 'Capture',
+      fields: [
+        { name: 'title', label: 'What it answers', type: 'text',
+          hint: 'How somebody looking for it would describe it — "Social value: local labour and apprenticeships".' },
+        { name: 'category', label: 'Requirement category', type: 'select',
+          options: REQUIREMENT_CATEGORY,
+          hint: 'The same list the compliance matrix classifies requirements onto, so a matrix gap can find this.' },
+        { name: 'body', label: 'The answer', type: 'textarea', rows: 10,
+          hint: 'As it was written, one paragraph per line. At least 25 words — a note to self is not an answer.' },
+        { name: 'tags', label: 'Tags', type: 'text', required: false,
+          hint: 'Comma separated. What a buyer or a sector would call it — "social value, apprenticeships, NEC4".' },
+        { name: 'packSection', label: 'Where it came from', type: 'select', required: false,
+          options: packSections,
+          hint: packSections.length === 0
+            ? 'Nothing to attribute it to on this project yet. An answer captured from outside the platform needs none.'
+            : 'The section this was written for, where it was written here. Attribution only — it changes nothing.' },
+      ],
+      transform: ({ body, tags, packSection, ...rest }) => ({
+        ...rest,
+        body: String(body ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+        ...(String(tags ?? '').trim()
+          ? { tags: String(tags).split(',').map((tag) => tag.trim()).filter(Boolean) }
+          : {}),
+        ...(packSection
+          ? { origin: { packId: String(packSection).split('::')[0], sectionKey: String(packSection).split('::')[1] } }
+          : {}),
+      }),
+    },
+    'approve-answer': {
+      title: 'Approve for reuse',
+      intent:
+        'Refused if you were the one who captured it. An answer in the library is offered to every bid that touches ' +
+        'this category, so the second reader is the only thing standing between one person’s draft and what the ' +
+        'company claims about itself.',
+      path: (v) => `/v1/pipeline/answers/${v.answerId}/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'answerId', label: 'Answer', type: 'select',
+          options: (library?.answers ?? [])
+            .filter((answer) => answer.status === 'DRAFT')
+            .map((answer) => ({ value: answer.id, label: `${answer.reference} · v${answer.version} — ${answer.title}` })) },
+        { name: 'note', label: 'What you checked', type: 'textarea', rows: 2,
+          hint: '"Dates and the apprenticeship figures match the 2026 return" is a check. "OK" is a signature on nothing.' },
+      ],
+      transform: ({ answerId: _answerId, ...rest }) => rest,
+    },
+    'revise-answer': {
+      title: 'Revise an answer',
+      intent:
+        'Writes a better version and supersedes the old one rather than overwriting it — the version a buyer read is a ' +
+        'promise this business made, and it stays readable. The replacement is a draft and needs its own approval. Its ' +
+        'uses do not carry forward: a new answer has not earned the old one’s marks.',
+      path: (v) => `/v1/pipeline/answers/${v.answerId}/revise`,
+      submitLabel: 'Revise',
+      fields: [
+        { name: 'answerId', label: 'Answer', type: 'select',
+          options: (library?.answers ?? [])
+            .filter((answer) => answer.status === 'APPROVED' || answer.status === 'DRAFT')
+            .map((answer) => ({ value: answer.id, label: `${answer.reference} · v${answer.version} — ${answer.title}` })) },
+        { name: 'body', label: 'The better version', type: 'textarea', rows: 10,
+          hint: 'One paragraph per line. At least 25 words.' },
+        { name: 'reason', label: 'What changed', type: 'text',
+          hint: 'Read by whoever approves it, and by whoever wonders in a year why the old one was replaced.' },
+        { name: 'title', label: 'Retitle', type: 'text', required: false,
+          hint: 'Leave blank to keep the title it has.' },
+        { name: 'tags', label: 'Replace tags', type: 'text', required: false,
+          hint: 'Comma separated. Leave blank to keep the tags it has.' },
+      ],
+      transform: ({ answerId: _answerId, body, tags, title, ...rest }) => ({
+        ...rest,
+        body: String(body ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+        ...(String(title ?? '').trim() ? { title: String(title).trim() } : {}),
+        ...(String(tags ?? '').trim()
+          ? { tags: String(tags).split(',').map((tag) => tag.trim()).filter(Boolean) }
+          : {}),
+      }),
+    },
+    'record-answer-use': {
+      title: 'Record a use and its mark',
+      intent:
+        'The half that makes the library honest. Without it the register is a bank of answers somebody is proud of; ' +
+        'with it, it says which ones go out and what happens when they do — an answer used eleven times for two wins ' +
+        'is worse than the blank page it replaced, and that is a sentence nobody can write unless the uses are on the ' +
+        'record. The mark is optional because most buyers disclose none, and a guessed mark is worse than no mark.',
+      path: (v) => `/v1/pipeline/answers/${v.answerId}/used`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'answerId', label: 'Answer', type: 'select',
+          options: (library?.answers ?? [])
+            .filter((answer) => answer.status !== 'DRAFT')
+            .map((answer) => ({ value: answer.id, label: `${answer.reference} · v${answer.version} — ${answer.title}` })) },
+        { name: 'packSection', label: 'Section it went out on', type: 'select',
+          options: packSections,
+          hint: packSections.length === 0
+            ? 'Open a project with a response pack still being written. A use is recorded against the section it went ' +
+              'out on, and this project has none.'
+            : 'Every section of every pack this project has not yet issued.' },
+        { name: 'scorePercent', label: 'The buyer’s mark (%)', type: 'number', required: false,
+          hint: 'Only where the buyer actually disclosed one. Leave blank otherwise — the library reports no median ' +
+            'rather than one built from guesses.' },
+      ],
+      transform: ({ answerId: _answerId, packSection, scorePercent, ...rest }) => ({
+        ...rest,
+        packId: String(packSection).split('::')[0],
+        sectionKey: String(packSection).split('::')[1],
+        ...(String(scorePercent ?? '').trim() === '' ? {} : { scorePercent: Number(scorePercent) }),
+      }),
+    },
+    'retire-answer': {
+      title: 'Retire an answer',
+      intent:
+        'Takes it out of use without taking it off the record. It stops being offered; the bids it already went out on ' +
+        'still say what they said, and the reason stays readable — otherwise the next person captures the same answer ' +
+        'and the same reviewer retires it again.',
+      path: (v) => `/v1/pipeline/answers/${v.answerId}/retire`,
+      submitLabel: 'Retire',
+      fields: [
+        { name: 'answerId', label: 'Answer', type: 'select',
+          options: (library?.answers ?? [])
+            .filter((answer) => answer.status !== 'RETIRED')
+            .map((answer) => ({ value: answer.id, label: `${answer.reference} · v${answer.version} — ${answer.title}` })) },
+        { name: 'reason', label: 'Why', type: 'text',
+          hint: 'The standard it cites was withdrawn; the scheme it describes is finished; it has never scored above 2.' },
+      ],
+      transform: ({ answerId: _answerId, ...rest }) => rest,
     },
   };
 

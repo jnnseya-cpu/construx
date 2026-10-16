@@ -25916,3 +25916,83 @@ has, for the same reason: the checkout path runs through an HTTP route, so a
 test cannot pass a stub down to it per call. The default is the real transport
 and production never touches it. The checkout test now asserts `201` against a
 stub instead of accepting three statuses, and a second test holds the 502.
+
+### The answer library
+
+The second BidCraft piece. The qualitative half of a public bid carries 40–60%
+of the score, and the answers that earn it are thrown away after every
+submission: the next bid writes the same social-value commitment from nothing,
+and nobody can say which version of it scored.
+
+`domain/answers.ts` keeps them. One entity, `BidAnswer`, classified
+`ESTIMATE_TENDER` / `COMMERCIAL_L3` — this is the company's own method, priced
+into a bid, readable by whoever can read the bid and nobody else. Five events,
+every one `aiAllowed: false`: an agent may draft prose into a bid section, which
+is already built and metered, but what this business permanently claims about
+itself is not something an agent commits to on its behalf.
+
+**It does not paste, and that is the design.** `offerAnswers` returns the
+candidates for a requirement category with the mark each one earned, and the
+section is still written by a person. There is no function in the module and no
+route anywhere that writes a library answer into a bid section. An answer pasted
+unchanged into forty bids is boilerplate; a buyer reading their fourth identical
+submission marks it as their fourth identical submission; the library converges
+on a permanent 3/5 — which is the failure it was bought to fix. `answers.test.ts`
+asserts the absence against the source, so adding a paste means arguing for it in
+a review rather than discovering it in a scoring sheet.
+
+Five refusals carry the rest:
+
+- **One person is not both ends.** `ANSWER_SELF_APPROVAL`: whoever captured an
+  answer cannot approve it for reuse. The approval note has to say what was
+  checked, because "OK" is a signature on nothing.
+- **A draft is offered to nobody.** It is in the register, so somebody can see
+  there is an answer waiting for them, and `limits` says how many are waiting.
+- **Nothing is overwritten.** A revision writes a new record that supersedes the
+  old one and arrives as its own draft. The version a buyer read is a promise
+  this business made and it stays readable.
+- **A new version has not earned the old one's marks.** Uses do not carry
+  forward. An answer with no record is reported as having no record.
+- **No median is invented.** Most buyers disclose no mark. An answer used twice
+  with nothing disclosed reports `null` and says so in `limits`, rather than a
+  median built from the uses that happened to come with a number.
+
+`recordAnswerUse` is the half that makes the library honest: without it the
+register is a bank of answers somebody is proud of, and with it the register says
+which ones go out and what happens when they do. An answer used eleven times for
+two wins is worse than the blank page it replaced, and that is a sentence nobody
+can write unless the uses are on the record. It is a separate human act rather
+than something inferred from `bidresponse.ts` writing a section — because the
+library does not paste, so whether anybody actually worked from an answer is a
+fact only they have.
+
+Retirement is not deletion. A retired answer stops being offered, stays in the
+register, and keeps the reason — otherwise the next person captures the same
+answer and the same reviewer retires it again.
+
+On the pipeline screen: a register table, the five doors, and a category chooser
+whose "What do we have" press reads `GET /v1/pipeline/answers/offer/:category`
+and renders every candidate in full with its median mark. The categories come
+from `REQUIREMENT_CATEGORY`, now in `shared/vocabulary.js` and re-exported
+through `enums.js` rather than declared in the browser, so the chooser can never
+offer a category the compliance matrix would not classify a requirement onto.
+`vocabulary.test.ts` holds that list, the route enum and `REQUIREMENT_CATEGORIES`
+in `itt.ts` to the same set — drift there would file an answer under a category
+no requirement can carry, which is a silent failure.
+
+Recording a use needs the section it went out on. The pack register carries
+counts rather than sections, so the screen reads each un-issued pack in full and
+offers `pack · reference — title`; a typed matrix reference is how one section
+becomes two rows no median can be taken across. An issued pack is excluded,
+because an answer cannot first go out on a submission that has already gone.
+
+**Found and fixed in the same work:** the win-rate panel's by-client table passed
+`head:` to `table()`, which takes `headers:`. It would have thrown on the first
+tenancy with a settled bid against a named client — that is, on the first screen
+that had anything to show — and an empty pipeline is exactly the state it was
+written against.
+
+**What is not built:** the answer-against-limit check. A tender section with a
+stated word or page limit is still issuable over it; `BidSection.words` exists and
+`bidCompleteness` is where the refusal belongs. It is the third of the three
+BidCraft pieces and it is not started.

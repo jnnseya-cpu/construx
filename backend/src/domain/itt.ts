@@ -37,17 +37,28 @@ import { companyProfile, type CompanyProfile } from './radar.ts';
 
 // --- The matrix --------------------------------------------------------------------
 
-export type RequirementCategory =
-  | 'QUALIFICATION'
-  | 'TECHNICAL'
-  | 'COMMERCIAL'
-  | 'INSURANCE'
-  | 'HEALTH_AND_SAFETY'
-  | 'QUALITY'
-  | 'ENVIRONMENTAL'
-  | 'SOCIAL_VALUE'
-  | 'PROGRAMME'
-  | 'SUBMISSION';
+/**
+ * The categories a requirement falls into.
+ *
+ * A list rather than a bare union, because a route schema and the answer
+ * library both need the values at runtime. `RequirementCategory` is derived
+ * from it, so the two cannot drift: adding a category here adds it everywhere
+ * it is validated.
+ */
+export const REQUIREMENT_CATEGORIES = [
+  'QUALIFICATION',
+  'TECHNICAL',
+  'COMMERCIAL',
+  'INSURANCE',
+  'HEALTH_AND_SAFETY',
+  'QUALITY',
+  'ENVIRONMENTAL',
+  'SOCIAL_VALUE',
+  'PROGRAMME',
+  'SUBMISSION',
+] as const;
+
+export type RequirementCategory = (typeof REQUIREMENT_CATEGORIES)[number];
 
 export type ITTRequirement = {
   reference: string;

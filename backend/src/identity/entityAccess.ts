@@ -658,6 +658,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // names lost bids and competitors' prices, so it sits at the same
   // classification as the estimates it would correct.
   CalibrationLesson: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // The company's own words about itself, kept for reuse. Commercial because
+  // the library is what the business competes with: it names the schemes, the
+  // numbers and the commitments that win work, and a competitor holding it
+  // would know exactly what to bid against.
+  BidAnswer: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   // What a red team found against a submission before it went out. Sits with
   // the submission it attacks: the findings quote the prose and name the marks
   // at risk, so anybody who may not read the bid may not read the review of it.

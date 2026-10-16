@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import * as vocabulary from '../../shared/vocabulary.js';
 import { createGateway } from '../src/api/gateway.ts';
 import { ROUTES } from '../src/api/routes.ts';
+import { REQUIREMENT_CATEGORIES } from '../src/domain/itt.ts';
 import { CURRENCIES } from '../src/domain/locale.ts';
 import { Platform } from '../src/platform.ts';
 
@@ -111,6 +112,26 @@ describe('what the API refuses', () => {
     assert.deepEqual(
       [...constraint.values].sort(),
       vocabulary.values(vocabulary.WEATHER_CONDITION).sort(),
+    );
+  });
+
+  it('constrains a library answer to the requirement categories the matrix classifies onto', () => {
+    // The matrix files requirements onto this list and the answer library files
+    // answers against it. If they drift, an answer is filed under a category no
+    // requirement can ever carry — it is in the library, it is approved, and it
+    // is offered to nobody. That failure is silent, which is why it is asserted
+    // rather than remembered.
+    const constraint = schemaEnums().find((e) => e.field === 'category' && e.values.includes('SOCIAL_VALUE'));
+    assert.ok(constraint, 'the library answer category is no longer constrained');
+    assert.deepEqual(
+      [...constraint.values].sort(),
+      vocabulary.values(vocabulary.REQUIREMENT_CATEGORY).sort(),
+      'the route enum and the category chooser have drifted apart',
+    );
+    assert.deepEqual(
+      [...REQUIREMENT_CATEGORIES].sort(),
+      vocabulary.values(vocabulary.REQUIREMENT_CATEGORY).sort(),
+      'itt.ts and the shared vocabulary have drifted apart',
     );
   });
 
