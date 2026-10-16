@@ -25885,15 +25885,34 @@ tenant isolation is a settled decision. Per-tenant price intelligence already
 exists in `calibrationSignals`, which reads the winning price a buyer disclosed
 on a loss; that is the honest version and it is enough.
 
-### A pre-existing failure, recorded rather than fixed
+### An unreachable Stripe answered 500
 
-`paywall.test.ts` — *"a paid package, paid by card through Stripe"* — fails in
-this container with `TypeError: fetch failed` from `stripeRequest`. It is
-unrelated to the win-rate work and fails identically on a clean tree, which was
-checked rather than assumed. The cause is that the test drives
-`createCheckoutSession`, which makes a real outbound call to `api.stripe.com`;
-the network policy in this environment refuses it. That is an environmental
-failure and also a genuine weakness in the test: a unit test that depends on
-reaching a third party is a test that fails for reasons that have nothing to do
-with the code. Recorded here, not touched — uncontrolled scope creates
-regressions.
+Recorded first as an unrelated failure found beside the win-rate work, then
+fixed on request. It turned out not to be environmental at all.
+
+`paywall.test.ts` failed with `TypeError: fetch failed` from `stripeRequest`,
+because the checkout test opened a real socket to `api.stripe.com` and this
+container's egress policy refuses it. The test accepted `201`, `502` **or**
+`503` — so it passed on a machine with outbound network, failed on one without,
+and proved nothing about the code either way.
+
+**Underneath it was a real defect the test had been papering over.**
+`stripeRequest` translated Stripe *answering and refusing* into
+`STRIPE_ERROR` at 502, and translated Stripe *being unreachable* into nothing
+at all: the raw `TypeError` escaped the handler, was logged as
+`unhandled_error`, and reached a customer pressing **pay** as a 500 reading
+*"The request could not be completed. Reference 8c3d29e0…"*. That looks like
+the platform broke rather than the payment network being out of reach, tells an
+operator nothing about which it was, and — worst of the three — leaves somebody
+unsure whether they have just been charged.
+
+`STRIPE_UNREACHABLE` now answers 502 and says *"Nothing was charged and nothing
+was taken; this can be retried."* It is deliberately a different code from
+`STRIPE_ERROR`: one means the card was refused, the other means nobody asked,
+and a collector reading them has to be able to tell those apart.
+
+`setStripeTransport` provides the seam — the same one `collection.setCollector`
+has, for the same reason: the checkout path runs through an HTTP route, so a
+test cannot pass a stub down to it per call. The default is the real transport
+and production never touches it. The checkout test now asserts `201` against a
+stub instead of accepting three statuses, and a second test holds the 502.

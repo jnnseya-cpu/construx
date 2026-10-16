@@ -137,6 +137,25 @@ function formEncode(values: Record<string, string | number | undefined>): string
   return params.toString();
 }
 
+/**
+ * How this module reaches Stripe. The real `fetch`, unless a test says otherwise.
+ *
+ * The same seam `collection.setCollector` provides, for the same reason. The
+ * checkout path is driven through an HTTP route, so a test cannot pass a stub
+ * down to it per call — and without a seam the only way to exercise the route
+ * is to let it open a socket to `api.stripe.com`. That is a test which fails
+ * when a container has no outbound network, passes when somebody's laptop does,
+ * and tells you nothing about the code either way.
+ *
+ * The default is the real transport and production never touches this.
+ */
+let transport: typeof fetch = (...args) => fetch(...args);
+
+/** Install a transport — a test double. Pass nothing to restore the real one. */
+export function setStripeTransport(next?: typeof fetch): void {
+  transport = next ?? ((...args) => fetch(...args));
+}
+
 async function stripeRequest(
   path: string,
   body: Record<string, string | number | undefined>,
@@ -147,22 +166,45 @@ async function stripeRequest(
   }
 
   const method = options.method ?? 'POST';
-  const response = await fetch(`${STRIPE_API}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${config.stripe.secretKey}`,
-      ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
-      // Stripe pins behaviour to an API version. Sending ours means a version
-      // rolled out on their side cannot change the shape of what we parse.
-      'Stripe-Version': config.stripe.apiVersion,
-      // Stripe's own replay guard: the same key returns the same result for a
-      // day rather than a second charge. Used for every off-session collection,
-      // keyed on the charge, so a retried run cannot take a month twice.
-      ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
-    },
-    ...(method === 'POST' ? { body: formEncode(body) } : {}),
-    signal: AbortSignal.timeout(20_000),
-  });
+  let response: Response;
+  try {
+    response = await transport(`${STRIPE_API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${config.stripe.secretKey}`,
+        ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
+        // Stripe pins behaviour to an API version. Sending ours means a version
+        // rolled out on their side cannot change the shape of what we parse.
+        'Stripe-Version': config.stripe.apiVersion,
+        // Stripe's own replay guard: the same key returns the same result for a
+        // day rather than a second charge. Used for every off-session collection,
+        // keyed on the charge, so a retried run cannot take a month twice.
+        ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
+      },
+      ...(method === 'POST' ? { body: formEncode(body) } : {}),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    /*
+     * Stripe could not be reached at all — DNS, a refused socket, a timeout, an
+     * egress policy that does not allow it.
+     *
+     * Distinct from `STRIPE_ERROR`, which is Stripe answering and declining,
+     * and it has to be: one means the card was refused and the other means
+     * nobody asked. Without this the raw `TypeError: fetch failed` escaped the
+     * handler, was logged as `unhandled_error`, and reached a customer pressing
+     * *pay* as a 500 reading *"The request could not be completed. Reference
+     * 8c3d29e0…"* — which tells them nothing, tells an operator nothing, and
+     * looks like the platform broke rather than the payment network being out
+     * of reach.
+     */
+    throw new DomainError(
+      'STRIPE_UNREACHABLE',
+      `Stripe could not be reached: ${error instanceof Error ? error.message : String(error)}. ` +
+        'Nothing was charged and nothing was taken; this can be retried.',
+      502,
+    );
+  }
 
   const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {

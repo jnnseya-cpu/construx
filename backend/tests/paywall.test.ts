@@ -6,6 +6,7 @@ import { createGateway } from '../src/api/gateway.ts';
 import { rateLimiter, resetIdempotency } from '../src/api/middleware.ts';
 import * as collection from '../src/billing/collection.ts';
 import { PACKAGES } from '../src/billing/seats.ts';
+import * as stripe from '../src/billing/stripe.ts';
 import { resetWebhookHealth, settledPayment, type StripeEvent } from '../src/billing/stripe.ts';
 import { config } from '../src/config.ts';
 import { issueTokens } from '../src/identity/auth.ts';
@@ -312,13 +313,50 @@ describe('a paid package, paid by card through Stripe', () => {
   });
 
   it('offers a checkout for the charge, and only for a charge still owed', async () => {
-    const token = await signIn(email);
-    const checkout = await call('POST', `/v1/billing/charges/${chargeId}/checkout`, token, {});
-    // No Stripe account answers in this suite; what matters is that the door
-    // exists, is the customer's own, and is refused for somebody else's charge.
-    assert.ok([201, 502, 503].includes(checkout.status), `unexpected ${checkout.status}: ${JSON.stringify(checkout.body)}`);
-    const other = await call('POST', `/v1/billing/charges/not-my-charge/checkout`, token, {});
-    assert.equal(other.status, 404);
+    // Stripe answers from a stub rather than from the internet.
+    //
+    // This assertion used to accept 201, 502 or 503, because the route opened a
+    // real socket to api.stripe.com and the suite had no account behind it —
+    // so it passed on a laptop with outbound network, failed in a container
+    // without one, and proved nothing about the code either way. A seam costs
+    // one exported setter and makes the success path actually testable.
+    stripe.setStripeTransport((async () =>
+      new Response(JSON.stringify({ id: 'cs_test_stub', url: 'https://checkout.stripe.com/c/pay/cs_test_stub' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch);
+    try {
+      const token = await signIn(email);
+      const checkout = await call('POST', `/v1/billing/charges/${chargeId}/checkout`, token, {});
+      assert.equal(checkout.status, 201, `unexpected ${checkout.status}: ${JSON.stringify(checkout.body)}`);
+      const other = await call('POST', `/v1/billing/charges/not-my-charge/checkout`, token, {});
+      assert.equal(other.status, 404);
+    } finally {
+      stripe.setStripeTransport();
+    }
+  });
+
+  it('answers 502 rather than 500 when Stripe cannot be reached at all', async () => {
+    // The defect this exists for. An unreachable payment network escaped as a
+    // raw `TypeError: fetch failed`, was logged as an unhandled error, and
+    // reached somebody pressing *pay* as a 500 reading "The request could not
+    // be completed. Reference 8c3d29e0…" — which looks like the platform broke
+    // rather than the payment network being out of reach, and tells an
+    // operator nothing about which it was.
+    stripe.setStripeTransport((async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch);
+    try {
+      const token = await signIn(email);
+      const checkout = await call('POST', `/v1/billing/charges/${chargeId}/checkout`, token, {});
+      assert.equal(checkout.status, 502, `unexpected ${checkout.status}: ${JSON.stringify(checkout.body)}`);
+      assert.equal((checkout.body as { title?: string }).title, 'STRIPE_UNREACHABLE');
+      // It has to say nothing was taken. A payment error that leaves somebody
+      // unsure whether they were charged is the one they telephone about.
+      assert.match((checkout.body as { detail?: string }).detail ?? '', /Nothing was charged/);
+    } finally {
+      stripe.setStripeTransport();
+    }
   });
 
   it('reads the charge off the session Stripe signed', () => {
