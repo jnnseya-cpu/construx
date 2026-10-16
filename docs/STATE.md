@@ -26056,3 +26056,64 @@ checked it.
 
 The demo invitation carries both: ITT-3.4 a 20-page limit, ITT-6.5 a 1,000-word
 one. A field recorded and never exercised is how the first one got missed.
+
+### Auditing the plan against the platform, line by line
+
+Asked whether everything in the BidCraft plan had actually been built, the
+honest answer was no — three things it names were still missing, and two of them
+were missing in a way nobody would have noticed from a screen.
+
+**The framework win rate was computed and invisible.** `winRatePosition` returns
+four segments — client, source, sector, value band — and the panel rendered only
+the client. The source segment *is* the framework view: *"lifted framework win
+rate from 17% to 28% across six bids"* is the sentence the plan's whole growth
+engine rests on, and it was being computed on every request and shown to nobody.
+All four now render, each only where the record carries it.
+
+**And it was unmeasurable in practice.** `source` is a free-text box hinted "the
+portal, the framework, the person who told you". Typed freely, `SCAPE`, `Scape
+framework` and `SCAPE NPS` are three segments, each under the five-bid floor, so
+each withholds its rate — and the business can never state a framework win rate
+at all. The field now suggests the tenancy's **own** prior answers: a datalist,
+not a select, because a source nobody has used before has to be enterable, and
+not a curated list of UK frameworks, which would be wrong the first time
+somebody bids through one nobody thought of and wrong everywhere outside the UK.
+No backend change — `GET /v1/pipeline` already returns `source` on every
+opportunity.
+
+**Measurable commitments are now checked.** The plan says the compliance checker
+cross-references each answer against *"framework requirements, word limits and
+social-value schedules."* The first was built; the second was built above; the
+third was not built at all. A new deterministic lens in `evaluatorFindings`
+refuses to let a `SOCIAL_VALUE` or `ENVIRONMENTAL` answer pass with no quantity
+in it — no weeks, starts, hours, tonnes or pounds, and no period. An evaluator
+scoring a TOMs-style schedule awards committed quantities; a paragraph of intent
+earns the bottom band however well it reads, and 10–20% of the marks go with it.
+
+It is **not** a contradiction of the drafting rule that forbids a model stating
+figures. That rule is why the finding exists: the model writes the method and
+names what the bid team must insert, and this is the check that says nobody has
+inserted it. Where the section is still AI-drafted the remedy says so — the fix
+is a person with the real numbers, not another pass. `HIGH` on a mandatory
+question, `MEDIUM` on a scored one.
+
+**What the plan asks for and this platform will not build:** the cross-client
+price-to-win engine. *"Which prices won at which scores on which frameworks"*
+accumulated across every client is the plan's stated moat and a data network
+effect; here it would be one customer's commercial position pricing their
+competitor's bid. Tenant isolation is a settled decision. The per-tenant version
+exists in `calibrationSignals`, which reads the winning price a buyer disclosed
+on a loss, and that is the honest version.
+
+**What the plan asks for that is a consultancy's operations rather than a
+platform capability:** the fixed-fee audit and retainer pricing, the margin-share
+associate model, the trademark filing, the funding ask and the three-year revenue
+ramp. Those are how a bid-support business would be run on top of this platform,
+not features of it, and nothing was built for them.
+
+Everything else the plan describes was already here before the plan was read:
+the compliance matrix and its mandatory gaps, waivers, addendum invalidation,
+the nine-lens red team with `findableScorePercent` (reported as coverage and
+explicitly not as a predicted mark), the evidence claim register with its
+second-person verification, the deadline schedule, the portal port, and the
+human-only authorship rule that is the plan's *"AI never signs off alone."*

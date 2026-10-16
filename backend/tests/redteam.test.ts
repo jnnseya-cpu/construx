@@ -587,3 +587,149 @@ describe('the evidence lens, on the day the buyer reads it', () => {
     assert.ok(review.findings.some((entry) => entry.reference === 'R-03'));
   });
 });
+
+describe('the measurable-commitment lens', () => {
+  /**
+   * The third thing a compliance check cross-references, after the requirement
+   * and the stated word limit: the measurable commitments a social value
+   * schedule asks for.
+   *
+   * An evaluator scoring a TOMs-style schedule awards committed quantities —
+   * apprenticeship weeks, local starts, tonnes avoided. A paragraph of intent
+   * earns the bottom band however well it reads, and 10–20% of the marks go
+   * with it. It is the most common way a social value answer that reads
+   * perfectly scores nothing.
+   */
+  const SOCIAL = {
+    reference: 'S-01',
+    category: 'SOCIAL_VALUE',
+    requirement: 'Set out your local employment and apprenticeship commitments',
+    mandatory: true,
+    weightingPercent: 10,
+    owner: 'OWNER',
+    evidenceRequired: 'Completed social value schedule with measurable commitments',
+    status: 'UNKNOWN',
+  };
+
+  const run = (body: string[], authorship: 'HUMAN' | 'AI_DRAFTED' = 'HUMAN', line = SOCIAL) =>
+    redteam.evaluatorFindings({
+      pack: {
+        id: 'p',
+        reference: 'BID-0001',
+        projectId: 'x',
+        analysisId: 'a',
+        clientName: 'c',
+        returnBy: '2027-03-01T12:00:00.000Z',
+        sections: [
+          {
+            key: line.reference,
+            title: 'Social value',
+            deliverable: line.requirement,
+            owner: 'OWNER',
+            mandatory: line.mandatory,
+            status: 'DRAFTED' as const,
+            body,
+            words: body.join(' ').split(/\s+/).filter(Boolean).length,
+            authorship,
+          },
+        ],
+        deadlines: [],
+        status: 'DRAFTING',
+        passes: 1,
+        plannedAt: '2026-01-01T00:00:00.000Z',
+        plannedBy: 'u',
+      } as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'],
+      matrix: [line] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'],
+      waivedKeys: new Set(),
+      claims: [],
+      staleKeys: new Map(),
+    });
+
+  const unmeasurable = (findings: ReturnType<typeof redteam.evaluatorFindings>) =>
+    findings.find((entry) => entry.title.includes('commits to nothing anybody can measure'));
+
+  it('finds a social value answer that commits to nothing countable', () => {
+    const findings = run([
+      'We are fully committed to supporting local employment and to the communities in which we work. Social value',
+      'is embedded in our culture and we work in genuine partnership with our clients to deliver lasting benefit to',
+      'the area around every scheme we build, which we take extremely seriously at every level of the business.',
+    ]);
+
+    const found = unmeasurable(findings);
+    assert.ok(found, 'a social value answer of pure intent was accepted');
+    assert.equal(found.severity, 'HIGH', 'a mandatory schedule question is not blocking');
+    assert.equal(found.lens, 'EVALUATOR');
+    assert.match(found.detail, /no number of weeks, starts, hours, tonnes or pounds/);
+  });
+
+  it('accepts one that commits to a quantity against a period', () => {
+    const findings = run([
+      'We will take two apprentices through a level 3 NVQ over 104 weeks with the college nearest the site, and we',
+      'will place 6 local starts in the first 12 months. We report starts and completions quarterly rather than at',
+      'handover, so an apprenticeship that is not happening is visible while there is still time to fix it.',
+    ]);
+    assert.equal(unmeasurable(findings), undefined, 'a quantified commitment was still called unmeasurable');
+  });
+
+  it('names the drafting rule as the reason when the section is still AI-drafted', () => {
+    // Not a contradiction of the rule that forbids the model stating figures —
+    // that rule is why this finding exists. The remedy has to say the fix is a
+    // person with the real numbers, not another pass.
+    const found = unmeasurable(
+      run(
+        [
+          'We will operate a local employment and apprenticeship programme on this scheme, working with the nearest',
+          'further education college and reporting against the framework model throughout the contract period as',
+          'the employer requires of every contractor delivering work of this kind under the framework.',
+        ],
+        'AI_DRAFTED',
+      ),
+    );
+    assert.ok(found);
+    assert.match(String(found.remedy), /drafting rule deliberately leaves figures out/);
+    assert.match(String(found.remedy), /Somebody with the real numbers/);
+  });
+
+  it('applies to a carbon answer too, and reports a scored one lower than a pass/fail one', () => {
+    const environmental = {
+      ...SOCIAL,
+      reference: 'E-01',
+      category: 'ENVIRONMENTAL',
+      requirement: 'Set out your carbon reduction commitments for the works',
+      mandatory: false,
+    };
+    const found = unmeasurable(
+      run(
+        [
+          'We are committed to reducing the carbon impact of our works and we continually review our plant, our',
+          'logistics and our material choices with that aim in mind on every scheme, because the industry has to',
+          'decarbonise and we intend to be part of how that happens rather than a drag on it.',
+        ],
+        'HUMAN',
+        environmental,
+      ),
+    );
+    assert.ok(found, 'a carbon answer of pure intent was accepted');
+    assert.equal(found.severity, 'MEDIUM', 'a scored question is being treated as a hard block');
+    assert.match(found.detail, /environmental requirement/);
+  });
+
+  it('says nothing about a requirement that is not scored on commitments', () => {
+    const insurance = {
+      ...SOCIAL,
+      reference: 'I-01',
+      category: 'INSURANCE',
+      requirement: 'Confirm you hold employers liability cover',
+      mandatory: true,
+    };
+    const findings = run(
+      [
+        'We hold employers liability and public liability cover and the certificates are attached to this submission',
+        'at appendix C, issued by our broker and current for the whole of the period this invitation covers.',
+      ],
+      'HUMAN',
+      insurance,
+    );
+    assert.equal(unmeasurable(findings), undefined, 'the lens fired on a requirement nobody scores on quantities');
+  });
+});

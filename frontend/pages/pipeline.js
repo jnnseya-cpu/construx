@@ -1366,12 +1366,35 @@ export async function pipeline(root) {
                 }
               </div>
               ${
-                winRate.byClient.length > 0
-                  ? html`<div style="margin-top:12px">
+                /*
+                 * All four segments, not just the client.
+                 *
+                 * The position computes by client, sector, value band and
+                 * source, and the first version of this panel rendered only
+                 * the client — so three of the four were computed on every
+                 * request and visible to nobody. The source one is the
+                 * framework view: "lifted framework win rate from 17% to 28%"
+                 * is the sentence this breakdown exists to let somebody say,
+                 * and it was the one missing.
+                 *
+                 * Each is shown only where the record carries it. A business
+                 * that never filled in a sector sees no sector table rather
+                 * than an empty one.
+                 */
+                [
+                  ['By client', winRate.byClient, 'Client'],
+                  ['By framework, portal or introduction', winRate.bySource, 'Where it came from'],
+                  ['By sector', winRate.bySector, 'Sector'],
+                  ['By value', winRate.byValueBand, 'Value band'],
+                ]
+                  .filter(([, rows]) => rows.length > 0)
+                  .map(
+                    ([heading, rows, keyLabel]) => html`<div style="margin-top:12px">
+                      <h2 style="font-size:13px">${heading}</h2>
                       ${table({
-                        headers: ['Client', 'Settled', 'Won', 'Rate', 'Value won'],
+                        headers: [keyLabel, 'Settled', 'Won', 'Rate', 'Value won'],
                         align: ['', 'num', 'num', 'num', 'num'],
-                        rows: winRate.byClient.slice(0, 8).map((entry) => [
+                        rows: rows.slice(0, 8).map((entry) => [
                           entry.key,
                           String(entry.settled),
                           String(entry.won),
@@ -1379,8 +1402,8 @@ export async function pipeline(root) {
                           money(entry.valueWonMinor),
                         ]),
                       })}
-                    </div>`
-                  : ''
+                    </div>`,
+                  )
               }
               ${
                 winRate.limits.length > 0
@@ -1995,7 +2018,33 @@ export async function pipeline(root) {
           required: false,
           hint: 'Leave blank when a project is chosen — its contract value is used, and correcting the project corrects this.',
         },
-        { name: 'source', label: 'Where it came from', hint: 'The portal, the framework, the person who told you.' },
+        {
+          name: 'source',
+          label: 'Where it came from',
+          /*
+           * Suggestions from this tenancy's own prior answers, not a curated
+           * list of UK frameworks — which would be wrong the first time
+           * somebody bids through one nobody thought of, and wrong everywhere
+           * outside the UK.
+           *
+           * It matters because this field is the framework breakdown on the
+           * win-rate position. Typed freely, "SCAPE", "Scape framework" and
+           * "SCAPE NPS" are three segments, each under the five-bid floor, so
+           * each withholds its rate and the business can never say what its
+           * framework win rate is — which is the one number a buyer of bid
+           * support asks for. Offering what was typed last time makes the
+           * second bid pick it rather than retype it.
+           *
+           * A datalist and not a select: a source nobody has used before has
+           * to be enterable, and this is the platform's own distinction
+           * between offering the recognised set and refusing the rest.
+           */
+          suggestions: [...new Set(opportunities.map((o) => String(o.source ?? '').trim()).filter(Boolean))].sort(),
+          hint:
+            'The portal, the framework, the person who told you. Pick the same words as last time where it is the ' +
+            'same framework — the win rate is reported per source, and two spellings are two segments neither of ' +
+            'which has enough bids to report.',
+        },
         { name: 'submissionDueAt', label: 'Submission due', type: 'datetime-local', required: false, hint: 'The deadline as stated. It can be recorded precisely with the invitation afterwards.' },
         { name: 'countryCode', label: 'Country code', required: false, placeholder: 'GB' },
         { name: 'city', label: 'Town or city', required: false },

@@ -241,6 +241,23 @@ const COMMON = new Set([
 /** A figure the drafting constraint forbade the model from stating. */
 const FIGURE = /(?:£|\$|€)\s?\d|(?:\b\d[\d,]*\s?(?:%|per\s?cent\b))|\b\d[\d,]*\s?(?:million|billion|k\b)/i;
 
+/**
+ * A commitment an evaluator can score: a quantity, with a unit or a period.
+ *
+ * Social value and carbon questions are marked on measurable commitments — the
+ * TOMs-style schedules every public framework now attaches ask for a number of
+ * weeks, starts, hours or tonnes, against a period. "We are committed to
+ * supporting local employment" is a sentence, not a commitment, and it is the
+ * single most common way a social value answer worth 10% of the marks scores
+ * nothing while reading perfectly well.
+ *
+ * Deliberately broader than `FIGURE`, which looks for money and percentages.
+ * This looks for a counted thing: a number followed by a unit a schedule is
+ * written in, or a number against a period.
+ */
+const QUANTIFIED =
+  /\b\d[\d,.]*\s?(?:%|per\s?cent|weeks?|months?|years?|days?|hours?|starts?|places?|apprentices?|apprenticeships?|jobs?|roles?|people|FTE|tonnes?|tCO2e?|kg|miles?|km|visits?|sessions?|students?|pupils?|SMEs?|suppliers?)\b|(?:£|\$|€)\s?\d|\b\d[\d,.]*\s?(?:million|billion|k\b)/i;
+
 /** What a draft leaves behind when the model was told to name what the bid team must insert. */
 const PLACEHOLDER =
   /\bTBC\b|\bTBA\b|\bXX+\b|\bN\/A\b|\[[^\]]{0,60}\]|<[^>]{0,60}>|\bbid team must (?:insert|supply|confirm)\b|\binsert\b\s+(?:the\s+)?(?:figure|number|name|date)\b|\blorem ipsum\b/i;
@@ -417,6 +434,45 @@ export function evaluatorFindings(input: {
             'precisely because the model has no source for one, and a number in a submission is a representation to ' +
             'the buyer.',
           remedy: 'Check the figure against the record it should come from, or take it out.',
+        }),
+      );
+    }
+
+    /*
+     * A social value or carbon answer with nothing in it anybody can count.
+     *
+     * The third thing a compliance check has to cross-reference, after the
+     * requirement itself and the stated word limit: the measurable commitments
+     * a social value schedule asks for. An evaluator scoring a TOMs-style
+     * schedule awards the number of apprenticeship weeks, local starts or
+     * tonnes avoided; a paragraph of intent earns the bottom band however well
+     * it is written, and 10–20% of the marks go with it.
+     *
+     * It is not a contradiction of the drafting rule that forbids the model
+     * stating figures. That rule is why this finding exists: the model writes
+     * the method and names what the bid team must insert, and this is the check
+     * that says nobody has inserted it yet. Where the section is still
+     * AI-drafted the remedy says so explicitly, because the fix is a person
+     * with the real numbers rather than another pass.
+     */
+    if (line && (line.category === 'SOCIAL_VALUE' || line.category === 'ENVIRONMENTAL') && !QUANTIFIED.test(prose)) {
+      findings.push(
+        finding({
+          lens: 'EVALUATOR',
+          severity: line.mandatory ? 'HIGH' : 'MEDIUM',
+          sectionKey: section.key,
+          reference: section.key,
+          title: `${section.key} commits to nothing anybody can measure`,
+          detail:
+            `This answers a ${line.category === 'SOCIAL_VALUE' ? 'social value' : 'environmental'} requirement and ` +
+            'contains no quantity — no number of weeks, starts, hours, tonnes or pounds, and no period to deliver ' +
+            'them in. A schedule is marked on committed quantities, so an answer of pure intent scores in the ' +
+            'bottom band however well it reads.',
+          remedy:
+            section.authorship === 'AI_DRAFTED'
+              ? 'The drafting rule deliberately leaves figures out, because the model has no source for one. Somebody ' +
+                'with the real numbers has to put the commitments in before this goes out.'
+              : 'State what is being committed, how much of it, and by when.',
         }),
       );
     }
