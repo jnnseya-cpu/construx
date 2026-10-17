@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { inflateRawSync } from 'node:zlib';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as customers from '../src/domain/bidon/customers.ts';
@@ -918,5 +919,180 @@ describe('the Bid Engine refuses the local stand-in before it charges', () => {
     assert.ok(estimate.chargeMinor >= estimate.rawCostMinor, 'the charge is below the provider cost');
     // It says it is an estimate rather than implying a price.
     assert.ok(estimate.limits.some((line) => /An estimate/.test(line)));
+  });
+});
+
+/**
+ * One part of a ZIP, inflated.
+ *
+ * Needed because the writer deflates: the sheet names and the cell values live
+ * inside `xl/workbook.xml` and `xl/worksheets/sheetN.xml`, and a test that
+ * searched the archive for them in the clear would pass only on a writer that
+ * stored its parts uncompressed — which is the naive implementation this one
+ * deliberately is not.
+ *
+ * Reads the local header rather than the central directory, which is enough
+ * here and is the half a reader has to get right anyway: name length at offset
+ * 26, extra length at 28, and the payload straight after both.
+ */
+function partOf(archive: Buffer, path: string): string {
+  const needle = Buffer.from(path, 'utf8');
+  for (let at = 0; at < archive.length - 4; at += 1) {
+    if (archive.readUInt32LE(at) !== 0x04_03_4b_50) continue;
+    const nameLength = archive.readUInt16LE(at + 26);
+    const extraLength = archive.readUInt16LE(at + 28);
+    const name = archive.subarray(at + 30, at + 30 + nameLength);
+    if (!name.equals(needle)) continue;
+
+    const method = archive.readUInt16LE(at + 8);
+    const compressed = archive.readUInt32LE(at + 18);
+    const start = at + 30 + nameLength + extraLength;
+    const payload = archive.subarray(start, start + compressed);
+    // Method 0 is stored, 8 is deflate. The writer picks whichever is smaller
+    // per part, so both have to be handled.
+    return (method === 8 ? inflateRawSync(payload) : payload).toString('utf8');
+  }
+  throw new Error(`${path} is not in the archive`);
+}
+
+describe('the pack comes out in the questionnaire’s own structure', () => {
+  /**
+   * The acceptance criterion: *"the DOCX/XLSX keeps the source numbering and
+   * section order."* Asserted against the bytes, because a renderer that
+   * reordered would pass any check made against the model it was given.
+   */
+  let ready: bids.Bid;
+  const branding = () => platform.exports.branding(seed.tenantId);
+
+  before(() => {
+    // A pack whose sections are deliberately out of alphabetical order, so a
+    // renderer that sorted would be caught rather than accidentally right.
+    const own = engagements.openEngagement(asProviderAdmin(), {
+      customerAccountId: thornhill.id,
+      name: 'Render test',
+      type: 'ONE_OFF',
+      billingBasis: 'FIXED_FEE',
+      feeMinor: 150_000,
+      currency: 'GBP',
+    });
+    engagements.activateEngagement(asProviderAdmin(), own.id);
+    ready = bids.createBid(asProviderAdmin(), {
+      engagementId: own.id,
+      buyerName: 'Scottish Power Energy Networks',
+      scheme: 'UVDB',
+      deadline: DEADLINE,
+    });
+    ready = bids.confirmQuestions(asProviderAdmin(), ready.id, {
+      questions: [
+        { section: 'Zebra section', number: '9.1', text: 'The last section, first in the document', answerType: 'TEXT', mandatory: true },
+        { section: 'Alpha section', number: '1.1', text: 'The first section, second in the document', answerType: 'TEXT', mandatory: true },
+        { section: 'Zebra section', number: '9.2', text: 'Back in the first section again', answerType: 'TEXT', mandatory: false },
+      ],
+    });
+
+    for (const question of ready.questions.filter((entry) => entry.mandatory)) {
+      const written = bids.recordAnswer(asBidWriter(), ready.id, {
+        questionId: question.id,
+        body: [`Our answer to ${question.number}.`],
+      });
+      bids.scoreAnswer(asProviderAdmin(), ready.id, written.answer.id, { scores: FULL, reasons: REASONS });
+      bids.approveAnswer(asReviewer(), ready.id, written.answer.id, {
+        note: `Checked the answer to ${question.number} against the record`,
+      });
+    }
+    ready = bids.requireBid(asProviderAdmin(), ready.id);
+  });
+
+  it('keeps the sections in the order the document had them, not sorted', () => {
+    const pack = bids.renderPack(asProviderAdmin(), ready.id, 'TEXT', branding());
+    // Zebra before Alpha, because that is the order the source had.
+    assert.deepEqual(pack.sections, ['Zebra section', 'Alpha section']);
+    assert.equal(pack.questions, 3);
+  });
+
+  it('writes the copy-ready text with the buyer’s own numbering and no formatting', () => {
+    const pack = bids.renderPack(asProviderAdmin(), ready.id, 'TEXT', branding());
+    assert.equal(pack.contentType, 'text/plain; charset=utf-8');
+    // The buyer's numbers, in source order.
+    const order = ['9.1', '1.1', '9.2'].map((number) => pack.content.indexOf(`${number} `));
+    assert.ok(order.every((index) => index >= 0), 'a question number is missing from the text form');
+    assert.ok(order[0]! < order[1]! && order[1]! < order[2]!, 'the text form reordered the questions');
+    // Nothing that arrives as literal asterisks in a portal textarea.
+    assert.ok(!/\*\*|^#/m.test(pack.content), 'the portal text carries markdown');
+  });
+
+  it('writes a real spreadsheet with a sheet per section, in source order', () => {
+    const pack = bids.renderPack(asProviderAdmin(), ready.id, 'XLSX', branding());
+    assert.match(pack.filename, /\.xlsx$/);
+    assert.equal(pack.contentType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+    const bytes = Buffer.from(pack.content, 'base64');
+    // A real ZIP, not a renamed CSV.
+    assert.equal(bytes.subarray(0, 2).toString('utf8'), 'PK');
+
+    const names = bytes.toString('latin1');
+    // The parts a spreadsheet needs, by name — a workbook missing any of these
+    // opens as a repair prompt rather than a file. The filenames are in the
+    // local headers uncompressed, so they can be read directly.
+    for (const part of ['[Content_Types].xml', 'xl/workbook.xml', 'xl/styles.xml', 'xl/worksheets/sheet1.xml']) {
+      assert.ok(names.includes(part), `the workbook has no ${part}`);
+    }
+
+    // The sheet names are inside the deflated workbook part, so this inflates
+    // it rather than scanning the archive for a string that is not there in
+    // the clear. A test that searched the raw bytes would pass on a stored
+    // (uncompressed) writer and fail on a correct one.
+    const workbook = partOf(bytes, 'xl/workbook.xml');
+    const zebra = workbook.indexOf('Zebra section');
+    const alpha = workbook.indexOf('Alpha section');
+    assert.ok(zebra >= 0 && alpha >= 0, `a section name is missing from the workbook: ${workbook}`);
+    assert.ok(zebra < alpha, 'the workbook sorted the sheets');
+
+    // A row per question, in the buyer's numbering, on the sheet for its own
+    // section.
+    const first = partOf(bytes, 'xl/worksheets/sheet1.xml');
+    assert.ok(first.includes('9.1'), 'the first sheet does not carry its own section’s questions');
+    assert.ok(first.includes('9.2'));
+    assert.ok(!first.includes('1.1'), 'a question from another section is on this sheet');
+  });
+
+  it('writes a real Word file carrying the answers', () => {
+    const pack = bids.renderPack(asProviderAdmin(), ready.id, 'DOCX', branding());
+    assert.match(pack.filename, /\.docx$/);
+    const bytes = Buffer.from(pack.content, 'base64');
+    assert.equal(bytes.subarray(0, 2).toString('utf8'), 'PK');
+    const text = bytes.toString('latin1');
+    assert.ok(text.includes('word/document.xml'), 'the file is not a Word document');
+  });
+
+  it('is byte-identical on a second render, so a pack can be proved', () => {
+    // The ZIP writer uses a fixed timestamp for exactly this: two renders of
+    // one pack are the same instrument, and a difference means the pack
+    // changed rather than the clock did.
+    const first = bids.renderPack(asProviderAdmin(), ready.id, 'XLSX', branding());
+    const second = bids.renderPack(asProviderAdmin(), ready.id, 'XLSX', branding());
+    assert.equal(first.content, second.content);
+  });
+
+  it('refuses to render a pack that cannot be exported, so the gate is not a formality', () => {
+    // Without this, anybody blocked from exporting could render the same file
+    // and send it.
+    const blocked = bids.createBid(asProviderAdmin(), {
+      engagementId: ready.engagementId,
+      buyerName: 'Electricity North West',
+      scheme: 'UVDB',
+      deadline: DEADLINE,
+    });
+    bids.confirmQuestions(asProviderAdmin(), blocked.id, {
+      questions: [
+        { section: 'HSEQ', number: '1.1', text: 'A mandatory question nobody has answered', answerType: 'TEXT', mandatory: true },
+      ],
+    });
+
+    const error = throwsCode(
+      () => bids.renderPack(asProviderAdmin(), blocked.id, 'DOCX', branding()),
+      'BID_ON_NOT_EXPORTABLE',
+    );
+    assert.match(String(error.message), /would make the gate a formality/);
   });
 });

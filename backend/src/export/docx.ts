@@ -66,7 +66,7 @@ function crc32(bytes: Buffer): number {
   return (c ^ 0xff_ff_ff_ff) >>> 0;
 }
 
-type ZipEntry = { path: string; bytes: Buffer };
+export type ZipEntry = { path: string; bytes: Buffer };
 
 /**
  * A ZIP archive, deflated.
@@ -76,7 +76,16 @@ type ZipEntry = { path: string; bytes: Buffer };
  * hundred-row schedule is mostly repeated XML — the difference is roughly an
  * order of magnitude, and these files are emailed.
  */
-function zip(entries: ZipEntry[]): Buffer {
+/*
+ * Exported so the XLSX writer uses this one rather than a second copy.
+ *
+ * An `.xlsx` is the same container as a `.docx` — a ZIP of XML parts with a
+ * content-types declaration and relationships — so a second implementation
+ * would be a second place for the fixed timestamp, the CRC and the central
+ * directory to be subtly wrong, and only one of them would be the one anybody
+ * tested.
+ */
+export function zip(entries: ZipEntry[]): Buffer {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;

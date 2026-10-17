@@ -26550,3 +26550,62 @@ distinctive-term overlap today and says so rather than dressing it up as
 semantic search; DOCX and XLSX rendering in the questionnaire's own numbering,
 where only the gate exists; import and resync from the standard Tenders section;
 the guest workspace screen; statements; and deposits blocking agent runs.
+
+### Bid-On: the pack, in the questionnaire's own structure
+
+`XLSX` is now a format this platform writes. `export/xlsx.ts` is written by hand
+for the reason `docx.ts` was — zero runtime dependencies is settled, and an
+`.xlsx` is the same container: a ZIP of XML parts with a content-types
+declaration and relationships. It **reuses `zip()` from `docx.ts`**, now
+exported, because a second ZIP implementation would be a second place for the
+fixed timestamp, the CRC and the central directory to be subtly wrong and only
+one of them would be the one anybody tested.
+
+Deliberately not a spreadsheet library: no formulas, no merged cells, no charts,
+one bold header row. Every one of those is a feature somebody would want and
+none is what a returned questionnaire needs. Values are written as **inline
+strings rather than into a shared string table** — the table is the format's
+compression trick and it is exactly where a hand-written writer goes wrong: an
+index off by one silently moves every cell to a neighbour and the file still
+opens. Excel's own restrictions on a tab name are applied rather than
+discovered, including the duplicate-name case, which is most likely to arise from
+two questionnaire sections whose headings differ past the thirty-first character.
+
+**Why CSV was not enough.** CSV covers most of what a spreadsheet is for and
+does not cover the one thing a bid pack needs: a questionnaire returned in its
+own structure. A buyer who issues an XLSX with a sheet per section and a row per
+numbered question expects it back that way, and a CSV of the same content is a
+file somebody rebuilds by hand — which is where the numbering stops matching and
+the submission starts failing a format check.
+
+`renderPack` produces three forms for two readers. DOCX goes in an email or a
+portal upload, through the platform's own document model so the branding and the
+renderer are the ones every other issued document uses. XLSX goes back in the
+buyer's template, a sheet per section. The text form is for an online portal with
+a box per question and carries **no formatting at all**, because formatting
+pasted into a textarea arrives as literal asterisks.
+
+**Nothing sorts.** Sections come out in first-appearance order and questions in
+the order they were confirmed, which is the order they were parsed, which is the
+order the source document prints them. The test uses sections named "Zebra" and
+"Alpha" *in that order* so a renderer that sorted would be caught rather than
+accidentally right, and it asserts against the bytes — inflating the workbook
+part, because a test that searched the archive for a string in the clear would
+pass only on a writer that stored its parts uncompressed.
+
+**Rendering is refused unless the export gate has already passed.** Without that
+the gate would be a formality: somebody blocked from exporting could render the
+same file and send it. It is checked against the live readiness position rather
+than the stored status, so a pack that became unsendable after export — a
+certificate lapsed, an answer rejected — cannot be rendered either.
+
+**The DOCX carries no CONSTRUX verification code, deliberately.** This file is
+the *customer's* submission in the buyer's format, not a report this platform
+issues. A buyer opening a UVDB questionnaire does not want a verification
+footer, and stamping one there would be this platform attesting to a document
+the customer is the author of. It is still hashed over its content, so two
+renders of one pack are provably the same file — which the fixed ZIP timestamp
+is what makes true, and a test asserts byte-identity on a second render.
+
+Branding is passed in rather than looked up, because how a tenancy's branding
+resolves is the export service's business and this module should not know it.

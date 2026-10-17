@@ -3,6 +3,10 @@ import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
 import { tierCost } from '../../billing/acu.ts';
+import { renderDocx } from '../../export/docx.ts';
+import { renderXlsx } from '../../export/xlsx.ts';
+import type { ClientBranding, DocumentBlock } from '../../export/exporter.ts';
+import { hashEvidence } from '../../core/canonical.ts';
 import { liveDeclarations, requireVisibleCustomer, type CustomerAccount } from './customers.ts';
 import { requireOpenEngagement, engagementsOf, type Engagement } from './engagements.ts';
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
@@ -1353,5 +1357,234 @@ export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
         : `${runs} run(s): ${outstanding} draft(s), ${outstanding + toScore} score(s)` +
           (bid.questionsConfirmedAt ? '' : ', and one parse') +
           `, against ${passages} passage(s) of evidence.`,
+  };
+}
+
+// --- Rendering the pack ------------------------------------------------------
+
+export type RenderedPack = {
+  reference: string;
+  /** DOCX, XLSX or the copy-ready text an online portal needs. */
+  format: 'DOCX' | 'XLSX' | 'TEXT';
+  /** Base64 for the two binary formats, the text itself for the third. */
+  content: string;
+  contentType: string;
+  filename: string;
+  /** Sections in the buyer's own order, so a reader can check the structure. */
+  sections: string[];
+  questions: number;
+};
+
+/**
+ * Render the pack in the questionnaire's own structure.
+ *
+ * The acceptance criterion is *"the DOCX/XLSX keeps the source numbering and
+ * section order"*, and that is the whole job: a buyer who issued a
+ * questionnaire with a sheet per section and a row per numbered question
+ * expects it back the same way, and anything that renumbered or regrouped is a
+ * file somebody rebuilds by hand — which is where the numbering stops matching
+ * and the submission starts failing a format check.
+ *
+ * So nothing here sorts. The questions are emitted in the order they were
+ * confirmed, which is the order they were parsed, which is the order they are
+ * printed in the source document. `confirmQuestions` is what guarantees that,
+ * because it refuses a duplicate number and keeps the array as given.
+ *
+ * **Three formats for two different readers.** A DOCX is what goes in an email
+ * or a portal upload. An XLSX is what a buyer who issued a spreadsheet wants
+ * back. The text form is for an online portal with a box per question: it
+ * carries no formatting at all, because formatting pasted into a portal textarea
+ * arrives as literal asterisks.
+ *
+ * It is a read. Rendering does not export: `exportBid` is the act with the gate
+ * on it, and this refuses unless that gate has already passed — so nothing can
+ * produce a sendable file from a pack that is not sendable.
+ */
+export function renderPack(
+  ctx: EngineContext,
+  bidId: string,
+  format: 'DOCX' | 'XLSX' | 'TEXT',
+  /**
+   * The branding to put on a DOCX, resolved by the caller.
+   *
+   * Passed in rather than looked up, because how a tenancy's branding is
+   * resolved is the export service's business and this module should not know
+   * it. Unused by the other two formats: a spreadsheet goes back in the
+   * buyer's own template and portal text carries no formatting at all.
+   */
+  branding: ClientBranding,
+): RenderedPack {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'I', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const bid = requireBid(ctx, bidId);
+  const position = bidPosition(ctx, bidId);
+
+  /*
+   * Refused unless the pack has been through the export gate.
+   *
+   * Without this the gate would be a formality: somebody blocked from
+   * exporting could render the same file and send it. The check is the
+   * readiness position rather than the status, so a pack that became unsendable
+   * after export — a certificate that lapsed, an answer rejected — cannot be
+   * rendered either.
+   */
+  if (!position.readiness.exportable) {
+    throw new DomainError(
+      'BID_ON_NOT_EXPORTABLE',
+      `${bid.reference} cannot be rendered: ${position.readiness.blocking.length} mandatory answer(s) are red or ` +
+        'unapproved. Rendering a file from a pack that cannot be exported would make the gate a formality — the ' +
+        'file would be sendable.',
+      422,
+    );
+  }
+
+  // The buyer's own sections, in first-appearance order. Not sorted and not
+  // deduplicated by name alone: two sections genuinely called "Appendix" stay
+  // two sections if the source has them twice.
+  const sections: string[] = [];
+  for (const entry of position.questions) {
+    if (!sections.includes(entry.question.section)) sections.push(entry.question.section);
+  }
+
+  const answerOf = (entry: (typeof position.questions)[number]): string =>
+    entry.answer
+      ? [
+          ...(entry.answer.yesNo === undefined ? [] : [entry.answer.yesNo ? 'Yes' : 'No']),
+          ...entry.answer.body,
+        ].join('\n\n')
+      : '';
+
+  if (format === 'TEXT') {
+    // One block per question, with the buyer's number as the only heading, and
+    // a rule between them. Somebody pasting into a portal copies from the
+    // number down to the next rule.
+    const text = position.questions
+      .map((entry) => {
+        const citations = entry.answer?.citations ?? [];
+        return [
+          `${entry.question.number} ${entry.question.text}`,
+          '',
+          answerOf(entry),
+          ...(citations.length > 0
+            ? ['', `Evidence: ${citations.map((citation) => citation.reference).join(', ')}`]
+            : []),
+          '',
+          '---',
+          '',
+        ].join('\n');
+      })
+      .join('');
+
+    return {
+      reference: bid.reference,
+      format,
+      content: `${bid.buyerName} — ${bid.reference}\n\n${text}`,
+      contentType: 'text/plain; charset=utf-8',
+      filename: `${bid.reference}-${bid.scheme.toLowerCase()}.txt`,
+      sections,
+      questions: position.questions.length,
+    };
+  }
+
+  if (format === 'XLSX') {
+    // A sheet per section, a row per question, in source order. The columns
+    // carry what a buyer's own template carries plus the evidence reference,
+    // which is what lets their evaluator check a claim without asking.
+    const sheets = sections.map((section) => ({
+      name: section,
+      headers: ['Number', 'Question', 'Answer', 'Words', 'Limit', 'Evidence'],
+      widths: [10, 60, 90, 8, 8, 24],
+      rows: position.questions
+        .filter((entry) => entry.question.section === section)
+        .map((entry) => [
+          entry.question.number,
+          entry.question.text,
+          answerOf(entry),
+          entry.answer?.words ?? 0,
+          entry.question.wordLimit ?? null,
+          (entry.answer?.citations ?? []).map((citation) => citation.reference).join(', '),
+        ] as Array<string | number | null>),
+    }));
+
+    return {
+      reference: bid.reference,
+      format,
+      content: Buffer.from(renderXlsx(sheets)).toString('base64'),
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      filename: `${bid.reference}-${bid.scheme.toLowerCase()}.xlsx`,
+      sections,
+      questions: position.questions.length,
+    };
+  }
+
+  // DOCX, through the platform's own document model — so the branding, the
+  // hashing and the renderer are the ones every other issued document uses.
+  const blocks: DocumentBlock[] = [
+    {
+      kind: 'KEY_VALUES',
+      rows: [
+        { label: 'Buyer', value: bid.buyerName },
+        ...(bid.buyerReference ? [{ label: 'Their reference', value: bid.buyerReference }] : []),
+        { label: 'Scheme', value: bid.scheme },
+        { label: 'Return by', value: bid.deadline },
+        { label: 'Our reference', value: bid.reference },
+      ],
+    },
+  ];
+  for (const section of sections) {
+    blocks.push({ kind: 'HEADING', level: 2, text: section });
+    for (const entry of position.questions.filter((row) => row.question.section === section)) {
+      blocks.push({ kind: 'HEADING', level: 3, text: `${entry.question.number} ${entry.question.text}` });
+      const answer = answerOf(entry);
+      for (const paragraph of answer.split('\n\n').filter(Boolean)) {
+        blocks.push({ kind: 'PARAGRAPH', text: paragraph });
+      }
+      const citations = entry.answer?.citations ?? [];
+      if (citations.length > 0) {
+        blocks.push({
+          kind: 'PARAGRAPH',
+          text: `Evidence: ${citations
+            .map((citation) => `${citation.reference}${citation.pageRef ? ` (${citation.pageRef})` : ''}`)
+            .join(', ')}`,
+        });
+      }
+    }
+  }
+
+  const bytes = renderDocx({
+    id: bid.id,
+    reference: bid.reference,
+    title: `${bid.buyerName} — ${bid.scheme} submission`,
+    subtitle: position.customer.legalName,
+    branding,
+    audience: 'CLIENT',
+    format: 'DOCX',
+    generatedAt: new Date().toISOString(),
+    generatedBy: ctx.auth.actorId,
+    projectId: ctx.projectId,
+    blocks,
+    /*
+     * Hashed, and deliberately not verified as a CONSTRUX instrument.
+     *
+     * This file is the *customer's* submission in the buyer's format, not a
+     * report this platform issues. A buyer opening a UVDB questionnaire does
+     * not want a CONSTRUX verification code in the footer, and stamping one
+     * there would be this platform attesting to a document the customer is the
+     * author of. The hash is over the content so two renders of one pack are
+     * provably the same file; the identifier is the pack's own reference.
+     */
+    contentHash: hashEvidence(JSON.stringify({ reference: bid.reference, blocks })),
+    verification: bid.reference,
+  });
+
+  return {
+    reference: bid.reference,
+    format,
+    content: Buffer.from(bytes).toString('base64'),
+    contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    filename: `${bid.reference}-${bid.scheme.toLowerCase()}.docx`,
+    sections,
+    questions: position.questions.length,
   };
 }

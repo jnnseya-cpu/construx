@@ -13901,6 +13901,20 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/render',
+    readOnly: true,
+    description:
+      'The pack in the questionnaire’s own structure: DOCX, XLSX with a sheet per section, or copy-ready text per question for an online portal. Nothing is sorted or renumbered — a file a buyer has to rebuild by hand is where the numbering stops matching. Refused unless the export gate has passed, or the gate would be a formality',
+    handler: (platform, ctx) =>
+      bidOnBids.renderPack(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ((ctx.query.get('format') ?? 'DOCX').toUpperCase() as 'DOCX' | 'XLSX' | 'TEXT'),
+        platform.exports.branding(auth(ctx).tenantId),
+      ),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/pipeline/win-rate',
     readOnly: true,
     description:

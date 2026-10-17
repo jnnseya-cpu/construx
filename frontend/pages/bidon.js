@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, pct, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
 /**
@@ -457,6 +457,52 @@ export async function bidon(root) {
     } finally {
       open.disabled = false;
       open.textContent = 'Open';
+    }
+  });
+
+  /*
+   * Taking the pack out.
+   *
+   * A download rather than a panel: the deliverable is a file somebody emails
+   * or uploads to a portal, and rendering it into the page would be showing
+   * somebody a Word document as HTML. The text form is put on the clipboard
+   * instead, because an online portal has a box per question and what somebody
+   * wants is to paste.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-render]');
+    if (!button) return;
+    const format = button.dataset.render;
+    button.disabled = true;
+    try {
+      const pack = await api.read(
+        `/v1/bid-on/bids/${button.dataset.renderBid}/render?format=${format}`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      if (format === 'TEXT') {
+        await navigator.clipboard?.writeText(pack.content);
+        toast(
+          'Copied',
+          `${pack.questions} answer(s) across ${pack.sections.length} section(s), in the buyer's own numbering.`,
+          'ok',
+        );
+      } else {
+        // Base64 from the API rather than a blob URL the server issued: the
+        // bytes are the pack and there is nothing to keep on a server.
+        const bytes = Uint8Array.from(atob(pack.content), (char) => char.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: pack.contentType }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = pack.filename;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast('Downloaded', `${pack.filename} — ${pack.sections.length} section(s) in source order.`, 'ok');
+      }
+    } catch (error) {
+      toast('Not rendered', error.detail ?? error.message ?? 'The pack could not be taken out.', 'err');
+    } finally {
+      button.disabled = false;
     }
   });
 
@@ -1434,6 +1480,20 @@ function bidDetail(position, estimate) {
                 </div>`,
               )}
             </div></div>`
+          : ''
+      }
+      ${
+        readiness.exportable
+          ? html`<div class="actions" style="padding:11px 17px 0">
+              <span style="font-size:12.5px;color:var(--text-3)">
+                Take it out in the questionnaire's own structure — nothing is renumbered or regrouped:
+              </span>
+              <button class="btn sm" data-render="DOCX" data-render-bid="${bid.id}">Word</button>
+              <button class="btn sm" data-render="XLSX" data-render-bid="${bid.id}">Spreadsheet</button>
+              <button class="btn sm quiet" data-render="TEXT" data-render-bid="${bid.id}">
+                Copy-ready text
+              </button>
+            </div>`
           : ''
       }
       ${
