@@ -303,8 +303,16 @@ export async function bidon(root) {
             reason: liveEngagements.some((e) => e.openForWork)
               ? blockedReason('BID_SERVICES', 'C')
               : 'Activate an engagement first — a bid belongs to one, which is what makes its AI cost attributable.' },
+          { id: 'parse-questionnaire', label: 'Read the questionnaire',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'confirm-questions', label: 'Confirm the question list',
             permitted: can('BID_SERVICES', 'C'), reason: blockedReason('BID_SERVICES', 'C') },
+          { id: 'draft-answer', label: 'Draft an answer',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
+          { id: 'rescore-answer', label: 'Score it as the buyer would',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
+          { id: 'gap-request', label: 'Write the request to the customer', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'record-answer', label: 'Write an answer', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'score-answer', label: 'Score an answer', tone: 'quiet',
@@ -430,12 +438,17 @@ export async function bidon(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const position = await api.read(
-        `/v1/bid-on/bids/${open.dataset.bid}`,
-        'BID_SERVICES',
-        'COMMERCIAL_L3',
-      );
-      render(detail, bidDetail(position));
+      const [position, estimate] = await Promise.all([
+        api.read(`/v1/bid-on/bids/${open.dataset.bid}`, 'BID_SERVICES', 'COMMERCIAL_L3'),
+        // Beside the pack rather than behind a separate button: the question
+        // "what would it cost to finish this" is asked by whoever is looking
+        // at what is left, and a quote on another screen is a quote nobody
+        // reads before pressing the thing that spends.
+        api
+          .read(`/v1/bid-on/bids/${open.dataset.bid}/acu-estimate`, 'BID_SERVICES', 'COMMERCIAL_L3')
+          .catch((error) => ({ error })),
+      ]);
+      render(detail, bidDetail(position, estimate));
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       // A denial shown as a denial. An empty panel here would read as "this
@@ -767,6 +780,82 @@ export async function bidon(root) {
         body: String(body ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
         ...(String(yesNo ?? '').trim() === '' ? {} : { yesNo: yesNo === 'true' }),
       }),
+    },
+    'parse-questionnaire': {
+      title: 'Read the questionnaire',
+      intent:
+        'Reads a questionnaire into an ordered question list, keeping the buyer’s own numbering exactly as printed. ' +
+        'It produces a proposal and nothing more: a person confirms the list against the source, because a parser ' +
+        'that drops one question produces a pack where every answer is good and the submission is still rejected. ' +
+        'The cost of the run is quoted before it starts.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/parse`,
+      submitLabel: 'Read',
+      ai: true,
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'text', label: 'Pasted from the portal', type: 'textarea', rows: 10, required: false,
+          hint: 'Paste the questions. Leave blank and give a file hash instead for a PDF, including a scan.' },
+        { name: 'hash', label: 'Or a document hash', type: 'text', required: false,
+          hint: 'A file already in the evidence store. A scan is read by a vision model rather than refused.' },
+      ],
+      transform: ({ bidId: _b, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'draft-answer': {
+      title: 'Draft an answer',
+      intent:
+        'Retrieval runs first, against this customer’s evidence only. If nothing in their library supports the ' +
+        'question it raises a gap instead of drafting and costs nothing — a model asked to answer a question its ' +
+        'evidence cannot support writes exactly the uncited claim that gets a submission thrown out. An answer that ' +
+        'comes back citing nothing becomes a gap too.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/draft`,
+      submitLabel: 'Draft',
+      ai: true,
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.filter((bid) => bid.questions > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'questionId', label: 'Question id', type: 'text', hint: 'From the opened pack above.' },
+        { name: 'reviewerInstructions', label: 'Anything the drafter should know', type: 'textarea', rows: 2, required: false,
+          hint: 'A rejected answer already carries the reviewer’s instructions; this is for anything else.' },
+      ],
+      transform: ({ bidId: _b, reviewerInstructions, ...rest }) => ({
+        ...rest,
+        ...(String(reviewerInstructions ?? '').trim()
+          ? { reviewerInstructions: String(reviewerInstructions).trim() }
+          : {}),
+      }),
+    },
+    'rescore-answer': {
+      title: 'Score it as the buyer would',
+      intent:
+        'A separate call with a separate prompt, given the answer and the question but not the retrieval — a scorer ' +
+        'that saw the retrieval would be marking the drafter’s homework against the drafter’s own notes. Where the ' +
+        'same provider drafted and scored, the run says so rather than implying independence it does not have.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers/${v.answerId}/rescore`,
+      submitLabel: 'Score',
+      ai: true,
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'answerId', label: 'Answer id', type: 'text' },
+      ],
+      transform: () => ({}),
+    },
+    'gap-request': {
+      title: 'Write the request to the customer',
+      intent:
+        'Turns every open gap into one message they can answer in a sitting. Twelve separate emails over three days ' +
+        'is how a customer stops replying. The gaps are already on the record; this writes the covering note in ' +
+        'their language rather than the bid team’s, and changes nothing.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/gap-request`,
+      submitLabel: 'Write it',
+      ai: true,
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })) },
+      ],
+      transform: () => ({}),
     },
     'score-answer': {
       title: 'Score an answer',
@@ -1229,7 +1318,7 @@ function listOf(value, key) {
  * beside it. "This would have been green" is what tells somebody the writing is
  * fine and the problem is a certificate.
  */
-function bidDetail(position) {
+function bidDetail(position, estimate) {
   const { bid, customer, questions, readiness, openGaps, limits } = position;
   return html`
     <div class="card pad0">
@@ -1274,6 +1363,15 @@ function bidDetail(position) {
           <div class="metric-sub">Each pauses its own question only.</div>
         </div>
       </div>
+      ${
+        estimate && !estimate.error
+          ? html`<div class="notice info" style="margin:11px 17px 0"><div>
+              <b>To finish this pack: ${money(estimate.chargeMinor)} across ${estimate.runs} agent run(s).</b>
+              ${estimate.summary}
+              ${estimate.limits.map((line) => html`<div style="margin-top:4px">${line}</div>`)}
+            </div></div>`
+          : ''
+      }
       ${table({
         headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict'],
         align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],

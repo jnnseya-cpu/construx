@@ -2,6 +2,7 @@ import { DomainError } from '../../core/errors.ts';
 import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
+import { tierCost } from '../../billing/acu.ts';
 import { liveDeclarations, requireVisibleCustomer, type CustomerAccount } from './customers.ts';
 import { requireOpenEngagement, engagementsOf, type Engagement } from './engagements.ts';
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
@@ -166,6 +167,19 @@ export type Bid = {
   /** The rubric weights in force for this bid, copied at creation. */
   weights: Record<string, number>;
   questions: BidQuestion[];
+  /**
+   * What the parser proposed, awaiting a person.
+   *
+   * Kept apart from `questions` deliberately. A proposal is a reading and the
+   * list is a record: until somebody has checked it against the source
+   * document, nothing may be drafted against it, nothing may be scored and no
+   * readiness figure means anything. Keeping the two in one field would make
+   * "has this been checked" unanswerable.
+   */
+  proposedQuestions?: Array<Omit<BidQuestion, 'id'>>;
+  parsedAt?: string;
+  /** Which provider read it. */
+  parsedBy?: string;
   questionsConfirmedAt?: string;
   questionsConfirmedBy?: string;
   answers: BidAnswerVersion[];
@@ -341,6 +355,10 @@ export function confirmQuestions(
   authorise(ctx, 'BID_SERVICES', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const { bid } = requireWorkableBid(ctx, bidId);
+  // The proposal, where a person is accepting it unchanged. Explicit rather
+  // than implicit: passing no questions means "the parse was right", which is
+  // a decision, and passing a list means "this is the list", which is another.
+  const proposal = (input.questions.length === 0 ? bid.proposedQuestions ?? [] : input.questions) as typeof input.questions;
   if (bid.questionsConfirmedAt) {
     throw new DomainError(
       'BID_ON_QUESTIONS_CONFIRMED',
@@ -350,12 +368,17 @@ export function confirmQuestions(
       409,
     );
   }
-  if (input.questions.length === 0) {
-    throw new DomainError('BID_ON_NO_QUESTIONS', 'A questionnaire with no questions has not been read properly', 422);
+  if (proposal.length === 0) {
+    throw new DomainError(
+      'BID_ON_NO_QUESTIONS',
+      'There is no question list to confirm. Give it one, or read the questionnaire first — a questionnaire with no ' +
+        'questions has not been read properly.',
+      422,
+    );
   }
 
   const seen = new Set<string>();
-  const questions: BidQuestion[] = input.questions.map((question) => {
+  const questions: BidQuestion[] = proposal.map((question) => {
     const number = requireText(question.number, 1, 'BID_ON_NUMBER_REQUIRED', 'A question number');
     // The buyer's own numbering, and it has to be unique. Two questions
     // numbered 4.2 is an export whose numbering does not match the source and a
@@ -1225,5 +1248,110 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
           'customer and a piece of commercial work.'
         : `${bids.length} bid(s): ${bids.filter((bid) => bid.exportable).length} ready to export, ` +
           `${bids.filter((bid) => bid.openGaps > 0).length} waiting on a customer.`,
+  };
+}
+
+// --- The quote before the run ------------------------------------------------
+
+export type AcuEstimate = {
+  bidId: string;
+  reference: string;
+  /** What is actually left to do, which is what decides the cost. */
+  questionsOutstanding: number;
+  answersToScore: number;
+  /** Passages in this customer's library a drafter may be given. */
+  passagesAvailable: number;
+  /** One run per outstanding question, plus one score each. */
+  runs: number;
+  rawCostMinor: number;
+  chargeMinor: number;
+  multiplier: number;
+  limits: string[];
+  summary: string;
+};
+
+/**
+ * What an agent run on this pack would cost, before it starts.
+ *
+ * The specification asks for this, and `doors.test.ts` now requires it: a
+ * tenant-quoted AI route is refused unless an estimate route exists for the
+ * same prefix, because the rule every AI action in this platform keeps is that
+ * the cost is shown first. A module whose work has no project in its URL still
+ * has to keep it.
+ *
+ * Sized from what is left rather than from the pack. A hundred-question
+ * questionnaire with ninety answers approved costs ten drafts, and quoting a
+ * hundred would make the figure useless in the one direction that matters — it
+ * would stop somebody running the ten they need.
+ *
+ * It is an estimate and says so. The real charge is the tokens actually spent,
+ * settled per run against the ledger, and a pack whose evidence is thin costs
+ * less than one with forty passages to read.
+ */
+export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const bid = requireBid(ctx, bidId);
+  const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
+
+  const outstanding = bid.questions.filter((question) => {
+    const answer = latestAnswer(bid, question.id);
+    return !answer || answer.status === 'REJECTED';
+  }).length;
+  const toScore = bid.questions.filter((question) => {
+    const answer = latestAnswer(bid, question.id);
+    return answer && answer.status !== 'REJECTED' && !answer.scores;
+  }).length;
+
+  const passages = evidenceOf(ctx)
+    .filter((entry) => entry.customerAccountId === customer.id)
+    .reduce((sum, entry) => sum + entry.chunks.length, 0);
+
+  // One draft and one score per outstanding question, plus one score for each
+  // answer written and not yet scored. The parse, where it has not run, is one
+  // more. Each is its own call because each is one question — a single call for
+  // the whole pack has no way to refuse when it runs out of room.
+  const runs = outstanding * 2 + toScore + (bid.questionsConfirmedAt ? 0 : 1);
+
+  // Both passes are reasoning calls over one question and its passages, which
+  // is the MED tier the tender engine already prices its section drafting at.
+  const { rawCostMinor, chargeMinor, multiplier } = tierCost('MED');
+
+  const limits: string[] = [];
+  if (!bid.questionsConfirmedAt) {
+    limits.push(
+      'The question list is not confirmed, so the count of outstanding questions is the parse only. The real figure ' +
+        'is known once somebody has confirmed the list.',
+    );
+  }
+  if (passages === 0) {
+    limits.push(
+      'This customer has no readable evidence, so every draft would raise a gap instead of writing — and a gap ' +
+        'costs nothing. Nothing here is worth spending until the library has something in it.',
+    );
+  }
+  limits.push(
+    'An estimate. The charge is the tokens actually spent, settled per run, and a pack with forty passages to read ' +
+      'costs more than one with four.',
+  );
+
+  return {
+    bidId: bid.id,
+    reference: bid.reference,
+    questionsOutstanding: outstanding,
+    answersToScore: toScore,
+    passagesAvailable: passages,
+    runs,
+    rawCostMinor: rawCostMinor * runs,
+    chargeMinor: chargeMinor * runs,
+    multiplier,
+    limits,
+    summary:
+      runs === 0
+        ? 'Nothing outstanding. An agent run on this pack would do nothing and is refused rather than charged.'
+        : `${runs} run(s): ${outstanding} draft(s), ${outstanding + toScore} score(s)` +
+          (bid.questionsConfirmedAt ? '' : ', and one parse') +
+          `, against ${passages} passage(s) of evidence.`,
   };
 }

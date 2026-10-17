@@ -460,6 +460,21 @@ export type AITaskInput = {
    */
   requireModel?: { code: string; message: string };
   /**
+   * Who this run is being done for, where the work is done for somebody else.
+   *
+   * Carried onto the `AIExecution` record so an auditor — and a provider
+   * reading its own margin — can reconcile every ACU debited against the
+   * customer and the piece of commercial work it was spent on. Optional and
+   * absent on every CONSTRUX engine, because a tenancy running its own engines
+   * on its own project has no third party to attribute to: the project id on
+   * the event already says what it was for.
+   *
+   * It is a label on the record, never an authorisation. Whether this run may
+   * happen at all is decided by `requireOpenEngagement` before `runAI` is
+   * called, and by the standing and wallet checks above.
+   */
+  attribution?: { customerAccountId?: string; engagementId?: string; bidId?: string };
+  /**
    * Hold this task's answer to the AI Output Standard.
    *
    * Declared per task rather than applied to everything, and the distinction is
@@ -856,6 +871,7 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
       acuConsumed: execution.acuConsumed,
       outputRefs: execution.outputRefs,
       inputRefs: task.inputRefs,
+      ...(task.attribution ? { attribution: task.attribution } : {}),
       startedAt: execution.startedAt,
       endedAt: execution.endedAt,
       // The answer itself, where the task was held to the output standard.

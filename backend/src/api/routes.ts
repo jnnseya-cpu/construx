@@ -143,6 +143,7 @@ import * as bidOnCustomers from '../domain/bidon/customers.ts';
 import * as bidOnEngagements from '../domain/bidon/engagements.ts';
 import * as bidOnEvidence from '../domain/bidon/evidence.ts';
 import * as bidOnBids from '../domain/bidon/bids.ts';
+import * as bidOnEngine from '../domain/bidon/engine.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -360,6 +361,22 @@ export type Route = {
   method: string;
   /** Path pattern with :params, e.g. /v1/projects/:projectId/programme. */
   pattern: string;
+  /**
+   * Where the wallet that pays for an AI route is resolved from.
+   *
+   * Almost every AI route is project-scoped and needs nothing here: the
+   * project in the path names the wallet, and the console quotes from it. A
+   * module whose work is tenant-level by construction has no project in its
+   * path and still has a wallet — the tenancy's own governance project — so
+   * it declares `TENANT` and publishes its own estimate route.
+   *
+   * It is a declaration, not a permission. `doors.test.ts` refuses a
+   * tenant-quoted AI route unless an estimate route for the same prefix
+   * exists, because the rule it enforces is that no AI action runs without its
+   * cost shown first — and that rule is about the quote existing, not about
+   * the shape of the URL.
+   */
+  quoteScope?: 'TENANT';
   handler: RouteHandler;
   public?: boolean;
   /** Handler returns a complete HTML page rather than a JSON payload. */
@@ -13804,6 +13821,83 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       bidOnBids.recordBidOutcome(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  // The Bid Engine: parse, draft, score, and the gap request. Four AI calls,
+  // one question at a time, every one refusing the local stand-in before it is
+  // charged — prose from a stand-in sent to a buyer under a customer's name is
+  // a false statement. The fifth agent, the Retriever, is the retrieval route
+  // above and is not an AI call at all.
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/parse',
+    quoteScope: 'TENANT',
+    ai: { engine: 'TENDER', taskType: 'bid_on_parse', capability: 'REASONING' },
+    description:
+      'Read a questionnaire into an ordered question list, keeping the buyer’s own numbering exactly as printed. It produces a proposal, never the list — a parser that drops one question produces a pack where every answer is good and the submission is still rejected',
+    schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', minLength: 1, maxLength: 200000 },
+        hash: { type: 'string', minLength: 10, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngine.parseQuestionnaire(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/draft',
+    quoteScope: 'TENANT',
+    ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING' },
+    description:
+      'Draft one answer from this customer’s own evidence. Retrieval runs first and if it returns nothing the command raises a gap instead of drafting, because a model asked to answer a question its evidence cannot support writes exactly the uncited claim that gets a submission thrown out',
+    schema: {
+      type: 'object',
+      required: ['questionId'],
+      properties: {
+        questionId: stringField,
+        reviewerInstructions: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngine.draftAnswer(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers/:answerId/rescore',
+    quoteScope: 'TENANT',
+    ai: { engine: 'TENDER', taskType: 'bid_on_score', capability: 'REASONING' },
+    description:
+      'Score one answer as the buyer’s evaluator would — a separate call with a separate prompt, given the answer and the question but not the retrieval, because a scorer that saw the retrieval would be marking the drafter’s homework against the drafter’s own notes',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngine.scoreAnswerWithAI(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.answerId as string,
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/gap-request',
+    quoteScope: 'TENANT',
+    ai: { engine: 'TENDER', taskType: 'bid_on_gaps', capability: 'REASONING' },
+    description:
+      'Turn every open gap into one request the customer can answer in a sitting. Twelve separate emails over three days is how a customer stops replying; the gaps are already on the record and this writes the covering note in their language',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngine.composeGapRequest(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/acu-estimate',
+    readOnly: true,
+    description:
+      'What an agent run on this pack would cost, before it starts: sized from the questions outstanding, their word limits and how much of this customer’s evidence there is to read. The quote every Bid-On AI route is shown against',
+    handler: (platform, ctx) =>
+      bidOnBids.acuEstimate(tenantContext(platform, ctx), ctx.params.bidId as string),
   },
   {
     method: 'GET',

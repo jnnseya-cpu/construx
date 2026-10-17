@@ -1,5 +1,6 @@
 import { customersOf, liveDeclarations } from '../domain/bidon/customers.ts';
 import { engagementsOf } from '../domain/bidon/engagements.ts';
+import { bidRegister } from '../domain/bidon/bids.ts';
 import type { EngineContext } from '../engines/context.ts';
 import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
 
@@ -210,4 +211,121 @@ export const bidOnEngagementAgent: AgentDefinition = {
   },
 };
 
-export const BID_ON_AGENTS: AgentDefinition[] = [bidOnEngagementAgent];
+/**
+ * The pack watch: which bids are drifting towards their deadline.
+ *
+ * The engagement agent above watches the commercial relationship. This watches
+ * the work, and it is a different question with a different reader: a bid
+ * director wants to know which of eleven packs will not be ready, while there
+ * is still time to decide which one to drop.
+ *
+ * Observes and proposes nothing, for the same reason: every action behind a
+ * finding here is a person drafting, approving, chasing a customer or deciding
+ * not to bid. The one thing an agent could do unattended — draft the next
+ * answer — spends a customer's money, and `PROPOSE` on a spend is a queue of
+ * charges waiting for somebody to notice.
+ */
+const bidOnPackAgent: AgentDefinition = {
+  name: 'bid-on packs',
+  agentId: 'AGT-BIDON-PACK',
+  module: 'BID_ON',
+  division: 'BID',
+  purpose:
+    'Watches every bid under way against its deadline and says which ones will not be ready: mandatory answers with ' +
+    'nothing written, gaps the customer has not answered, and packs whose evidence lapses before the buyer reads them.',
+  activeIn: 'ANY',
+  triggers: [
+    { kind: 'SCHEDULE', at: '06:00' },
+    { kind: 'EVENT', eventType: 'BID_ON_QUESTIONS_CONFIRMED' },
+    { kind: 'EVENT', eventType: 'BID_ON_GAP_RAISED' },
+    { kind: 'EVENT', eventType: 'BID_ON_ANSWER_REJECTED' },
+  ],
+  inputs: ['Bids and their deadlines', 'Questions and their latest answers', 'Open gaps', 'Evidence expiry'],
+  outputs: [
+    'Packs that will not be ready for their deadline',
+    'Gaps the customer has not answered',
+    'Mandatory answers nobody has approved',
+    'Packs past their deadline never recorded as submitted',
+  ],
+  emits: [],
+  hitl: 'REVIEW',
+  confidenceFloor: 0.9,
+  acuTier: 'LOW',
+  memory: { reads: ['ORGANISATION'], writes: [] },
+  mandate: {
+    reads: ['BID_SERVICES'],
+    proposes: [],
+    approvers: ['OWNER'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx: EngineContext): AgentOutput {
+    const register = (() => {
+      try {
+        return bidRegister(ctx);
+      } catch {
+        // A tenancy that has not started using the module, or a person with no
+        // customers assigned. Nothing to say either way.
+        return null;
+      }
+    })();
+    if (!register || register.bids.length === 0) return empty;
+
+    const findings: Finding[] = [];
+
+    for (const bid of register.bids) {
+      const sent = ['SUBMITTED', 'WON', 'LOST'].includes(bid.status);
+
+      if (bid.daysLeft < 0 && !sent) {
+        findings.push({
+          key: `bidon:overdue:${bid.id}`,
+          severity: 'URGENT',
+          summary: `${bid.reference} for ${bid.customerName} was due ${bid.deadline} and was never recorded as submitted.`,
+          consequence:
+            'Either it went and nobody said so, in which case the record of what this customer sent is missing, or ' +
+            'it did not go and the work was spent for nothing. Both are worth five minutes now.',
+          evidence: [{ refType: 'BidOnBid', refId: bid.id, note: `${bid.openGaps} open gap(s)` }],
+        });
+        continue;
+      }
+
+      if (sent) continue;
+
+      if (bid.daysLeft <= 7 && !bid.exportable) {
+        findings.push({
+          key: `bidon:not-ready:${bid.id}`,
+          severity: bid.daysLeft <= 3 ? 'URGENT' : 'ATTENTION',
+          summary:
+            `${bid.reference} for ${bid.customerName} closes in ${bid.daysLeft} day(s) and cannot be exported: ` +
+            `${bid.approved} of ${bid.questions} answers approved` +
+            (bid.openGaps > 0 ? `, ${bid.openGaps} gap(s) still with the customer` : '') +
+            '.',
+          consequence:
+            'Export is refused while any mandatory answer is red or unapproved, so this does not go out as it ' +
+            'stands. The decision available now is to finish it or to stop spending on it; in three days only one ' +
+            'of those is left.',
+          evidence: [
+            { refType: 'BidOnBid', refId: bid.id, note: `Readiness ${bid.readinessPercent ?? 0}%` },
+          ],
+        });
+      }
+
+      if (bid.openGaps > 0 && bid.daysLeft <= 14) {
+        findings.push({
+          key: `bidon:gaps-waiting:${bid.id}`,
+          severity: bid.daysLeft <= 5 ? 'URGENT' : 'ATTENTION',
+          summary:
+            `${bid.reference} is waiting on ${bid.customerName} for ${bid.openGaps} thing(s), ${bid.daysLeft} day(s) ` +
+            'before the deadline.',
+          consequence:
+            'A gap pauses its own question, so the rest of the pack is still being written — but a mandatory ' +
+            'question left as a gap is a rejected submission however good everything around it is.',
+          evidence: [{ refType: 'BidOnBid', refId: bid.id, note: `${bid.openGaps} open` }],
+        });
+      }
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+export const BID_ON_AGENTS: AgentDefinition[] = [bidOnEngagementAgent, bidOnPackAgent];

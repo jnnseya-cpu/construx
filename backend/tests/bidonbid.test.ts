@@ -5,6 +5,7 @@ import * as customers from '../src/domain/bidon/customers.ts';
 import * as engagements from '../src/domain/bidon/engagements.ts';
 import * as evidence from '../src/domain/bidon/evidence.ts';
 import * as bids from '../src/domain/bidon/bids.ts';
+import * as engine from '../src/domain/bidon/engine.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { classifyEntity } from '../src/identity/entityAccess.ts';
@@ -778,5 +779,144 @@ describe('a bid is invisible to anybody not assigned to its customer', () => {
       register.limits.some((line) => /further bid\(s\) exist/.test(line)),
       'the register looks complete while withholding bids',
     );
+  });
+});
+
+describe('the Bid Engine refuses the local stand-in before it charges', () => {
+  /**
+   * Every one of the four AI commands, and the refusal that matters most.
+   *
+   * This deployment runs the local stand-in in tests, which answers every
+   * request with a deterministic sentence derived from a hash of its inputs.
+   * Prose from it — sent to a buyer, under a customer's name, as their answer
+   * to a mandatory question — is a false statement. `requireModel` refuses
+   * before the charge is settled, so nobody pays for a refusal.
+   */
+  let engineBid: bids.Bid;
+
+  before(() => {
+    engineBid = bids.createBid(asProviderAdmin(), {
+      engagementId: engagement.id,
+      buyerName: 'Northern Powergrid',
+      scheme: 'SQ_PA23',
+      deadline: DEADLINE,
+    });
+  });
+
+  it('refuses to read a questionnaire on it, and changes nothing', async () => {
+    await assert.rejects(
+      () => engine.parseQuestionnaire(asProviderAdmin(), engineBid.id, { text: '4.1 Describe your safety system' }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'NO_REASONING_PROVIDER');
+        return true;
+      },
+    );
+    const after = bids.requireBid(asProviderAdmin(), engineBid.id);
+    assert.equal(after.proposedQuestions, undefined, 'a refused parse left a proposal behind');
+    assert.equal(after.status, 'CREATED');
+  });
+
+  it('refuses to parse with nothing to parse, before it reaches a provider', async () => {
+    await assert.rejects(
+      () => engine.parseQuestionnaire(asProviderAdmin(), engineBid.id, {}),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'BID_ON_NOTHING_TO_PARSE');
+        return true;
+      },
+    );
+  });
+
+  it('raises a gap instead of drafting when the customer has nothing to cite, and spends nothing', async () => {
+    // The specification's rule — "unknowns become gaps" — and the honest
+    // option: a model asked to answer a question its evidence cannot support
+    // writes a plausible paragraph, which is the uncited claim that gets a
+    // submission thrown out. No provider is reached at all, so it costs zero.
+    const confirmed = bids.confirmQuestions(asProviderAdmin(), engineBid.id, {
+      questions: [
+        {
+          section: 'Technical',
+          number: '9.9',
+          text: 'Describe your experience of subsea cable jointing in tidal waters',
+          answerType: 'TEXT',
+          mandatory: true,
+        },
+      ],
+    });
+
+    const result = await engine.draftAnswer(asProviderAdmin(), confirmed.id, {
+      questionId: confirmed.questions[0]!.id,
+    });
+    assert.equal(result.outcome, 'GAP_RAISED');
+    assert.equal(result.acuConsumed, 0, 'a gap raised without reaching a provider was charged for');
+    assert.ok(result.gapId);
+
+    const gap = result.bid.gaps.find((entry) => entry.id === result.gapId)!;
+    assert.match(gap.promptToClient, /subsea cable jointing/);
+    // Written for the customer: it says what to send, not that a retrieval
+    // scored below a floor.
+    assert.match(gap.promptToClient, /Please send/);
+  });
+
+  it('refuses to draft over an open gap rather than writing around what is missing', async () => {
+    const confirmed = bids.requireBid(asProviderAdmin(), engineBid.id);
+    await assert.rejects(
+      () => engine.draftAnswer(asProviderAdmin(), confirmed.id, { questionId: confirmed.questions[0]!.id }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'BID_ON_GAP_OPEN');
+        return true;
+      },
+    );
+  });
+
+  it('refuses to compose a gap request when there is nothing to ask for', async () => {
+    const other = bids.createBid(asProviderAdmin(), {
+      engagementId: engagement.id,
+      buyerName: 'Cadent Gas',
+      scheme: 'UVDB',
+      deadline: DEADLINE,
+    });
+    await assert.rejects(
+      () => engine.composeGapRequest(asProviderAdmin(), other.id),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'BID_ON_NO_GAPS');
+        return true;
+      },
+    );
+  });
+
+  it('refuses every agent run under a paused engagement', async () => {
+    // The specification's prohibition: a paused engagement cannot consume ACU.
+    // Enforced in one place so it cannot be missed on one route of four.
+    const paused = engagements.pauseEngagement(asProviderAdmin(), engagement.id, {
+      reason: 'Customer paused the work over the shutdown',
+    });
+    assert.equal(paused.status, 'PAUSED');
+
+    const confirmed = bids.requireBid(asProviderAdmin(), engineBid.id);
+    for (const [name, call] of [
+      ['parse', () => engine.parseQuestionnaire(asProviderAdmin(), confirmed.id, { text: 'anything' })],
+      ['draft', () => engine.draftAnswer(asProviderAdmin(), confirmed.id, { questionId: confirmed.questions[0]!.id })],
+      ['gap request', () => engine.composeGapRequest(asProviderAdmin(), confirmed.id)],
+    ] as const) {
+      await assert.rejects(
+        call,
+        (error: Error & { code?: string }) => {
+          assert.equal(error.code, 'BID_ON_ENGAGEMENT_NOT_OPEN', `${name} ran under a paused engagement`);
+          return true;
+        },
+      );
+    }
+
+    engagements.resumeEngagement(asProviderAdmin(), engagement.id);
+  });
+
+  it('quotes what finishing the pack would cost, sized from what is left', () => {
+    const estimate = bids.acuEstimate(asProviderAdmin(), engineBid.id);
+    assert.equal(estimate.questionsOutstanding, 1);
+    assert.ok(estimate.runs >= 2, 'a draft and a score are two runs');
+    assert.ok(estimate.chargeMinor > 0);
+    assert.ok(estimate.chargeMinor >= estimate.rawCostMinor, 'the charge is below the provider cost');
+    // It says it is an estimate rather than implying a price.
+    assert.ok(estimate.limits.some((line) => /An estimate/.test(line)));
   });
 });

@@ -26459,3 +26459,94 @@ rather than dressing it up as semantic search; DOCX and XLSX rendering in the
 questionnaire's own numbering, where only the gate exists; import and resync from
 the standard Tenders section; the guest workspace screen; statements; deposits
 blocking agent runs; and ACU attribution per customer and engagement.
+
+### Bid-On: the Bid Engine
+
+The five agents, and where each actually lives. Four are AI calls —
+`parseQuestionnaire`, `draftAnswer`, `scoreAnswerWithAI`, `composeGapRequest` in
+`domain/bidon/engine.ts`. The fifth, the **Retriever**, is `retrieveFor` in
+`evidence.ts` and is not an AI call at all: it filters on the customer, judges
+expiry against the deadline and refuses below a matching floor. It is called by
+the drafter rather than invoked on its own, because a retriever's output is not
+a deliverable; it is an input to one.
+
+**One question per call.** The specification asks for eight in parallel, which
+is an orchestration choice a caller makes by calling eight times. What it must
+never be is one call producing a hundred answers: a single call has no way to
+refuse when it runs out of room — it stops mid-pack, looks finished, and the
+tokens are spent. The same reasoning `writeNextSection` was built on.
+
+**The drafter raises a gap rather than writing around what is missing.** Two
+ways, and the first costs nothing at all: if retrieval returns no passage the
+command raises the gap without reaching a provider. If the model returns prose
+with no citation, or names what the evidence does not cover, **the prose is
+discarded and the question goes back to the customer** — a worse outcome for the
+schedule and the only honest one, because the thing a reviewer cannot check is
+the thing a buyer will. Where it drafts and some parts are still unevidenced, it
+writes the answer *and* raises a gap for the rest: a partial answer with a known
+hole beats either throwing away good prose or hiding what is missing.
+
+**The scorer is given the answer and the question, and not the retrieval.** A
+scorer that saw the retrieval would be marking the drafter's homework against the
+drafter's own notes. Where one provider drafted and scored, the run reports
+`independent: false` rather than implying a second opinion — the same disclosure
+`redteam.ts` makes.
+
+**All four refuse the local stand-in before the charge.** `requireModel` on each.
+The stand-in answers every request with a deterministic sentence derived from a
+hash of its inputs; prose from it, sent to a buyer under a customer's name as
+their answer to a mandatory question, is a false statement. Six tests exercise
+the refusals, including that a refused parse leaves no proposal behind.
+
+**The parse produces a proposal, not the list.** `proposedQuestions` is a
+separate field from `questions`, because until a person has checked it against
+the source document nothing may be drafted against it and no readiness figure
+means anything. Keeping both in one field would make "has this been checked"
+unanswerable. `confirmQuestions` with no argument accepts the proposal unchanged
+— explicitly, because that is a decision.
+
+**A paused engagement cannot consume ACU**, enforced in one `gate()` the four
+commands share rather than in four places, which is how a paused engagement
+otherwise accepts a run through the one route somebody forgot.
+
+**ACU attribution per customer and engagement.** `AITaskInput.attribution`
+carries `customerAccountId`, `engagementId` and `bidId` onto the `AIExecution`
+record, so a provider reading its own margin — and an auditor — can reconcile
+every ACU debited against the customer and the commercial work it was spent on.
+It is a label on the record and never an authorisation: whether a run may happen
+is decided by `requireOpenEngagement` and the standing and wallet checks before
+`runAI` is reached. Optional and absent on every CONSTRUX engine, because a
+tenancy running its own engines on its own project has no third party to
+attribute to.
+
+**A rule widened deliberately, and the condition that keeps it honest.** Two
+tests required an AI route to be project-scoped, as a proxy for "there is a
+wallet to quote against". That held while every AI route acted on a delivery
+project. Bid-On's agents do not: bid support for an external customer exists
+before any delivery project and is paid from the provider's own tenancy wallet.
+There *is* a project to quote against — the governance project where every
+Bid-On record is written — it is simply not in the URL.
+
+So `Route.quoteScope: 'TENANT'` now exists, and `doors.test.ts` **refuses that
+declaration unless an estimate route exists for the same prefix**. The rule
+being kept is the one that was always meant — the cost is shown before the run —
+rather than the shape of a URL. A route that spends a customer's ACUs with
+nothing to quote against still fails. The argument is written into both tests
+beside the exception it replaces, and `GET /v1/bid-on/bids/:bidId/acu-estimate`
+is the estimate that makes the declaration true: sized from what is **left**
+rather than from the pack, because quoting a hundred questions when ninety are
+approved would stop somebody running the ten they need. It is shown beside the
+pack on the screen that decides whether to spend it.
+
+**A second agent**, `AGT-BIDON-PACK`, watching the work rather than the
+relationship: which packs will not be ready, which gaps the customer has not
+answered, which bids passed their deadline and were never recorded as submitted.
+Observe-only like the first, and for a sharper reason — the one thing it could do
+unattended is draft the next answer, and `PROPOSE` on a spend is a queue of
+charges waiting for somebody to notice.
+
+**Still not built:** the embedding swap in `retrieveFor`, which ranks on
+distinctive-term overlap today and says so rather than dressing it up as
+semantic search; DOCX and XLSX rendering in the questionnaire's own numbering,
+where only the gate exists; import and resync from the standard Tenders section;
+the guest workspace screen; statements; and deposits blocking agent runs.

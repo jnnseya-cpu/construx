@@ -429,9 +429,27 @@ describe('every AI route can be quoted, and only those', () => {
       // to prevent and no entry may be added for it.
       const PLATFORM_OWN = ['/v1/site/posts/draft', '/v1/site/posts/audit'];
       const platformOwn = PLATFORM_OWN.includes(route.pattern);
+
+      /*
+       * The third way, and the condition on it.
+       *
+       * `:projectId` was a proxy for "there is a wallet to quote against", and
+       * it held while every AI route acted on a delivery project. Bid-On's
+       * agents do not: bid support for an external customer exists before any
+       * delivery project and is paid from the provider's own tenancy wallet.
+       * There *is* a project to quote against — the tenancy's governance
+       * project, where every Bid-On record is written — it is not in the URL.
+       *
+       * So a route may declare `quoteScope: 'TENANT'`, and `doors.test.ts`
+       * refuses that declaration unless an estimate route exists for the same
+       * prefix. The rule being kept is the one that was always meant: the cost
+       * is shown before the run. A route that spends a customer's ACUs with
+       * nothing to quote against still fails here.
+       */
       assert.ok(
-        route.pattern.includes(':projectId') || platformOwn,
-        `${route.pattern} must be project-scoped to be quoted, or spend the platform's own wallet`,
+        route.pattern.includes(':projectId') || platformOwn || route.quoteScope === 'TENANT',
+        `${route.pattern} must be project-scoped to be quoted, spend the platform's own wallet, or declare ` +
+          'quoteScope TENANT with an estimate route behind it',
       );
       assert.match(route.ai!.taskType, /^[a-z_]+$/);
     }

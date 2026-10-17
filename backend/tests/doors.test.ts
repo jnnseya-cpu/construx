@@ -287,9 +287,55 @@ describe('every command has a door', () => {
       // to prevent and no entry may be added for it.
       const PLATFORM_OWN = ['/v1/site/posts/draft', '/v1/site/posts/audit'];
       const platformOwn = PLATFORM_OWN.includes(route.pattern);
+
+      /*
+       * The third way, argued.
+       *
+       * `:projectId` in the path was a proxy for "there is a wallet to quote
+       * against", and it held while every AI route acted on a delivery
+       * project. Bid-On's agents do not: the work is bid support for an
+       * external customer, it exists before any delivery project and it is
+       * paid for from the provider's own tenancy wallet. There is a project to
+       * quote against — the tenancy's governance project, which is where every
+       * Bid-On record is written — it is simply not in the URL.
+       *
+       * So the rule is enforced on what it was always about rather than on the
+       * shape of the path: a route may declare `quoteScope: 'TENANT'` **only
+       * if an estimate route exists for the same prefix**, so the cost can
+       * still be shown before the run. That is checked below rather than
+       * taken on trust, and it is why this is not the loophole the paragraph
+       * above forbids: a route that spends a customer's ACUs with nothing to
+       * quote against still fails here.
+       */
+      const tenantQuoted = route.quoteScope === 'TENANT';
       assert.ok(
-        route.pattern.includes(':projectId') || platformOwn,
-        `${route.pattern} is quotable only if it is project-scoped, or spends the platform's own wallet`,
+        route.pattern.includes(':projectId') || platformOwn || tenantQuoted,
+        `${route.pattern} is quotable only if it is project-scoped, spends the platform's own wallet, or declares ` +
+          'quoteScope TENANT and publishes an estimate route',
+      );
+    }
+  });
+
+  it('gives every tenant-quoted AI route an estimate to be shown against', () => {
+    // The condition on the third way above. Without this, `quoteScope` would
+    // be a flag that turns the rule off; with it, declaring it is a promise the
+    // test keeps you to.
+    const tenantQuoted = writeRoutes.filter((route) => route.ai && route.quoteScope === 'TENANT');
+    assert.ok(tenantQuoted.length > 0, 'nothing declares a tenant quote, so this check is passing on an empty set');
+
+    for (const route of tenantQuoted) {
+      // The prefix the route's own module owns, e.g. `/v1/bid-on`.
+      const prefix = route.pattern.split('/').slice(0, 3).join('/');
+      const estimate = ROUTES.find(
+        (candidate) =>
+          candidate.method === 'GET' &&
+          candidate.pattern.startsWith(prefix) &&
+          /estimate/i.test(candidate.pattern),
+      );
+      assert.ok(
+        estimate,
+        `${route.pattern} declares a tenant quote and ${prefix} publishes no estimate route, so its cost cannot be ` +
+          'shown before the run',
       );
     }
   });
