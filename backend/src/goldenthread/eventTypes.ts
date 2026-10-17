@@ -2417,6 +2417,28 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_ENGAGEMENT_CANCELLED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
   def('BID_ON_STAGE_SIGNED_OFF', 'BidOnEngagement', 'APPROVE', 'GOVERNANCE'),
   def('BID_ON_CYCLE_OPENED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+
+  // The evidence library and the bid itself.
+  //
+  // `aiAllowed` splits here, and the split is the module's whole authorship
+  // rule. An agent may read a file, draft prose and score it — clerical work
+  // with a person's signature still required downstream. It may not file
+  // evidence against a customer, confirm the question list, approve or reject
+  // an answer, export a pack or record an outcome: each of those is somebody
+  // committing the business or making a statement to a buyer.
+  def('BID_ON_EVIDENCE_FILED', 'BidOnEvidence', 'CREATE', 'EVIDENCE', { creates: true, requiresEvidence: true }),
+  def('BID_ON_EVIDENCE_EXTRACTED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
+  def('BID_ON_EVIDENCE_WITHDRAWN', 'BidOnEvidence', 'UPDATE', 'EVIDENCE'),
+  def('BID_ON_BID_CREATED', 'BidOnBid', 'CREATE', 'PROCUREMENT', { creates: true }),
+  def('BID_ON_QUESTIONS_CONFIRMED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_ANSWER_DRAFTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  def('BID_ON_ANSWER_SCORED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  def('BID_ON_ANSWER_APPROVED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  def('BID_ON_ANSWER_REJECTED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  def('BID_ON_GAP_RAISED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  def('BID_ON_GAP_RESOLVED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_BID_EXPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_BID_OUTCOME_RECORDED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
 ];
 
 /**

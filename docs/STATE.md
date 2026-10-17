@@ -26355,3 +26355,107 @@ or unapproved does not block: those are conceded marks, not a rejection.
 several, which is what the acceptance criterion asks for, and enumerates the
 rule list from the type so a rule added later fails rather than arriving with
 nothing exercising it.
+
+### Bid-On: the bid vertical
+
+The questionnaire, its questions, every version of every answer, the gaps, and
+the two gates. No AI in any of it — which is the point of keeping the records,
+the lifecycle and the gates apart from the agents: a human-written pack behaves
+identically to an agent-written one, and every hard rule can be tested without a
+provider configured.
+
+**The evidence library belongs to the customer, not the tenancy.** This is the
+most important structural fact in the module. A provider writes bids for firms
+that compete with each other, and both customers' certificates, CVs and accident
+statistics sit inside one tenancy, so tenant isolation cannot separate them.
+`customerAccountId` is on the record and `retrieveFor` takes a customer as an
+argument it cannot ignore — it filters **before** it ranks. The test that proves
+it gives two customers a near-identical apprenticeship passage and asks the
+question that matches the other one at least as well.
+
+Two refusals in the library that are not validation:
+
+- **A certificate or insurance schedule with no expiry is refused.** That date
+  is what the hard rule reads. A missing one is not a blank field, it is a
+  safety check switched off.
+- **A CV with no data-subject consent is refused.** It is a named person's data
+  going to a buyer under a company's name, and upload is the only point at which
+  consent can honestly be captured — afterwards the file is already citable.
+
+Filing goes through the platform's own `registerEvidence`, so the file is in the
+one evidence chain the audit trail already reads, and the filing event declares
+`requiresEvidence` so the ledger refuses an evidence record with no file behind
+it. Extraction is a separate act: a document can be filed and attached without
+anything being read out of it, because a certificate is proof whether or not a
+model can read the scan.
+
+**Retrieval has a floor and returns nothing below it.** Ranking always returns
+neighbours, and the nearest of several irrelevant passages reads exactly like a
+relevant one once a model has written a paragraph from it. Returning nothing is
+what makes a gap a gap instead of a confident wrong answer — and the gap is the
+thing the customer can actually fix. Expiry is judged against the **bid's
+deadline**, so a certificate lapsing the week before return is never offered to
+a drafter.
+
+**The question list is confirmed by a person, once.** A parser that misses one
+question produces a pack where every answer is good, readiness reads 100%, and
+the submission is rejected for a missing mandatory response — and nothing
+downstream can detect that, because what is wrong is the list itself. Duplicate
+question numbers are refused: the buyer's numbering is what an export has to
+match and what a reviewer identifies an answer by. A second confirmation is
+refused too; a questionnaire that genuinely changed is a resync.
+
+**Scoring is a separate command from drafting, structurally.** The specification
+asks for *"a separate model call and prompt from the Drafter"*, and
+`recordAnswer` therefore has **no score field at all** — a drafter cannot return
+one. `scoreAnswer` records the five criterion scores with a reason for each,
+because a score nobody can argue with is a score a reviewer ignores and the
+override exists precisely so they can disagree with something. Scoring a
+superseded version is refused: it produces a readiness figure for text nobody
+will read. The dead-event check in `catalogue.test.ts` is what forced this —
+`BID_ON_ANSWER_SCORED` was declared with nothing able to emit it, and the honest
+fix was the command the specification already asked for rather than deleting the
+event.
+
+**A citation is refused unless it points at this customer's own evidence and at
+a passage that exists.** Refused rather than filtered out, because a silently
+dropped citation leaves an uncited claim reading as a cited one. That is the
+mechanism behind *"none state an uncited fact"*.
+
+**Approval is refused to whoever wrote it, where a person wrote it.** Where an
+agent drafted it, any reviewer may sign: the agent drafted and a person approved,
+which is the two-person review. The role split does most of the work — the bid
+writer holds `C`, `U`, `X` and `I` on `BID_SERVICES` and no `A`, so an approval
+from them is refused one level earlier by the capability check. The person who
+can reach the self-approval rule is the director, who can both write and
+approve, and that is exactly who it exists to stop. Approving a superseded
+version is refused: it would approve text the pack is not going to send.
+
+**A rejection carries the instructions, and they are mandatory.** A rejection
+with none is a round trip that produces the same answer again.
+
+**A gap pauses its own question and nothing else.** That is why it is a record
+against one question rather than a status on the bid: a pack blocked by one
+missing certificate is a pack nobody works on for three days. One open gap per
+question, because two requests for one thing is two emails the customer has to
+reconcile.
+
+**Export is refused unless every mandatory answer is approved and out of red**,
+naming every blocking answer rather than the first — fixing them one attempt at a
+time is how somebody decides at 4pm that the check is the problem. An optional
+answer that is red or unapproved does not block: those are conceded marks, not a
+rejection. An outcome follows an export and a result follows a submission, so a
+"won" cannot be recorded against a pack that was never sent.
+
+Everything is read on demand. `bidPosition` computes every verdict and the
+readiness figure on each request, judged against the bid's deadline, for the
+reason every other position here gives: a stored readiness figure is a second
+copy of a conclusion that moves the moment a certificate lapses.
+
+**Still not built, and absent rather than stubbed:** the five agents (Parser,
+Retriever, Drafter, Scorer, Gap) that would fill these records in; the embedding
+swap in `retrieveFor`, which today ranks on distinctive-term overlap and says so
+rather than dressing it up as semantic search; DOCX and XLSX rendering in the
+questionnaire's own numbering, where only the gate exists; import and resync from
+the standard Tenders section; the guest workspace screen; statements; deposits
+blocking agent runs; and ACU attribution per customer and engagement.

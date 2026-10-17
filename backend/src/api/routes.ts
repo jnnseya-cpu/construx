@@ -141,6 +141,8 @@ import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as answers from '../domain/answers.ts';
 import * as bidOnCustomers from '../domain/bidon/customers.ts';
 import * as bidOnEngagements from '../domain/bidon/engagements.ts';
+import * as bidOnEvidence from '../domain/bidon/evidence.ts';
+import * as bidOnBids from '../domain/bidon/bids.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -13444,6 +13446,364 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       bidOnEngagements.closeEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/customers/:customerId/evidence',
+    readOnly: true,
+    guest: 'OWN',
+    description:
+      'One customer’s evidence library and nobody else’s, with what has lapsed and what nothing has been read out of. Filters by type and by how soon an item expires',
+    handler: (platform, ctx) =>
+      bidOnEvidence.evidenceLibrary(tenantContext(platform, ctx), ctx.params.customerId as string, {
+        ...(ctx.query.get('type') ? { type: ctx.query.get('type') as never } : {}),
+        ...(ctx.query.get('expiringWithinDays')
+          ? { expiringWithinDays: Number(ctx.query.get('expiringWithinDays')) }
+          : {}),
+        ...(ctx.query.get('asAt') ? { asAt: ctx.query.get('asAt') as string } : {}),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/evidence',
+    guest: 'OWN',
+    description:
+      'File an evidence item against a customer. A certificate or insurance is refused without the day it lapses, and a CV without the data subject’s consent — the first disables a hard rule and the second is personal data going to a buyer',
+    schema: {
+      type: 'object',
+      required: ['type', 'title', 'hash'],
+      properties: {
+        type: { type: 'string', enum: [...bidOnEvidence.EVIDENCE_TYPE] },
+        title: { type: 'string', minLength: 4, maxLength: 300 },
+        hash: { type: 'string', minLength: 10, maxLength: 200 },
+        validFrom: { type: 'string', minLength: 10, maxLength: 10 },
+        expiresOn: { type: 'string', minLength: 10, maxLength: 10 },
+        consent: {
+          type: 'object',
+          required: ['subject', 'basis'],
+          properties: {
+            subject: { type: 'string', minLength: 4, maxLength: 200 },
+            basis: { type: 'string', minLength: 12, maxLength: 600 },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEvidence.fileEvidence(tenantContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bidOnEvidence.fileEvidence>[1], 'customerAccountId'>>(ctx),
+        customerAccountId: ctx.params.customerId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/evidence/:evidenceId/extraction',
+    description:
+      'Record what was read out of a filed document, as the passages a retriever ranks. A passage too short to mean anything is dropped rather than indexed',
+    schema: {
+      type: 'object',
+      required: ['extractedText', 'chunks'],
+      properties: {
+        extractedText: { type: 'array', items: { type: 'string', maxLength: 20000 } },
+        chunks: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['text'],
+            properties: {
+              text: { type: 'string', minLength: 1, maxLength: 8000 },
+              pageRef: { type: 'string', maxLength: 64 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEvidence.recordExtraction(tenantContext(platform, ctx), ctx.params.evidenceId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/evidence/:evidenceId/withdraw',
+    description: 'Take an item out of use. Withdrawn, never deleted — a bid that cited it still cited it',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEvidence.withdrawEvidence(tenantContext(platform, ctx), ctx.params.evidenceId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/customers/:customerId/retrieval',
+    readOnly: true,
+    description:
+      'What this customer’s library has for one question — filtered on the customer before anything is ranked, current on the deadline, and nothing at all below a matching floor, because the nearest of several irrelevant passages reads exactly like a relevant one',
+    handler: (platform, ctx) =>
+      bidOnEvidence.retrieveFor(tenantContext(platform, ctx), {
+        customerAccountId: ctx.params.customerId as string,
+        question: ctx.query.get('question') ?? '',
+        asAt: ctx.query.get('asAt') ?? new Date().toISOString().slice(0, 10),
+        ...(ctx.query.get('limit') ? { limit: Number(ctx.query.get('limit')) } : {}),
+      }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids',
+    readOnly: true,
+    guest: 'OWN',
+    description:
+      'Every bid this person may see, with its readiness, its open gaps and how long is left. Says how many it is not showing rather than looking complete',
+    handler: (platform, ctx) =>
+      bidOnBids.bidRegister(tenantContext(platform, ctx), ctx.query.get('asAt') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids',
+    description:
+      'Open a bid under an engagement. Refused for a paused, completed or cancelled engagement, which is what makes every ACU it later spends attributable to a customer and a piece of commercial work',
+    schema: {
+      type: 'object',
+      required: ['engagementId', 'buyerName', 'scheme', 'deadline'],
+      properties: {
+        engagementId: stringField,
+        buyerName: { type: 'string', minLength: 3, maxLength: 200 },
+        scheme: { type: 'string', enum: [...bidOnBids.BID_SCHEME] },
+        deadline: { type: 'string', minLength: 10, maxLength: 10 },
+        buyerReference: { type: 'string', maxLength: 120 },
+        sourceTenderId: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidOnBids.createBid(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId',
+    readOnly: true,
+    guest: 'OWN',
+    description:
+      'The bid in full: every question with its latest answer, the verdict on it, its open gap, and pack readiness. Computed on read, so the screen and the export gate cannot disagree',
+    handler: (platform, ctx) => bidOnBids.bidPosition(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/questions',
+    description:
+      'Confirm the question list, once. A parser that missed a question produces a pack where every answer is good and the submission is still rejected, and only a person reading the source can catch that',
+    schema: {
+      type: 'object',
+      required: ['questions'],
+      properties: {
+        questions: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['section', 'number', 'text', 'answerType', 'mandatory'],
+            properties: {
+              section: { type: 'string', minLength: 1, maxLength: 200 },
+              number: { type: 'string', minLength: 1, maxLength: 32 },
+              text: { type: 'string', minLength: 3, maxLength: 4000 },
+              answerType: { type: 'string', enum: [...bidOnBids.ANSWER_TYPE] },
+              wordLimit: { type: 'integer', minimum: 1 },
+              weighting: { type: 'number', minimum: 0, maximum: 100 },
+              mandatory: { type: 'boolean' },
+              passFail: { type: 'boolean' },
+              declarationKinds: { type: 'array', items: { type: 'string', maxLength: 32 } },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.confirmQuestions(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers',
+    description:
+      'Record an answer as a new version. The same route for an agent’s draft and a person’s rewrite, so the hand-written half of a pack is checked exactly as hard as the half nobody touched',
+    schema: {
+      type: 'object',
+      required: ['questionId', 'body'],
+      properties: {
+        questionId: stringField,
+        body: { type: 'array', items: { type: 'string', maxLength: 20000 } },
+        yesNo: { type: 'boolean' },
+        citations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['evidenceId', 'chunkId'],
+            properties: { evidenceId: stringField, chunkId: stringField },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.recordAnswer(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers/:answerId/score',
+    description:
+      'Score an answer against the rubric — a separate act from writing it, so the drafter cannot grade its own work. The route that records an answer carries no score field at all, and every criterion needs the reason a reviewer would argue with',
+    schema: {
+      type: 'object',
+      required: ['scores', 'reasons'],
+      properties: {
+        scores: {
+          type: 'object',
+          required: ['COMPLIANCE', 'EVIDENCE', 'BUYER_RELEVANCE', 'SPECIFICITY', 'CLARITY_AND_LIMITS'],
+          properties: {
+            COMPLIANCE: { type: 'number', minimum: 0, maximum: 100 },
+            EVIDENCE: { type: 'number', minimum: 0, maximum: 100 },
+            BUYER_RELEVANCE: { type: 'number', minimum: 0, maximum: 100 },
+            SPECIFICITY: { type: 'number', minimum: 0, maximum: 100 },
+            CLARITY_AND_LIMITS: { type: 'number', minimum: 0, maximum: 100 },
+          },
+          additionalProperties: false,
+        },
+        reasons: {
+          type: 'object',
+          required: ['COMPLIANCE', 'EVIDENCE', 'BUYER_RELEVANCE', 'SPECIFICITY', 'CLARITY_AND_LIMITS'],
+          properties: {
+            COMPLIANCE: { type: 'string', minLength: 1, maxLength: 1000 },
+            EVIDENCE: { type: 'string', minLength: 1, maxLength: 1000 },
+            BUYER_RELEVANCE: { type: 'string', minLength: 1, maxLength: 1000 },
+            SPECIFICITY: { type: 'string', minLength: 1, maxLength: 1000 },
+            CLARITY_AND_LIMITS: { type: 'string', minLength: 1, maxLength: 1000 },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.scoreAnswer(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.answerId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers/:answerId/approve',
+    description:
+      'Approve an answer, and never its own author where a person wrote it. A score override is permitted and is recorded with the reason that justifies it; it cannot clear a hard rule',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: {
+        note: { type: 'string', minLength: 12, maxLength: 600 },
+        overrideScore: { type: 'number', minimum: 0, maximum: 100 },
+        overrideReason: { type: 'string', minLength: 12, maxLength: 600 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.approveAnswer(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.answerId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers/:answerId/reject',
+    description:
+      'Reject an answer with the instructions that go back to the drafter. The instructions are mandatory: a rejection with none is a round trip that produces the same answer again',
+    schema: {
+      type: 'object',
+      required: ['instructions'],
+      properties: { instructions: { type: 'string', minLength: 12, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.rejectAnswer(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.answerId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/gaps',
+    description:
+      'Raise a gap: something nobody can answer from the evidence held. It pauses its own question and nothing else, so the rest of the pack keeps drafting while the customer is asked',
+    schema: {
+      type: 'object',
+      required: ['questionId', 'promptToClient'],
+      properties: {
+        questionId: stringField,
+        promptToClient: { type: 'string', minLength: 20, maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.raiseGap(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/gaps/:gapId/resolve',
+    guest: 'OWN',
+    description:
+      'Close a gap, by filing evidence or by answering in text where there is no document. The customer’s own people may do this — it is their material',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: {
+        evidenceId: stringField,
+        note: { type: 'string', minLength: 12, maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.resolveGap(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.gapId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/export',
+    description:
+      'Refused unless every mandatory answer is approved and out of red, naming every blocking answer rather than the first — fixing them one attempt at a time is how somebody decides at 4pm that the check is the problem',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => bidOnBids.exportBid(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/outcome',
+    description:
+      'Record submitted, won or lost, with the buyer’s feedback. An outcome follows a submission: recording one against a pack that was never sent would put a result on the record with nothing behind it',
+    schema: {
+      type: 'object',
+      required: ['outcome'],
+      properties: {
+        outcome: { type: 'string', enum: ['SUBMITTED', 'WON', 'LOST'] },
+        on: { type: 'string', minLength: 10, maxLength: 10 },
+        feedback: { type: 'string', maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.recordBidOutcome(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
   },
   {
     method: 'GET',

@@ -1,6 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
-import { badge, date, html, humanise, money, notice, raw, render, table } from '../lib/ui.js';
+import { badge, date, html, humanise, money, notice, pct, raw, render, table } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
 /**
@@ -38,6 +38,25 @@ const ENGAGEMENT_TONE = {
 
 const STAGE_TONE = { OPEN: 'ok', PENDING: '', SIGNED_OFF: 'info' };
 
+/** A bid's own state. `EXPORTED` is not done — somebody still has to submit it. */
+const BID_TONE = {
+  CREATED: 'warn',
+  PARSING: 'info',
+  DRAFTING: '',
+  IN_REVIEW: 'info',
+  APPROVED: 'ok',
+  EXPORTED: 'info',
+  SUBMITTED: 'ok',
+  WON: 'good',
+  LOST: 'bad',
+};
+
+/** The traffic lights the rubric publishes. */
+const RAG_TONE = { GREEN: 'ok', AMBER: 'warn', RED: 'bad' };
+
+/** An answer's own review state. */
+const ANSWER_TONE = { DRAFT: '', IN_REVIEW: 'warn', APPROVED: 'ok', REJECTED: 'bad' };
+
 /** What each engagement type means for how work opens and repeats. */
 const TYPE_MEANING = {
   ONE_OFF: 'One or more bids, then it closes. Billed as a fixed fee.',
@@ -48,16 +67,18 @@ const TYPE_MEANING = {
 };
 
 export async function bidon(root) {
-  const [customers, engagements, offerings] = await Promise.all([
+  const [customers, engagements, offerings, bids] = await Promise.all([
     // Every read is tenant-scoped and filtered to this person inside the API,
     // not here. A screen that filtered would leak the moment anybody called
     // the route directly.
     api.read('/v1/bid-on/customers', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/engagements', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/offerings', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read('/v1/bid-on/bids', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const customerList = customers?.customers ?? [];
+  const bidList = bids?.bids ?? [];
   const engagementList = engagements?.engagements ?? [];
   const offeringList = offerings?.offerings ?? [];
 
@@ -266,6 +287,124 @@ export async function bidon(root) {
       })}
     </div>
 
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Bids</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${bids?.error ? 'The bid register could not be read.' : (bids?.summary ?? '')}
+        A bid is a questionnaire, its questions in the buyer's own numbering, every version of every answer, and the
+        gaps nobody can answer yet. A gap pauses its own question and nothing else, so the rest of a pack keeps
+        drafting while the customer is asked for what is missing. Export is refused until every mandatory answer is
+        approved and out of red.
+      </p>
+      <div style="padding:11px 17px 0">
+        ${raw(commandBar([
+          { id: 'create-bid', label: 'Open a bid',
+            permitted: can('BID_SERVICES', 'C') && liveEngagements.some((e) => e.openForWork),
+            reason: liveEngagements.some((e) => e.openForWork)
+              ? blockedReason('BID_SERVICES', 'C')
+              : 'Activate an engagement first — a bid belongs to one, which is what makes its AI cost attributable.' },
+          { id: 'confirm-questions', label: 'Confirm the question list',
+            permitted: can('BID_SERVICES', 'C'), reason: blockedReason('BID_SERVICES', 'C') },
+          { id: 'record-answer', label: 'Write an answer', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'score-answer', label: 'Score an answer', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'approve-answer', label: 'Approve an answer',
+            permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
+          { id: 'reject-answer', label: 'Reject with instructions', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
+          { id: 'raise-gap', label: 'Raise a gap', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'resolve-gap', label: 'Close a gap', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'export-bid', label: 'Export the pack',
+            permitted: can('BID_SERVICES', 'I'), reason: blockedReason('BID_SERVICES', 'I') },
+          { id: 'record-bid-outcome', label: 'Record the outcome', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+        ]))}
+      </div>
+      ${table({
+        headers: ['Ref', 'Customer', 'Buyer', 'Scheme', 'Due', 'Left', 'Questions', 'Approved', 'Gaps', 'Readiness', 'State', ''],
+        align: ['', '', '', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],
+        rows: bidList.map((bid) => [
+          bid.reference,
+          bid.customerName,
+          bid.buyerName,
+          humanise(bid.scheme),
+          date(bid.deadline),
+          bid.daysLeft < 0
+            ? badge(`${Math.abs(bid.daysLeft)} over`, 'bad')
+            : badge(`${bid.daysLeft}d`, bid.daysLeft <= 5 ? 'warn' : ''),
+          String(bid.questions),
+          String(bid.approved),
+          bid.openGaps === 0 ? '—' : badge(String(bid.openGaps), 'warn'),
+          bid.readinessPercent === null ? '—' : `${bid.readinessPercent}%`,
+          bid.exportable
+            ? badge('ready to export', 'ok')
+            : badge(humanise(bid.status), BID_TONE[bid.status] ?? ''),
+          html`<button class="btn sm" data-bid="${bid.id}">Open</button>`,
+        ]),
+        empty: 'No bid yet',
+        emptyDetail:
+          'A bid can be started here from a questionnaire with no tender in the standard section at all, and a bid ' +
+          'started here never appears there.',
+      })}
+      ${
+        (bids?.limits ?? []).length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 15px"><div>
+              ${bids.limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+    </div>
+
+    <!-- The topbar is sticky, so scrolling a pack into view without a margin
+         puts its own heading underneath it. -->
+    <div id="bid-detail" style="margin-bottom:14px;scroll-margin-top:68px"></div>
+
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Evidence library</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        One library per customer, and never the provider's. Every answer is drafted from it and every claim cites it,
+        which is why a certificate filed without the day it lapses is refused — that date is what the hard rule reads,
+        and a missing one is a safety check switched off rather than a blank field. A CV is refused without the data
+        subject's consent.
+      </p>
+      <div style="padding:11px 17px 0">
+        ${raw(commandBar([
+          { id: 'file-evidence', label: 'File an evidence item',
+            permitted: can('BID_SERVICES', 'C') && customerOptions.length > 0,
+            reason: customerOptions.length === 0
+              ? 'Open a customer workspace first — evidence belongs to a customer, not to the provider.'
+              : blockedReason('BID_SERVICES', 'C') },
+          { id: 'record-extraction', label: 'Record what was read out of it', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'withdraw-evidence', label: 'Withdraw an item', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+        ]))}
+      </div>
+      <!--
+        A lookup, not a position: there is no "the library" to show, only one
+        customer's at a time. The chooser's options are the customers this
+        person is assigned to, so it cannot ask for one they may not read.
+      -->
+      <div class="actions" style="padding:11px 17px 0;align-items:flex-end">
+        <div class="field" style="margin:0;min-width:260px">
+          <label for="ev-customer">Whose library?</label>
+          <select id="ev-customer">
+            ${customerOptions.map((option) => html`<option value="${option.value}">${option.label}</option>`)}
+          </select>
+        </div>
+        <div class="field" style="margin:0;min-width:180px">
+          <label for="ev-question">Or ask it a question</label>
+          <input id="ev-question" type="text" placeholder="local labour and apprenticeships">
+        </div>
+        <button class="btn sm" id="ev-open">Open the library</button>
+        <button class="btn sm quiet" id="ev-retrieve">What do we have</button>
+      </div>
+      <div id="evidence-detail" style="padding:0 17px 4px"></div>
+    </div>
+
     <div class="notice info" style="margin-bottom:14px"><div>
       <b>A declaration is confirmed by the customer, never here.</b>
       Insurance cover, accident figures and legal statements are representations the customer makes to a buyer under
@@ -276,6 +415,85 @@ export async function bidon(root) {
   `;
 
   render(root, view);
+
+  /*
+   * Opening one pack.
+   *
+   * Loaded on a click rather than with the register, because the register
+   * shows every bid and a pack carries a hundred questions. Loading all of
+   * them to show one would be a hundred packs read to display one.
+   */
+  const detail = root.querySelector('#bid-detail');
+  root.addEventListener('click', async (event) => {
+    const open = event.target.closest('[data-bid]');
+    if (!open || !detail) return;
+    open.disabled = true;
+    open.textContent = 'Opening…';
+    try {
+      const position = await api.read(
+        `/v1/bid-on/bids/${open.dataset.bid}`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(detail, bidDetail(position));
+      detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      // A denial shown as a denial. An empty panel here would read as "this
+      // pack is empty", which is a different statement.
+      render(detail, notice(`This pack could not be opened: ${error.message}`, 'err'));
+    } finally {
+      open.disabled = false;
+      open.textContent = 'Open';
+    }
+  });
+
+  /*
+   * One customer's library, and what it has for one question.
+   *
+   * Two buttons on one chooser rather than two choosers. The question is the
+   * only thing that differs between them, and a second customer select is a
+   * second chance to read the library of a customer you did not mean.
+   */
+  const evidenceDetail = root.querySelector('#evidence-detail');
+  const chosenCustomer = () => root.querySelector('#ev-customer')?.value;
+
+  root.querySelector('#ev-open')?.addEventListener('click', async () => {
+    const customerId = chosenCustomer();
+    if (!customerId || !evidenceDetail) return;
+    try {
+      const library = await api.read(
+        `/v1/bid-on/customers/${customerId}/evidence`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(evidenceDetail, evidencePanel(library));
+    } catch (error) {
+      render(evidenceDetail, notice(`The library could not be read: ${error.message}`, 'err'));
+    }
+  });
+
+  root.querySelector('#ev-retrieve')?.addEventListener('click', async () => {
+    const customerId = chosenCustomer();
+    const question = root.querySelector('#ev-question')?.value?.trim();
+    if (!customerId || !evidenceDetail) return;
+    if (!question) {
+      render(
+        evidenceDetail,
+        notice('Type the question first. Retrieval ranks against a question; with none it has nothing to rank.', 'warn'),
+      );
+      return;
+    }
+    try {
+      const result = await api.read(
+        `/v1/bid-on/customers/${customerId}/retrieval?question=${encodeURIComponent(question)}`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(evidenceDetail, retrievalPanel(result));
+    } catch (error) {
+      render(evidenceDetail, notice(`Retrieval was refused: ${error.message}`, 'err'));
+    }
+  });
 
   const COMMANDS = {
     'open-customer': {
@@ -449,6 +667,345 @@ export async function bidon(root) {
         ...(String(defaultFee ?? '').trim() === '' ? {} : { defaultFeeMinor: Math.round(Number(defaultFee) * 100) }),
         ...(String(active ?? '').trim() === '' ? {} : { active: active === 'true' }),
       }),
+    },
+
+    'create-bid': {
+      title: 'Open a bid',
+      intent:
+        'A questionnaire or a tender, under one engagement. Refused for a paused, completed or cancelled ' +
+        'engagement — which is what makes every ACU the bid later spends attributable to a customer and a piece of ' +
+        'commercial work. A bid started here needs no tender in the standard section and never appears there.',
+      path: '/v1/bid-on/bids',
+      submitLabel: 'Open',
+      fields: [
+        { name: 'engagementId', label: 'Engagement', type: 'select',
+          options: liveEngagements
+            .filter((entry) => entry.openForWork)
+            .map((entry) => ({ value: entry.id, label: engagementLabel(entry) })),
+          hint: 'Only an engagement that is open for work. A draft or paused one accepts no bid.' },
+        { name: 'buyerName', label: 'Buyer', type: 'text', hint: 'The organisation asking. It frames every answer.' },
+        { name: 'scheme', label: 'Scheme', type: 'select',
+          options: [
+            { value: 'UVDB', label: 'UVDB — Achilles utilities' },
+            { value: 'CONSTRUCTIONLINE', label: 'Constructionline' },
+            { value: 'PAS91', label: 'PAS 91' },
+            { value: 'SQ_PA23', label: 'Procurement Act standard selection questionnaire' },
+            { value: 'ITT', label: 'ITT — a full invitation' },
+            { value: 'CUSTOM', label: 'Something else' },
+          ],
+          hint: 'Which rubric the answers are scored against.' },
+        { name: 'deadline', label: 'Return deadline', type: 'date',
+          hint: 'The day the buyer reads it. Every certificate expiry is judged against this, not against today.' },
+        { name: 'buyerReference', label: 'Buyer’s reference', type: 'text', required: false },
+      ],
+      transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'confirm-questions': {
+      title: 'Confirm the question list',
+      intent:
+        'Once, by a person, against the source document. A parser that missed one question produces a pack where ' +
+        'every answer is good, readiness reads 100%, and the submission is rejected for a missing mandatory ' +
+        'response — and nothing downstream can detect that, because what is wrong is the list itself.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/questions`,
+      submitLabel: 'Confirm',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList
+            .filter((bid) => bid.questions === 0)
+            .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })),
+          hint: 'Only a bid with no confirmed list. A questionnaire that genuinely changed is a resync.' },
+        { name: 'questions', label: 'The questions', type: 'textarea', rows: 12,
+          hint:
+            'One per line as "section | number | question | type | limit | weight | M or O | PF". Type is text, ' +
+            'yes_no, numeric, upload or table. Limit and weight may be blank. M is mandatory, O optional, PF ' +
+            'pass/fail. The buyer’s own numbering, because the export has to match the source.' },
+      ],
+      transform: ({ questions }) => ({
+        questions: String(questions ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 4 && parts[1] && parts[2])
+          .map((parts) => ({
+            section: parts[0] || 'General',
+            number: parts[1],
+            text: parts[2],
+            answerType: String(parts[3] ?? 'text').toUpperCase().replace('-', '_'),
+            ...(parts[4] ? { wordLimit: Number(parts[4]) } : {}),
+            ...(parts[5] ? { weighting: Number(parts[5]) } : {}),
+            mandatory: String(parts[6] ?? '').toUpperCase().startsWith('M'),
+            passFail: String(parts[7] ?? '').toUpperCase().includes('PF'),
+          })),
+      }),
+    },
+    'record-answer': {
+      title: 'Write an answer',
+      intent:
+        'A new version every time, because the version that went to a buyer is a promise the customer made. The same ' +
+        'door an agent’s draft comes through, so an answer a bid writer rewrote by hand is checked exactly as hard ' +
+        'as one nobody touched.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList
+            .filter((bid) => bid.questions > 0)
+            .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'questionId', label: 'Question id', type: 'text',
+          hint: 'From the opened pack above. Open the bid, and the question row carries it.' },
+        { name: 'body', label: 'The answer', type: 'textarea', rows: 10,
+          hint: 'One paragraph per line.' },
+        { name: 'yesNo', label: 'For a yes/no question', type: 'select', required: false,
+          options: [
+            { value: '', label: 'Not a yes/no question' },
+            { value: 'true', label: 'Yes' },
+            { value: 'false', label: 'No — this ends the bid at the gate' },
+          ],
+          hint: 'The hard rule that ends a bid on a "no" reads this field. Prose alone leaves it unanswered.' },
+      ],
+      transform: ({ bidId: _b, body, yesNo, ...rest }) => ({
+        ...rest,
+        body: String(body ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+        ...(String(yesNo ?? '').trim() === '' ? {} : { yesNo: yesNo === 'true' }),
+      }),
+    },
+    'score-answer': {
+      title: 'Score an answer',
+      intent:
+        'A separate act from writing it, so the drafter cannot grade its own work — the route that records an answer ' +
+        'carries no score field at all. Every criterion needs the reason a reviewer would argue with, because a ' +
+        'score nobody can argue with is a score a reviewer ignores.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers/${v.answerId}/score`,
+      submitLabel: 'Score',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'answerId', label: 'Answer id', type: 'text', hint: 'From the opened pack above.' },
+        { name: 'compliance', label: 'Compliance (30%)', type: 'number',
+          hint: 'Is every part of the question answered, in the order asked?' },
+        { name: 'complianceWhy', label: 'Why', type: 'text' },
+        { name: 'evidence', label: 'Evidence (25%)', type: 'number',
+          hint: 'Is every claim cited to an in-date item, with no unsupported claim?' },
+        { name: 'evidenceWhy', label: 'Why', type: 'text' },
+        { name: 'relevance', label: 'Buyer relevance (20%)', type: 'number' },
+        { name: 'relevanceWhy', label: 'Why', type: 'text' },
+        { name: 'specificity', label: 'Specificity (15%)', type: 'number' },
+        { name: 'specificityWhy', label: 'Why', type: 'text' },
+        { name: 'clarity', label: 'Clarity and limits (10%)', type: 'number' },
+        { name: 'clarityWhy', label: 'Why', type: 'text' },
+      ],
+      transform: (v) => ({
+        scores: {
+          COMPLIANCE: Number(v.compliance),
+          EVIDENCE: Number(v.evidence),
+          BUYER_RELEVANCE: Number(v.relevance),
+          SPECIFICITY: Number(v.specificity),
+          CLARITY_AND_LIMITS: Number(v.clarity),
+        },
+        reasons: {
+          COMPLIANCE: String(v.complianceWhy ?? ''),
+          EVIDENCE: String(v.evidenceWhy ?? ''),
+          BUYER_RELEVANCE: String(v.relevanceWhy ?? ''),
+          SPECIFICITY: String(v.specificityWhy ?? ''),
+          CLARITY_AND_LIMITS: String(v.clarityWhy ?? ''),
+        },
+      }),
+    },
+    'approve-answer': {
+      title: 'Approve an answer',
+      intent:
+        'Refused for whoever wrote it, where a person wrote it. Where an agent drafted it, a reviewer signing is the ' +
+        'two-person check; where a person wrote it, the same person approving is one person at both ends of a ' +
+        'statement going to a buyer. An override is permitted with the reason that justifies it, and cannot clear a ' +
+        'hard rule.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers/${v.answerId}/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'answerId', label: 'Answer id', type: 'text', hint: 'From the opened pack above.' },
+        { name: 'note', label: 'What you checked', type: 'textarea', rows: 2,
+          hint: '"Figures reconciled to the 2026 accounts" is a check. "OK" is a signature on nothing.' },
+        { name: 'overrideScore', label: 'Override the score', type: 'number', required: false },
+        { name: 'overrideReason', label: 'Why the scorer was wrong', type: 'text', required: false },
+      ],
+      transform: ({ bidId: _b, answerId: _a, overrideScore, overrideReason, ...rest }) => ({
+        ...rest,
+        ...(String(overrideScore ?? '').trim() === ''
+          ? {}
+          : { overrideScore: Number(overrideScore), overrideReason: String(overrideReason ?? '').trim() }),
+      }),
+    },
+    'reject-answer': {
+      title: 'Reject with instructions',
+      intent:
+        'The instructions are mandatory and are the point: a rejection with none is a round trip that produces the ' +
+        'same answer again. They go back to the drafter attached to the answer.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers/${v.answerId}/reject`,
+      submitLabel: 'Reject',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'answerId', label: 'Answer id', type: 'text' },
+        { name: 'instructions', label: 'What has to change', type: 'textarea', rows: 3 },
+      ],
+      transform: ({ bidId: _b, answerId: _a, ...rest }) => rest,
+    },
+    'raise-gap': {
+      title: 'Raise a gap',
+      intent:
+        'Something nobody can answer from the evidence held. It pauses its own question and nothing else, so the ' +
+        'rest of the pack keeps drafting while the customer is asked. Gaps are batched into one list per bid rather ' +
+        'than an email per question.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/gaps`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'questionId', label: 'Question id', type: 'text' },
+        { name: 'promptToClient', label: 'What to ask the customer', type: 'textarea', rows: 3,
+          hint:
+            'Written for them, not for you. "Social value evidence missing" is a note to self; "how many ' +
+            'apprenticeship starts and completions in 2026" is something somebody can answer.' },
+      ],
+      transform: ({ bidId: _b, ...rest }) => rest,
+    },
+    'resolve-gap': {
+      title: 'Close a gap',
+      intent:
+        'By filing evidence, which is the useful case, or by answering in text where there is no document. The ' +
+        'customer’s own people may do this — it is their material.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/gaps/${v.gapId}/resolve`,
+      submitLabel: 'Close',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })) },
+        { name: 'gapId', label: 'Gap id', type: 'text', hint: 'From the opened pack above.' },
+        { name: 'evidenceId', label: 'Evidence filed to close it', type: 'text', required: false },
+        { name: 'note', label: 'What closed it', type: 'text' },
+      ],
+      transform: ({ bidId: _b, gapId: _g, evidenceId, ...rest }) => ({
+        ...rest,
+        ...(String(evidenceId ?? '').trim() ? { evidenceId: String(evidenceId).trim() } : {}),
+      }),
+    },
+    'export-bid': {
+      title: 'Export the pack',
+      intent:
+        'Refused unless every mandatory answer is approved and out of red, naming every blocking answer rather than ' +
+        'the first. A submission missing a mandatory response is not marked down, it is rejected, and everything ' +
+        'else in it is spent for nothing.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/export`,
+      submitLabel: 'Export',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({
+            value: bid.id,
+            label: `${bid.reference} — ${bid.exportable ? 'ready' : 'blocked'}`,
+          })) },
+      ],
+      transform: () => ({}),
+    },
+    'record-bid-outcome': {
+      title: 'Record the outcome',
+      intent:
+        'Submitted, won or lost, with the buyer’s feedback where they gave any. An outcome follows a submission: ' +
+        'recording one against a pack that was never sent would put a result on the record with nothing behind it.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/outcome`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} · ${humanise(bid.status)}` })) },
+        { name: 'outcome', label: 'What happened', type: 'select',
+          options: [
+            { value: 'SUBMITTED', label: 'Submitted — it has gone to the buyer' },
+            { value: 'WON', label: 'Won' },
+            { value: 'LOST', label: 'Lost' },
+          ] },
+        { name: 'on', label: 'On', type: 'date', required: false },
+        { name: 'feedback', label: 'The buyer’s feedback', type: 'textarea', rows: 3, required: false,
+          hint: 'What they actually said. It is the only honest way a scoring rule improves.' },
+      ],
+      transform: ({ bidId: _b, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+    },
+
+    'file-evidence': {
+      title: 'File an evidence item',
+      intent:
+        'Against a customer, never the provider. A certificate or insurance schedule is refused without the day it ' +
+        'lapses — that date is what the hard rule reads, and a missing one is a safety check switched off rather ' +
+        'than a blank field. A CV is refused without the data subject’s consent.',
+      path: (v) => `/v1/bid-on/customers/${v.customerId}/evidence`,
+      submitLabel: 'File',
+      fields: [
+        { name: 'customerId', label: 'Customer', type: 'select', options: customerOptions },
+        { name: 'type', label: 'Kind', type: 'select',
+          options: [
+            { value: 'POLICY', label: 'Policy' },
+            { value: 'CERTIFICATE', label: 'Certificate — needs an expiry' },
+            { value: 'CASE_STUDY', label: 'Case study' },
+            { value: 'CV', label: 'CV — needs the person’s consent' },
+            { value: 'STATS', label: 'Accident or performance statistics' },
+            { value: 'INSURANCE', label: 'Insurance — needs an expiry' },
+            { value: 'OTHER', label: 'Something else' },
+          ] },
+        { name: 'title', label: 'Title', type: 'text',
+          hint: 'As a reviewer looking for it would describe it.' },
+        { name: 'hash', label: 'File hash', type: 'text',
+          hint: 'The hash of the file already uploaded to the evidence store, which refuses bytes that do not hash to the address they claim.' },
+        { name: 'validFrom', label: 'Valid from', type: 'date', required: false },
+        { name: 'expiresOn', label: 'Current until', type: 'date', required: false,
+          hint: 'Required for a certificate or an insurance schedule. Everything else may genuinely not lapse.' },
+        { name: 'consentSubject', label: 'Data subject', type: 'text', required: false,
+          hint: 'For a CV: whose data it is.' },
+        { name: 'consentBasis', label: 'How consent was obtained', type: 'text', required: false },
+      ],
+      transform: ({ customerId: _c, consentSubject, consentBasis, ...rest }) => ({
+        ...Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+        ...(String(consentSubject ?? '').trim()
+          ? { consent: { subject: String(consentSubject).trim(), basis: String(consentBasis ?? '').trim() } }
+          : {}),
+      }),
+    },
+    'record-extraction': {
+      title: 'Record what was read out of a document',
+      intent:
+        'The passages a retriever ranks. Separate from filing, because a document can be filed and attached without ' +
+        'anything being read out of it — a certificate is proof whether or not a model can read the scan. A passage ' +
+        'too short to mean anything is dropped rather than indexed.',
+      path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/extraction`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'evidenceId', label: 'Evidence id', type: 'text',
+          hint: 'From the library panel above.' },
+        { name: 'chunks', label: 'The passages', type: 'textarea', rows: 10,
+          hint: 'One per line, optionally as "page 4 | the passage". Each is what a citation will open to.' },
+      ],
+      transform: ({ evidenceId: _e, chunks }) => {
+        const lines = String(chunks ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+        return {
+          extractedText: lines,
+          chunks: lines.map((line) => {
+            const [first, ...rest] = line.split('|');
+            return rest.length > 0
+              ? { pageRef: first.trim(), text: rest.join('|').trim() }
+              : { text: line };
+          }),
+        };
+      },
+    },
+    'withdraw-evidence': {
+      title: 'Withdraw an evidence item',
+      intent:
+        'Out of use, never deleted: a bid that cited it still cited it, and the submission that went out said what ' +
+        'it said.',
+      path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/withdraw`,
+      submitLabel: 'Withdraw',
+      fields: [
+        { name: 'evidenceId', label: 'Evidence id', type: 'text' },
+        { name: 'reason', label: 'Why', type: 'text' },
+      ],
+      transform: ({ evidenceId: _e, ...rest }) => rest,
     },
 
     'open-engagement': {
@@ -657,4 +1214,205 @@ function listOf(value, key) {
     .map((part) => part.trim())
     .filter(Boolean);
   return list.length > 0 ? { [key]: list } : {};
+}
+
+/**
+ * One pack, question by question.
+ *
+ * The verdict column is the point of the screen and the hard rules are shown
+ * in full rather than summarised. A reviewer who sees "red" learns nothing; a
+ * reviewer who sees "EV-0004 — Employers liability certificate — expires
+ * 2026-11-15, before the deadline of 2026-12-01" knows what to do in the next
+ * ten seconds.
+ *
+ * Where a hard rule fired, the band the prose alone would have earned is shown
+ * beside it. "This would have been green" is what tells somebody the writing is
+ * fine and the problem is a certificate.
+ */
+function bidDetail(position) {
+  const { bid, customer, questions, readiness, openGaps, limits } = position;
+  return html`
+    <div class="card pad0">
+      <h2 style="padding:15px 17px 0">
+        ${bid.reference} · ${bid.buyerName}
+        ${readiness.exportable ? badge('ready to export', 'ok') : badge(humanise(bid.status), BID_TONE[bid.status] ?? '')}
+      </h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${customer.legalName} · ${humanise(bid.scheme)} · due ${date(bid.deadline)}.
+        ${readiness.summary}
+        Every verdict is judged against the deadline rather than against today, because that is the day the buyer
+        reads it.
+      </p>
+      ${
+        limits.length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              ${limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+      <div class="grid g4" style="padding:11px 17px 0">
+        <div class="card">
+          <h2>Readiness</h2>
+          <div class="metric ${raw(readiness.readinessPercent === null ? '' : readiness.readinessPercent >= 80 ? 'good' : readiness.readinessPercent >= 50 ? 'orange' : 'bad')}">
+            ${readiness.readinessPercent === null ? '—' : `${readiness.readinessPercent}%`}
+          </div>
+          <div class="metric-sub">Weighted by each question's own share of the buyer's marks.</div>
+        </div>
+        <div class="card">
+          <h2>Approved</h2>
+          <div class="metric">${readiness.approved} of ${readiness.total}</div>
+          <div class="metric-sub">A person has to put their name to every answer before anything leaves here.</div>
+        </div>
+        <div class="card">
+          <h2>Traffic lights</h2>
+          <div class="metric">${readiness.green}/${readiness.amber}/${readiness.red}</div>
+          <div class="metric-sub">Green, amber, red. Red is below 50 or a hard rule.</div>
+        </div>
+        <div class="card">
+          <h2>Open gaps</h2>
+          <div class="metric ${raw(openGaps.length === 0 ? 'good' : 'warn')}">${openGaps.length}</div>
+          <div class="metric-sub">Each pauses its own question only.</div>
+        </div>
+      </div>
+      ${table({
+        headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict'],
+        align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],
+        rows: questions.map((entry) => [
+          entry.question.number,
+          entry.question.section,
+          html`${entry.question.text}${entry.question.mandatory ? badge('mandatory', 'warn') : ''}${
+            entry.question.passFail ? badge('pass/fail', 'bad') : ''
+          }`,
+          humanise(entry.question.answerType),
+          entry.question.wordLimit === undefined ? '—' : String(entry.question.wordLimit),
+          entry.question.weighting === undefined ? '—' : `${entry.question.weighting}%`,
+          entry.answer ? String(entry.answer.words) : '—',
+          entry.answer ? String(entry.answer.citations.length) : '—',
+          entry.versions === 0 ? '—' : String(entry.versions),
+          entry.answer
+            ? badge(humanise(entry.answer.status), ANSWER_TONE[entry.answer.status] ?? '')
+            : entry.gap
+              ? badge('gap raised', 'warn')
+              : badge('nothing written', 'bad'),
+          html`${badge(entry.verdict.rag, RAG_TONE[entry.verdict.rag] ?? '')}${
+            entry.verdict.hardRules.length > 0 && entry.verdict.weightedBand !== 'RED'
+              ? html`<span style="font-size:12px;color:var(--text-3)"> prose alone: ${entry.verdict.weightedBand} ${entry.verdict.weightedScore}</span>`
+              : html`<span style="font-size:12px;color:var(--text-3)"> ${entry.verdict.weightedScore}</span>`
+          }`,
+        ]),
+        empty: 'No question confirmed yet',
+        emptyDetail:
+          'The question list is confirmed by a person once, against the source document. A parser that missed a ' +
+          'question produces a pack where every answer is good and the submission is still rejected.',
+      })}
+      ${
+        questions.some((entry) => entry.verdict.hardRules.length > 0)
+          ? html`<div class="notice bad" style="margin:11px 17px 0"><div>
+              <b>Hard rules fired. Each one overrides the score to red however well the answer reads.</b>
+              ${questions
+                .filter((entry) => entry.verdict.hardRules.length > 0)
+                .map(
+                  (entry) => html`<div style="margin-top:6px">
+                    <b>${entry.question.number}</b>
+                    ${entry.verdict.hardRules.map(
+                      (hit) => html`<div style="margin-left:10px">
+                        ${humanise(hit.rule)} — ${hit.detail} <i>${hit.remedy}</i>
+                      </div>`,
+                    )}
+                  </div>`,
+                )}
+            </div></div>`
+          : ''
+      }
+      ${
+        openGaps.length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              <b>Waiting on the customer for ${openGaps.length} thing(s).</b>
+              Batched deliberately: one list the customer answers in a sitting, rather than an email per question.
+              ${openGaps.map(
+                (gap) => html`<div style="margin-top:6px">
+                  ${questions.find((entry) => entry.question.id === gap.questionId)?.question.number ?? '—'} —
+                  ${gap.promptToClient}
+                </div>`,
+              )}
+            </div></div>`
+          : ''
+      }
+      ${
+        readiness.blocking.length > 0
+          ? html`<div class="notice err" style="margin:11px 17px 15px"><div>
+              <b>${readiness.blocking.length} mandatory answer(s) block the export.</b>
+              Named in full rather than one at a time, because fixing them one attempt at a time is how somebody
+              decides at 4pm that the check is the problem.
+              ${readiness.blocking.map(
+                (entry) => html`<div style="margin-top:4px">
+                  ${questions[entry.index]?.question.number ?? entry.index} — ${entry.reason}
+                </div>`,
+              )}
+            </div></div>`
+          : html`<div style="padding:0 17px 15px"></div>`
+      }
+    </div>
+  `;
+}
+
+/** One customer's evidence library. */
+function evidencePanel(library) {
+  return html`
+    <div style="margin-top:11px">
+      <p class="metric-sub">${library.summary}</p>
+      ${table({
+        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Standing'],
+        align: ['', '', '', '', '', 'num', 'num', ''],
+        rows: library.evidence.map((item) => [
+          item.reference,
+          humanise(item.type),
+          item.title,
+          item.validFrom ? date(item.validFrom) : '—',
+          item.expiresOn ? date(item.expiresOn) : html`<span style="font-size:12px;color:var(--text-3)">does not lapse</span>`,
+          item.daysLeft === null ? '—' : item.daysLeft < 0 ? badge(`${Math.abs(item.daysLeft)} ago`, 'bad') : String(item.daysLeft),
+          item.extracted ? String(item.chunkCount) : badge('nothing read', 'warn'),
+          item.withdrawnAt
+            ? badge('withdrawn', '')
+            : item.currentNow
+              ? badge('current', 'ok')
+              : badge('lapsed', 'bad'),
+        ]),
+        empty: 'Nothing filed for this customer',
+        emptyDetail:
+          'The library is what every answer is drafted from, so it is the first thing to build — and the thing that ' +
+          'makes the second bid faster than the first.',
+      })}
+      ${
+        library.limits.length > 0
+          ? html`<div class="notice warn" style="margin-top:10px"><div>
+              ${library.limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+    </div>
+  `;
+}
+
+/** What the library has for one question, with the floor's refusal said plainly. */
+function retrievalPanel(result) {
+  return html`
+    <div style="margin-top:11px">
+      <div class="notice ${raw(result.chunks.length === 0 ? 'warn' : 'info')}" style="margin:0 0 10px">
+        <div>${result.note}</div>
+      </div>
+      ${result.chunks.map(
+        (chunk) => html`<div style="padding:9px 0;border-top:1px solid var(--line)">
+          <div class="actions" style="justify-content:space-between;align-items:baseline">
+            <b>${chunk.reference} · ${chunk.title}</b>
+            <span style="font-size:12px;color:var(--text-3)">
+              ${humanise(chunk.type)}${chunk.pageRef ? ` · ${chunk.pageRef}` : ''} · match ${pct(chunk.score * 100, 0)}
+              ${chunk.expiresOn ? ` · expires ${chunk.expiresOn}` : ''}
+            </span>
+          </div>
+          <p style="margin:6px 0;font-size:13px;line-height:1.55">${chunk.text}</p>
+        </div>`,
+      )}
+    </div>
+  `;
 }

@@ -126,6 +126,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   BidOnCustomer: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   BidOnEngagement: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   BidOnOffering: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // The customer's own documents and the submission written from them. A CV in
+  // the library is personal data as well as commercial, which is why the
+  // library refuses one filed without the data subject's consent.
+  BidOnEvidence: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  BidOnBid: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
 
   SiteServicesAppointment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ModelFitAssessment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
