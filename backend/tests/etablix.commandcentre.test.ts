@@ -127,7 +127,22 @@ describe('§1.2 the automation boundary', () => {
     );
     const start = source.indexOf('--- ETABLIX site services');
     assert.ok(start > 0, 'the ETABLIX block marker has moved; this test can no longer find the catalogue');
-    const declared = new Set([...source.slice(start).matchAll(/def\('([A-Z_0-9]+)'/g)].map((match) => match[1]!));
+    /*
+     * Bounded at the end of the block, not at the end of the file.
+     *
+     * The first version sliced to EOF, which was the same thing while ETABLIX
+     * was the last block in the catalogue. It stopped being the same thing the
+     * moment a second module's events were appended after it: fifteen Bid-On
+     * events were read as ETABLIX events with no automation class, and the
+     * failure said nothing about the real cause.
+     *
+     * The next top-level block marker ends it. ETABLIX's own sections are
+     * commented without one, so this cannot cut the block short.
+     */
+    const after = source.slice(start);
+    const nextBlock = after.slice(1).search(/\n  \/\/ --- /);
+    const block = nextBlock === -1 ? after : after.slice(0, nextBlock + 1);
+    const declared = new Set([...block.matchAll(/def\('([A-Z_0-9]+)'/g)].map((match) => match[1]!));
 
     const classified = new Set(Object.keys(ACTIVITIES));
     const unclassified = [...declared].filter((code) => !classified.has(code));

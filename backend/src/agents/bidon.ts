@@ -1,0 +1,213 @@
+import { customersOf, liveDeclarations } from '../domain/bidon/customers.ts';
+import { engagementsOf } from '../domain/bidon/engagements.ts';
+import type { EngineContext } from '../engines/context.ts';
+import type { AgentDefinition, AgentOutput, Finding } from './types.ts';
+
+/**
+ * The Bid-On engagement watch.
+ *
+ * ## Why an agent here at all
+ *
+ * Everything this reports is visible on the Bid-On screen, for one engagement
+ * at a time. Nobody opens forty of them. A provider running six retainers and
+ * a dozen one-off packs has a handful of facts that cost real money the week
+ * nobody notices them, and each one is arithmetic over records the platform
+ * already holds:
+ *
+ *   - **a retainer with no cycle open** is a customer being billed monthly and
+ *     receiving nothing, which is the complaint that ends a retainer;
+ *   - **a customer with no guest invited** cannot confirm a declaration, and a
+ *     declaration is the one thing the provider may not confirm on their
+ *     behalf — so the pack will be blocked at the last moment by something
+ *     that took five minutes to fix weeks earlier;
+ *   - **a declaration lapsing** is a submission resting on a statement that
+ *     will not be true when the buyer reads it;
+ *   - **an engagement drafted and never activated** is work somebody thinks is
+ *     running and cannot start;
+ *   - **an open stage past its due date** is a per-stage fee nobody can
+ *     invoice, because the next stage does not open until this one is signed
+ *     off.
+ *
+ * ## It observes, and that is not a limitation
+ *
+ * `maxUnattended: 'OBSERVE'` and `proposes: []`. Every action behind these
+ * findings is a commercial act between two companies — open a cycle, invite a
+ * customer's director, chase a renewal, sign off a stage, activate an
+ * engagement at an agreed fee. Each binds a fee or speaks for somebody else's
+ * company, and no agent mandate in this platform reaches an act that does
+ * either. An agent proposing "activate this engagement at £2,500" would be an
+ * agent agreeing a price.
+ *
+ * It carries `module: 'BID_ON'`, so the runtime will not run it for a tenancy
+ * without the grant — the same gate every Bid-On route carries, applied to the
+ * one caller that acts unattended.
+ */
+
+const empty: AgentOutput = { findings: [], proposals: [] };
+
+/** How long a draft engagement can sit before it is worth saying so. */
+const DRAFT_STALE_DAYS = 7;
+/** How close a lapsing declaration has to be before it is a finding. */
+const DECLARATION_WARNING_DAYS = 45;
+
+const daysBetween = (from: string, to: string): number =>
+  Math.ceil((Date.parse(to.slice(0, 10)) - Date.parse(from.slice(0, 10))) / 86_400_000);
+
+export const bidOnEngagementAgent: AgentDefinition = {
+  name: 'bid-on engagements',
+  agentId: 'AGT-BIDON-ENGAGEMENT',
+  module: 'BID_ON',
+  division: 'BID',
+  purpose:
+    'Watches every engagement and customer workspace across the provider’s book, and says which ones are quietly ' +
+    'costing money: a retainer with no cycle open, a customer who cannot confirm a declaration, a declaration about ' +
+    'to lapse, a stage nobody can invoice.',
+  // Every phase. A bid-support engagement is not on a construction phase at
+  // all — it runs against the tenancy's own governance scope, before and
+  // between the customers' projects.
+  activeIn: 'ANY',
+  triggers: [
+    { kind: 'SCHEDULE', at: '06:00' },
+    { kind: 'EVENT', eventType: 'BID_ON_ENGAGEMENT_ACTIVATED' },
+    { kind: 'EVENT', eventType: 'BID_ON_STAGE_SIGNED_OFF' },
+    { kind: 'EVENT', eventType: 'BID_ON_CUSTOMER_OPENED' },
+  ],
+  inputs: ['Customer workspaces and their guests', 'Confirmed declarations', 'Engagements, their stages and cycles'],
+  outputs: [
+    'Retainers with no cycle open',
+    'Customers who cannot confirm a declaration',
+    'Declarations lapsing',
+    'Engagements drafted and never activated',
+    'Stages open past their due date',
+  ],
+  emits: [],
+  hitl: 'REVIEW',
+  // High, because every finding is arithmetic over recorded facts rather than
+  // a judgement. If the records are there, the gap either exists or it does not.
+  confidenceFloor: 0.9,
+  acuTier: 'LOW',
+  memory: { reads: ['ORGANISATION'], writes: [] },
+  mandate: {
+    reads: ['BID_SERVICES'],
+    proposes: [],
+    approvers: ['OWNER'],
+    maxUnattended: 'OBSERVE',
+  },
+  evaluate(ctx: EngineContext): AgentOutput {
+    // Nothing at all for a tenancy that has not started using the module. An
+    // agent with nothing to read has not found a problem; it has found nothing.
+    const customers = customersOf(ctx);
+    const engagements = engagementsOf(ctx);
+    if (customers.length === 0 && engagements.length === 0) return empty;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const findings: Finding[] = [];
+    const nameOf = new Map(customers.map((customer) => [customer.id, customer.legalName]));
+
+    for (const engagement of engagements) {
+      const who = nameOf.get(engagement.customerAccountId) ?? 'a customer';
+
+      if (engagement.status === 'DRAFT' && daysBetween(engagement.openedAt, today) >= DRAFT_STALE_DAYS) {
+        findings.push({
+          key: `bidon:draft:${engagement.id}`,
+          severity: 'ATTENTION',
+          summary:
+            `${engagement.reference} for ${who} has been drafted since ${engagement.openedAt.slice(0, 10)} and never ` +
+            'activated.',
+          consequence:
+            'No agent run and no bid can be started against a draft engagement, so this is work somebody may think ' +
+            'is running. Activating it is what agrees the terms the customer will be charged against.',
+          evidence: [
+            { refType: 'BidOnEngagement', refId: engagement.id, note: `Opened ${engagement.openedAt.slice(0, 10)}` },
+          ],
+        });
+      }
+
+      if (engagement.status !== 'ACTIVE') continue;
+
+      if (engagement.type === 'CONTINUOUS' && !engagement.stages.some((stage) => stage.status === 'OPEN')) {
+        findings.push({
+          key: `bidon:no-cycle:${engagement.id}`,
+          severity: 'URGENT',
+          summary: `${engagement.reference} for ${who} is a ${engagement.schedule?.toLowerCase() ?? 'repeating'} retainer with no cycle open.`,
+          consequence:
+            'A retainer with no cycle open is a customer being billed for work they are not receiving. It is also ' +
+            'the complaint that ends a retainer, and it is invisible on an invoice.',
+          evidence: [
+            {
+              refType: 'BidOnEngagement',
+              refId: engagement.id,
+              note: `${engagement.stages.filter((stage) => stage.status === 'SIGNED_OFF').length} cycle(s) delivered`,
+            },
+          ],
+        });
+      }
+
+      const overdue = engagement.stages.filter(
+        (stage) => stage.status === 'OPEN' && stage.dueOn && stage.dueOn < today,
+      );
+      for (const stage of overdue) {
+        findings.push({
+          key: `bidon:stage-overdue:${engagement.id}:${stage.id}`,
+          severity: 'ATTENTION',
+          summary: `${engagement.reference} · ${stage.name} was due ${stage.dueOn} and is still open.`,
+          consequence:
+            engagement.billingBasis === 'PER_STAGE' || engagement.billingBasis === 'PER_CYCLE'
+              ? 'This engagement bills per stage, so nothing can be invoiced for it until it is signed off — and the ' +
+                'next stage does not open either.'
+              : 'The next stage does not open until this one is signed off, so the work behind it is waiting.',
+          evidence: [{ refType: 'BidOnEngagement', refId: engagement.id, note: `${stage.name}, due ${stage.dueOn}` }],
+        });
+      }
+    }
+
+    for (const customer of customers) {
+      if (customer.status !== 'ACTIVE') continue;
+
+      const hasWork = engagements.some(
+        (engagement) => engagement.customerAccountId === customer.id && engagement.status === 'ACTIVE',
+      );
+
+      // Only where there is live work. A workspace opened yesterday with no
+      // engagement yet is not a problem, and saying so on every one of them is
+      // how a briefing stops being read.
+      if (hasWork && !customer.guests.some((guest) => guest.role === 'CUSTOMER_ADMIN')) {
+        findings.push({
+          key: `bidon:no-admin:${customer.id}`,
+          severity: 'URGENT',
+          summary: `${customer.reference} ${customer.legalName} has live work and nobody from that company invited.`,
+          consequence:
+            'Insurance cover, accident figures and legal statements can only be confirmed by the customer’s own ' +
+            'admin — the provider cannot confirm one and neither can an agent. Without that person the pack will be ' +
+            'blocked at the last moment by something that takes five minutes to fix now.',
+          evidence: [{ refType: 'BidOnCustomer', refId: customer.id, note: `${customer.guests.length} guest(s)` }],
+        });
+      }
+
+      for (const declaration of liveDeclarations(customer, today)) {
+        if (!declaration.validUntil) continue;
+        const left = daysBetween(today, declaration.validUntil);
+        if (left > DECLARATION_WARNING_DAYS) continue;
+        findings.push({
+          key: `bidon:declaration-lapsing:${declaration.id}`,
+          severity: left < 0 ? 'URGENT' : 'ATTENTION',
+          summary:
+            left < 0
+              ? `${customer.legalName} declared "${declaration.statement.slice(0, 60)}" and it lapsed on ${declaration.validUntil}.`
+              : `${customer.legalName}'s declaration "${declaration.statement.slice(0, 60)}" lapses in ${left} day(s).`,
+          consequence:
+            'A submission resting on a declaration that is not true when the buyer reads it is not marked down — it ' +
+            'is thrown out, and everything else in the pack is spent for nothing. Only that customer’s own admin can ' +
+            'reconfirm it.',
+          evidence: [
+            { refType: 'BidOnCustomer', refId: customer.id, note: `${declaration.kind}, until ${declaration.validUntil}` },
+          ],
+        });
+      }
+    }
+
+    return { findings, proposals: [] };
+  },
+};
+
+export const BID_ON_AGENTS: AgentDefinition[] = [bidOnEngagementAgent];

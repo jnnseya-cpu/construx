@@ -174,7 +174,23 @@ export type CapabilityArea =
   // against it also calls `requireModule`. The area exists in the matrix for
   // every tenancy because the matrix is one published document; holding a
   // permission on it does nothing at all without the grant.
-  | 'SITE_SERVICES';
+  | 'SITE_SERVICES'
+  // Bid work delivered for external customers: the provider's customer
+  // workspaces, their engagements and terms, and the bids written under them.
+  //
+  // Its own area and not a corner of ESTIMATE_TENDER, because the authority is
+  // over a different thing. ESTIMATE_TENDER is authority over *this company's*
+  // own bid — what it claims, what it prices, what it sends. This is authority
+  // over a commercial relationship with somebody else: who the customers are,
+  // what was agreed, what is billed, and whether an engagement is open at all.
+  // Sharing the area would have let anybody who can draft this company's own
+  // tender also create customers and set fees, and would have left the audit
+  // trail unable to tell the two apart.
+  //
+  // Reachable only inside the Bid-On module, on the same terms as
+  // SITE_SERVICES: the area is in the published matrix for every tenancy, and
+  // holding a permission on it does nothing without the grant.
+  | 'BID_SERVICES';
 
 export const ROLE_ACCOUNT_LAYER: Record<Role, AccountLayer> = {
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
@@ -311,6 +327,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R', 'U'],
     SITE_SERVICES: ['R'],
+    BID_SERVICES: ['R'],
   },
 
   // The business owner: everything anybody in the tenancy can do, and nothing
@@ -346,6 +363,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'A'],
+    BID_SERVICES: ['R', 'A'],
   },
 
   // Authors the concept and approves none of it. Every 'A' is absent
@@ -371,6 +389,14 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R'],
+    // Authorship and no approval, like every other area this role holds. The
+    // spec's "Provider Bid Writer" who both edits and approves is a provider
+    // job title, composed from these verbs as a custom role — which is what
+    // `customroles.ts` exists for. Putting 'A' here instead would have broken
+    // the modelled split this role is the whole point of, and the review that
+    // matters is enforced per act anyway: `approveAnswer` refuses whoever last
+    // wrote the answer, whether an agent or a person.
+    BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
   },
 
   // Contractor-side seniority: approves what the delivery team authors, and
@@ -427,6 +453,7 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'U', 'A'],
+    BID_SERVICES: ['R'],
   },
 
   // The CDM 2015 statutory duty holder for the pre-construction phase. This is
@@ -508,6 +535,15 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     AI_EXECUTION: ['R', 'X'],
     BILLING_ACU: ['R'],
     SITE_SERVICES: ['R', 'C', 'U'],
+    // The bid writer in practice. This role already holds ESTIMATE_TENDER
+    // create and update, so it is who writes a tender answer in a small
+    // consultancy — and the module is unusable if the only people who can
+    // author in it are the director and a role nobody seeds.
+    //
+    // Authorship without 'A' or 'G': the reviewer who signs an answer and the
+    // director who sets a fee are deliberately somebody else, by role as well
+    // as by act.
+    BID_SERVICES: ['R', 'C', 'U', 'X', 'I'],
   },
 
   PM: {

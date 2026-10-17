@@ -50,6 +50,7 @@ import { programme } from './programme.js';
 import { reports } from './reports.js';
 import { risk } from './risk.js';
 import { siteservices } from './siteservices.js';
+import { bidon } from './bidon.js';
 import { settings } from './settings.js';
 import { signup } from './signup.js';
 import { support } from './support.js';
@@ -86,6 +87,7 @@ export const PAGES = {
   // absent for a tenancy without the module, and the routes behind it refuse
   // one regardless.
   siteservices,
+  bidon,
   documents,
   commercial,
   commands,

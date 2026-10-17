@@ -94,6 +94,42 @@ export const MODULES = {
       customerSelfActivation: false,
     },
   },
+  /**
+   * Bid-On: bid work delivered *for somebody else*.
+   *
+   * The distinction that makes this a module rather than a feature of the
+   * Tender & Procurement screens every tenancy already has. The standard
+   * section answers "we are bidding for this job": one company, its own
+   * pursuit, its own evidence. Bid-On answers "we are being paid to write
+   * somebody else's bid": a provider, its external customers, an engagement
+   * with terms and a fee, and a wall between every customer's evidence and
+   * every other customer's.
+   *
+   * **It adds and never replaces.** The standard section stays exactly as it
+   * is for every tenancy including a granted one. Nothing in `itt.ts`,
+   * `bidresponse.ts`, `answers.ts` or `redteam.ts` changes shape because this
+   * exists; Bid-On reaches them and they do not reach back.
+   */
+  BID_ON: {
+    name: 'CONSTRUX Bid-On',
+    summary:
+      'Bid work delivered for external customers: a questionnaire or tender read into questions, every answer ' +
+      'drafted from that customer’s own evidence with citations, scored against a buyer-side rubric, and signed off ' +
+      'by a person before anything leaves the platform. Each customer is a separate workspace under an engagement ' +
+      'with its own terms, fee and billing basis.',
+    restricted:
+      'Allocated to a business only under a signed agreement, because it is a service a provider sells onward to ' +
+      'its own customers rather than a capability every subscriber gets. It does not replace the Tender & ' +
+      'Procurement section, which stays available to everybody.',
+    registry: {
+      moduleKey: 'construx.bidon.bid_services',
+      productCode: 'construx',
+      visibility: 'restricted',
+      requires: ['construx.core'],
+      eligibilityPolicy: 'explicit_tenant_grant',
+      customerSelfActivation: false,
+    },
+  },
 } as const;
 
 export type ModuleId = keyof typeof MODULES;

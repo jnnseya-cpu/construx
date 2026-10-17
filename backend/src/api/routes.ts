@@ -139,6 +139,8 @@ import * as itt from '../domain/itt.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as answers from '../domain/answers.ts';
+import * as bidOnCustomers from '../domain/bidon/customers.ts';
+import * as bidOnEngagements from '../domain/bidon/engagements.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -13090,6 +13092,358 @@ export const ROUTES: Route[] = [
       'What the library has for a requirement category — candidates and how they have scored. A starting point, never a section: nothing here writes an answer into a bid',
     handler: (platform, ctx) =>
       answers.offerAnswers(tenantContext(platform, ctx), ctx.params.category as never),
+  },
+
+  // ------------------------------------------------ CONSTRUX Bid-On (module)
+  //
+  // Bid work delivered for external customers. Every route calls
+  // `requireModule` inside the domain command as well as authorising the
+  // capability, and the two ask different questions: whether this *company*
+  // holds the module at all, and whether this *person* may do this thing
+  // within it. A tenancy without the grant is refused and is never told the
+  // routes exist, because `/v1/permissions/matrix` publishes only the modules
+  // it holds and the console gates its navigation on that.
+  //
+  // Paths sit under `/v1/bid-on`, apart from the Tender & Procurement paths
+  // every tenancy already has. Bid-On reaches that section; it does not change
+  // it, and nothing there knows this exists.
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/offerings',
+    readOnly: true,
+    description:
+      'The provider’s own service catalogue: what it sells, at what starting price, on what billing basis. Every value is the provider’s, never a platform constant',
+    handler: (platform, ctx) => bidOnEngagements.offeringCatalogue(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/offerings',
+    description:
+      'Define a service the provider sells, so an engagement is priced from the catalogue rather than typed again each time',
+    schema: {
+      type: 'object',
+      required: ['name', 'engagementType', 'billingBasis', 'defaultFeeMinor', 'currency', 'deliverables'],
+      properties: {
+        name: { type: 'string', minLength: 3, maxLength: 160 },
+        engagementType: { type: 'string', enum: [...bidOnEngagements.ENGAGEMENT_TYPE] },
+        billingBasis: { type: 'string', enum: [...bidOnEngagements.BILLING_BASIS] },
+        defaultFeeMinor: { type: 'integer', minimum: 0 },
+        currency: { type: 'string', minLength: 3, maxLength: 3 },
+        depositPercent: { type: 'number', minimum: 0, maximum: 100 },
+        deliverables: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1, maxLength: 300 } },
+        rubricScheme: { type: 'string', minLength: 1, maxLength: 64 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidOnEngagements.defineOffering(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/bid-on/offerings/:offeringId',
+    description:
+      'Reprice or withdraw a service. Engagements already signed keep their own copy of the terms and do not move',
+    schema: {
+      type: 'object',
+      properties: {
+        defaultFeeMinor: { type: 'integer', minimum: 0 },
+        deliverables: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1, maxLength: 300 } },
+        rubricScheme: { type: 'string', minLength: 1, maxLength: 64 },
+        active: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.updateOffering(tenantContext(platform, ctx), ctx.params.offeringId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/customers',
+    readOnly: true,
+    description:
+      'The customer workspaces this person is assigned to — never the tenancy’s whole list. A provider’s customers compete with each other, so the register says how many it is not showing rather than looking complete',
+    handler: (platform, ctx) =>
+      bidOnCustomers.customerRegister(tenantContext(platform, ctx), ctx.query.get('asAt') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers',
+    description:
+      'Open a workspace for an external customer. Its evidence, profile and declarations live inside it and are visible only to assigned staff and that customer’s own guests',
+    schema: {
+      type: 'object',
+      required: ['legalName'],
+      properties: {
+        legalName: { type: 'string', minLength: 3, maxLength: 200 },
+        companyNumber: { type: 'string', maxLength: 32 },
+        sicCodes: { type: 'array', items: { type: 'string', maxLength: 16 } },
+        headcount: { type: 'integer', minimum: 0 },
+        turnoverBand: { type: 'string', maxLength: 64 },
+        sectors: { type: 'array', items: { type: 'string', maxLength: 64 } },
+        regions: { type: 'array', items: { type: 'string', maxLength: 64 } },
+        assignStaff: { type: 'array', items: stringField },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidOnCustomers.openCustomer(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/customers/:customerId',
+    readOnly: true,
+    description: 'One customer workspace in full: profile, guests, live declarations and every engagement',
+    handler: (platform, ctx) =>
+      bidOnCustomers.customerWorkspace(
+        tenantContext(platform, ctx),
+        ctx.params.customerId as string,
+        ctx.query.get('asAt') ?? undefined,
+      ),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/bid-on/customers/:customerId/profile',
+    description:
+      'Keep the customer’s standing facts current — the first twenty questions of every prequalification, answered once',
+    schema: {
+      type: 'object',
+      properties: {
+        legalName: { type: 'string', minLength: 3, maxLength: 200 },
+        companyNumber: { type: 'string', maxLength: 32 },
+        sicCodes: { type: 'array', items: { type: 'string', maxLength: 16 } },
+        headcount: { type: 'integer', minimum: 0 },
+        turnoverBand: { type: 'string', maxLength: 64 },
+        sectors: { type: 'array', items: { type: 'string', maxLength: 64 } },
+        regions: { type: 'array', items: { type: 'string', maxLength: 64 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCustomers.updateCustomerProfile(tenantContext(platform, ctx), ctx.params.customerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/staff',
+    description:
+      'Assign or unassign the provider’s own staff. Restrictive by default: a new workspace is visible to nobody but whoever opened it',
+    schema: {
+      type: 'object',
+      properties: {
+        add: { type: 'array', items: stringField },
+        remove: { type: 'array', items: stringField },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCustomers.assignStaff(tenantContext(platform, ctx), ctx.params.customerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/guests',
+    description:
+      'Invite one of the customer’s own people as a guest. One account cannot be a guest of two customers — that would be two competitors’ evidence behind one login',
+    schema: {
+      type: 'object',
+      required: ['actorId', 'organisation', 'role'],
+      properties: {
+        actorId: stringField,
+        organisation: { type: 'string', minLength: 3, maxLength: 200 },
+        role: { type: 'string', enum: ['CUSTOMER_ADMIN', 'CUSTOMER_CONTRIBUTOR'] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCustomers.inviteGuest(tenantContext(platform, ctx), ctx.params.customerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/declarations',
+    guest: 'OWN',
+    description:
+      'Confirm a fact the customer states about itself — insurance cover, accident figures, a legal statement. Refused for anybody who is not that customer’s own admin: whoever confirms it is who the buyer will hold to it',
+    schema: {
+      type: 'object',
+      required: ['kind', 'statement'],
+      properties: {
+        kind: { type: 'string', enum: ['INSURANCE', 'ACCIDENT_STATISTICS', 'LEGAL_STATEMENT', 'FINANCIAL', 'OTHER'] },
+        statement: { type: 'string', minLength: 12, maxLength: 1000 },
+        value: { type: 'string', maxLength: 200 },
+        validUntil: { type: 'string', minLength: 10, maxLength: 10 },
+        supersedes: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCustomers.confirmDeclaration(tenantContext(platform, ctx), ctx.params.customerId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/close',
+    description:
+      'Close a workspace. Nothing is deleted and its bids stay readable; refused while an engagement is still open',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCustomers.closeCustomer(tenantContext(platform, ctx), ctx.params.customerId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/engagements',
+    readOnly: true,
+    description:
+      'Every engagement, with what is stopping each one. Computed on read, so the answer on the screen and the answer at the gate cannot disagree',
+    handler: (platform, ctx) =>
+      bidOnEngagements.engagementRegister(tenantContext(platform, ctx), {
+        ...(ctx.query.get('customerId') ? { customerAccountId: ctx.query.get('customerId') as string } : {}),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/engagements',
+    description:
+      'Open an engagement: the piece of work, its type, its terms and its fee. It opens as a draft, because the terms are what a customer will be charged against and somebody has to say they are right',
+    schema: {
+      type: 'object',
+      required: ['name', 'type'],
+      properties: {
+        name: { type: 'string', minLength: 3, maxLength: 160 },
+        type: { type: 'string', enum: [...bidOnEngagements.ENGAGEMENT_TYPE] },
+        billingBasis: { type: 'string', enum: [...bidOnEngagements.BILLING_BASIS] },
+        feeMinor: { type: 'integer', minimum: 0 },
+        currency: { type: 'string', minLength: 3, maxLength: 3 },
+        depositPercent: { type: 'number', minimum: 0, maximum: 100 },
+        deliverables: { type: 'array', items: { type: 'string', maxLength: 300 } },
+        rubricScheme: { type: 'string', maxLength: 64 },
+        schedule: { type: 'string', enum: [...bidOnEngagements.CYCLE_SCHEDULE] },
+        startOn: { type: 'string', minLength: 10, maxLength: 10 },
+        endOn: { type: 'string', minLength: 10, maxLength: 10 },
+        termsText: { type: 'string', maxLength: 4000 },
+        offeringId: stringField,
+        stages: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['name', 'scope', 'feeMinor'],
+            properties: {
+              name: { type: 'string', minLength: 3, maxLength: 160 },
+              scope: { type: 'string', minLength: 12, maxLength: 2000 },
+              feeMinor: { type: 'integer', minimum: 0 },
+              dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.openEngagement(tenantContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bidOnEngagements.openEngagement>[1], 'customerAccountId'>>(ctx),
+        customerAccountId: ctx.params.customerId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/activate',
+    description: 'Activate the engagement, which is what lets work start against it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngagements.activateEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'PUT',
+    pattern: '/v1/bid-on/engagements/:engagementId',
+    description:
+      'Change the terms, versioned. The new terms apply from now and the old ones stay on the record — a fee edited in place would rewrite what the customer owed for work already delivered',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string', minLength: 12, maxLength: 600 },
+        feeMinor: { type: 'integer', minimum: 0 },
+        billingBasis: { type: 'string', enum: [...bidOnEngagements.BILLING_BASIS] },
+        deliverables: { type: 'array', items: { type: 'string', maxLength: 300 } },
+        endOn: { type: 'string', minLength: 10, maxLength: 10 },
+        termsText: { type: 'string', maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.retermEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/pause',
+    description:
+      'Pause, with a reason. Any type, any time: no agent run, no recurring charge, and every bid left exactly where it was',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.pauseEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/resume',
+    description: 'Resume exactly where it stopped. How long the customer was away, and why, stays on the record',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngagements.resumeEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/stages/:stageId/sign-off',
+    description:
+      'Sign off a stage or a cycle, which is what opens the next one. Refused twice on the same stage — a second sign-off would bill it twice',
+    schema: {
+      type: 'object',
+      required: ['note'],
+      properties: { note: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.signOffStage(
+        tenantContext(platform, ctx),
+        ctx.params.engagementId as string,
+        ctx.params.stageId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/cycles',
+    description:
+      'Open the next cycle of a continuous engagement. Refused while one is still open, because two open cycles is two cycles billed for one period of work',
+    schema: {
+      type: 'object',
+      required: ['scope'],
+      properties: { scope: { type: 'string', minLength: 12, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.openNextCycle(tenantContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/close',
+    description:
+      'Complete or cancel. One act for both, because the effect on the work is identical — the bids become read-only and nothing more is billed — and only the reason differs',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'reason'],
+      properties: {
+        outcome: { type: 'string', enum: ['COMPLETED', 'CANCELLED'] },
+        reason: { type: 'string', minLength: 12, maxLength: 600 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngagements.closeEngagement(tenantContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
   },
   {
     method: 'GET',

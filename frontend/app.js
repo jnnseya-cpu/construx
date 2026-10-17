@@ -150,6 +150,24 @@ export const NAV = [
     group: 'Commercial',
     items: [
       { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true, hostOnly: true },
+      // Bid-On: bid work delivered for external customers. `module` is what
+      // makes it absent rather than locked for everybody else — see
+      // `reachable()` — and the value is checked against what the API said this
+      // tenancy holds, never against a constant here.
+      //
+      // Beside Pipeline & Bids rather than replacing it. The standard section
+      // is this business bidding its own work and stays available to every
+      // tenancy including a granted one; this is the same business being paid
+      // to write somebody else's.
+      {
+        id: 'bidon',
+        label: 'Bid-On',
+        area: 'BID_SERVICES',
+        module: 'BID_ON',
+        icon: 'target',
+        tenantScoped: true,
+        hostOnly: true,
+      },
       { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
       // Measurement and the supplier's own return sit on this screen. The
       // BIM manager takes off quantities from the model and a supplier answers

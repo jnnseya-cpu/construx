@@ -114,6 +114,19 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // COMMERCIAL_L3 on both: the appointment names the contracting entity, the
   // funding source and which party carries the cash exposure, and the fit
   // assessment carries ETABLIX's own credit position.
+  // Bid-On — reachable only by a tenancy holding that module, on the same terms:
+  // `requireModule` is the gate above the capability check and both have to
+  // pass.
+  //
+  // COMMERCIAL_L3 on all four, and this is the strictest case of it anywhere in
+  // the platform. A customer record names another company that has engaged a
+  // bid writer; an engagement carries what they agreed to pay; an offering is
+  // the provider's own price list. Any of the three in the wrong hands is
+  // commercially damaging to a third party who is not even the tenant.
+  BidOnCustomer: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  BidOnEngagement: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  BidOnOffering: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+
   SiteServicesAppointment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ModelFitAssessment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   // A brief fact is a site measurement, not a commercial one — the peak

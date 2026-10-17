@@ -41,6 +41,12 @@ export type Scope =
   // roster — and the reverse is just as true.
   | 'siteservices:read'
   | 'siteservices:write'
+  // Its own pair for the same reason, and a sharper one. A token that could
+  // reach a provider's bid customers would reach several other companies'
+  // unpublished submissions through one credential — the single worst blast
+  // radius an integration token has anywhere in this platform.
+  | 'bidservices:read'
+  | 'bidservices:write'
   | 'media:upload'
   | 'media:read'
   | 'admin:*';
@@ -75,6 +81,7 @@ const AREA_SCOPES: Record<CapabilityArea, { read: Scope; write: Scope }> = {
   AI_EXECUTION: { read: 'ai:execute', write: 'ai:execute' },
   BILLING_ACU: { read: 'billing:read', write: 'billing:write' },
   SITE_SERVICES: { read: 'siteservices:read', write: 'siteservices:write' },
+  BID_SERVICES: { read: 'bidservices:read', write: 'bidservices:write' },
 };
 
 const WRITE_CODES = new Set<PermissionCode>(['C', 'U', 'A', 'I', 'G']);

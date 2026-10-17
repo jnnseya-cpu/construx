@@ -26117,3 +26117,162 @@ the nine-lens red team with `findableScorePercent` (reported as coverage and
 explicitly not as a predicted mark), the evidence claim register with its
 second-person verification, the deadline schedule, the portal port, and the
 human-only authorship rule that is the plan's *"AI never signs off alone."*
+
+## CONSTRUX Bid-On — the module, and what it is built on
+
+Bid-On is bid work delivered **for external customers**. Every tenancy already
+has Tender & Procurement, which answers "we are bidding for this job". Bid-On
+answers "we are being paid to write somebody else's bid", and that changes three
+things: there is a third party whose evidence is theirs and must not reach the
+provider's other customers; there is a commercial relationship with terms, a fee
+and a billing basis that can be paused for months; and the provider's own staff
+are not the approvers of everything, because a declaration about insurance cover
+or an accident rate is a statement the *customer* makes about itself.
+
+**It adds and never replaces.** The standard section stays exactly as it is for
+every tenancy including a granted one. Nothing in `itt.ts`, `bidresponse.ts`,
+`answers.ts` or `redteam.ts` changed shape because this exists; Bid-On reaches
+them and they do not reach back.
+
+### The stack, stated once
+
+The specification names a portfolio standard: Next.js 14, NestJS, PostgreSQL
+with pgvector, Kafka, LangGraph, GCP, event-sourced/CQRS, ACU billing, BitriPay.
+Bid-On is built on **CONSTRUX's own mechanisms**, because settled decisions 2 and
+3 — zero runtime dependencies, no build step — are not open for re-litigation and
+every requirement behind that stack already has an implementation here:
+
+| The spec asks for | What it is built on |
+|---|---|
+| Event-sourced / CQRS write side | the Golden Thread ledger: append-only, hash-chained, with read models computed per request |
+| Kafka `bidon.*` topics | the one closed event catalogue. Each listed event is an event type; a second catalogue would be a second answer to "what happened here" |
+| PostgreSQL with row-level security | `LEDGER_POSTGRES_MODE`, already built and verified against a live Postgres 16 in CI, plus tenant isolation in `identity/` |
+| pgvector similarity | `datalayer/vectorindex.ts` — real embeddings, a similarity floor, and every passage keeping its record |
+| LangGraph agents | `agents/runtime.ts`: mandate, autonomy ladder, confidence floor, ACU tier, trigger routing, proposal queue |
+| A NestJS guard on the module | `requireModule()` — which the specification itself says to reuse rather than build twice |
+| `bidon_` table prefix | `BID_ON_*` event codes and `BidOn*` entity types, so nothing collides with the standard section |
+| BitriPay | not built. `docs/STATE.md` already records that; `billing/stripe.ts` is what exists |
+
+Two deliberate deviations from the specification's own wording, both recorded
+here rather than left for somebody to find:
+
+- **`PUT`, not `PATCH`.** The paths are the specification's. The verb is not:
+  the platform has 800-odd routes and had never used `PATCH`, the gateway's
+  client speaks `POST` and `PUT` only, and `PUT /v1/company/profile` is the
+  existing update verb. Three `PATCH` doors would have fallen through to `POST`
+  and 404'd. Introducing a verb end to end for three routes is the
+  overengineering rule 7 forbids, and nothing about behaviour changes.
+- **The "Provider Bid Writer" is a custom role, not a built-in one.** The five
+  roles in the specification are provider job titles. `BID_SERVICES` supplies
+  the verbs and `customroles.ts` is how a provider composes them — which is what
+  that module exists for. The built-in Development Manager holds authorship
+  everywhere and approval nowhere, a modelled split `authority.test.ts` enforces,
+  and putting `A` on it would have broken the one thing that role is for.
+
+### What is built
+
+**The entitlement.** `BID_ON` in `identity/modules.ts`, beside `ETABLIX`, with
+the same restricted visibility, the same explicit-tenant-grant policy and the
+same refusal: `MODULE_NOT_GRANTED`, not a 404, because pretending the routes do
+not exist is obscurity against somebody who can read the route list and makes a
+real misconfiguration indistinguishable from a typo. A new capability area,
+`BID_SERVICES`, and its own scope pair `bidservices:read/write` — its own rather
+than reusing another, because a token that could reach a provider's bid
+customers would reach several other companies' unpublished submissions through
+one credential, the worst blast radius an integration token has anywhere here.
+
+**The customer wall.** `domain/bidon/customers.ts`. A provider writes bids for
+firms that compete with each other, and tenant isolation cannot help because
+both customers are inside one tenancy. So access is **per customer**, from the
+record: a guest of that account, a member of staff assigned to it, or whoever
+opened it, and no fourth way in. Restrictive by default — a new workspace is
+visible to nobody else until somebody is assigned, because the opposite default
+is one forgotten exclusion away from a competitor's evidence on the wrong
+screen. The register **says how many customers it is not showing**; a list of
+four that looks like all nine is worse than one that names what it withheld. One
+login cannot be a guest of two customers.
+
+**Declarations are the customer's own.** `confirmDeclaration` refuses anybody
+who is not a guest of that customer account — checked against the guest list
+rather than against a role, because a role is something the provider grants
+itself and being a guest means belonging to that company. A contributor is
+refused too: uploading evidence and speaking for the company are different acts.
+Nothing is deleted; a superseded declaration is what the company said last year,
+and a bid that went out on it said it too. Live-ness is judged against the date
+given, not today — the same rule the evidence claim register follows.
+
+**Engagements.** `domain/bidon/engagements.ts`. Five types (one-off, permanent,
+continuous, staged, custom) and **pausing is a status, not a sixth type**: the
+specification lists "stop-start" beside the others, which would mean a permanent
+engagement going quiet for four months has to be converted into a different kind
+of thing and converted back. A billing basis has to fit the type, because a
+staged engagement billed monthly has no answer to "what does the next stage
+cost" and nobody finds that out until the invoice. Terms are **versioned**: a fee
+edited in place would rewrite what a customer owed for work already delivered,
+and last month's statement would change after it was sent. An engagement takes a
+**copy** of a service offering's terms, so repricing the catalogue next quarter
+never moves work already signed.
+
+`engagementOpenForWork` is one function every command that costs money will call
+— the alternative, each command deciding for itself, is how a paused engagement
+accepts an agent run through the one route somebody forgot.
+
+**A cycle is a stage with a number on it.** Annual re-verification and a weekly
+tender watch are the same shape as prequalification-then-tender: a repeating
+piece of scoped, priced work that waits for a sign-off. Giving cycles their own
+entity would have duplicated sign-off, billing and ordering for no gain.
+
+**Found by its own test:** the first cycle-date implementation added a fixed
+number of days, so 1 January 2028 plus "a year" came out as 31 December 2028 —
+2028 being a leap year — and an annual re-verification would walk a day earlier
+every four years, drifting out of step with the registration it renews, silently,
+over the life of a retainer meant to last. It is calendar arithmetic now, with
+the day of the month clamped rather than rolled over: 31 January plus a month is
+28 or 29 February, never 2 March.
+
+**One agent**, `AGT-BIDON-ENGAGEMENT`, carrying `module: 'BID_ON'` so the runtime
+will not run it for an ungranted tenancy. It observes and proposes nothing: every
+action behind its findings is a commercial act between two companies — open a
+cycle, invite a customer's director, activate an engagement at an agreed fee —
+and an agent proposing "activate this at £2,500" would be an agent agreeing a
+price. It reports a retainer with no cycle open (a customer billed for work they
+are not receiving), a customer with live work and nobody who can confirm a
+declaration, a declaration lapsing, a draft engagement nobody activated, and a
+stage open past its due date that therefore cannot be invoiced.
+
+**One console screen**, `frontend/pages/bidon.js`, module-gated in the navigation
+exactly as Site Services is — absent rather than locked for a tenancy without the
+grant, and gated on what the API said the tenancy holds rather than on a constant
+in the browser. It leads with customers rather than bids, because in this module
+the reason somebody cannot start work is almost always one level up.
+
+### What is not built yet
+
+Named precisely, because the specification's v1 is larger than this and a
+half-built module presented as finished is the failure rule 9 exists to prevent.
+**Nothing below is stubbed, mocked or faked — it is absent.**
+
+- **The bid itself.** `bid`, `question`, `answer`, `gap` and `rubric`. No
+  questionnaire is parsed, no answer is drafted, scored or approved, and nothing
+  is exported. The five agents the specification names (Parser, Retriever,
+  Drafter, Scorer, Gap) do not exist; the one agent that does watches
+  engagements.
+- **The per-customer evidence library.** `evidence_item` and `evidence_chunk`
+  against a customer account, with expiry driving alerts and score penalties.
+  The platform's own evidence store, registry and vector index are what this will
+  be built on.
+- **Import from the standard Tenders section**, and resync on an addendum.
+- **The guest workspace screen.** The customer's own people have no screen yet,
+  which is why `POST /v1/bid-on/customers/:customerId/declarations` is reachable
+  only through the generated command catalogue. **That consumed the last slot of
+  the `doors.test.ts` write ratchet**, which now sits at exactly its ceiling of
+  298 — the next write route with no panel fails there, which is the mechanism
+  working as intended, and this entry is the record of why the slot was spent.
+- **XLSX export.** `ExportFormat` is `PDF | DOCX | JSON_BUNDLE | CSV | HTML`;
+  reading XLSX exists in `evidence/office.ts`, writing it does not.
+- **Statements and invoicing.** `GET /v1/bid-on/engagements/{id}/statement` is
+  not built, and neither is raising an invoice — consistent with STATE.md's
+  existing entry that no invoicing run moves money.
+- **ACU attribution to a customer and engagement.** The ledger meters per run
+  already; carrying `customerAccountId` and `engagementId` onto that row is what
+  lets a provider see margin per customer, and it belongs with the bid.

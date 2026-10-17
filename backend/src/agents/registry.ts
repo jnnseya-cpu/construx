@@ -3,6 +3,7 @@ import type { EngineContext } from '../engines/context.ts';
 import * as planning from '../engines/planning.ts';
 import { LIFECYCLE_AGENTS } from './lifecycle.ts';
 import { ETABLIX_AGENTS } from './etablix.ts';
+import { BID_ON_AGENTS } from './bidon.ts';
 import { FIELD_AGENTS } from './field.ts';
 import { PLATFORM_AGENTS } from './platform.ts';
 import type { AgentDefinition, AgentOutput, Finding, ProposedCommand } from './types.ts';
@@ -1435,6 +1436,10 @@ export const AGENTS: AgentDefinition[] = [
   // leaves the same audit trail — and carries `module: 'ETABLIX'`, which is
   // what stops the runtime running it for a tenancy without the grant.
   ...ETABLIX_AGENTS,
+  // The Bid-On fleet, in `bidon.ts`. One agent, and it carries
+  // `module: 'BID_ON'` for the same reason the ETABLIX fleet carries its own:
+  // the runtime refuses to run it for a tenancy without the grant.
+  ...BID_ON_AGENTS,
 ];
 
 export function agentsByDivision(division: AgentDefinition['division']): AgentDefinition[] {

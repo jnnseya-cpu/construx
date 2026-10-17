@@ -2389,6 +2389,34 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('LIBRARY_SUPPLIER_SCORED', 'LibrarySupplierScore', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
   def('LIBRARY_BENCHMARK_PROMOTED', 'LibraryBenchmark', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
   def('LIBRARY_TEMPLATE_PROMOTED', 'LibraryPackageTemplate', 'UPDATE', 'PROCUREMENT', { aiAllowed: true, creates: true }),
+
+  // --- Bid-On: bid work delivered for external customers --------------------
+  //
+  // Reachable only inside the module. The events are in the one closed
+  // catalogue all the same, for the reason the catalogue is closed: a module's
+  // acts have to be readable on the same audit trail as everything else, and a
+  // second catalogue would be a second answer to "what happened here".
+  //
+  // Every one is `aiAllowed: false`. These are commercial acts between two
+  // companies — who the customer is, what was agreed, what it costs, whether
+  // the work is open — and no agent mandate reaches an act that binds a fee.
+  // The drafting and scoring events that agents *do* author come with the bid
+  // itself and are defined with it.
+  def('BID_ON_CUSTOMER_OPENED', 'BidOnCustomer', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('BID_ON_CUSTOMER_UPDATED', 'BidOnCustomer', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_CUSTOMER_CLOSED', 'BidOnCustomer', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_STAFF_ASSIGNED', 'BidOnCustomer', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_OFFERING_DEFINED', 'BidOnOffering', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('BID_ON_OFFERING_UPDATED', 'BidOnOffering', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_OPENED', 'BidOnEngagement', 'CREATE', 'GOVERNANCE', { creates: true }),
+  def('BID_ON_ENGAGEMENT_ACTIVATED', 'BidOnEngagement', 'APPROVE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_RETERMED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_PAUSED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_RESUMED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_COMPLETED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_ENGAGEMENT_CANCELLED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
+  def('BID_ON_STAGE_SIGNED_OFF', 'BidOnEngagement', 'APPROVE', 'GOVERNANCE'),
+  def('BID_ON_CYCLE_OPENED', 'BidOnEngagement', 'UPDATE', 'GOVERNANCE'),
 ];
 
 /**
