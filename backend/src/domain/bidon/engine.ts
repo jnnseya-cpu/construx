@@ -4,6 +4,7 @@ import { authorise, runAI, write, type EngineContext } from '../../engines/conte
 import { requireModule } from '../../identity/modules.ts';
 import { requireVisibleCustomer } from './customers.ts';
 import { requireOpenEngagement } from './engagements.ts';
+import { requireFundedEngagement } from './billing.ts';
 import { retrieveFor } from './evidence.ts';
 import { ANSWER_TYPE, bidsOf, latestAnswer, recordAnswer, scoreAnswer, type Bid, type BidQuestion } from './bids.ts';
 import { CRITERION, CRITERION_QUESTION, type CriterionScores } from './rubric.ts';
@@ -81,7 +82,13 @@ function requireBidRecord(ctx: EngineContext, bidId: string): Bid {
 function gate(ctx: EngineContext, bidId: string): Bid {
   requireModule(ctx.grantedModules, 'BID_ON');
   const bid = requireBidRecord(ctx, bidId);
-  requireOpenEngagement(ctx, bid.engagementId);
+  const engagement = requireOpenEngagement(ctx, bid.engagementId);
+  // Beside the open check rather than inside it: the two answer different
+  // questions. One asks whether work may happen at all, this asks whether the
+  // provider has been paid enough to spend money on it. A paused engagement
+  // blocks everything; an unpaid deposit blocks only the spend, so a person can
+  // still file evidence and confirm a question list.
+  requireFundedEngagement(ctx, engagement);
   if (['EXPORTED', 'SUBMITTED', 'WON', 'LOST'].includes(bid.status)) {
     throw new DomainError(
       'BID_ON_BID_SENT',

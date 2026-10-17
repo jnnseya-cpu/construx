@@ -144,6 +144,7 @@ import * as bidOnEngagements from '../domain/bidon/engagements.ts';
 import * as bidOnEvidence from '../domain/bidon/evidence.ts';
 import * as bidOnBids from '../domain/bidon/bids.ts';
 import * as bidOnEngine from '../domain/bidon/engine.ts';
+import * as bidOnBilling from '../domain/bidon/billing.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -13889,6 +13890,97 @@ export const ROUTES: Route[] = [
     schema: { type: 'object', properties: {}, additionalProperties: false },
     handler: (platform, ctx) =>
       bidOnEngine.composeGapRequest(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/invoices',
+    readOnly: true,
+    guest: 'OWN',
+    description:
+      'Every invoice for a customer this person may see, and which engagements cannot start an agent run until their deposit is settled. No money has moved: the payment gateway is not built, so a paid invoice here is somebody recording that it was paid',
+    handler: (platform, ctx) =>
+      bidOnBilling.invoiceRegister(tenantContext(platform, ctx), ctx.query.get('asAt') ?? undefined),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/engagements/:engagementId/invoices',
+    description:
+      'Issue an invoice against an engagement. Govern rather than create, for the same reason setting a fee is: whoever may agree what a customer pays is who may bill them for it',
+    schema: {
+      type: 'object',
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: [...bidOnBilling.INVOICE_KIND] },
+        amountMinor: { type: 'integer', minimum: 0 },
+        narrative: { type: 'string', maxLength: 300 },
+        stageId: stringField,
+        dueOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBilling.issueInvoice(tenantContext(platform, ctx), {
+        ...body<Omit<Parameters<typeof bidOnBilling.issueInvoice>[1], 'engagementId'>>(ctx),
+        engagementId: ctx.params.engagementId as string,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/invoices/:invoiceId/paid',
+    description:
+      'Record that an invoice was paid. Somebody saying it was paid, not a payment being taken — nothing in this module moves money and every read says so',
+    schema: {
+      type: 'object',
+      required: ['paymentReference'],
+      properties: {
+        paymentReference: { type: 'string', minLength: 4, maxLength: 120 },
+        paidOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBilling.recordPayment(tenantContext(platform, ctx), ctx.params.invoiceId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/invoices/:invoiceId/waive',
+    description:
+      'Waive a deposit so work can start before it is paid. The reason is mandatory: a waiver with none is indistinguishable from a deposit nobody chased, and the difference matters three months later',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBilling.waiveInvoice(tenantContext(platform, ctx), ctx.params.invoiceId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/invoices/:invoiceId/void',
+    description:
+      'Void one issued in error. Voided, never deleted, because the number was used — and refused on a paid invoice, which would leave money received against nothing',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBilling.voidInvoice(tenantContext(platform, ctx), ctx.params.invoiceId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/engagements/:engagementId/statement',
+    readOnly: true,
+    guest: 'OWN',
+    description:
+      'One engagement’s account for a period: work delivered, what was invoiced and received, and what the AI cost from the runs attributed to it. The margin is called a contribution rather than profit because it ignores the provider’s own time, which is the largest cost in this business',
+    handler: (platform, ctx) =>
+      bidOnBilling.engagementStatement(tenantContext(platform, ctx), ctx.params.engagementId as string, {
+        ...(ctx.query.get('from') ? { from: ctx.query.get('from') as string } : {}),
+        ...(ctx.query.get('to') ? { to: ctx.query.get('to') as string } : {}),
+      }),
   },
   {
     method: 'GET',

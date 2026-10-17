@@ -57,6 +57,9 @@ const RAG_TONE = { GREEN: 'ok', AMBER: 'warn', RED: 'bad' };
 /** An answer's own review state. */
 const ANSWER_TONE = { DRAFT: '', IN_REVIEW: 'warn', APPROVED: 'ok', REJECTED: 'bad' };
 
+/** An invoice's standing. A waiver is neutral: it was a decision, not a failure. */
+const INVOICE_TONE = { ISSUED: 'warn', PAID: 'ok', WAIVED: '', VOID: '' };
+
 /** What each engagement type means for how work opens and repeats. */
 const TYPE_MEANING = {
   ONE_OFF: 'One or more bids, then it closes. Billed as a fixed fee.',
@@ -67,7 +70,7 @@ const TYPE_MEANING = {
 };
 
 export async function bidon(root) {
-  const [customers, engagements, offerings, bids] = await Promise.all([
+  const [customers, engagements, offerings, bids, invoices] = await Promise.all([
     // Every read is tenant-scoped and filtered to this person inside the API,
     // not here. A screen that filtered would leak the moment anybody called
     // the route directly.
@@ -75,10 +78,12 @@ export async function bidon(root) {
     api.read('/v1/bid-on/engagements', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/offerings', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/bids', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    api.read('/v1/bid-on/invoices', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const customerList = customers?.customers ?? [];
   const bidList = bids?.bids ?? [];
+  const invoiceList = invoices?.invoices ?? [];
   const engagementList = engagements?.engagements ?? [];
   const offeringList = offerings?.offerings ?? [];
 
@@ -413,6 +418,73 @@ export async function bidon(root) {
       <div id="evidence-detail" style="padding:0 17px 4px"></div>
     </div>
 
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Invoices and statements</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${invoices?.error ? 'The invoice register could not be read.' : (invoices?.summary ?? '')}
+        A deposit is issued when an engagement is activated, a stage fee on sign-off and a balance on completion —
+        the provider does not have to remember. An outstanding deposit blocks <b>agent runs only</b>: a person can
+        still set the customer up, file their evidence and confirm a question list, because what a deposit protects
+        is the spend rather than the relationship.
+      </p>
+      <div style="padding:11px 17px 0">
+        ${raw(commandBar([
+          { id: 'issue-invoice', label: 'Issue an invoice',
+            permitted: can('BID_SERVICES', 'G'), reason: blockedReason('BID_SERVICES', 'G') },
+          { id: 'record-payment', label: 'Record a payment',
+            permitted: can('BID_SERVICES', 'G'), reason: blockedReason('BID_SERVICES', 'G') },
+          { id: 'waive-invoice', label: 'Waive a deposit', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'G'), reason: blockedReason('BID_SERVICES', 'G') },
+          { id: 'void-invoice', label: 'Void one issued in error', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'G'), reason: blockedReason('BID_SERVICES', 'G') },
+        ]))}
+      </div>
+      <!--
+        The statement is a lookup: there is no "the statement", only one
+        engagement's for a period. The chooser offers the engagements this
+        person can already see, so it cannot ask for one they may not read.
+      -->
+      <div class="actions" style="padding:11px 17px 0;align-items:flex-end">
+        <div class="field" style="margin:0;min-width:280px">
+          <label for="st-engagement">Statement for</label>
+          <select id="st-engagement">
+            ${liveEngagements.concat(engagementList.filter((entry) => !liveEngagements.includes(entry))).map(
+              (entry) => html`<option value="${entry.id}">${engagementLabel(entry)}</option>`,
+            )}
+          </select>
+        </div>
+        <div class="field" style="margin:0"><label for="st-from">From</label><input id="st-from" type="date"></div>
+        <div class="field" style="margin:0"><label for="st-to">To</label><input id="st-to" type="date"></div>
+        <button class="btn sm" id="st-go">Show it</button>
+      </div>
+      <div id="statement-detail" style="padding:0 17px"></div>
+      ${table({
+        headers: ['Ref', 'Customer', 'Engagement', 'For', 'Amount', 'Issued', 'Due', 'Standing'],
+        align: ['', '', '', '', 'num', '', '', ''],
+        rows: invoiceList.map((invoice) => [
+          invoice.reference,
+          invoice.customerName,
+          invoice.engagementReference,
+          invoice.narrative,
+          money(invoice.amountMinor, invoice.currency),
+          date(invoice.issuedAt),
+          invoice.dueOn ? date(invoice.dueOn) : '—',
+          invoice.overdue
+            ? badge('past due', 'bad')
+            : badge(humanise(invoice.status), INVOICE_TONE[invoice.status] ?? ''),
+        ]),
+        empty: 'Nothing invoiced yet',
+        emptyDetail: 'A deposit appears here the moment an engagement whose terms include one is activated.',
+      })}
+      ${
+        (invoices?.limits ?? []).length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 15px"><div>
+              ${invoices.limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+    </div>
+
     <div class="notice info" style="margin-bottom:14px"><div>
       <b>A declaration is confirmed by the customer, never here.</b>
       Insurance cover, accident figures and legal statements are representations the customer makes to a buyer under
@@ -457,6 +529,32 @@ export async function bidon(root) {
     } finally {
       open.disabled = false;
       open.textContent = 'Open';
+    }
+  });
+
+  /*
+   * One engagement's statement for a period.
+   *
+   * A lookup with a default rather than a required period: the question is
+   * almost always "what has this cost and earned so far", and making somebody
+   * pick two dates to ask it is how a screen stops being used.
+   */
+  const statementDetail = root.querySelector('#statement-detail');
+  root.querySelector('#st-go')?.addEventListener('click', async () => {
+    const engagementId = root.querySelector('#st-engagement')?.value;
+    if (!engagementId || !statementDetail) return;
+    const from = root.querySelector('#st-from')?.value;
+    const to = root.querySelector('#st-to')?.value;
+    const query = [from ? `from=${from}` : '', to ? `to=${to}` : ''].filter(Boolean).join('&');
+    try {
+      const statement = await api.read(
+        `/v1/bid-on/engagements/${engagementId}/statement${query ? `?${query}` : ''}`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(statementDetail, statementPanel(statement));
+    } catch (error) {
+      render(statementDetail, notice(`The statement could not be read: ${error.message}`, 'err'));
     }
   });
 
@@ -1143,6 +1241,97 @@ export async function bidon(root) {
       transform: ({ evidenceId: _e, ...rest }) => rest,
     },
 
+    'issue-invoice': {
+      title: 'Issue an invoice',
+      intent:
+        'Govern rather than create, for the same reason setting a fee is: whoever may agree what a customer pays is ' +
+        'who may bill them for it. The amount comes from the engagement’s own terms where they decide it — a deposit ' +
+        'percentage, a stage fee, the monthly fee — and is refused rather than guessed where they do not.',
+      path: (v) => `/v1/bid-on/engagements/${v.engagementId}/invoices`,
+      submitLabel: 'Issue',
+      fields: [
+        { name: 'engagementId', label: 'Engagement', type: 'select',
+          options: engagementList
+            .filter((entry) => entry.status !== 'DRAFT')
+            .map((entry) => ({ value: entry.id, label: engagementLabel(entry) })),
+          hint: 'A draft engagement cannot be billed: its terms are not agreed yet.' },
+        { name: 'kind', label: 'What for', type: 'select',
+          options: [
+            { value: 'DEPOSIT', label: 'Deposit — blocks agent runs until settled' },
+            { value: 'BALANCE', label: 'Balance on delivery' },
+            { value: 'STAGE', label: 'A stage, on sign-off' },
+            { value: 'CYCLE', label: 'A cycle of a retainer' },
+            { value: 'MONTHLY', label: 'The monthly fee' },
+          ] },
+        { name: 'amount', label: 'Amount', type: 'number', required: false,
+          hint: 'Leave blank to take it from the engagement’s terms.' },
+        { name: 'narrative', label: 'What it says', type: 'text', required: false,
+          hint: 'Leave blank for the wording the terms imply.' },
+        { name: 'dueOn', label: 'Due', type: 'date', required: false, hint: 'Fourteen days by default.' },
+      ],
+      transform: ({ engagementId: _e, amount, ...rest }) => ({
+        ...Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+        ...(String(amount ?? '').trim() === '' ? {} : { amountMinor: Math.round(Number(amount) * 100) }),
+      }),
+    },
+    'record-payment': {
+      title: 'Record a payment',
+      intent:
+        'Somebody saying it was paid, not a payment being taken — the payment gateway is not built and every read ' +
+        'here says so. Settling a deposit this way is what unblocks agent runs on that engagement.',
+      path: (v) => `/v1/bid-on/invoices/${v.invoiceId}/paid`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'invoiceId', label: 'Invoice', type: 'select',
+          options: invoiceList
+            .filter((invoice) => invoice.status === 'ISSUED')
+            .map((invoice) => ({
+              value: invoice.id,
+              label: `${invoice.reference} — ${invoice.customerName} — ${invoice.narrative}`,
+            })) },
+        { name: 'paymentReference', label: 'Reference', type: 'text',
+          hint: 'The bank reference or whatever identifies it on your statement.' },
+        { name: 'paidOn', label: 'Paid on', type: 'date', required: false },
+      ],
+      transform: ({ invoiceId: _i, paidOn, ...rest }) => ({
+        ...rest,
+        ...(String(paidOn ?? '').trim() ? { paidOn: String(paidOn) } : {}),
+      }),
+    },
+    'waive-invoice': {
+      title: 'Waive a deposit',
+      intent:
+        'So work can start before it is paid. A provider who knows the customer will sometimes start on a handshake, ' +
+        'and a platform that made that impossible is a platform they work around. The reason is mandatory and is ' +
+        'the point: a waiver with none is indistinguishable from a deposit nobody chased.',
+      path: (v) => `/v1/bid-on/invoices/${v.invoiceId}/waive`,
+      submitLabel: 'Waive',
+      fields: [
+        { name: 'invoiceId', label: 'Invoice', type: 'select',
+          options: invoiceList
+            .filter((invoice) => invoice.status === 'ISSUED')
+            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })) },
+        { name: 'reason', label: 'Why', type: 'text' },
+      ],
+      transform: ({ invoiceId: _i, ...rest }) => rest,
+    },
+    'void-invoice': {
+      title: 'Void an invoice issued in error',
+      intent:
+        'Voided, never deleted, because the number was used. Refused on one already paid — that would leave money ' +
+        'received against nothing.',
+      path: (v) => `/v1/bid-on/invoices/${v.invoiceId}/void`,
+      submitLabel: 'Void',
+      fields: [
+        { name: 'invoiceId', label: 'Invoice', type: 'select',
+          options: invoiceList
+            .filter((invoice) => invoice.status === 'ISSUED')
+            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })) },
+        { name: 'reason', label: 'Why', type: 'text' },
+      ],
+      transform: ({ invoiceId: _i, ...rest }) => rest,
+    },
+
     'open-engagement': {
       title: 'Open an engagement',
       intent:
@@ -1571,6 +1760,66 @@ function retrievalPanel(result) {
           <p style="margin:6px 0;font-size:13px;line-height:1.55">${chunk.text}</p>
         </div>`,
       )}
+    </div>
+  `;
+}
+
+/**
+ * One engagement's account for a period.
+ *
+ * The contribution figure is labelled as what it is. `received − AI cost` is
+ * not profit: it ignores the provider's own time, which is the largest cost in
+ * a bid-support business by a wide margin, and a screen that called it profit
+ * would be telling somebody they made £1,420 on a pack that took three days.
+ */
+function statementPanel(statement) {
+  return html`
+    <div style="margin-top:11px">
+      <p class="metric-sub">${statement.summary}</p>
+      <div class="grid g4">
+        <div class="card">
+          <h2>Invoiced</h2>
+          <div class="metric">${money(statement.invoicedMinor)}</div>
+          <div class="metric-sub">${money(statement.receivedMinor)} received, ${money(statement.outstandingMinor)} outstanding.</div>
+        </div>
+        <div class="card">
+          <h2>AI it took</h2>
+          <div class="metric orange">${money(statement.acuChargedMinor)}</div>
+          <div class="metric-sub">${statement.acuRuns} agent run(s) attributed to this engagement.</div>
+        </div>
+        <div class="card">
+          <h2>Contribution</h2>
+          <div class="metric ${raw(statement.contributionMinor >= 0 ? 'good' : 'bad')}">
+            ${money(statement.contributionMinor)}
+          </div>
+          <div class="metric-sub">
+            Received less what the AI cost. <b>Not profit</b> — it ignores your own time.
+          </div>
+        </div>
+        <div class="card">
+          <h2>Delivered</h2>
+          <div class="metric">${statement.work.packsExported}</div>
+          <div class="metric-sub">
+            pack(s) exported · ${statement.work.answersApproved} answer(s) approved ·
+            ${statement.work.stagesSignedOff} stage(s) signed off
+          </div>
+        </div>
+      </div>
+      ${table({
+        headers: ['On', 'What', 'Reference', 'Narrative', 'Amount'],
+        align: ['', '', '', '', 'num'],
+        rows: statement.lines.map((line) => [
+          date(line.on),
+          humanise(line.kind),
+          line.reference,
+          line.narrative,
+          line.amountMinor === 0 ? '—' : money(line.amountMinor),
+        ]),
+        empty: 'Nothing in this period',
+      })}
+      <div class="notice info" style="margin-top:10px"><div>
+        ${statement.limits.map((line) => html`<div>${line}</div>`)}
+      </div></div>
     </div>
   `;
 }

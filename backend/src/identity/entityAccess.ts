@@ -131,6 +131,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // library refuses one filed without the data subject's consent.
   BidOnEvidence: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   BidOnBid: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
+  // What a customer owes, and what they paid. Commercial in the strictest
+  // sense: it is a third party's payment history held by somebody else.
+  BidOnInvoice: { area: 'BID_SERVICES', sensitivity: 'COMMERCIAL_L3' },
 
   SiteServicesAppointment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },
   ModelFitAssessment: { area: 'SITE_SERVICES', sensitivity: 'COMMERCIAL_L3' },

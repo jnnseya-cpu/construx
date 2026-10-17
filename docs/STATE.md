@@ -26609,3 +26609,88 @@ is what makes true, and a test asserts byte-identity on a second render.
 
 Branding is passed in rather than looked up, because how a tenancy's branding
 resolves is the export service's business and this module should not know it.
+
+### Bid-On: deposits, invoices, statements, and the customer's own screen
+
+**The deposit blocks the spend and nothing else.** The specification says
+*"blocks agent runs until it is paid, unless the Provider Admin waives it"* —
+agent runs, not all work. The distinction is the design: a customer whose
+deposit is unpaid can still be set up, still upload their policies and
+certificates, still confirm declarations, still have a question list confirmed
+by a person, and a bid writer can still write an answer by hand. What is blocked
+is the four AI commands, because an agent run costs the provider real money the
+moment it runs and running one for an unpaid deposit is lending money nobody
+agreed to lend. Blocking everything would make the deposit a barrier to getting
+started, and the first thing it would stop is the customer uploading the evidence
+the work depends on.
+
+`requireFundedEngagement` sits beside `requireOpenEngagement` in the engine's
+shared gate rather than inside it, because the two answer different questions: one
+asks whether work may happen at all, the other whether the provider has been paid
+enough to spend money on it. A paused engagement blocks everything; an unpaid
+deposit blocks only the spend.
+
+**The engagement bills itself, in three places.** A deposit on activation — not
+on opening, because a draft engagement's terms are not agreed and billing against
+terms nobody agreed is how a dispute starts; not on the first agent run either,
+because the point of a deposit is that it is paid before the work rather than
+discovered when somebody presses draft. A stage fee on sign-off, which is the
+moment the work is agreed delivered: billing when a stage opens charges for work
+not done, and billing when the next opens makes the last stage free. A balance on
+**completion only** — a cancelled engagement has not delivered, and what is owed
+on a cancellation is a commercial conversation the provider raises themselves.
+Each only where the billing basis makes it mean something, so a staged engagement
+on a fixed fee is not billed twice.
+
+**A waiver is settled.** Treating it as still outstanding would make the
+specification's own escape hatch useless, and a provider who knows the customer
+will sometimes start on a handshake — a platform that made that impossible is one
+they work around. The reason is mandatory and is the point: a waiver with none is
+indistinguishable from a deposit nobody chased, and the difference matters three
+months later when somebody asks why this customer never paid one.
+
+**Nothing moves money, and every read says so.** `docs/STATE.md` already records
+that BitriPay and any invoicing run are not built. An invoice here is a record of
+what is owed; `recordPayment` is somebody saying it arrived. A statement that
+looked reconciled while nothing had been reconciled is the kind of wrong about
+money that stops a provider trusting the tool, so the sentence is on the
+statement and on the register rather than in a release note.
+
+**The margin is called a contribution, not profit.** `received − AI cost` ignores
+the provider's own time, which is the largest cost in a bid-support business by a
+wide margin. A screen that called it profit would be telling somebody they made
+£1,420 on a pack that took them three days. The ACU figure is **not re-derived**
+— it is the charge already settled on each `AIExecution` record, the same number
+the wallet moved, read through the attribution the Bid Engine sets. Recomputing
+it from tokens and a multiplier would produce a second figure that disagrees with
+the wallet whenever the multiplier changes.
+
+**The customer has their own screen**, and `guestOnly` is a new navigation shape
+— the mirror of `hostOnly`. A Bid-On customer is a guest in their provider's
+tenancy, and the obvious move is to show them the provider's screen with the
+other customers filtered out. That is wrong twice: it shows them what the
+provider charges and how many other customers exist, and it buries the three
+things they actually have to do.
+
+So `bidonguest.js` is built from their point of view. Everything on it is theirs:
+the documents held for them with the expiry dates that matter, the statements only
+their own director can confirm, everything they have been asked for from every
+pack **in one list** — which is the whole point of batching gaps and only works if
+they are together — and what they are being charged. The bid states are in plain
+words rather than internal ones: *"we are checking it"* means something to a
+contractor and *"in review"* does not. There is deliberately **no readiness
+percentage**: a number that says 68% invites a conversation about the number
+rather than about the two certificates that are missing, and the list of what is
+still needed is the useful form of the same fact. No approval and no export — the
+provider's reviewer approves, because the whole service is somebody competent
+reading it before it goes.
+
+**This closes the ratchet entry.** `POST
+/v1/bid-on/customers/:customerId/declarations` was reachable only through the
+generated command catalogue, recorded above as the slot that was spent. It now
+has the door it always belonged on, and it is the only place in the platform
+where a declaration can be confirmed at all — the API refuses one from the
+provider's staff and from an agent.
+
+**Still not built:** import and resync from the standard Tenders section, and the
+embedding swap in `retrieveFor`.

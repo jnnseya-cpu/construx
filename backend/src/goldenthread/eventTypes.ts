@@ -2439,6 +2439,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_GAP_RESOLVED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_BID_EXPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_BID_OUTCOME_RECORDED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+
+  // What the customer owes. Every one human-only: an invoice is a demand for
+  // money between two companies, and a waiver is somebody deciding not to ask
+  // for it. No agent mandate reaches either.
+  def('BID_ON_INVOICE_ISSUED', 'BidOnInvoice', 'CREATE', 'COMMERCIAL', { creates: true }),
+  def('BID_ON_INVOICE_PAID', 'BidOnInvoice', 'UPDATE', 'COMMERCIAL'),
+  def('BID_ON_INVOICE_WAIVED', 'BidOnInvoice', 'UPDATE', 'COMMERCIAL'),
+  def('BID_ON_INVOICE_VOIDED', 'BidOnInvoice', 'UPDATE', 'COMMERCIAL'),
 ];
 
 /**

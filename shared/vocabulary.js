@@ -569,6 +569,7 @@ export const CONSOLE_PAGE = opts([
   ['centre', 'Command Centre'],
   ['pipeline', 'Pipeline & Bids'],
   ['bidon', 'Bid-On'],
+  ['bidonguest', 'Our bid work'],
   ['commercial', 'Cost & Value'],
   ['procurement', 'Tender & Procurement'],
   ['contracts', 'Change & Claims'],

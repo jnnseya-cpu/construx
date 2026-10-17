@@ -51,6 +51,7 @@ import { reports } from './reports.js';
 import { risk } from './risk.js';
 import { siteservices } from './siteservices.js';
 import { bidon } from './bidon.js';
+import { bidonguest } from './bidonguest.js';
 import { settings } from './settings.js';
 import { signup } from './signup.js';
 import { support } from './support.js';
@@ -88,6 +89,7 @@ export const PAGES = {
   // one regardless.
   siteservices,
   bidon,
+  bidonguest,
   documents,
   commercial,
   commands,

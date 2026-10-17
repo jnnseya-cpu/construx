@@ -168,6 +168,19 @@ export const NAV = [
         tenantScoped: true,
         hostOnly: true,
       },
+      // The customer's own side of Bid-On. `guestOnly` is the mirror of
+      // `hostOnly` above: the provider's staff see the screen above and a
+      // customer sees this one, because what a customer needs is a different
+      // screen rather than a cut-down version of the provider's.
+      {
+        id: 'bidonguest',
+        label: 'Our bid work',
+        area: 'BID_SERVICES',
+        module: 'BID_ON',
+        icon: 'target',
+        tenantScoped: true,
+        guestOnly: true,
+      },
       { id: 'commercial', label: 'Cost & Value', area: 'BUDGET_COST', icon: 'coins' },
       // Measurement and the supplier's own return sit on this screen. The
       // BIM manager takes off quantities from the model and a supplier answers
@@ -1115,6 +1128,22 @@ function reachable(item) {
   // project, and that is what they are shown. The refusal is the control and
   // this is the courtesy, exactly as `groupOnly` above.
   if (item.hostOnly && state.me?.guest) return false;
+  /*
+   * The mirror of `hostOnly`, and it exists for one screen.
+   *
+   * A Bid-On customer is a guest in their provider's tenancy, and what they
+   * need is not a cut-down version of the provider's screen — it is a
+   * different screen. They see their own evidence, the declarations only they
+   * can confirm, the gaps they have been asked to close and their own
+   * statements; they do not see the provider's other customers, their
+   * engagements' terms, or the answers awaiting approval.
+   *
+   * Hiding it from the provider's own staff is the courtesy half: the screen
+   * would load for them and show their own company as a customer of itself,
+   * which is confusing rather than dangerous. The control is the API, which
+   * refuses a declaration from anybody who is not that customer's own admin.
+   */
+  if (item.guestOnly && !state.me?.guest) return false;
   return readableAreas(item).some((area) => can(area, 'R'));
 }
 

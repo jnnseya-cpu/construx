@@ -2,6 +2,14 @@ import { DomainError } from '../../core/errors.ts';
 import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
+/*
+ * Billing reads engagements, so this import is the one direction that would
+ * cycle. It does not: `billing.ts` imports `engagementsOf` and a type, and
+ * nothing in it imports back into this module's commands. Node's ES modules
+ * resolve the cycle either way, but keeping the dependency readable is why the
+ * invoice-issuing lives there and the three places that trigger it live here.
+ */
+import { issueInvoice } from './billing.ts';
 import type { EntityRecord } from '../../goldenthread/ledger.ts';
 
 /**
@@ -538,6 +546,26 @@ export function activateEngagement(ctx: EngineContext, engagementId: string): En
     entity: { refType: 'BidOnEngagement', refId: engagementId },
     nextState: { ...active },
   });
+
+  /*
+   * The deposit, issued here and nowhere else.
+   *
+   * The specification: *"Bid-On issues the deposit invoice when the engagement
+   * is activated."* On activation rather than on opening, because a draft
+   * engagement's terms are not agreed and billing against terms nobody agreed
+   * is how a dispute starts — and not on the first agent run either, because
+   * the point of a deposit is that it is paid before the work rather than
+   * discovered when somebody presses draft.
+   *
+   * The import is local to keep the dependency one-way: billing reads
+   * engagements, so engagements cannot import billing at the top level without
+   * a cycle. The alternative — having the caller issue it — would mean an
+   * activation that forgot, which is a deposit nobody ever asks for.
+   */
+  if (active.depositPercent !== undefined && active.depositPercent > 0) {
+    issueInvoice(ctx, { engagementId, kind: 'DEPOSIT' });
+  }
+
   return active;
 }
 
@@ -780,6 +808,29 @@ export function signOffStage(
     nextState: { ...next },
   });
 
+  /*
+   * The stage's own fee, on sign-off.
+   *
+   * *"The balance invoice issues on delivery or stage sign-off."* Sign-off is
+   * the moment the work is agreed delivered, which is the only defensible
+   * moment to bill for it: billing when the stage opened would charge for work
+   * not done, and billing when the next one opens would make the last stage of
+   * an engagement free.
+   *
+   * Only where the engagement bills that way. A staged engagement on a fixed
+   * fee is billed once at the end, and issuing a stage invoice against it would
+   * bill the same money twice.
+   */
+  if (next.billingBasis === 'PER_STAGE' || next.billingBasis === 'PER_CYCLE') {
+    if (signedOff.feeMinor > 0) {
+      issueInvoice(ctx, {
+        engagementId,
+        kind: signedOff.cycle === undefined ? 'STAGE' : 'CYCLE',
+        stageId: signedOff.id,
+      });
+    }
+  }
+
   return { engagement: next, signedOff, opened };
 }
 
@@ -891,6 +942,26 @@ export function closeEngagement(
     entity: { refType: 'BidOnEngagement', refId: engagementId },
     nextState: { ...closed },
   });
+
+  /*
+   * The balance, on delivery.
+   *
+   * Completion only. A cancelled engagement has not delivered, and issuing its
+   * balance would bill a customer for work that stopped — what is owed on a
+   * cancellation is a commercial conversation and the provider raises it
+   * themselves with the amount they have agreed.
+   *
+   * Only on a fixed fee, because that is the basis a balance means anything
+   * under: a monthly engagement has been billed monthly and a staged one was
+   * billed per stage, and a balance on either would be the whole fee again.
+   */
+  if (input.outcome === 'COMPLETED' && closed.billingBasis === 'FIXED_FEE') {
+    const balance = closed.depositPercent === undefined
+      ? closed.feeMinor
+      : closed.feeMinor - Math.round(closed.feeMinor * (closed.depositPercent / 100));
+    if (balance > 0) issueInvoice(ctx, { engagementId, kind: 'BALANCE' });
+  }
+
   return closed;
 }
 
