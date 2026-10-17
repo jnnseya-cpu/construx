@@ -128,6 +128,17 @@ export const MODULES = {
       requires: ['construx.core'],
       eligibilityPolicy: 'explicit_tenant_grant',
       customerSelfActivation: false,
+      /**
+       * An allocation is refused without the agreement it is made under.
+       *
+       * Declared per module rather than demanded of every grant, because
+       * ETABLIX's allocation exists and works and rule 3 says finished work is
+       * not reopened for a field it never needed. Here it is load-bearing: this
+       * module is sold to a provider who then sells onward to its own
+       * customers, and "which agreement is this company working under" is the
+       * first question asked when a fee, a renewal or a dispute comes up.
+       */
+      requiresAgreementRef: true,
     },
   },
 } as const;
@@ -159,6 +170,14 @@ export type ModuleGrant = {
    */
   validFrom?: string;
   validTo?: string;
+  /**
+   * The signed agreement this allocation is made under.
+   *
+   * Required where the module's registry says so. Not a reason and not a note:
+   * a reason is why somebody decided, and this is the document the decision
+   * rests on — the thing somebody looks up when the renewal falls due.
+   */
+  agreementRef?: string;
   grantedBy: string;
   grantedAt: string;
   /** Why, in the operator's own words. Mandatory: a grant with no stated reason is unreviewable. */
@@ -195,6 +214,24 @@ export function grantRef(moduleId: ModuleId, tenantId: string): string {
  * would otherwise be open to everybody, which is the worst possible direction
  * for a mistake in an access check to fail.
  */
+/**
+ * Whether a module's registry demands the agreement it is allocated under.
+ *
+ * Read from the registry rather than from a list here, so adding a module that
+ * needs one is a property of that module and not a second place to remember.
+ */
+export function moduleRequiresAgreement(moduleId: ModuleId): boolean {
+  const registry = MODULES[moduleId].registry as { requiresAgreementRef?: boolean };
+  return registry.requiresAgreementRef === true;
+}
+
+/**
+ * Refuse a **write** unless this tenancy holds the module and it is live.
+ *
+ * The same function as before under a clearer name, kept as `requireModule`
+ * because every existing caller means exactly this. See `moduleReadable` for
+ * the weaker test a read uses.
+ */
 export function requireModule(granted: readonly ModuleId[], moduleId: ModuleId): void {
   if (!isModuleId(moduleId)) {
     throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has.`, 404);
@@ -210,4 +247,44 @@ export function requireModule(granted: readonly ModuleId[], moduleId: ModuleId):
       'MODULE_NOT_GRANTED',
     );
   }
+}
+
+/**
+ * Refuse a **read** only where the tenancy has never held the module.
+ *
+ * The specification says it twice and means it both times: *"when an agreement
+ * ends or the module is removed, the tenant's bids become read-only; nothing is
+ * deleted"*, and *"access becomes read-only automatically the day after
+ * agreement_end"*.
+ *
+ * Read-only is not the same as gone, and the difference matters to the customer
+ * rather than to the provider. A customer's evidence, its confirmed
+ * declarations and the submissions written for it are records of what that
+ * company said to a buyer. An agreement lapsing is a commercial event between
+ * the provider and the platform operator; it is not a reason the record of a
+ * bid somebody submitted should stop being readable.
+ *
+ * So a lapsed or revoked grant leaves every Bid-On read working and refuses
+ * every write. `requireModule` is what the writes call; this is what the reads
+ * call, and the asymmetry is the whole point.
+ *
+ * Deliberately **not** "anybody who once had a grant": the grant has to exist.
+ * A tenancy that never held the module is refused here exactly as it is on a
+ * write, because otherwise this would be a way to read a module nobody
+ * allocated.
+ */
+export function requireModuleReadable(
+  granted: readonly ModuleId[],
+  everHeld: readonly ModuleId[],
+  moduleId: ModuleId,
+): { live: boolean } {
+  if (!isModuleId(moduleId)) {
+    throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has.`, 404);
+  }
+  if (granted.includes(moduleId)) return { live: true };
+  if (everHeld.includes(moduleId)) return { live: false };
+  throw new ForbiddenError(
+    `This tenancy does not hold the ${MODULES[moduleId].name} module. ${MODULES[moduleId].restricted}`,
+    'MODULE_NOT_GRANTED',
+  );
 }

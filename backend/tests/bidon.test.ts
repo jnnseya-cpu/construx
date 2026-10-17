@@ -6,7 +6,7 @@ import * as engagements from '../src/domain/bidon/engagements.ts';
 import { ROUTES } from '../src/api/routes.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { classifyEntity } from '../src/identity/entityAccess.ts';
-import { MODULES, isModuleId } from '../src/identity/modules.ts';
+import { MODULES, isModuleId, moduleRequiresAgreement } from '../src/identity/modules.ts';
 import { PERMISSION_MATRIX } from '../src/identity/roles.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -49,8 +49,15 @@ const asProviderAdmin = (): EngineContext =>
 const asBidWriter = (): EngineContext =>
   platform.context(seed.users.qs!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
 
-/** The same person on a tenancy that was never granted the module. */
-const ungranted = (): EngineContext => ({ ...asProviderAdmin(), grantedModules: [] });
+/**
+ * The same person on a tenancy that **never** held the module.
+ *
+ * Both lists cleared, and the distinction is load-bearing: clearing only the
+ * live one means "the agreement has ended", which leaves the records readable
+ * on purpose. A tenancy that was never allocated the module is refused on a
+ * read as well.
+ */
+const ungranted = (): EngineContext => ({ ...asProviderAdmin(), grantedModules: [], heldModules: [] });
 
 /** A guest of a customer account, as the gateway would present one. */
 const asGuest = (actorId: string): EngineContext => ({
@@ -79,6 +86,7 @@ before(async () => {
     tenantId: seed.tenantId,
     status: 'ACTIVE',
     reason: 'Allocated under the signed Bid-On agreement',
+    agreementRef: 'AGR-BIDON-2026-001',
     decidedBy: seed.users.operator!.id,
   });
 });
@@ -110,6 +118,76 @@ describe('the module is an allocation, not a feature flag', () => {
       const error = throwsCode(call, 'MODULE_NOT_GRANTED');
       assert.match(String(error.message), /does not hold the CONSTRUX Bid-On module/, `${name} refused differently`);
     }
+  });
+
+  it('refuses an allocation that does not name the agreement it is made under', () => {
+    // The specification's own acceptance criterion. Without the reference
+    // nobody can answer which agreement a company is working under when the
+    // fee, the renewal or a dispute comes up.
+    const error = throwsCode(
+      () =>
+        platform.setModuleGrant({
+          moduleId: 'BID_ON',
+          tenantId: seed.tenantId,
+          status: 'ACTIVE',
+          reason: 'Allocating it without the paperwork',
+          decidedBy: seed.users.operator!.id,
+          validTo: '2099-01-01T00:00:00.000Z',
+        }),
+      'MODULE_AGREEMENT_REQUIRED',
+    );
+    assert.match(String(error.message), /only under a signed agreement/);
+
+    // Declared per module rather than demanded of every grant, so ETABLIX's
+    // allocation — which exists, works, and never needed the field — is
+    // untouched.
+    assert.equal(moduleRequiresAgreement('BID_ON'), true);
+    assert.equal(moduleRequiresAgreement('ETABLIX'), false);
+  });
+
+  it('leaves the records readable when the agreement ends, and refuses every write', () => {
+    /*
+     * Said twice in the specification and meant both times: "the tenant's bids
+     * become read-only; nothing is deleted", and "access becomes read-only
+     * automatically the day after agreement_end".
+     *
+     * The difference matters to the customer rather than to the provider. A
+     * customer's confirmed declarations and the submissions written for it are
+     * the record of what that company said to a buyer, and an agreement ending
+     * between the provider and the platform operator is not a reason that
+     * record should stop being readable.
+     */
+    // A tenancy whose grant has lapsed: it holds one, and none of them is live.
+    const expired = {
+      ...asProviderAdmin(),
+      grantedModules: [] as never[],
+      heldModules: ['BID_ON'] as never[],
+    };
+
+    // Reads work.
+    assert.ok(customers.customerRegister(expired).customers.length >= 0);
+    assert.ok(engagements.engagementRegister(expired).engagements.length >= 0);
+    assert.ok(engagements.offeringCatalogue(expired).offerings.length >= 0);
+
+    // Writes do not.
+    throwsCode(() => customers.openCustomer(expired, { legalName: 'After The Agreement Ltd' }), 'MODULE_NOT_GRANTED');
+    throwsCode(
+      () =>
+        engagements.defineOffering(expired, {
+          name: 'A service after the agreement ended',
+          engagementType: 'ONE_OFF',
+          billingBasis: 'FIXED_FEE',
+          defaultFeeMinor: 1,
+          currency: 'GBP',
+          deliverables: ['Nothing'],
+        }),
+      'MODULE_NOT_GRANTED',
+    );
+
+    // And a tenancy that never held it is refused on a read as well, so this is
+    // not a way into a module nobody allocated.
+    const never = { ...expired, heldModules: [] as never[] };
+    throwsCode(() => customers.customerRegister(never), 'MODULE_NOT_GRANTED');
   });
 
   it('routes every act, classifies every entity, and lets no agent author one', () => {

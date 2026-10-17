@@ -26276,3 +26276,82 @@ half-built module presented as finished is the failure rule 9 exists to prevent.
 - **ACU attribution to a customer and engagement.** The ledger meters per run
   already; carrying `customerAccountId` and `engagementId` onto that row is what
   lets a provider see margin per customer, and it belongs with the bid.
+
+### Bid-On: the allocation agreement, and the rubric
+
+Two pieces the second specification pass added, both acceptance criteria.
+
+**An allocation is refused without the agreement it is made under.** A new
+`agreementRef` on the module grant, required where the module's registry says
+so — `requiresAgreementRef: true` on `BID_ON` and absent on `ETABLIX`, because
+that allocation exists and works and rule 3 says finished work is not reopened
+for a field it never needed. It is not the `reason`: a reason is why somebody
+decided, and this is the document the decision rests on, which is what gets
+looked up when the renewal falls due. Required only on a grant, never on a
+revocation — demanding the paperwork to take access away would mean an
+allocation made in error could not be undone without first finding it.
+
+**A lapsed agreement makes the records read-only rather than invisible.** The
+specification says it twice: *"when an agreement ends or the module is removed,
+the tenant's bids become read-only; nothing is deleted"* and *"access becomes
+read-only automatically the day after agreement_end"*. The grant lifecycle
+already went `SCHEDULED → ACTIVE → EXPIRED` against the clock, so the date
+behaviour was free; what was missing was the asymmetry. `grantedModules` is the
+live list and `heldModules` is every module the tenancy holds a grant for at
+all, both resolved onto the context. Writes call `requireModule` against the
+live list; reads call `requireModuleReadable`, which accepts a lapsed grant and
+still refuses a tenancy that never held one — otherwise it would be a way into
+a module nobody allocated.
+
+The reason for the asymmetry is the customer, not the provider: a customer's
+confirmed declarations and the submissions written for it are the record of what
+that company said to a buyer, and an agreement ending between the provider and
+the platform operator is not a reason that record should stop being readable.
+
+**The rubric is `domain/bidon/rubric.ts`, and it is pure.** No ledger, no
+context, no clock beyond the deadline it is given — the same choice
+`redteam.ts` makes, for the same reason: the scorer that writes a score, the
+screen that shows it and the export gate that refuses a pack have to agree, and
+a score computed three ways is three numbers.
+
+Five criteria weighted to one (`S = Σ wᵢ sᵢ`), the specification's own figures
+as a **default** rather than a constant, because a rubric is per scheme and per
+version and a buyer who weights social value at 40% is not wrong. Bands on the
+charity OS boundaries so one rubric serves both consumers: red below 50, amber
+50–79, green 80 and above, inclusive at each floor.
+
+Five hard rules, each overriding the weighted score to red however well the
+answer reads, because each describes a submission that is not marked down but
+rejected: a mandatory question unanswered, a pass/fail question answered no,
+cited evidence that lapses **before the deadline** rather than before today, a
+declaration the customer has not confirmed, and an answer more than 10% over a
+stated limit. Three properties of how they are applied:
+
+- **Every rule that fired is reported, not the first.** A reviewer fixing one at
+  a time finds the second after they thought they were finished.
+- **The weighted band is kept beside the verdict.** "This would have been green"
+  is what tells a reviewer the prose is fine and the problem is a certificate. A
+  hard rule can only lower a verdict, never raise one.
+- **Only the unanswered rule depends on the question being mandatory.** An
+  expired certificate cited on a scored question is still an expired
+  certificate; conflating the two would let a lapsed insurance certificate
+  through on every scored question in the pack.
+
+`DECLARATION_UNCONFIRMED` is a hard rule rather than a deduction because the
+provider cannot clear it at all — only the customer's own admin confirms a
+declaration — and there is no amount of good prose that makes an unconfirmed
+insurance value safe to send. Its remedy names who can.
+
+Pack readiness is the weighted mean using each **question's** weighting, because
+a 30% question scoring 40 and a 2% question scoring 40 are not the same problem.
+Where no question carries one it falls back to an unweighted mean **and says
+so**, rather than inventing weights that would make the figure look more precise
+than it is. Export is blocked while any mandatory answer is red **or**
+unapproved — both, because an approved red is still a rejection at the gate and
+an unapproved green has had nobody's name on it. An optional answer that is red
+or unapproved does not block: those are conceded marks, not a rejection.
+
+`bidonrubric.test.ts` has a test per hard rule rather than one test that trips
+several, which is what the acceptance criterion asks for, and enumerates the
+rule list from the type so a rule added later fails rather than arriving with
+nothing exercising it.

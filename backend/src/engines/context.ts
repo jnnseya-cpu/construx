@@ -71,6 +71,18 @@ export type EngineContext = {
    */
   grantedModules: readonly ModuleId[];
   /**
+   * Modules this tenancy holds a grant for at all, live or lapsed.
+   *
+   * A superset of `grantedModules`. It exists because a lapsed agreement makes
+   * a module's records **read-only** rather than invisible: a customer's
+   * confirmed declarations and the submissions written for it are the record of
+   * what that company said to a buyer, and an agreement ending between the
+   * provider and the platform operator is not a reason that record should stop
+   * being readable. `requireModule` reads the live list; `requireModuleReadable`
+   * reads this one.
+   */
+  heldModules: readonly ModuleId[];
+  /**
    * The agent this context is acting on behalf of, where one is.
    *
    * Set by the agent runtime around an unattended act and nowhere else. It

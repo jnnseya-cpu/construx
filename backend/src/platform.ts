@@ -64,7 +64,7 @@ import {
   type CapabilityGrant,
   type CustomRole,
 } from './identity/customroles.ts';
-import { MODULES, grantRef, isModuleId, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
+import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
@@ -2878,6 +2878,8 @@ export class Platform {
     status: ModuleGrant['status'];
     reason: string;
     decidedBy: string;
+    /** The signed agreement. Required where the module's registry says so. */
+    agreementRef?: string;
     /** Scheduled start and expiry (Enterprise / Group v1.0 §7). Omitted: from now, open-ended. */
     validFrom?: string;
     validTo?: string;
@@ -2896,6 +2898,26 @@ export class Platform {
     }
     if (!input.reason.trim()) {
       throw new DomainError('MODULE_REASON_REQUIRED', 'Granting or revoking a module requires a reason');
+    }
+    /*
+     * Refused without the agreement it is made under, where the module says so.
+     *
+     * Only on a grant. A revocation is the operator withdrawing their own
+     * decision and needs the reason it already requires; demanding the
+     * agreement reference to take access away would mean an allocation made in
+     * error could not be undone without first finding the paperwork for it.
+     */
+    if (
+      input.status === 'ACTIVE' &&
+      moduleRequiresAgreement(input.moduleId) &&
+      !(input.agreementRef ?? '').trim()
+    ) {
+      throw new DomainError(
+        'MODULE_AGREEMENT_REQUIRED',
+        `${MODULES[input.moduleId].name} is allocated only under a signed agreement, so the allocation has to name ` +
+          'it. Without the reference nobody can answer which agreement this company is working under when the fee, ' +
+          'the renewal or a dispute comes up.',
+      );
     }
     // The tenancy has to exist. Without this a typo in a tenant id writes a
     // grant nobody can see, against a company that does not exist, which then
@@ -2930,6 +2952,7 @@ export class Platform {
           status: 'ACTIVE',
           ...(input.validFrom ? { validFrom: new Date(input.validFrom).toISOString() } : {}),
           ...(input.validTo ? { validTo: new Date(input.validTo).toISOString() } : {}),
+          ...((input.agreementRef ?? '').trim() ? { agreementRef: input.agreementRef!.trim() } : {}),
           grantedBy: input.decidedBy,
           grantedAt: decidedAt,
           reason: input.reason,
@@ -2983,6 +3006,24 @@ export class Platform {
     return this.moduleGrants()
       .filter((grant) => grant.tenantId === tenantId && grantLifecycle(grant, now) === 'ACTIVE')
       .map((grant) => grant.moduleId);
+  }
+
+  /**
+   * Every module this tenancy holds a grant for, whatever its standing.
+   *
+   * Scheduled, expired and revoked included, which is exactly the difference
+   * from `grantedModules`. A module whose agreement has ended leaves its
+   * records readable and refuses every write — see `requireModuleReadable` —
+   * and this is the list that answers "did this company ever hold it".
+   */
+  heldModules(tenantId: string): ModuleId[] {
+    return [
+      ...new Set(
+        this.moduleGrants()
+          .filter((grant) => grant.tenantId === tenantId)
+          .map((grant) => grant.moduleId),
+      ),
+    ];
   }
 
   // --- Accessors -------------------------------------------------------------
@@ -4330,6 +4371,7 @@ export class Platform {
       // grant, so reactivating restores what they had rather than silently
       // dropping a module nobody remembered to re-add.
       grantedModules: this.grantedModules(auth.tenantId),
+      heldModules: this.heldModules(auth.tenantId),
       // Whether a maker-checker rule has anybody to hand the second act to.
       //
       // Resolved lazily, because almost no command asks: only a gate decision,

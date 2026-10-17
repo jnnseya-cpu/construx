@@ -1,7 +1,7 @@
 import { DomainError } from '../../core/errors.ts';
 import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
-import { requireModule } from '../../identity/modules.ts';
+import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
 import type { EntityRecord } from '../../goldenthread/ledger.ts';
 import { engagementsOf, type Engagement } from './engagements.ts';
 
@@ -550,7 +550,9 @@ export type CustomerRegister = {
  * the rest would leak through the API the moment anybody called it directly.
  */
 export function customerRegister(ctx: EngineContext, asAt?: string): CustomerRegister {
-  requireModule(ctx.grantedModules, 'BID_ON');
+  // Readable after the agreement ends, and refused for a tenancy that never
+  // held the module. See `requireModuleReadable` for why the two differ.
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const day = (asAt ?? new Date().toISOString()).slice(0, 10);
@@ -624,7 +626,7 @@ export function customerWorkspace(ctx: EngineContext, customerId: string, asAt?:
   liveDeclarations: Declaration[];
   engagements: Engagement[];
 } {
-  requireModule(ctx.grantedModules, 'BID_ON');
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const customer = requireVisibleCustomer(ctx, customerId);

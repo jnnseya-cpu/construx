@@ -1,7 +1,7 @@
 import { DomainError } from '../../core/errors.ts';
 import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, write, type EngineContext } from '../../engines/context.ts';
-import { requireModule } from '../../identity/modules.ts';
+import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
 import type { EntityRecord } from '../../goldenthread/ledger.ts';
 
 /**
@@ -899,7 +899,7 @@ export function closeEngagement(
 export type OfferingCatalogue = { offerings: ServiceOffering[]; summary: string };
 
 export function offeringCatalogue(ctx: EngineContext): OfferingCatalogue {
-  requireModule(ctx.grantedModules, 'BID_ON');
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const offerings = offeringsOf(ctx).sort((a, b) => a.reference.localeCompare(b.reference));
@@ -939,7 +939,7 @@ export function engagementRegister(
   ctx: EngineContext,
   filter: { customerAccountId?: string } = {},
 ): EngagementRegister {
-  requireModule(ctx.grantedModules, 'BID_ON');
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const engagements = engagementsOf(ctx)
