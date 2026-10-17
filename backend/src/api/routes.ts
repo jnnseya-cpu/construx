@@ -145,6 +145,7 @@ import * as bidOnEvidence from '../domain/bidon/evidence.ts';
 import * as bidOnBids from '../domain/bidon/bids.ts';
 import * as bidOnEngine from '../domain/bidon/engine.ts';
 import * as bidOnBilling from '../domain/bidon/billing.ts';
+import * as bidOnImporting from '../domain/bidon/importing.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -13602,6 +13603,73 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/bid-on/importable-tenders',
+    readOnly: true,
+    description:
+      'Every invitation the standard Tenders section already holds, with how many files are registered against each and the bids already imported from it. Importing is a shortcut so a provider does not upload the same questionnaire twice, never a requirement — a bid started here has no tender and never appears there',
+    handler: (platform, ctx) =>
+      bidOnImporting.importableTenders(tenantContext(platform, ctx), {
+        ...(ctx.query.get('search') ? { search: ctx.query.get('search') as string } : {}),
+      }),
+  },
+  {
+    // Declared before the `:bidId` patterns because the router is first match
+    // wins on segment count with no preference for a literal: a later
+    // `POST /v1/bid-on/bids/:bidId` would otherwise swallow this path.
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/import',
+    description:
+      'Create a bid from a tender the standard section already holds. Requires read access to that tender in its own section, not just the module. One-way: the fields are copied and any file registered against that invitation comes over by its hash, so the questionnaire can be read without uploading it again and a later change there cannot alter a bid in progress. Where no file is registered, it says so rather than implying one came',
+    schema: {
+      type: 'object',
+      required: ['tenderId', 'engagementId'],
+      properties: {
+        tenderId: stringField,
+        engagementId: stringField,
+        scheme: { type: 'string', enum: [...bidOnBids.BID_SCHEME] },
+        documentIds: { type: 'array', items: { type: 'string', maxLength: 400 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidOnImporting.importBid(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/source',
+    readOnly: true,
+    description:
+      'Whether the tender this bid was imported from has moved since. A digest compared on read rather than a notification, because a missed event leaves a bid silently stale for ever while a digest that no longer matches is wrong on every read until somebody acts on it',
+    handler: (platform, ctx) =>
+      bidOnImporting.sourceStanding(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/resync',
+    description:
+      'Pull the source’s changes in. Approved answers survive: only a question whose wording actually changed goes back for review, every version is kept, and the deadline follows the source because every expiry verdict in the pack is judged against it',
+    schema: {
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['number', 'text'],
+            properties: {
+              number: { type: 'string', minLength: 1, maxLength: 32 },
+              text: { type: 'string', minLength: 3, maxLength: 4000 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnImporting.resyncBid(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/bid-on/bids/:bidId',
     readOnly: true,
     guest: 'OWN',
@@ -25247,11 +25315,21 @@ export const ROUTES: Route[] = [
     schema: {
       type: 'object',
       required: ['hash'],
-      properties: { hash: stringField, filename: { type: 'string', maxLength: 260 } },
+      properties: {
+        hash: stringField,
+        filename: { type: 'string', maxLength: 260 },
+        // Optional, because the pack lands before the invitation record exists.
+        // Where it is given, anything asking which files arrived with this
+        // tender can answer from the record instead of guessing.
+        invitationId: stringField,
+      },
       additionalProperties: false,
     },
     handler: (platform, ctx) =>
-      tenderintake.recordTenderDocument(projectContext(platform, ctx), body<{ hash: string; filename?: string }>(ctx)),
+      tenderintake.recordTenderDocument(
+        projectContext(platform, ctx),
+        body<{ hash: string; filename?: string; invitationId?: string }>(ctx),
+      ),
   },
   {
     method: 'POST',

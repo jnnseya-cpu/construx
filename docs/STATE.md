@@ -20095,6 +20095,16 @@ asserts that a file with this hash arrived as part of this tender. It reads
 nothing and unlocks nothing, and it refuses the same hash twice rather than
 putting two register entries at one address.
 
+It now also takes an optional `invitationId` and carries it as a linked entity on
+the registry record, which says *which* tender the file arrived with. Optional
+because the pack lands before the invitation record exists — that is the whole
+reason this function has to accept a file with nothing to attach it to — and
+verified where it is given, since a link to an invitation that does not exist is
+worse than no link because it reads as an answer. Added for Bid-On's import,
+which needs to answer "which files is this tender" from the record rather than by
+guessing from a project and a type; see "importing a standard tender" below for
+why guessing would be the one unacceptable failure in that module.
+
 ### The doors
 
 Three new routes, all on the Pipeline & Bids tender panel:
@@ -26246,36 +26256,52 @@ grant, and gated on what the API said the tenancy holds rather than on a constan
 in the browser. It leads with customers rather than bids, because in this module
 the reason somebody cannot start work is almost always one level up.
 
-### What is not built yet
+### What was absent after the foundation, and where each piece landed
 
-Named precisely, because the specification's v1 is larger than this and a
-half-built module presented as finished is the failure rule 9 exists to prevent.
-**Nothing below is stubbed, mocked or faked — it is absent.**
+Kept as written rather than deleted, because it is the record of what the
+foundation did and did not contain, and of the order the rest was built in. Each
+entry now carries where it was finished. **Nothing here was ever stubbed, mocked
+or faked — each was absent, and each is now built and tested.** The one piece
+still outstanding is named at the end of this chapter: the embedding swap in
+`retrieveFor`.
 
 - **The bid itself.** `bid`, `question`, `answer`, `gap` and `rubric`. No
   questionnaire is parsed, no answer is drafted, scored or approved, and nothing
   is exported. The five agents the specification names (Parser, Retriever,
   Drafter, Scorer, Gap) do not exist; the one agent that does watches
   engagements.
+  → *Built:* "Bid-On: the bid vertical" and "Bid-On: the Bid Engine" below.
 - **The per-customer evidence library.** `evidence_item` and `evidence_chunk`
   against a customer account, with expiry driving alerts and score penalties.
   The platform's own evidence store, registry and vector index are what this will
   be built on.
+  → *Built:* `domain/bidon/evidence.ts`, in "Bid-On: the bid vertical" below.
 - **Import from the standard Tenders section**, and resync on an addendum.
+  → *Built:* `domain/bidon/importing.ts`, in "Bid-On: importing a standard
+  tender, and resyncing it" below.
 - **The guest workspace screen.** The customer's own people have no screen yet,
   which is why `POST /v1/bid-on/customers/:customerId/declarations` is reachable
   only through the generated command catalogue. **That consumed the last slot of
   the `doors.test.ts` write ratchet**, which now sits at exactly its ceiling of
   298 — the next write route with no panel fails there, which is the mechanism
   working as intended, and this entry is the record of why the slot was spent.
+  → *Built:* `frontend/pages/bidonguest.js`, which closed the ratchet entry; see
+  "deposits, invoices, statements, and the customer's own screen" below.
 - **XLSX export.** `ExportFormat` is `PDF | DOCX | JSON_BUNDLE | CSV | HTML`;
   reading XLSX exists in `evidence/office.ts`, writing it does not.
+  → *Built:* `export/xlsx.ts`, in "the pack, in the questionnaire's own
+  structure" below.
 - **Statements and invoicing.** `GET /v1/bid-on/engagements/{id}/statement` is
   not built, and neither is raising an invoice — consistent with STATE.md's
   existing entry that no invoicing run moves money.
+  → *Built:* `domain/bidon/billing.ts`. Still moves no money, and every read
+  says so.
 - **ACU attribution to a customer and engagement.** The ledger meters per run
   already; carrying `customerAccountId` and `engagementId` onto that row is what
   lets a provider see margin per customer, and it belongs with the bid.
+  → *Built:* `attribution` on `AITaskInput`, spread onto the `AIExecution`
+  record by the Bid Engine, and read back by the statement without being
+  re-derived.
 
 ### Bid-On: the allocation agreement, and the rubric
 
@@ -26692,5 +26718,135 @@ has the door it always belonged on, and it is the only place in the platform
 where a declaration can be confirmed at all — the API refuses one from the
 provider's staff and from an agent.
 
-**Still not built:** import and resync from the standard Tenders section, and the
-embedding swap in `retrieveFor`.
+### Bid-On: importing a standard tender, and resyncing it
+
+`domain/bidon/importing.ts`, four routes under `/v1/bid-on`, a card on the module
+screen and `backend/tests/bidonimport.test.ts`.
+
+**It is a shortcut and never a requirement.** A bid can be started here from a
+questionnaire with no tender in the standard section at all, and such a bid never
+appears there — that is the other half of the same acceptance criterion and it is
+tested in `bidonbid.test.ts`. This exists so that a provider whose customer's
+tender is *already* recorded does not upload the same questionnaire twice. Both
+routes produce the same bid and use the same agents, review and export, which is
+what makes the shortcut safe to skip.
+
+**The import is one-way, and that is the load-bearing decision.** Bid-On copies
+what it needs and links back; it never writes to the source tender, and nothing
+in the standard section is aware it happened. The reason is not tidiness: a bid
+in progress must not change underneath somebody. If the bid read the source live,
+editing a deadline in the standard section would move every certificate-expiry
+verdict in the pack without anybody touching the bid, and removing a document
+from the invitation would change what the bid says it was answering. So the
+fields are copied at import and the files are taken by their content address,
+which the evidence store makes immutable — bytes cannot change under a hash. The
+test asserts the other direction by version and state hash: the invitation record
+does not move across an import or a resync.
+
+**What a "document" is here, stated because the comfortable version is false.**
+The invitation's `documents` field is the transmittal's own list in words —
+"Pricing schedule, native spreadsheet" — and a description is not a file. Files
+arrive separately through `recordTenderDocument`, which now takes an optional
+`invitationId` and carries it as a linked entity on the registry record; that
+link is additive, verified, and the only honest way to answer "which files is
+this tender". The import carries those **hashes**, which is what makes it worth
+doing: `parseQuestionnaire` takes a hash, so the pack is read without anybody
+uploading it again.
+
+The link is found from the registry's own `linkedEntities` and never inferred
+from a project and a type. Inferring would gather every tender document in the
+tenancy and attach another buyer's pack to this bid, which in a module built to
+keep one customer's material away from another is the one mistake that must not
+be possible.
+
+Where no file is linked, the import carries the record and the deadline, and both
+the register and the import's own result **say** the questionnaire still has to be
+given to the parser. The table shows "Listed" and "Files" as two separate
+columns, because they are two different numbers and conflating them would be the
+screen telling somebody a file came over when none did. A file registered against
+the invitation *after* the import counts as drift and is picked up by a resync,
+because a hash the store already holds is the point of importing and one that
+arrives a week later is worth exactly as much — nothing else would ever tell
+somebody it had turned up.
+
+**The deadline comes from `deadlineInForce`, not from the issue.** That is the
+standard section's own rule — an addendum that moves the return date supersedes
+the invitation without rewriting it — and reading `issue.returnDeadline` here
+would judge every certificate in the pack against a date the buyer has already
+moved.
+
+**A change at source is a banner, not a re-parse.** `sourceDigest` records what
+the tender looked like when it was imported; when it no longer matches, the bid
+says so and waits. Nothing re-parses until a person presses resync, because a
+silent re-parse would overwrite approved answers with drafts and an approved
+answer is one somebody put their name to.
+
+A **digest compared on read** rather than a subscription to the standard
+section's change event. The platform has no broker, but the comparison is
+strictly better than a notification would be: a missed event leaves a bid
+silently stale for ever, while a digest that no longer matches is wrong on every
+read until somebody acts on it. The comparison is one function used by both the
+module screen and the per-bid read, so the banner on the register and the banner
+on the pack cannot disagree about whether a resync is outstanding — and it is
+computed in the register rather than left to a read per bid, because a banner
+nobody opens a pack to see is a banner that did not happen.
+
+Only the fields a bid depends on count as drift, and only **added** documents. A
+note retyped in the standard section is not drift, and reporting it would train
+people to ignore the banner — whose whole job is to be believed the one time it
+matters. A document the standard section has since removed is still in the pack
+by content address and still cited by an approved answer, and calling that drift
+would ask somebody to resync away their own evidence.
+
+**On resync, approved answers survive.** Only a question whose *wording* changed
+loses its approval, compared on text against the buyer's own number, which is the
+only stable identity a question has. A question whose number moved or whose
+section heading was retyped is the same question, and throwing away a good answer
+because a buyer fixed a typo is how a resync becomes something nobody dares press.
+Nothing is deleted either: every answer version is kept and the latest simply
+goes back to `IN_REVIEW`, because the answer approved against the old wording is
+what a dispute about the old wording would turn on.
+
+Resync **takes the new wording as its argument** rather than re-reading the
+documents. Re-reading them is a parse, and a parse is an agent run with a cost
+and a confirmation step of its own. The sequence a person follows is: see the
+banner, re-read the changed document, resync with what it now says. Folding the
+parse in would make resync a button that silently spends money.
+
+**A paused engagement refuses a resync.** The module's rule is that a pause
+freezes everything under it and every bid stays exactly where it was, and a
+resync moves the deadline and reopens answers — a change to the work rather than
+record-keeping about it. An exception here would be a way around the pause.
+
+**The standard section's own permissions still apply.** The specification's rule
+is that the user must already have read access to that tender there, so
+`authorise(ESTIMATE_TENDER, 'R')` is checked rather than inferred from holding
+`BID_SERVICES`. Every *role* that carries `BID_SERVICES` also carries
+`ESTIMATE_TENDER` `R` today, so a person at a seat passes both quietly — but the
+scopes differ (`bidservices:read` against `commercial:read`), so a token issued
+for Bid-On is refused, and the test pins that down. Inferring one from the other
+would turn the module into a way around the standard section's permissions. A
+tender in another tenancy is a 404 rather than a denial: it is not a permission
+this tenancy could be granted.
+
+**The imported column respects the wall between customers.** `importedAs` names a
+bid, and a bid belongs to a customer, so it is filtered to the customers this
+person is assigned to. Without that filter the screen would say "already imported
+as BON-0007" for a competitor's bid — the reference and the buyer together are
+enough to know a rival is bidding the same framework, which is exactly the leak
+the module exists to prevent. What is left out is **said** rather than hidden,
+because "already imported" reading as empty when it is not would send somebody
+into a duplicate they cannot see.
+
+**A second import off one invitation is allowed.** A prequalification stage and a
+later ITT stage are two bids off one tender, so a duplicate is not refused — it is
+shown, in the table and in the chooser's own labels, at the moment somebody
+chooses.
+
+`POST /v1/bid-on/bids/import` is declared **before** the `:bidId` patterns,
+because the router is first match wins on segment count with no preference for a
+literal segment. A test asserts the ordering, since the failure mode is an import
+silently answered by something else.
+
+**Still not built:** the embedding swap in `retrieveFor`, which ranks on
+distinctive-term overlap today and says so on every read.

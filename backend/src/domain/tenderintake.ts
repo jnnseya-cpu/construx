@@ -444,16 +444,27 @@ function deadlineClarifications(input: {
  * this hash arrived as part of the tender for this project. It reads nothing,
  * decides nothing and unlocks nothing: what the document *says* still comes
  * from ingestion and the reading a person confirms.
+ *
+ * `invitationId` is optional and says *which* tender the file arrived with.
+ * Optional because the pack lands before the invitation record exists — that
+ * is the whole reason this function has to accept a file with nothing to attach
+ * it to. Where it is given, the registry entry carries the link, and anything
+ * asking "which files is this tender" can answer from the record rather than by
+ * guessing from a project and a type.
  */
 export function recordTenderDocument(
   ctx: EngineContext,
-  input: { hash: string; filename?: string },
-): { evidenceId: string; hash: string; description: string } {
+  input: { hash: string; filename?: string; invitationId?: string },
+): { evidenceId: string; hash: string; description: string; invitationId?: string } {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const hash = input.hash.trim();
   const filename = input.filename?.trim();
   const description = filename ? `Tender document: ${filename}` : `Tender document ${hash.slice(0, 16)}`;
+
+  // Verified rather than taken on trust: a link to an invitation that does not
+  // exist is worse than no link, because it reads as an answer.
+  if (input.invitationId) requireInvitation(ctx, input.invitationId);
 
   // The same file filed twice would put two register entries at one address,
   // and the second says nothing the first did not.
@@ -466,8 +477,20 @@ export function recordTenderDocument(
     );
   }
 
-  const ref = registerEvidence(ctx, { type: 'TENDER_DOCUMENT', hash, description });
-  return { evidenceId: ref.refId, hash, description };
+  const ref = registerEvidence(ctx, {
+    type: 'TENDER_DOCUMENT',
+    hash,
+    description,
+    ...(input.invitationId
+      ? { linkedEntities: [{ refType: 'TenderInvitation', refId: input.invitationId }] }
+      : {}),
+  });
+  return {
+    evidenceId: ref.refId,
+    hash,
+    description,
+    ...(input.invitationId ? { invitationId: input.invitationId } : {}),
+  };
 }
 
 // --- Requirements and the compliance matrix ----------------------------------

@@ -70,7 +70,7 @@ const TYPE_MEANING = {
 };
 
 export async function bidon(root) {
-  const [customers, engagements, offerings, bids, invoices] = await Promise.all([
+  const [customers, engagements, offerings, bids, invoices, importable] = await Promise.all([
     // Every read is tenant-scoped and filtered to this person inside the API,
     // not here. A screen that filtered would leak the moment anybody called
     // the route directly.
@@ -79,6 +79,12 @@ export async function bidon(root) {
     api.read('/v1/bid-on/offerings', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/bids', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
     api.read('/v1/bid-on/invoices', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    // Declared against Tender & Procurement rather than against this module,
+    // because that is the access the route actually checks: the invitations are
+    // the standard section's records, and holding Bid-On is not permission to
+    // read them. Somebody with the module and no tender access gets the
+    // refusal, which is the honest answer.
+    api.read('/v1/bid-on/importable-tenders', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const customerList = customers?.customers ?? [];
@@ -97,6 +103,14 @@ export async function bidon(root) {
   );
   const engagementLabel = (entry) =>
     `${entry.reference} — ${entry.name} · ${humanise(entry.status)}`;
+
+  const importableList = importable?.tenders ?? [];
+  /** The bids that came from a tender, which are the only ones a resync applies to. */
+  const importedBids = bidList.filter((bid) => !bid.standalone);
+  /** Imported bids whose source has moved since. The banner is driven off these. */
+  const driftedBids = importableList.flatMap((tender) =>
+    tender.importedAs.filter((entry) => entry.sourceChanged).map((entry) => ({ ...entry, tender })),
+  );
 
   const view = html`
     <h1>Bid-On</h1>
@@ -375,6 +389,85 @@ export async function bidon(root) {
          puts its own heading underneath it. -->
     <div id="bid-detail" style="margin-bottom:14px;scroll-margin-top:68px"></div>
 
+    ${
+      // The banner, at the top of the card rather than inside a pack nobody has
+      // opened. A change at source is not urgent enough to interrupt and is far
+      // too important to find by accident.
+      driftedBids.length > 0
+        ? html`<div class="notice warn" style="margin-bottom:14px"><div>
+            <b>${driftedBids.length === 1 ? 'A tender has changed' : `${driftedBids.length} tenders have changed`}
+            since the bid was imported.</b>
+            Nothing has re-parsed. Resync when you are ready — approved answers are kept and only a question the buyer
+            actually reworded goes back for review.
+            ${driftedBids.map((entry) => html`<div style="margin-top:4px">
+              ${entry.reference} — ${entry.tender.reference}:
+              ${entry.changed.map((move) => `${move.field} ${move.was} → ${move.now}`).join('; ')}
+            </div>`)}
+          </div></div>`
+        : ''
+    }
+
+    <div class="card pad0" style="margin-bottom:14px">
+      <h2 style="padding:15px 17px 0">Import from Tender &amp; Procurement</h2>
+      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+        ${importable?.error ? 'The standard Tenders section could not be read.' : (importable?.summary ?? '')}
+        A shortcut, never a requirement: it exists so a provider whose customer's tender is <i>already</i> recorded
+        does not upload the same questionnaire twice. The import is <b>one-way</b> — the fields are copied and any
+        file registered against the invitation comes over by its hash, so a deadline edited in the standard section
+        cannot silently move every certificate-expiry verdict in the pack. A tender with no file registered against
+        it carries its record and its deadline, and the questionnaire itself still has to be given to the parser.
+      </p>
+      <div style="padding:11px 17px 0">
+        ${raw(commandBar([
+          { id: 'import-bid', label: 'Import a tender as a bid',
+            permitted: can('BID_SERVICES', 'C') && importableList.length > 0 && liveEngagements.some((e) => e.openForWork),
+            reason: importableList.length === 0
+              ? 'No invitation is recorded in the standard section — or you do not have read access to it there, which is checked separately from this module.'
+              : liveEngagements.some((e) => e.openForWork)
+                ? blockedReason('BID_SERVICES', 'C')
+                : 'Activate an engagement first — an imported bid belongs to one exactly as any other does.' },
+          { id: 'resync-bid', label: 'Resync a bid with its source', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U') && importedBids.length > 0,
+            reason: importedBids.length === 0
+              ? 'No bid here was imported. A bid started from a questionnaire has no source to resync from.'
+              : blockedReason('BID_SERVICES', 'U') },
+        ]))}
+      </div>
+      ${table({
+        headers: ['Reference', 'Buyer', 'Title', 'Return', 'Listed', 'Files', 'Addenda', 'Already imported as'],
+        align: ['', '', '', '', 'num', 'num', 'num', ''],
+        rows: importableList.map((tender) => [
+          tender.reference || '—',
+          tender.clientName || '—',
+          tender.title || '—',
+          tender.deadline ? date(tender.deadline) : badge('no deadline', 'bad'),
+          String(tender.documents.length),
+          // Listed is what the transmittal said it contained, in words. Files is
+          // what is actually in the evidence store and can be read without
+          // uploading anything, which is a different and smaller number.
+          tender.files === 0 ? badge('none', 'warn') : String(tender.files),
+          String(tender.addenda),
+          tender.importedAs.length === 0
+            ? '—'
+            : html`${tender.importedAs.map((entry) => html`<div>
+                ${entry.reference}
+                ${entry.sourceChanged ? badge('source changed', 'warn') : badge(humanise(entry.status), BID_TONE[entry.status] ?? '')}
+              </div>`)}`,
+        ]),
+        empty: 'No invitation to import',
+        emptyDetail:
+          'Importing is a shortcut. A bid started here from a questionnaire needs no tender in the standard section ' +
+          'at all, and never appears there.',
+      })}
+      ${
+        (importable?.limits ?? []).length > 0
+          ? html`<div class="notice info" style="margin:11px 17px 15px"><div>
+              ${importable.limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+    </div>
+
     <div class="card pad0" style="margin-bottom:14px">
       <h2 style="padding:15px 17px 0">Evidence library</h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
@@ -510,7 +603,8 @@ export async function bidon(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const [position, estimate] = await Promise.all([
+      const row = bidList.find((bid) => bid.id === open.dataset.bid);
+      const [position, estimate, source] = await Promise.all([
         api.read(`/v1/bid-on/bids/${open.dataset.bid}`, 'BID_SERVICES', 'COMMERCIAL_L3'),
         // Beside the pack rather than behind a separate button: the question
         // "what would it cost to finish this" is asked by whoever is looking
@@ -519,8 +613,17 @@ export async function bidon(root) {
         api
           .read(`/v1/bid-on/bids/${open.dataset.bid}/acu-estimate`, 'BID_SERVICES', 'COMMERCIAL_L3')
           .catch((error) => ({ error })),
+        // Only for an imported bid, and swallowed on refusal. Reading it needs
+        // access to the tender in its own section, which a bid writer may not
+        // have — and not being able to see whether the source moved is not a
+        // reason to fail to open the pack.
+        row && !row.standalone
+          ? api
+              .read(`/v1/bid-on/bids/${open.dataset.bid}/source`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3')
+              .catch((error) => ({ error }))
+          : null,
       ]);
-      render(detail, bidDetail(position, estimate));
+      render(detail, bidDetail(position, estimate, source));
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
       // A denial shown as a denial. An empty panel here would read as "this
@@ -856,6 +959,87 @@ export async function bidon(root) {
         { name: 'buyerReference', label: 'Buyer’s reference', type: 'text', required: false },
       ],
       transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'import-bid': {
+      title: 'Import a tender as a bid',
+      intent:
+        'For a tender the standard section already holds. Read access to that tender there is checked separately ' +
+        'from this module. One-way: the fields are copied, any file registered against the invitation comes over by ' +
+        'its hash so the questionnaire can be read without uploading it again, nothing is written back, and a later ' +
+        'change at source shows a banner rather than re-parsing anything. Where no file is registered there, you ' +
+        'get the record and the deadline and still have to give the parser the questionnaire.',
+      path: '/v1/bid-on/bids/import',
+      submitLabel: 'Import',
+      fields: [
+        { name: 'tenderId', label: 'Tender', type: 'select',
+          options: importableList.map((tender) => ({
+            value: tender.tenderId,
+            label: `${tender.reference || tender.tenderId} — ${tender.clientName}${
+              tender.importedAs.length > 0 ? ` · already imported as ${tender.importedAs.map((entry) => entry.reference).join(', ')}` : ''
+            }`,
+          })),
+          hint:
+            'A second import off one invitation is allowed — a prequalification stage and a later ITT stage are two ' +
+            'bids — so the label says what already exists.' },
+        { name: 'engagementId', label: 'Engagement', type: 'select',
+          options: liveEngagements
+            .filter((entry) => entry.openForWork)
+            .map((entry) => ({ value: entry.id, label: engagementLabel(entry) })),
+          hint: 'An imported bid belongs to an engagement exactly as any other does.' },
+        { name: 'scheme', label: 'Scheme', type: 'select', required: false,
+          options: [
+            { value: 'ITT', label: 'ITT — a full invitation' },
+            { value: 'SQ_PA23', label: 'Procurement Act standard selection questionnaire' },
+            { value: 'PAS91', label: 'PAS 91' },
+            { value: 'UVDB', label: 'UVDB — Achilles utilities' },
+            { value: 'CONSTRUCTIONLINE', label: 'Constructionline' },
+            { value: 'CUSTOM', label: 'Something else' },
+          ],
+          hint: 'Which rubric the answers are scored against. An invitation is taken as an ITT unless you say otherwise.' },
+        { name: 'documentIds', label: 'Only these documents', type: 'text', required: false,
+          hint:
+            'Comma separated, by the names the transmittal recorded. Blank carries all of them over, which is ' +
+            'almost always what you want. This narrows the recorded list only — every file registered against the ' +
+            'invitation comes over either way, because a hash the store already holds is the point of importing.' },
+      ],
+      transform: (v) => ({
+        tenderId: v.tenderId,
+        engagementId: v.engagementId,
+        ...(String(v.scheme ?? '').trim() ? { scheme: v.scheme } : {}),
+        ...listOf(v.documentIds, 'documentIds'),
+      }),
+    },
+    'resync-bid': {
+      title: 'Resync a bid with its source',
+      intent:
+        'Pulls the tender’s changes in: the deadline follows the source, because every certificate-expiry verdict in ' +
+        'the pack is judged against it. Approved answers survive — only a question whose wording you give here as ' +
+        'genuinely different goes back for review, and every version is kept. It takes the new wording rather than ' +
+        're-reading the document, because re-reading is an agent run with a cost, and a button that silently spends ' +
+        'money is a button nobody should press.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/resync`,
+      submitLabel: 'Resync',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: importedBids.map((bid) => ({
+            value: bid.id,
+            label: `${bid.reference} — ${bid.buyerName} · ${humanise(bid.status)}`,
+          })),
+          hint: 'Only a bid that was imported, and only one that has not been sent.' },
+        { name: 'questions', label: 'Reworded questions', type: 'textarea', rows: 8, required: false,
+          hint:
+            'One per line as "number | the new wording", in the buyer’s own numbering. Leave it blank to take the ' +
+            'deadline and the document list only: a question whose number moved or whose heading was retyped is the ' +
+            'same question, and listing it here would throw away a good answer over a typo.' },
+      ],
+      transform: ({ questions }) => {
+        const lines = String(questions ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
+          .map((parts) => ({ number: parts[0], text: parts[1] }));
+        return lines.length > 0 ? { questions: lines } : {};
+      },
     },
     'confirm-questions': {
       title: 'Confirm the question list',
@@ -1553,7 +1737,7 @@ function listOf(value, key) {
  * beside it. "This would have been green" is what tells somebody the writing is
  * fine and the problem is a certificate.
  */
-function bidDetail(position, estimate) {
+function bidDetail(position, estimate, source) {
   const { bid, customer, questions, readiness, openGaps, limits } = position;
   return html`
     <div class="card pad0">
@@ -1571,6 +1755,34 @@ function bidDetail(position, estimate) {
         limits.length > 0
           ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
               ${limits.map((line) => html`<div>${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+      ${
+        // The source banner, on the pack itself as well as on the register.
+        // Shown only where the tender has actually moved: a banner that is
+        // always there is furniture, and the one time it means something it is
+        // read as furniture too.
+        source?.changed?.length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              <b>The tender this bid was imported from has changed.</b>
+              ${source.note}
+            </div></div>`
+          : ''
+      }
+      ${
+        // The hashes the import carried, shown where there are any and where
+        // the list is not confirmed yet — which is when somebody needs them.
+        // Each is a file the store already holds, so the parser can be pointed
+        // at one instead of asking the customer for the pack again.
+        (bid.sourceFiles ?? []).length > 0 && questions.length === 0
+          ? html`<div class="notice info" style="margin:11px 17px 0"><div>
+              <b>${bid.sourceFiles.length} file(s) came over with this tender.</b>
+              Read the questionnaire from one of them — nothing has to be uploaded again.
+              ${bid.sourceFiles.map((file) => html`<div style="margin-top:4px">
+                ${file.description}
+                <code style="font-size:11.5px;color:var(--text-3)">${file.hash}</code>
+              </div>`)}
             </div></div>`
           : ''
       }

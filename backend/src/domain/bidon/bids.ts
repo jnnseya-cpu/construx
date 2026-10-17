@@ -155,6 +155,32 @@ export type BidGap = {
   resolutionNote?: string;
 };
 
+/**
+ * What the standard section's invitation looked like when a bid was imported
+ * from it.
+ *
+ * Lives here rather than with the import code because it is part of the bid's
+ * own state: a bid carries the reading it was created from for the life of the
+ * record, and `sourceStanding` compares it against the tender as it stands now.
+ * Copied, never referenced — see `importing.ts` for why a bid in progress must
+ * not change underneath somebody.
+ */
+export type SourceDigest = {
+  reference: string;
+  clientName: string;
+  title: string;
+  /** The return deadline in force at the moment of the reading, as a date. */
+  deadline: string;
+  /** Descriptions of the documents the transmittal contained, as copied. */
+  documents: string[];
+  /** How many files the standard section had registered against it at the reading. */
+  files: number;
+  addenda: number;
+  /** What the questions were worded as, keyed by the buyer's own number. */
+  questionWording?: Record<string, string>;
+  takenAt: string;
+};
+
 export type Bid = {
   id: string;
   reference: string;
@@ -162,6 +188,26 @@ export type Bid = {
   engagementId: string;
   /** The standard-section tender this came from, where it was imported. */
   sourceTenderId?: string;
+  /**
+   * The source as it read at import or at the last resync.
+   *
+   * Set only on an imported bid. A bid started here has neither this nor
+   * `sourceTenderId`, and `sourceStanding` says so rather than reporting drift
+   * against nothing.
+   */
+  sourceDigest?: SourceDigest;
+  /** The documents carried over from the invitation, by the names it recorded. */
+  sourceDocuments?: string[];
+  /**
+   * Files already in the evidence store that arrived with that tender.
+   *
+   * The reason the import can be run without asking for the pack a second time:
+   * `parseQuestionnaire` takes a hash, and these are hashes the store already
+   * holds. Only files the standard section linked to the invitation appear here
+   * — its `documents` list is a record of what the transmittal contained, in
+   * words, and words are not a file.
+   */
+  sourceFiles?: Array<{ hash: string; description: string }>;
   buyerName: string;
   buyerReference?: string;
   scheme: BidScheme;

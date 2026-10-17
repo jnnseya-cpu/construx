@@ -2430,6 +2430,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_EVIDENCE_EXTRACTED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
   def('BID_ON_EVIDENCE_WITHDRAWN', 'BidOnEvidence', 'UPDATE', 'EVIDENCE'),
   def('BID_ON_BID_CREATED', 'BidOnBid', 'CREATE', 'PROCUREMENT', { creates: true }),
+  // Importing from the standard Tenders section, and pulling a later change in.
+  // Human-only, both of them: an import decides that a tender is this
+  // customer's work, and a resync decides that a buyer's reworded question
+  // invalidates an answer somebody approved. Neither is clerical.
+  def('BID_ON_BID_IMPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_BID_RESYNCED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_QUESTIONS_CONFIRMED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_ANSWER_DRAFTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_ANSWER_SCORED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
