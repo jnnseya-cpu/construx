@@ -26261,9 +26261,10 @@ the reason somebody cannot start work is almost always one level up.
 Kept as written rather than deleted, because it is the record of what the
 foundation did and did not contain, and of the order the rest was built in. Each
 entry now carries where it was finished. **Nothing here was ever stubbed, mocked
-or faked — each was absent, and each is now built and tested.** The one piece
-still outstanding is named at the end of this chapter: the embedding swap in
-`retrieveFor`.
+or faked — each was absent, and each is now built and tested.** Nothing from
+this list is outstanding; what remains in the module is named at the end of this
+chapter, and it is the `semantic-search` route's own provider rather than
+anything in Bid-On.
 
 - **The bid itself.** `bid`, `question`, `answer`, `gap` and `rubric`. No
   questionnaire is parsed, no answer is drafted, scored or approved, and nothing
@@ -26571,11 +26572,14 @@ Observe-only like the first, and for a sharper reason — the one thing it could
 unattended is draft the next answer, and `PROPOSE` on a spend is a queue of
 charges waiting for somebody to notice.
 
-**Still not built:** the embedding swap in `retrieveFor`, which ranks on
-distinctive-term overlap today and says so rather than dressing it up as
-semantic search; DOCX and XLSX rendering in the questionnaire's own numbering,
-where only the gate exists; import and resync from the standard Tenders section;
-the guest workspace screen; statements; and deposits blocking agent runs.
+**Not built at the time this section was written**, each since finished in the
+sections below and kept here as the record of the order: the embedding swap in
+`retrieveFor` (→ "ranking the library by meaning"); DOCX and XLSX rendering in
+the questionnaire's own numbering, where only the gate existed (→ "the pack, in
+the questionnaire's own structure"); import and resync from the standard Tenders
+section (→ "importing a standard tender"); the guest workspace screen,
+statements, and deposits blocking agent runs (→ "deposits, invoices, statements,
+and the customer's own screen").
 
 ### Bid-On: the pack, in the questionnaire's own structure
 
@@ -26848,5 +26852,102 @@ because the router is first match wins on segment count with no preference for a
 literal segment. A test asserts the ordering, since the failure mode is an import
 silently answered by something else.
 
-**Still not built:** the embedding swap in `retrieveFor`, which ranks on
-distinctive-term overlap today and says so on every read.
+### Bid-On: ranking the library by meaning
+
+The entry above said the embedding swap in `retrieveFor` was outstanding. It is
+done: `engine.embedEvidence`, `engine.retrieveSemantic`, the semantic path in
+`retrieveFor`, two routes, two console doors and
+`backend/tests/bidonembedding.test.ts`.
+
+**Nothing was replaced.** `retrieveFor` now has two paths and the free one is
+unchanged — same filter, same expiry rule, same floor. The semantic path is
+selected by the presence of a `queryVector` and nothing else.
+
+**The platform's own retrieval was reused, not restated.** `cosine` and
+`MINIMUM_SIMILARITY` come from `datalayer/vectorindex.ts`, so Bid-On's retriever
+and the record's cannot drift on either the arithmetic or the floor — and
+`cosine` is the one that refuses mismatched dimensions outright rather than
+returning a smaller number for a comparison that is undefined. The embedding
+capability is `ai/providers/embedding.ts`, through `runAI`, so an embedding call
+is held, charged, recorded, attributed to a customer and refused on an empty
+wallet by exactly the code that does it for a reasoning call.
+
+**Neither path pretends to be the other.** `method` is on every retrieval —
+`EMBEDDING` or `TERM_OVERLAP` — with the model named on the semantic one, and
+the note says in words that a term search will miss a passage answering the
+question in other words. This is `datalayer/embedding.ts`'s argument applied one
+level up: term overlap is a real and useful thing to offer, and calling it
+semantic search would not be. The method is carried onto the drafter's result
+too, including when the drafter raises a gap — *"nothing matched, and it was a
+word search"* is a different fact from *"nothing matched"*, and only the first
+tells a reviewer the answer may already be in the library.
+
+**The spend is separated from the read, and that is the shape of the whole
+thing.** `retrieveFor` costs nothing and a screen may call it. Embedding each
+passage once, and embedding the question on every search, are model calls — so
+they are commands: `POST /v1/bid-on/evidence/:evidenceId/embedding` and `POST
+/v1/bid-on/customers/:customerId/retrieval`, both quoted, both beside the `GET`
+that still answers for free. The screen has **two buttons** rather than one that
+silently picks the paid path when a library happens to be embedded.
+
+**Nothing is ever compared across two models' spaces.** The space is recorded on
+the item, not on the chunk, because one call by one model embeds every passage of
+one item. A passage in another vendor's space is **skipped and counted**, never
+scored: a cosine between two models' vectors is not a weaker score, it is a
+number with no meaning that sorts beside real ones. The skipped count is on
+every answer, because a semantic search that silently ignores half a library
+looks exactly like a library half the size.
+
+**Re-reading an item drops its vectors.** `recordExtraction` replaces the
+passages, so everything derived from them goes too — an item claiming to be
+embedded while its passages are not would fall out of every semantic search with
+nothing to explain why. The library read says how many items with passages are
+not embedded.
+
+**Embedding is a spend, so the spend rules apply.** An unpaid deposit refuses it
+with the invoice named, exactly as it refuses a draft; a customer with no
+engagement open for work is refused because there would be no piece of
+commercial work to attribute the ACU to, which is what lets a provider read its
+own margin per customer. A withdrawn item is refused — paying to make a
+withdrawn document findable is paying for the opposite of what withdrawal means.
+A second embedding by the same model is refused as the same vectors and a second
+charge; under a *different* model it replaces them.
+
+**There is no stand-in, and that is the one place this platform has none.** The
+argument is `datalayer/embedding.ts`'s and it holds: a stand-in narrative is
+visibly a stand-in, and a stand-in *vector* is not readable by anybody — it
+ranks, sorts and scores exactly like a real one. So `adapterFor('EMBEDDING')`
+refuses by name where no provider is configured, before anything is held, and
+that refusal is passed straight through to the screen with the variable in it.
+
+**The customer's prose is kept clean of the plumbing.** A retrieval carries two
+sentences: `note` for the provider, which names the method, the model and the
+skipped count, and `clientNote` for the message a gap sends to the contractor,
+which carries none of those. "Embed this library to rank by meaning" is an
+instruction to the provider about a setting the customer cannot see.
+
+**What the tests prove, and what they do not.** They prove the wiring and the
+refusals, with the pair that makes the swap worth having asserted as a pair:
+the same library and the same question raise a gap on the word search and
+produce a cited draft once embedded. They do **not** prove the quality of an
+embedding — no call is made to a vendor from this repository, the same
+distinction `tests/embedding.test.ts` draws about the same capability.
+
+**A deployment requirement this surfaced, and it is not a code gap.** Everything
+Bid-On sends is `COMMERCIAL_L3` — a customer's insurance values, accident
+figures and case studies — and the default provider clearance is `INTERNAL`. So
+*every* Bid-On AI command, embedding included, is refused with
+`AI_CLEARANCE_REQUIRED` until an operator names the vendor at that level in
+`AI_PROVIDER_CLEARANCE`. That is the gate working: clearance is a statement
+about a vendor contract, which is the same contract the no-training question is
+about. A test asserts the refusal so it is recorded here rather than discovered
+on a host.
+
+**Still outstanding, and recorded rather than quietly fixed:** the
+`semantic-search` route's own provider. `datalayer/embeddingProvider()` still
+returns `undefined`, and its docstring now says why — the blocker is no longer
+configuration but **metering**: that signature has no `EngineContext`, so an
+`embed` built from the adapter would bill a vendor with no hold, no wallet check
+and no `AIExecution` record, against the settled rule that nothing is charged
+without a ledger write. Closing it means giving semantic search the shape
+Bid-On's retrieval now has: a command with a context, quoted before it runs.

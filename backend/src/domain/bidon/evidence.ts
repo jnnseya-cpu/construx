@@ -2,6 +2,10 @@ import { DomainError } from '../../core/errors.ts';
 import { formatRef, ulid } from '../../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule, requireModuleReadable } from '../../identity/modules.ts';
+// The platform's own semantic retrieval, reused rather than restated: one
+// cosine implementation that refuses mismatched dimensions, and one similarity
+// floor, so Bid-On's retriever and the record's cannot drift apart on either.
+import { cosine, MINIMUM_SIMILARITY } from '../../datalayer/vectorindex.ts';
 import { requireVisibleCustomer } from './customers.ts';
 
 /**
@@ -76,6 +80,33 @@ export type EvidenceChunk = {
   id: string;
   text: string;
   pageRef?: string;
+  /**
+   * The passage's embedding, where the library has been embedded.
+   *
+   * Stored on the chunk rather than in a separate index, for the reason
+   * `datalayer/vectorindex.ts` gives about its own index: a second copy of text
+   * the ledger already holds goes stale the moment a record is corrected. A
+   * vector that lives on the passage is replaced when the passage is, and the
+   * space it belongs to is named once on the item.
+   */
+  vector?: number[];
+};
+
+/**
+ * Which model's space an item's vectors are in.
+ *
+ * On the item rather than the chunk because every chunk of one item is embedded
+ * in one call by one model. Recorded at all because cosine similarity between
+ * two models' vectors is not a smaller number — it is meaningless, and it looks
+ * exactly like a real score. Nothing here compares across spaces.
+ */
+export type SemanticModel = {
+  provider: string;
+  modelClass: string;
+  dimensions: number;
+  chunks: number;
+  embeddedAt: string;
+  embeddedBy: string;
 };
 
 export type EvidenceConsent = {
@@ -102,6 +133,8 @@ export type BidOnEvidence = {
   /** Paragraphs read out of the file. Absent until extraction has run. */
   extractedText?: string[];
   chunks: EvidenceChunk[];
+  /** Set once the passages have been embedded. Absent is the ordinary state. */
+  semanticModel?: SemanticModel;
   consent?: EvidenceConsent;
   uploadedAt: string;
   uploadedBy: string;
@@ -298,8 +331,14 @@ export function recordExtraction(
     );
   }
 
+  // Re-reading an item replaces its passages, so anything derived from the old
+  // ones goes with them. `semanticModel` is dropped rather than kept: the new
+  // chunks carry no vector, and an item that says it is embedded while its
+  // passages are not is one that silently drops out of every semantic search
+  // with nothing to explain why.
+  const { semanticModel: _replaced, ...carried } = evidence;
   const next: BidOnEvidence = {
-    ...evidence,
+    ...carried,
     extractedText: input.extractedText.map((line) => line.trim()).filter(Boolean),
     chunks: chunks.map((chunk) => ({
       id: ulid(),
@@ -435,6 +474,16 @@ export function evidenceLibrary(
         'They are still attachable as documents.',
     );
   }
+  const unembedded = mine.filter(
+    (entry) => !entry.withdrawnAt && entry.chunks.length > 0 && !entry.semanticModel,
+  );
+  if (unembedded.length > 0) {
+    limits.push(
+      `${unembedded.length} item(s) with passages are not embedded, so they are found by distinctive-term overlap ` +
+        'rather than by meaning: a passage that answers a question in other words will be missed. Embedding them is ' +
+        'a one-off cost per item and is quoted before it runs.',
+    );
+  }
 
   return {
     evidence,
@@ -457,8 +506,40 @@ export type RetrievedChunk = {
   text: string;
   pageRef?: string;
   expiresOn?: string;
-  /** How well it matched, 0–1. */
+  /** How well it matched, 0–1. Cosine similarity, or term overlap. */
   score: number;
+};
+
+/** How a result was ranked. On every answer, because the two are not equivalent. */
+export type RetrievalMethod = 'EMBEDDING' | 'TERM_OVERLAP';
+
+export type Retrieval = {
+  chunks: RetrievedChunk[];
+  considered: number;
+  method: RetrievalMethod;
+  /** The model whose space the comparison was made in, on the semantic path. */
+  model?: string;
+  /**
+   * Passages excluded because they are in no space, or in another model's.
+   *
+   * Counted and named rather than quietly dropped. A semantic search that
+   * silently ignores half a library looks like a library half the size, and the
+   * remedy — embed the rest — is only obvious to somebody told the passages
+   * exist.
+   */
+  skipped: number;
+  note: string;
+  /**
+   * The same finding with none of the plumbing in it, for a customer to read.
+   *
+   * `note` is written for the provider and names the ranking method, the model
+   * and how many passages were skipped. None of that belongs in a message to
+   * the contractor whose evidence it is: "embed this library to rank by
+   * meaning" is an instruction to the provider, and putting it in front of a
+   * customer is both confusing and an admission of an internal setting they
+   * cannot act on. So the gap-raising paths quote this instead.
+   */
+  clientNote: string;
 };
 
 /**
@@ -481,6 +562,22 @@ export type RetrievedChunk = {
  * exactly like a relevant one once a model has written a paragraph from it.
  * Returning nothing is what makes a gap a gap instead of a confident wrong
  * answer, and the gap is the thing the customer can actually fix.
+ *
+ * ## Two ways of ranking, and neither pretends to be the other
+ *
+ * Given a `queryVector` this is semantic search: cosine similarity against the
+ * passages' own embeddings, floored at `MINIMUM_SIMILARITY`, comparing only
+ * within one model's space. Given none it is distinctive-term overlap, floored
+ * at `MINIMUM_MATCH`. `method` is on every answer and the note says which ran,
+ * because the whole argument in `datalayer/embedding.ts` is that a cheaper
+ * answer wearing the expensive one's clothes is worse than no answer: term
+ * overlap is a real and useful thing to offer, and calling it semantic search
+ * would not be.
+ *
+ * The query vector is supplied rather than obtained here on purpose. Embedding
+ * costs money, so the call that spends it is `engine.retrieveSemantic`, which
+ * is quoted and metered like every other model call; this function stays a read
+ * that spends nothing and can therefore be called by a screen.
  */
 export function retrieveFor(
   ctx: EngineContext,
@@ -491,8 +588,12 @@ export function retrieveFor(
     asAt: string;
     types?: EvidenceType[];
     limit?: number;
+    /** The question's embedding. Its presence is what selects semantic search. */
+    queryVector?: number[];
+    /** The space that vector is in. Only passages in the same one are compared. */
+    queryModel?: { provider: string; modelClass: string };
   },
-): { chunks: RetrievedChunk[]; considered: number; note: string } {
+): Retrieval {
   requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
@@ -504,15 +605,37 @@ export function retrieveFor(
     .filter((entry) => evidenceCurrentOn(entry, input.asAt))
     .filter((entry) => !input.types || input.types.includes(entry.type));
 
-  const terms = distinctTerms(input.question);
+  const semantic = input.queryVector !== undefined && input.queryVector.length > 0;
+  const method: RetrievalMethod = semantic ? 'EMBEDDING' : 'TERM_OVERLAP';
+  const floor = semantic ? MINIMUM_SIMILARITY : MINIMUM_MATCH;
+  const terms = semantic ? [] : distinctTerms(input.question);
+
   const scored: RetrievedChunk[] = [];
   let considered = 0;
+  let skipped = 0;
 
   for (const evidence of usable) {
+    // On the semantic path, an item embedded by another model is not comparable
+    // at all. Skipped by name rather than scored, because a cosine between two
+    // models' vectors is not a weaker score — it is a number with no meaning
+    // that sorts beside real ones.
+    const comparable =
+      !semantic ||
+      (evidence.semanticModel !== undefined &&
+        (input.queryModel === undefined ||
+          (evidence.semanticModel.provider === input.queryModel.provider &&
+            evidence.semanticModel.modelClass === input.queryModel.modelClass)));
+
     for (const chunk of evidence.chunks) {
+      if (semantic && (!comparable || !chunk.vector || chunk.vector.length !== input.queryVector!.length)) {
+        skipped += 1;
+        continue;
+      }
       considered += 1;
-      const score = overlap(terms, chunk.text);
-      if (score < MINIMUM_MATCH) continue;
+      const score = semantic
+        ? Math.round(cosine(input.queryVector!, chunk.vector!) * 1000) / 1000
+        : overlap(terms, chunk.text);
+      if (score < floor) continue;
       scored.push({
         evidenceId: evidence.id,
         reference: evidence.reference,
@@ -530,37 +653,62 @@ export function retrieveFor(
   scored.sort((a, b) => b.score - a.score);
   const chunks = scored.slice(0, input.limit ?? 8);
 
+  const how = semantic
+    ? `Ranked by meaning against ${input.queryModel?.modelClass ?? 'the configured embedding model'}.`
+    : 'Ranked on distinctive-term overlap, which is not semantic search and is not presented as it: a passage that ' +
+      'answers the question in other words will not be found. Embed this library to rank by meaning.';
+
+  const left =
+    skipped > 0
+      ? ` ${skipped} passage(s) were not compared because they are not embedded, or are embedded by a different ` +
+        'model and are therefore in a different space. Embed them and they come into this search.'
+      : '';
+
+  const found =
+    chunks.length === 0
+      ? considered === 0
+        ? 'This customer has no readable evidence that is current on the deadline, so there is nothing to draft ' +
+          'from. That is a gap to ask them for rather than a question to answer from general knowledge.'
+        : `Nothing in ${considered} passage(s) matched this question closely enough to cite. Ranking always ` +
+          'returns the nearest passages, and the nearest of several irrelevant ones reads exactly like a relevant ' +
+          'one once a model has written a paragraph from it — so this returns nothing instead, which is what ' +
+          'makes it a gap the customer can fix.'
+      : `${chunks.length} passage(s) of ${considered} considered, every one from this customer and current on the ` +
+        'deadline.';
+
   return {
     chunks,
     considered,
-    note:
+    method,
+    ...(semantic && input.queryModel ? { model: `${input.queryModel.provider}/${input.queryModel.modelClass}` } : {}),
+    skipped,
+    note: `${found} ${how}${left}`,
+    // The finding alone. No ranking method, no model, no skipped count — a
+    // contractor cannot act on any of those and should not be shown them.
+    clientNote:
       chunks.length === 0
         ? considered === 0
-          ? 'This customer has no readable evidence that is current on the deadline, so there is nothing to draft ' +
-            'from. That is a gap to ask them for rather than a question to answer from general knowledge.'
-          : `Nothing in ${considered} passage(s) matched this question closely enough to cite. Ranking always ` +
-            'returns the nearest passages, and the nearest of several irrelevant ones reads exactly like a relevant ' +
-            'one once a model has written a paragraph from it — so this returns nothing instead, which is what ' +
-            'makes it a gap the customer can fix.'
-        : `${chunks.length} passage(s) of ${considered} considered, every one from this customer and current on the ` +
-          'deadline.',
+          ? 'We hold nothing on file for you that is current on the day this is returned.'
+          : 'Nothing on file is close enough to this question for us to cite it.'
+        : found,
   };
 }
 
 /**
- * The matching floor, and why this is term overlap rather than an embedding.
+ * The term-overlap floor: the share of a question's distinctive words a passage
+ * has to actually use.
  *
- * `datalayer/vectorindex.ts` is the platform's semantic retrieval and it is the
- * right thing here, with one blocking condition: it refuses to answer without a
- * real embedding from a configured provider, and it is right to. So retrieval
- * has two honest states and this is the one that works with no provider
- * configured — distinctive-term overlap, which is weaker and is **not dressed
- * up as semantic search**.
+ * This is the floor on the path that runs with **no embedding provider
+ * configured**, which is the ordinary state of a deployment that has not turned
+ * semantic search on. It is weaker than the semantic path and is never dressed
+ * up as it — `method` says `TERM_OVERLAP` and the note says a passage that
+ * answers the question in other words will not be found.
  *
- * `docs/STATE.md` records the swap as outstanding. What matters is that the
- * floor exists in both: a retriever with no floor returns neighbours whatever
- * the corpus holds, and a drafter given the least irrelevant passage in the
- * library writes a confident paragraph from it.
+ * The floor matters more than which path is in use. A retriever with no floor
+ * returns neighbours whatever the corpus holds, and a drafter handed the least
+ * irrelevant passage in the library writes a confident paragraph from it. Both
+ * paths have one: this, and `MINIMUM_SIMILARITY` from the platform's own vector
+ * index, which is reused rather than restated so the two cannot drift.
  */
 const MINIMUM_MATCH = 0.2;
 

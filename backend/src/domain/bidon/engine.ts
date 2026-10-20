@@ -3,9 +3,17 @@ import { ulid } from '../../core/ids.ts';
 import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
 import { requireVisibleCustomer } from './customers.ts';
-import { requireOpenEngagement } from './engagements.ts';
-import { requireFundedEngagement } from './billing.ts';
-import { retrieveFor } from './evidence.ts';
+import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
+import { depositStanding, invoicesOf, requireFundedEngagement } from './billing.ts';
+import {
+  evidenceCurrentOn,
+  evidenceOf,
+  requireEvidence,
+  retrieveFor,
+  type EvidenceType,
+  type Retrieval,
+} from './evidence.ts';
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MAX_CHARS } from '../../ai/providers/embedding.ts';
 import { ANSWER_TYPE, bidsOf, latestAnswer, recordAnswer, scoreAnswer, type Bid, type BidQuestion } from './bids.ts';
 import { CRITERION, CRITERION_QUESTION, type CriterionScores } from './rubric.ts';
 
@@ -15,11 +23,20 @@ import { CRITERION, CRITERION_QUESTION, type CriterionScores } from './rubric.ts
  * ## The five agents, and where each one actually lives
  *
  * The specification describes five agents behind one orchestrator. Four of them
- * are AI calls and are the four exported commands here. The fifth — the
- * **Retriever** — is `evidence.retrieveFor`, which is not an AI call at all:
- * it filters on the customer, judges expiry against the deadline and refuses
- * below a matching floor. It is called by the drafter rather than invoked on its
- * own, because a retriever's output is not a deliverable; it is an input to one.
+ * write prose or a score and are the four commands at the top of this file. The
+ * fifth — the **Retriever** — is split, and the split follows the money.
+ *
+ * Its filtering is `evidence.retrieveFor`: the customer, the expiry judged
+ * against the deadline, and the floor below which nothing comes back. None of
+ * that costs anything, which is why a screen may call it and why the drafter
+ * calls it without a quote.
+ *
+ * Its *ranking by meaning* costs two model calls — embedding each passage once
+ * and embedding the question on every search — so those are commands here too,
+ * `embedEvidence` and `retrieveSemantic`, quoted and metered like every other
+ * spend in the module. Where no embedding provider is configured the filtering
+ * still works and says it ranked on term overlap. One retriever, two honest
+ * states, neither wearing the other's clothes.
  *
  * ## One question at a time, and why that is the whole design
  *
@@ -98,6 +115,77 @@ function gate(ctx: EngineContext, bidId: string): Bid {
     );
   }
   return bid;
+}
+
+/**
+ * The passages the drafter is given, by the best honest means available.
+ *
+ * Semantic where this customer's library is embedded in the space this
+ * deployment would use, and distinctive-term overlap where it is not. The
+ * choice is made on two facts rather than on hope:
+ *
+ * - **Is an embedding provider configured at all.** Asked of the orchestrator's
+ *   own published status, which answers rather than throwing, so this is a
+ *   question and not a caught refusal. Read from the orchestrator and not from
+ *   `config` directly: the orchestrator is what `adapterFor` would actually
+ *   route to, and a deployment that was handed an adapter explicitly would
+ *   otherwise have the drafter disagreeing with the thing that does the work.
+ * - **Does this customer have anything embedded in that same space.** Without
+ *   this second check a provider who has turned embeddings on but not yet
+ *   embedded a library would get a semantic search that skips every passage,
+ *   finds nothing, and raises a gap against a library that holds the answer.
+ *   A false gap is worse than a weaker ranking: it asks the customer for
+ *   something they already sent.
+ *
+ * Whichever runs, `method` comes back on the result and ends up in the draft's
+ * own note. A reviewer reading "ranked on term overlap" knows that a passage
+ * answering the question in other words may have been missed, which is a
+ * different thing to know than "nothing was found".
+ */
+async function retrieveForDrafting(
+  ctx: EngineContext,
+  bid: Bid,
+  question: BidQuestion,
+): Promise<Retrieval & { acuConsumed: number }> {
+  const embedding = ctx.orchestrator.controlPlaneStatus().embedding;
+  const inSpace =
+    embedding.configured &&
+    embedding.provider !== undefined &&
+    evidenceOf(ctx).some(
+      (entry) =>
+        entry.customerAccountId === bid.customerAccountId &&
+        !entry.withdrawnAt &&
+        evidenceCurrentOn(entry, bid.deadline) &&
+        entry.semanticModel !== undefined &&
+        entry.semanticModel.provider === embedding.provider &&
+        entry.semanticModel.modelClass === EMBEDDING_CLASS,
+    );
+
+  if (inSpace) {
+    return retrieveSemantic(ctx, {
+      customerAccountId: bid.customerAccountId,
+      question: `${question.text} ${question.section}`,
+      asAt: bid.deadline,
+    });
+  }
+
+  return {
+    ...retrieveFor(ctx, {
+      customerAccountId: bid.customerAccountId,
+      question: `${question.text} ${question.section}`,
+      asAt: bid.deadline,
+    }),
+    acuConsumed: 0,
+  };
+}
+
+/** How a retrieval is reported on a draft, however the draft turned out. */
+function retrievalOf(retrieved: Retrieval): { method: Retrieval['method']; model?: string; skipped: number } {
+  return {
+    method: retrieved.method,
+    ...(retrieved.model ? { model: retrieved.model } : {}),
+    skipped: retrieved.skipped,
+  };
 }
 
 const NO_PROVIDER = {
@@ -253,6 +341,15 @@ export async function draftAnswer(
   answerId?: string;
   gapId?: string;
   acuConsumed: number;
+  /**
+   * How the passages behind this draft were found.
+   *
+   * Reported because the two ways are not equivalent and a reviewer should not
+   * have to guess which ran. "Ranked on term overlap, 14 passages not compared"
+   * tells somebody the library needs embedding; silence tells them nothing and
+   * reads as if everything was searched.
+   */
+  retrieval?: { method: Retrieval['method']; model?: string; skipped: number };
 }> {
   const bid = gate(ctx, bidId);
   authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -271,14 +368,10 @@ export async function draftAnswer(
     );
   }
 
-  // The Retriever. Not an AI call, and it filters on the customer before it
-  // ranks — so a drafter physically cannot be handed another customer's
-  // material.
-  const retrieved = retrieveFor(ctx, {
-    customerAccountId: bid.customerAccountId,
-    question: `${question.text} ${question.section}`,
-    asAt: bid.deadline,
-  });
+  // The Retriever. It filters on the customer before it ranks — so a drafter
+  // physically cannot be handed another customer's material — and it ranks by
+  // meaning where this customer's library has been embedded.
+  const retrieved = await retrieveForDrafting(ctx, bid, question);
 
   if (retrieved.chunks.length === 0) {
     // A gap, not a draft, and no AI call at all — so this costs nothing.
@@ -286,7 +379,8 @@ export async function draftAnswer(
       id: ulid(),
       questionId: question.id,
       promptToClient:
-        `For "${question.number} ${question.text}" we have nothing on file we could cite. ${retrieved.note} ` +
+        `For "${question.number} ${question.text}" we have nothing on file we could cite. ` +
+        `${retrieved.clientNote} ` +
         'Please send whatever evidences this — a policy, a certificate, a case study or the figures themselves.',
       raisedAt: new Date().toISOString(),
       raisedBy: ctx.auth.actorId,
@@ -297,7 +391,21 @@ export async function draftAnswer(
       entity: { refType: 'BidOnBid', refId: bid.id },
       nextState: { ...withGap },
     });
-    return { bid: withGap, outcome: 'GAP_RAISED', gapId: gap.id, acuConsumed: 0 };
+    // Not free any more where the retrieval embedded the question: a search
+    // that found nothing still cost what it cost, and reporting zero would
+    // make the wallet and the screen disagree.
+    //
+    // `retrieval` is reported on this path too, and this is where it matters
+    // most: "nothing matched, and it was a word search" is a different fact
+    // from "nothing matched", and only the first tells a reviewer that the
+    // answer may well be in the library already.
+    return {
+      bid: withGap,
+      outcome: 'GAP_RAISED',
+      gapId: gap.id,
+      acuConsumed: retrieved.acuConsumed,
+      retrieval: retrievalOf(retrieved),
+    };
   }
 
   const previous = latestAnswer(bid, question.id);
@@ -391,7 +499,13 @@ export async function draftAnswer(
       entity: { refType: 'BidOnBid', refId: bid.id },
       nextState: { ...withGap },
     });
-    return { bid: withGap, outcome: 'GAP_RAISED', gapId: gap.id, acuConsumed: result.acuConsumed };
+    return {
+      bid: withGap,
+      outcome: 'GAP_RAISED',
+      gapId: gap.id,
+      acuConsumed: result.acuConsumed + retrieved.acuConsumed,
+      retrieval: retrievalOf(retrieved),
+    };
   }
 
   // Through the ordinary command, so the citation check, the versioning and the
@@ -426,7 +540,15 @@ export async function draftAnswer(
     });
   }
 
-  return { bid: next, outcome: 'DRAFTED', answerId: written.answer.id, acuConsumed: result.acuConsumed };
+  return {
+    bid: next,
+    outcome: 'DRAFTED',
+    answerId: written.answer.id,
+    // The draft and the retrieval that fed it. One number, because one press of
+    // one button is what the provider is charged for.
+    acuConsumed: result.acuConsumed + retrieved.acuConsumed,
+    retrieval: retrievalOf(retrieved),
+  };
 }
 
 // --- The Scorer --------------------------------------------------------------
@@ -594,4 +716,283 @@ export async function composeGapRequest(
   }
 
   return { note, gaps: open.length, acuConsumed: result.acuConsumed };
+}
+
+// --- The Retriever's own two commands ----------------------------------------
+
+/**
+ * Why the Retriever has AI commands at all, when `retrieveFor` has none.
+ *
+ * `retrieveFor` filters on the customer, judges expiry against the deadline and
+ * refuses below a floor. None of that costs anything, which is what lets a
+ * screen call it. Ranking **by meaning** costs two things: embedding each
+ * passage once, and embedding the question on every search. Those are model
+ * calls, so they are commands here — quoted, metered, refused on an empty
+ * wallet and on an unpaid deposit, like every other spend in the module.
+ *
+ * The split is the point. The read stays a read; the spend is a command
+ * somebody presses.
+ */
+
+/** The width the index is built at, and the space every row has to be in. */
+const EMBEDDING_CLASS = 'embedding-standard';
+
+/**
+ * Whether this customer has an engagement that may spend.
+ *
+ * The bid commands take their engagement from the bid. Evidence belongs to the
+ * customer and not to a bid, so there is no single engagement to check — but an
+ * embedding run spends real money, and the deposit rule is about the spend
+ * rather than about bids. So: at least one engagement for this customer that is
+ * open for work and whose deposit is settled.
+ *
+ * Returned rather than discarded, because the ACU this run consumes is
+ * attributed to it. An unattributed run is one a provider cannot bill back or
+ * read its own margin from.
+ */
+function requireFundedCustomer(ctx: EngineContext, customerAccountId: string): Engagement {
+  const mine = engagementsOf(ctx).filter((entry) => entry.customerAccountId === customerAccountId);
+  const open = mine.filter((entry) => engagementOpenForWork(entry).open);
+
+  if (open.length === 0) {
+    throw new DomainError(
+      'BID_ON_NO_OPEN_ENGAGEMENT',
+      mine.length === 0
+        ? 'This customer has no engagement, so there is no piece of commercial work to attribute an AI run to. Open ' +
+          'one and activate it first — the attribution is what lets you read your own margin per customer.'
+        : 'Every engagement with this customer is paused, completed or cancelled. Embedding spends money, and a ' +
+          'paused engagement consuming ACU is exactly what pausing is for.',
+      409,
+    );
+  }
+
+  const invoices = invoicesOf(ctx);
+  const funded = open.find((entry) => depositStanding(entry, invoices).funded);
+  if (!funded) {
+    // The refusal of the first one, verbatim, rather than a summary: it names
+    // the invoice and what to do about it.
+    throw new DomainError('BID_ON_DEPOSIT_OUTSTANDING', depositStanding(open[0]!, invoices).reason!, 402);
+  }
+  return funded;
+}
+
+export type EmbeddingResult = {
+  evidenceId: string;
+  reference: string;
+  chunks: number;
+  provider: string;
+  modelClass: string;
+  dimensions: number;
+  acuConsumed: number;
+  note: string;
+};
+
+/**
+ * Embed one evidence item's passages. `X` on `BID_SERVICES`.
+ *
+ * Per item rather than per library, and that is deliberate: a library is filed
+ * over months, and a command that re-embedded everything each time a
+ * certificate arrived would charge for the same passages repeatedly. The screen
+ * loops over what is not embedded yet; the command stays the unit that can be
+ * refused, quoted and retried on its own.
+ *
+ * **Refused where it would charge twice.** Same passages, same model, same
+ * vectors. Re-embedding under a *different* model is allowed and replaces the
+ * rows, because the old ones are in a space nothing else on this customer is in
+ * any more.
+ *
+ * **No stand-in, ever.** `datalayer/embedding.ts` makes the argument in full: a
+ * stand-in narrative is visibly a stand-in, and a stand-in *vector* is not
+ * readable by anybody — it ranks, sorts and scores exactly like a real one and
+ * means nothing. `adapterFor('EMBEDDING')` refuses by name where no provider is
+ * configured, and that refusal is passed straight through.
+ */
+export async function embedEvidence(ctx: EngineContext, evidenceId: string): Promise<EmbeddingResult> {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  // Throws if this person is not assigned to the customer.
+  const evidence = requireEvidence(ctx, evidenceId);
+  if (evidence.withdrawnAt) {
+    throw new DomainError(
+      'BID_ON_EVIDENCE_WITHDRAWN',
+      `${evidence.reference} has been withdrawn. Embedding it would pay to make a withdrawn document findable.`,
+      409,
+    );
+  }
+  if (evidence.chunks.length === 0) {
+    throw new DomainError(
+      'BID_ON_NOTHING_EXTRACTED',
+      `Nothing has been read out of ${evidence.reference}, so there are no passages to embed. Record what was read ` +
+        'out of it first.',
+      409,
+    );
+  }
+
+  const engagement = requireFundedCustomer(ctx, evidence.customerAccountId);
+
+  // Resolved before anything is held, so an unconfigured deployment is refused
+  // by name at no cost rather than through a wallet hold that is then released.
+  const intended = ctx.orchestrator.adapterFor('EMBEDDING');
+  if (evidence.semanticModel?.provider === intended.name && evidence.semanticModel.modelClass === EMBEDDING_CLASS) {
+    throw new DomainError(
+      'BID_ON_ALREADY_EMBEDDED',
+      `${evidence.reference} was embedded by ${intended.name} on ${evidence.semanticModel.embeddedAt.slice(0, 10)}. ` +
+        'The passages have not changed, so the vectors would not either, and it would be charged again.',
+      409,
+    );
+  }
+
+  const passages = evidence.chunks.map((chunk) => chunk.text);
+  const oversized = passages.findIndex((text) => text.length > EMBEDDING_MAX_CHARS);
+  if (oversized !== -1) {
+    throw new DomainError(
+      'BID_ON_PASSAGE_TOO_LONG',
+      `Passage ${oversized + 1} of ${evidence.reference} is ${passages[oversized]!.length} characters and the ` +
+        `ceiling is ${EMBEDDING_MAX_CHARS}. Read the file into shorter passages — a passage that long is also one no ` +
+        'reviewer can check a citation against.',
+      422,
+    );
+  }
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_embed',
+    capability: 'EMBEDDING',
+    inputRefs: [{ refType: 'BidOnEvidence', refId: evidence.id }],
+    attribution: { customerAccountId: evidence.customerAccountId, engagementId: engagement.id },
+    request: {
+      // No prompt. An embedding endpoint is handed text, not an instruction,
+      // and anything else here is text the provider is billed to embed.
+      task: 'bid_on_embed',
+      payload: { passages },
+      modelClass: EMBEDDING_CLASS,
+    },
+    toWrites: (output) => {
+      const vectors = (output as { vectors?: number[][] }).vectors ?? [];
+      if (vectors.length !== passages.length) {
+        throw new DomainError(
+          'AI_EMBEDDING_MALFORMED',
+          `The provider returned ${vectors.length} vectors for ${passages.length} passages. Attaching vectors that ` +
+            'may belong to different text would produce plausible rankings from nothing.',
+          502,
+        );
+      }
+      const wrong = vectors.findIndex((vector) => vector.length !== EMBEDDING_DIMENSIONS);
+      if (wrong !== -1) {
+        // Belt and braces on the way into an append-only record: a row of the
+        // wrong width here is permanent, and cosine against it is undefined
+        // rather than merely low.
+        throw new DomainError(
+          'AI_EMBEDDING_MALFORMED',
+          `Vector ${wrong + 1} has ${vectors[wrong]!.length} dimensions; this index is built at ` +
+            `${EMBEDDING_DIMENSIONS}.`,
+          502,
+        );
+      }
+      return [
+        {
+          eventType: 'BID_ON_EVIDENCE_EMBEDDED',
+          entity: { refType: 'BidOnEvidence', refId: evidence.id },
+          nextState: {
+            ...evidence,
+            chunks: evidence.chunks.map((chunk, index) => ({ ...chunk, vector: vectors[index]! })),
+            semanticModel: {
+              provider: intended.name,
+              modelClass: EMBEDDING_CLASS,
+              dimensions: EMBEDDING_DIMENSIONS,
+              chunks: passages.length,
+              embeddedAt: new Date().toISOString(),
+              embeddedBy: ctx.auth.actorId,
+            },
+          },
+        },
+      ];
+    },
+  });
+
+  return {
+    evidenceId: evidence.id,
+    reference: evidence.reference,
+    chunks: passages.length,
+    provider: result.provider,
+    modelClass: result.modelClass ?? EMBEDDING_CLASS,
+    dimensions: EMBEDDING_DIMENSIONS,
+    acuConsumed: result.acuConsumed,
+    note:
+      `${passages.length} passage(s) of ${evidence.reference} are now searchable by meaning, in ` +
+      `${result.provider}'s space. Only passages in that same space are ever compared — a cosine between two ` +
+      'models’ vectors is not a weaker score, it is a number with no meaning.',
+  };
+}
+
+/**
+ * What this customer's library has for one question, ranked by meaning.
+ * `X` on `BID_SERVICES`.
+ *
+ * One embedding call — the question — and then the ordinary read. The spend is
+ * here and not in `retrieveFor`, so the screen that lists a library still costs
+ * nothing and the search that uses a model is quoted before it runs.
+ *
+ * Writes nothing. A retrieval is not a finding, and recording every search as
+ * an event would fill an append-only ledger with the fact that somebody typed
+ * a question. The `AIExecution` record the orchestrator writes is the audit
+ * trail for the spend, which is the part that needs one.
+ */
+export async function retrieveSemantic(
+  ctx: EngineContext,
+  input: { customerAccountId: string; question: string; asAt?: string; types?: EvidenceType[]; limit?: number },
+): Promise<Retrieval & { acuConsumed: number }> {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const customer = requireVisibleCustomer(ctx, input.customerAccountId);
+  const question = input.question.trim();
+  if (question.length < 8) {
+    throw new DomainError(
+      'BID_ON_QUESTION_TOO_SHORT',
+      'Give it the question. Embedding two words costs the same as embedding the question and ranks against ' +
+        'everything equally badly.',
+      400,
+    );
+  }
+
+  const engagement = requireFundedCustomer(ctx, input.customerAccountId);
+  const intended = ctx.orchestrator.adapterFor('EMBEDDING');
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_retrieve',
+    capability: 'EMBEDDING',
+    inputRefs: [{ refType: 'BidOnCustomer', refId: customer.id }],
+    attribution: { customerAccountId: customer.id, engagementId: engagement.id },
+    request: { task: 'bid_on_retrieve', payload: { passages: [question] }, modelClass: EMBEDDING_CLASS },
+    toWrites: () => [],
+  });
+
+  const vectors = (result.output as { vectors?: number[][] }).vectors ?? [];
+  const queryVector = vectors[0];
+  if (!queryVector || queryVector.length !== EMBEDDING_DIMENSIONS) {
+    throw new DomainError(
+      'AI_EMBEDDING_MALFORMED',
+      `The question embedded to ${queryVector?.length ?? 0} dimensions; this index is built at ` +
+        `${EMBEDDING_DIMENSIONS}. Ranking against it would produce scores that look ordinary and mean nothing.`,
+      502,
+    );
+  }
+
+  const retrieval = retrieveFor(ctx, {
+    customerAccountId: customer.id,
+    question,
+    // Today by default. A retrieval run from the library screen has no bid and
+    // therefore no deadline, and judging expiry against today is the honest
+    // reading of "what do we have right now".
+    asAt: (input.asAt ?? new Date().toISOString()).slice(0, 10),
+    ...(input.types ? { types: input.types } : {}),
+    ...(input.limit ? { limit: input.limit } : {}),
+    queryVector,
+    queryModel: { provider: intended.name, modelClass: EMBEDDING_CLASS },
+  });
+
+  return { ...retrieval, acuConsumed: result.acuConsumed };
 }

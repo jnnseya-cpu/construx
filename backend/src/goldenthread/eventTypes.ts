@@ -2428,6 +2428,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // committing the business or making a statement to a buyer.
   def('BID_ON_EVIDENCE_FILED', 'BidOnEvidence', 'CREATE', 'EVIDENCE', { creates: true, requiresEvidence: true }),
   def('BID_ON_EVIDENCE_EXTRACTED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
+  // The passages' vectors, written by the model that produced them. `aiAllowed`
+  // because the author genuinely is a model and the record says which one — and
+  // it has to, since a cosine between two models' vectors is not a weaker score
+  // but a number with no meaning.
+  def('BID_ON_EVIDENCE_EMBEDDED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
   def('BID_ON_EVIDENCE_WITHDRAWN', 'BidOnEvidence', 'UPDATE', 'EVIDENCE'),
   def('BID_ON_BID_CREATED', 'BidOnBid', 'CREATE', 'PROCUREMENT', { creates: true }),
   // Importing from the standard Tenders section, and pulling a later change in.

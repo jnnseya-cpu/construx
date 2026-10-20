@@ -13562,7 +13562,7 @@ export const ROUTES: Route[] = [
     pattern: '/v1/bid-on/customers/:customerId/retrieval',
     readOnly: true,
     description:
-      'What this customer’s library has for one question — filtered on the customer before anything is ranked, current on the deadline, and nothing at all below a matching floor, because the nearest of several irrelevant passages reads exactly like a relevant one',
+      'What this customer’s library has for one question — filtered on the customer before anything is ranked, current on the deadline, and nothing at all below a matching floor, because the nearest of several irrelevant passages reads exactly like a relevant one. This is the free path and ranks on distinctive-term overlap; it says so rather than presenting itself as semantic search',
     handler: (platform, ctx) =>
       bidOnEvidence.retrieveFor(tenantContext(platform, ctx), {
         customerAccountId: ctx.params.customerId as string,
@@ -13570,6 +13570,40 @@ export const ROUTES: Route[] = [
         asAt: ctx.query.get('asAt') ?? new Date().toISOString().slice(0, 10),
         ...(ctx.query.get('limit') ? { limit: Number(ctx.query.get('limit')) } : {}),
       }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/customers/:customerId/retrieval',
+    ai: { engine: 'TENDER', taskType: 'bid_on_retrieve', capability: 'EMBEDDING' },
+    quoteScope: 'TENANT',
+    description:
+      'The same search, ranked by meaning: the question is embedded and compared against this customer’s own passages, within one model’s space only. A POST and not a GET because it spends — the free read above is the one a screen may call without asking',
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: {
+        question: { type: 'string', minLength: 8, maxLength: 4000 },
+        asAt: { type: 'string', minLength: 10, maxLength: 10 },
+        limit: { type: 'integer', minimum: 1, maximum: 20 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngine.retrieveSemantic(tenantContext(platform, ctx), {
+        customerAccountId: ctx.params.customerId as string,
+        ...body<{ question: string; asAt?: string; limit?: number }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/evidence/:evidenceId/embedding',
+    ai: { engine: 'TENDER', taskType: 'bid_on_embed', capability: 'EMBEDDING' },
+    quoteScope: 'TENANT',
+    description:
+      'Embed one item’s passages so they can be searched by meaning. Refused where the same model has already embedded the same passages, because that is the same vectors and a second charge; re-embedding under a different model replaces them, since the old rows are in a space nothing else is in any more',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngine.embedEvidence(tenantContext(platform, ctx), ctx.params.evidenceId as string),
   },
   {
     method: 'GET',

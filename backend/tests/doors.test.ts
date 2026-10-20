@@ -136,7 +136,12 @@ describe('every command has a door', () => {
      *
      * Lower it when you give one a door. It is meant to fall.
      */
-    const CEILING = 298;
+    // 298 → 297. The guest workspace screen gave
+    // `POST /v1/bid-on/customers/:customerId/declarations` the door it always
+    // belonged on, which freed the slot that entry had spent; Bid-On's
+    // embedding command then took one and was given a panel in the same change,
+    // so the number is back where that left it rather than one higher.
+    const CEILING = 297;
     assert.ok(
       unreachable.length <= CEILING,
       `${unreachable.length} write routes have no hand-built door, up from ${CEILING}. ` +

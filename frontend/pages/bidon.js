@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { command, commandBar } from '../lib/command.js';
+import { command, commandBar, quoteAction } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
@@ -487,6 +487,8 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'withdraw-evidence', label: 'Withdraw an item', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'embed-evidence', label: 'Make an item searchable by meaning',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
         ]))}
       </div>
       <!--
@@ -507,6 +509,15 @@ export async function bidon(root) {
         </div>
         <button class="btn sm" id="ev-open">Open the library</button>
         <button class="btn sm quiet" id="ev-retrieve">What do we have</button>
+        <!--
+          Two buttons rather than one, because they are not the same search and
+          one of them spends. "What do we have" ranks on distinctive-term
+          overlap and costs nothing; "Search by meaning" embeds the question and
+          is charged. A single button that silently picked the paid path when a
+          library happened to be embedded would be a screen spending money
+          nobody pressed for.
+        -->
+        <button class="btn sm quiet" id="ev-semantic">Search by meaning · quote it</button>
       </div>
       <div id="evidence-detail" style="padding:0 17px 4px"></div>
     </div>
@@ -729,6 +740,72 @@ export async function bidon(root) {
       render(evidenceDetail, evidencePanel(library));
     } catch (error) {
       render(evidenceDetail, notice(`The library could not be read: ${error.message}`, 'err'));
+    }
+  });
+
+  /*
+   * The paid search.
+   *
+   * A POST, because it embeds the question and that is a model call. The answer
+   * carries which method actually ran and how many passages were not compared,
+   * and the panel shows both — a semantic search that silently skipped a
+   * library looks exactly like a library with nothing in it.
+   */
+  root.querySelector('#ev-semantic')?.addEventListener('click', async () => {
+    const customerId = chosenCustomer();
+    const question = root.querySelector('#ev-question')?.value?.trim();
+    const button = root.querySelector('#ev-semantic');
+    if (!customerId || !evidenceDetail) return;
+    if (!question) {
+      render(
+        evidenceDetail,
+        notice('Type the question first. Embedding two words costs the same and ranks against everything equally badly.', 'warn'),
+      );
+      return;
+    }
+    button.disabled = true;
+    try {
+      // Quoted before it runs, the same rule every other AI action here keeps,
+      // and the same `/v1/ai/quote` the command panel uses. A search is a
+      // small spend and a small spend nobody was shown is still a surprise on
+      // an invoice.
+      const quote = await quoteAction(`/v1/bid-on/customers/${customerId}/retrieval`);
+      render(
+        evidenceDetail,
+        html`<div class="notice ${raw(quote.affordable ? 'info' : 'warn')}" style="margin-top:11px"><div>
+          <b>Ranking by meaning costs ${money(quote.estimatedChargeMinor)}.</b>
+          ${quote.summary ?? ''}
+          ${quote.affordable
+            ? html`<div style="margin-top:8px">
+                <button class="btn sm" id="ev-semantic-go" data-customer="${customerId}">Run it</button>
+              </div>`
+            : html`<div style="margin-top:4px">There is not enough in the wallet to run it.</div>`}
+        </div></div>`,
+      );
+    } catch (error) {
+      // A denial, an unconfigured deployment and an unpaid deposit are all
+      // shown as what they are. "Semantic search is off on this deployment"
+      // names the variable that turns it on; an empty panel would read as
+      // "nothing found", which is a different and false statement.
+      render(evidenceDetail, notice(error.detail ?? error.message, 'err'));
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  /* The second press, which is the one that spends. */
+  root.addEventListener('click', async (event) => {
+    const go = event.target.closest('#ev-semantic-go');
+    if (!go || !evidenceDetail) return;
+    const question = root.querySelector('#ev-question')?.value?.trim();
+    if (!question) return;
+    go.disabled = true;
+    go.textContent = 'Searching…';
+    try {
+      const result = await api.post(`/v1/bid-on/customers/${go.dataset.customer}/retrieval`, { question });
+      render(evidenceDetail, retrievalPanel(result));
+    } catch (error) {
+      render(evidenceDetail, notice(error.detail ?? error.message, 'err'));
     }
   });
 
@@ -1040,6 +1117,25 @@ export async function bidon(root) {
           .map((parts) => ({ number: parts[0], text: parts[1] }));
         return lines.length > 0 ? { questions: lines } : {};
       },
+    },
+    'embed-evidence': {
+      title: 'Make an item searchable by meaning',
+      intent:
+        'Embeds one item’s passages so a question finds them by meaning rather than by shared words. A one-off cost ' +
+        'per item, quoted before it runs, and refused if the same model has already done it — that would be the ' +
+        'same vectors and a second charge. Items are never compared across models: a cosine between two models’ ' +
+        'vectors is not a weaker score, it is a number with no meaning. There is no stand-in on this one, because a ' +
+        'made-up vector ranks and scores exactly like a real one and nobody could tell.',
+      path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/embedding`,
+      submitLabel: 'Embed',
+      fields: [
+        { name: 'evidenceId', label: 'Evidence id', type: 'text',
+          hint:
+            'From the library above — open a customer’s library and the row carries it. Only an item something has ' +
+            'been read out of can be embedded.' },
+      ],
+      transform: () => ({}),
+      ai: true,
     },
     'confirm-questions': {
       title: 'Confirm the question list',
@@ -1921,8 +2017,8 @@ function evidencePanel(library) {
     <div style="margin-top:11px">
       <p class="metric-sub">${library.summary}</p>
       ${table({
-        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Standing'],
-        align: ['', '', '', '', '', 'num', 'num', ''],
+        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing'],
+        align: ['', '', '', '', '', 'num', 'num', '', ''],
         rows: library.evidence.map((item) => [
           item.reference,
           humanise(item.type),
@@ -1931,6 +2027,14 @@ function evidencePanel(library) {
           item.expiresOn ? date(item.expiresOn) : html`<span style="font-size:12px;color:var(--text-3)">does not lapse</span>`,
           item.daysLeft === null ? '—' : item.daysLeft < 0 ? badge(`${Math.abs(item.daysLeft)} ago`, 'bad') : String(item.daysLeft),
           item.extracted ? String(item.chunkCount) : badge('nothing read', 'warn'),
+          // Which of the two searches will find it, and in whose space. A
+          // library half embedded by one model and half by another is a real
+          // state and the column is where somebody sees it.
+          item.semanticModel
+            ? html`<span title="${item.semanticModel.provider}/${item.semanticModel.modelClass}, ${item.semanticModel.dimensions} dimensions">${badge('by meaning', 'ok')}</span>`
+            : item.extracted
+              ? badge('terms only', 'warn')
+              : '—',
           item.withdrawnAt
             ? badge('withdrawn', '')
             : item.currentNow
@@ -1958,6 +2062,11 @@ function retrievalPanel(result) {
   return html`
     <div style="margin-top:11px">
       <div class="notice ${raw(result.chunks.length === 0 ? 'warn' : 'info')}" style="margin:0 0 10px">
+        <div>
+          <b>${result.method === 'EMBEDDING' ? 'Ranked by meaning' : 'Ranked on term overlap'}</b>${
+            result.model ? html` · ${result.model}` : ''
+          }${result.acuConsumed ? html` · cost ${money(result.acuConsumed)}` : ''}
+        </div>
         <div>${result.note}</div>
       </div>
       ${result.chunks.map(

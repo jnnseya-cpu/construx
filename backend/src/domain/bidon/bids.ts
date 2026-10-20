@@ -1385,6 +1385,11 @@ export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
     'An estimate. The charge is the tokens actually spent, settled per run, and a pack with forty passages to read ' +
       'costs more than one with four.',
   );
+  limits.push(
+    'Drafting against an embedded library also embeds each question, which is priced per input token with no output ' +
+      'side — of the order of a hundredth of a draft. It is in the charge and not in this figure, because quoting a ' +
+      'rounding difference as a separate line would suggest a choice about it that nobody has.',
+  );
 
   return {
     bidId: bid.id,
