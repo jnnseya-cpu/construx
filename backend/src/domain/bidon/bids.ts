@@ -211,8 +211,34 @@ export type Bid = {
   buyerName: string;
   buyerReference?: string;
   scheme: BidScheme;
-  /** The day the buyer reads it. Every expiry is judged against this. */
-  deadline: string;
+  /**
+   * The day the buyer reads it. Every expiry is judged against this.
+   *
+   * Absent on a rolling submission, and absent rather than invented. See
+   * `rolling` below for why that distinction is the whole point.
+   */
+  deadline?: string;
+  /**
+   * There is no day the buyer reads this, because they read it whenever they
+   * look.
+   *
+   * A dynamic market under the Procurement Act accepts applications at any
+   * point in its life and cannot cap its membership; a UVDB or Constructionline
+   * registration is maintained rather than returned. None of those has a return
+   * date, and the obvious workaround — put a target date in the deadline field
+   * — is the thing this exists to avoid: every expiry verdict in the pack would
+   * then be judged against a date somebody made up, and "this certificate
+   * lapses before the deadline" would be a statement about an invention.
+   *
+   * So a rolling bid carries no deadline and is judged against **the day it is
+   * read**, every time it is read. `judgedOn` is the one place that decides
+   * which day that is, and the position says which day it used.
+   *
+   * `true` only, never `false`: absent means dated, so every bid written before
+   * this existed replays as exactly what it was, with no migration and no
+   * backfilled flag that would have to be trusted.
+   */
+  rolling?: true;
   status: BidStatus;
   /** The rubric weights in force for this bid, copied at creation. */
   weights: Record<string, number>;
@@ -252,6 +278,26 @@ function requireText(value: string, min: number, code: string, what: string): st
 }
 
 const wordsOf = (body: string[]): number => body.join(' ').split(/\s+/).filter(Boolean).length;
+
+/**
+ * The day this pack's expiries and declarations are judged against.
+ *
+ * One function, because the alternative is each caller deciding — and a screen
+ * that judged against today while the export gate judged against the deadline
+ * would disagree about whether a certificate is valid, which is the only
+ * question either of them is being asked.
+ *
+ * A dated bid is judged against its deadline, because that is the day the buyer
+ * reads it and a certificate lapsing the week before return is not evidence for
+ * that submission. A rolling bid has no such day, so it is judged against the
+ * day it is being read — which means its readiness genuinely moves as
+ * certificates age, and that is the honest behaviour for a membership somebody
+ * maintains rather than returns.
+ */
+export function judgedOn(bid: Pick<Bid, 'deadline' | 'rolling'>, asAt?: string): string {
+  if (!bid.rolling && bid.deadline) return bid.deadline.slice(0, 10);
+  return (asAt ?? new Date().toISOString()).slice(0, 10);
+}
 
 export function bidsOf(ctx: EngineContext): Bid[] {
   return ctx.ledger.listByTenant(ctx.tenantId, 'BidOnBid').map((record) => record.state as unknown as Bid);
@@ -310,7 +356,9 @@ export function createBid(
     engagementId: string;
     buyerName: string;
     scheme: BidScheme;
-    deadline: string;
+    deadline?: string;
+    /** No return date: a dynamic market, or a registration that is maintained. */
+    rolling?: true;
     buyerReference?: string;
     sourceTenderId?: string;
     weights?: Record<string, number>;
@@ -322,8 +370,33 @@ export function createBid(
   const engagement = requireOpenEngagement(ctx, input.engagementId);
   const customer = requireVisibleCustomer(ctx, engagement.customerAccountId);
 
-  const deadline = input.deadline.slice(0, 10);
-  if (Number.isNaN(Date.parse(deadline))) {
+  // Exactly one of the two, and the refusals say which mistake was made.
+  // Neither is a default: a bid with no date that is not declared rolling is
+  // somebody who forgot the deadline, and a rolling bid carrying a date is a
+  // dated bid wearing the wrong label — in which case every expiry verdict in
+  // it would be judged against a day that is not the day it is read.
+  if (input.rolling && input.deadline) {
+    throw new DomainError(
+      'BID_ON_ROLLING_HAS_DEADLINE',
+      'A rolling submission has no return date — that is what makes it rolling. Give a deadline or declare it ' +
+        'rolling, not both: with both, every certificate in the pack would be judged against a date nobody is ' +
+        'actually reading it on.',
+      400,
+    );
+  }
+  if (!input.rolling && !input.deadline) {
+    throw new DomainError(
+      'BID_ON_DEADLINE_REQUIRED',
+      'Give the day the buyer reads it. Every certificate expiry, insurance date and declaration in the pack is ' +
+        'judged against it. If there genuinely is no return date — a dynamic market, or a registration that is ' +
+        'maintained rather than returned — say so with `rolling` and it is judged against the day it is read ' +
+        'instead.',
+      400,
+    );
+  }
+
+  const deadline = input.deadline?.slice(0, 10);
+  if (deadline !== undefined && Number.isNaN(Date.parse(deadline))) {
     throw new DomainError('BID_ON_DEADLINE_INVALID', 'A deadline is a date', 400);
   }
 
@@ -349,7 +422,8 @@ export function createBid(
     buyerName: requireText(input.buyerName, NAME_MIN, 'BID_ON_NAME_TOO_SHORT', 'A buyer name'),
     ...(input.buyerReference?.trim() ? { buyerReference: input.buyerReference.trim() } : {}),
     scheme: input.scheme,
-    deadline,
+    ...(deadline ? { deadline } : {}),
+    ...(input.rolling ? { rolling: true as const } : {}),
     status: 'CREATED',
     // Copied, not referenced. A rubric reversioned next month must not restate
     // what a submission already sent was scored against.
@@ -951,6 +1025,15 @@ export type ScoredQuestion = {
 
 export type BidPosition = {
   bid: Omit<Bid, 'questions' | 'answers' | 'gaps'>;
+  /**
+   * The day every verdict in this position was judged against.
+   *
+   * The deadline on a dated bid, today on a rolling one. Published rather than
+   * left implicit because on a rolling bid the answer changes daily, and a
+   * readiness figure somebody screenshots is worthless without the date it was
+   * true on.
+   */
+  judgementDay: string;
   customer: { id: string; reference: string; legalName: string };
   questions: ScoredQuestion[];
   readiness: PackReadiness;
@@ -967,15 +1050,19 @@ export type BidPosition = {
  * trusts is whichever screen they had open.
  *
  * Every verdict is judged against **the bid's deadline**, not today, because
- * that is the day the buyer reads it.
+ * that is the day the buyer reads it — or, on a rolling submission that has no
+ * such day, against the day it is being read. `judgedOn` decides which, and
+ * `judgementDay` on the result says which it used: a readiness figure with no
+ * date attached is one nobody can check tomorrow.
  */
-export function bidPosition(ctx: EngineContext, bidId: string): BidPosition {
+export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): BidPosition {
   requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const bid = requireBid(ctx, bidId);
   const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
-  const scored = scoreBid(ctx, bid, customer);
+  const day = judgedOn(bid, asAt);
+  const scored = scoreBid(ctx, bid, customer, day);
 
   const { questions: _q, answers: _a, gaps: _g, ...header } = bid;
   const limits: string[] = [];
@@ -994,8 +1081,18 @@ export function bidPosition(ctx: EngineContext, bidId: string): BidPosition {
     );
   }
 
+  if (bid.rolling) {
+    limits.push(
+      `This is a rolling submission with no return date, so every expiry and declaration is judged against today ` +
+        `(${day}) and re-judged on every read. A pack that is green now can go red on its own as a certificate ` +
+        'ages, which is the honest behaviour for a membership nobody returns — watch the expiry dates rather than ' +
+        'the readiness figure alone.',
+    );
+  }
+
   return {
     bid: header,
+    judgementDay: day,
     customer: { id: customer.id, reference: customer.reference, legalName: customer.legalName },
     questions: scored,
     readiness: packReadiness(
@@ -1012,9 +1109,9 @@ export function bidPosition(ctx: EngineContext, bidId: string): BidPosition {
 }
 
 /** Every question with its latest answer and the verdict on it. */
-function scoreBid(ctx: EngineContext, bid: Bid, customer: CustomerAccount): ScoredQuestion[] {
+function scoreBid(ctx: EngineContext, bid: Bid, customer: CustomerAccount, day: string): ScoredQuestion[] {
   const evidenceById = new Map(evidenceOf(ctx).map((entry) => [entry.id, entry]));
-  const live = new Set(liveDeclarations(customer, bid.deadline).map((entry) => entry.kind));
+  const live = new Set(liveDeclarations(customer, day).map((entry) => entry.kind));
 
   return bid.questions.map((question) => {
     const answer = latestAnswer(bid, question.id) ?? null;
@@ -1059,7 +1156,9 @@ function scoreBid(ctx: EngineContext, bid: Bid, customer: CustomerAccount): Scor
         ...(answer?.yesNo === undefined ? {} : { passFailAnswer: answer.yesNo }),
         words: answer?.words ?? 0,
         ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
-        deadline: bid.deadline,
+        // The day the pack is judged against, which the rubric calls the
+        // deadline because on a dated bid that is exactly what it is.
+        deadline: day,
         citations,
         declarations,
       },
@@ -1196,14 +1295,17 @@ export type BidRegister = {
     engagementReference: string;
     buyerName: string;
     scheme: BidScheme;
-    deadline: string;
+    /** Absent on a rolling submission, which has no return date at all. */
+    deadline?: string;
+    rolling?: true;
     status: BidStatus;
     questions: number;
     approved: number;
     openGaps: number;
     readinessPercent: number | null;
     exportable: boolean;
-    daysLeft: number;
+    /** Null where there is no deadline to count down to. */
+    daysLeft: number | null;
     standalone: boolean;
   }>;
   limits: string[];
@@ -1237,7 +1339,7 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
   const bids = visible
     .map((bid) => {
       const customer = customers.get(bid.customerAccountId)!;
-      const scored = scoreBid(ctx, bid, customer);
+      const scored = scoreBid(ctx, bid, customer, judgedOn(bid, day));
       const readiness = packReadiness(
         scored.map((entry) => ({
           ...(entry.question.weighting === undefined ? {} : { weighting: entry.question.weighting }),
@@ -1254,18 +1356,26 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
         engagementReference: engagements.get(bid.engagementId)?.reference ?? '—',
         buyerName: bid.buyerName,
         scheme: bid.scheme,
-        deadline: bid.deadline,
+        ...(bid.deadline ? { deadline: bid.deadline } : {}),
+        ...(bid.rolling ? { rolling: true as const } : {}),
         status: bid.status,
         questions: bid.questions.length,
         approved: readiness.approved,
         openGaps: bid.gaps.filter((entry) => !entry.resolvedAt).length,
         readinessPercent: readiness.readinessPercent,
         exportable: readiness.exportable,
-        daysLeft: Math.ceil((Date.parse(bid.deadline) - Date.parse(day)) / 86_400_000),
+        // Null on a rolling bid, not zero and not a large number: there is no
+        // day to count down to, and a countdown of 0 would read as "due today"
+        // on a submission that has no due date at all.
+        daysLeft: bid.deadline
+          ? Math.ceil((Date.parse(bid.deadline) - Date.parse(day)) / 86_400_000)
+          : null,
         standalone: bid.sourceTenderId === undefined,
       };
     })
-    .sort((a, b) => a.deadline.localeCompare(b.deadline));
+    // Soonest first, and the rolling ones last — they are never the thing with
+    // the least time left, because they have no time left to have.
+    .sort((a, b) => (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999'));
 
   const limits: string[] = [];
   const hidden = bidsOf(ctx).length - visible.length;
@@ -1275,11 +1385,22 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
         'each other, so access is per customer.',
     );
   }
+  // A rolling bid is never late: there is no date for it to be past. Counting
+  // one here would put a permanent false alarm on the screen for every
+  // membership the provider maintains.
   const late = bids.filter(
-    (bid) => bid.daysLeft < 0 && !['SUBMITTED', 'WON', 'LOST'].includes(bid.status),
+    (bid) => bid.daysLeft !== null && bid.daysLeft < 0 && !['SUBMITTED', 'WON', 'LOST'].includes(bid.status),
   ).length;
   if (late > 0) {
     limits.push(`${late} bid(s) are past their deadline and were never recorded as submitted.`);
+  }
+  const rolling = bids.filter((bid) => bid.rolling).length;
+  if (rolling > 0) {
+    limits.push(
+      `${rolling} of these are rolling submissions with no return date — a dynamic market, or a registration that ` +
+        'is maintained rather than returned. They are judged against today and re-judged on every read, so one can ' +
+        'go red on its own as a certificate ages.',
+    );
   }
   const gapped = bids.filter((bid) => bid.openGaps > 0).length;
   if (gapped > 0) {
@@ -1577,8 +1698,14 @@ export function renderPack(
       rows: [
         { label: 'Buyer', value: bid.buyerName },
         ...(bid.buyerReference ? [{ label: 'Their reference', value: bid.buyerReference }] : []),
-        { label: 'Scheme', value: bid.scheme },
-        { label: 'Return by', value: bid.deadline },
+        { label: 'Scheme', value: bid.scheme as string },
+        // A rolling submission has no return date, and the pack says which day
+        // it was judged on instead. Printing a blank there, or today's date
+        // under a "Return by" label, would both be a buyer reading something
+        // untrue off the front page.
+        bid.rolling
+          ? { label: 'Submitted on a rolling basis, judged on', value: position.judgementDay }
+          : { label: 'Return by', value: bid.deadline as string },
         { label: 'Our reference', value: bid.reference },
       ],
     },

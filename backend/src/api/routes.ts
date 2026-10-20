@@ -13619,15 +13619,20 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/bid-on/bids',
     description:
-      'Open a bid under an engagement. Refused for a paused, completed or cancelled engagement, which is what makes every ACU it later spends attributable to a customer and a piece of commercial work',
+      'Open a bid under an engagement. Refused for a paused, completed or cancelled engagement, which is what makes every ACU it later spends attributable to a customer and a piece of commercial work. Either a return deadline or `rolling` — a dynamic market and a maintained registration have no return date, and a rolling bid is judged against the day it is read rather than against one somebody invented',
     schema: {
       type: 'object',
-      required: ['engagementId', 'buyerName', 'scheme', 'deadline'],
+      // `deadline` is no longer required at the schema, because a rolling
+      // submission has none. Exactly one of the two is required and that is
+      // checked in the domain, where the refusal can say which mistake was
+      // made — a schema that demanded one of two fields would say neither.
+      required: ['engagementId', 'buyerName', 'scheme'],
       properties: {
         engagementId: stringField,
         buyerName: { type: 'string', minLength: 3, maxLength: 200 },
         scheme: { type: 'string', enum: [...bidOnBids.BID_SCHEME] },
         deadline: { type: 'string', minLength: 10, maxLength: 10 },
+        rolling: { type: 'boolean' },
         buyerReference: { type: 'string', maxLength: 120 },
         sourceTenderId: stringField,
       },
@@ -13708,8 +13713,13 @@ export const ROUTES: Route[] = [
     readOnly: true,
     guest: 'OWN',
     description:
-      'The bid in full: every question with its latest answer, the verdict on it, its open gap, and pack readiness. Computed on read, so the screen and the export gate cannot disagree',
-    handler: (platform, ctx) => bidOnBids.bidPosition(tenantContext(platform, ctx), ctx.params.bidId as string),
+      'The bid in full: every question with its latest answer, the verdict on it, its open gap, and pack readiness. Computed on read, so the screen and the export gate cannot disagree. Says which day it was judged against — the deadline, or today on a rolling submission, where the answer genuinely changes as certificates age',
+    handler: (platform, ctx) =>
+      bidOnBids.bidPosition(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.query.get('asAt') ?? undefined,
+      ),
   },
   {
     method: 'POST',

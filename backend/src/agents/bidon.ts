@@ -275,6 +275,38 @@ const bidOnPackAgent: AgentDefinition = {
     for (const bid of register.bids) {
       const sent = ['SUBMITTED', 'WON', 'LOST'].includes(bid.status);
 
+      /*
+       * A rolling submission has no countdown, so every finding below is
+       * meaningless on one — "closes in 0 days" on a dynamic market
+       * application is a false alarm that would never clear.
+       *
+       * What is worth saying about one is the opposite problem. A dated bid has
+       * a deadline that forces the issue; a membership pack that cannot be
+       * exported has nothing forcing it, so it sits unfinished indefinitely and
+       * nobody is reminded. That is the finding.
+       */
+      if (bid.daysLeft === null) {
+        if (!sent && !bid.exportable && bid.questions > 0) {
+          findings.push({
+            key: `bidon:rolling-stalled:${bid.id}`,
+            severity: 'ATTENTION',
+            summary:
+              `${bid.reference} for ${bid.customerName} is a rolling submission with no return date and cannot be ` +
+              `exported: ${bid.approved} of ${bid.questions} answers approved` +
+              (bid.openGaps > 0 ? `, ${bid.openGaps} gap(s) still with the customer` : '') +
+              '.',
+            consequence:
+              'Nothing will force this one. A dated bid has a deadline that makes somebody finish it; an open ' +
+              'market application has none, so it stays unfinished until somebody decides to finish it. It is also ' +
+              'judged against today, so a certificate ageing can take it backwards while it waits.',
+            evidence: [
+              { refType: 'BidOnBid', refId: bid.id, note: `Readiness ${bid.readinessPercent ?? 0}%` },
+            ],
+          });
+        }
+        continue;
+      }
+
       if (bid.daysLeft < 0 && !sent) {
         findings.push({
           key: `bidon:overdue:${bid.id}`,

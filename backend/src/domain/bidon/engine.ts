@@ -14,7 +14,16 @@ import {
   type Retrieval,
 } from './evidence.ts';
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MAX_CHARS } from '../../ai/providers/embedding.ts';
-import { ANSWER_TYPE, bidsOf, latestAnswer, recordAnswer, scoreAnswer, type Bid, type BidQuestion } from './bids.ts';
+import {
+  ANSWER_TYPE,
+  bidsOf,
+  judgedOn,
+  latestAnswer,
+  recordAnswer,
+  scoreAnswer,
+  type Bid,
+  type BidQuestion,
+} from './bids.ts';
 import { CRITERION, CRITERION_QUESTION, type CriterionScores } from './rubric.ts';
 
 /**
@@ -147,6 +156,12 @@ async function retrieveForDrafting(
   bid: Bid,
   question: BidQuestion,
 ): Promise<Retrieval & { acuConsumed: number }> {
+  // The day this pack is judged against: its deadline, or today on a rolling
+  // submission that has no return date. The retriever must use the same day
+  // the verdicts do, or the drafter is handed a certificate the pack will
+  // then mark as lapsed.
+  const day = judgedOn(bid);
+
   const embedding = ctx.orchestrator.controlPlaneStatus().embedding;
   const inSpace =
     embedding.configured &&
@@ -155,7 +170,7 @@ async function retrieveForDrafting(
       (entry) =>
         entry.customerAccountId === bid.customerAccountId &&
         !entry.withdrawnAt &&
-        evidenceCurrentOn(entry, bid.deadline) &&
+        evidenceCurrentOn(entry, day) &&
         entry.semanticModel !== undefined &&
         entry.semanticModel.provider === embedding.provider &&
         entry.semanticModel.modelClass === EMBEDDING_CLASS,
@@ -165,7 +180,7 @@ async function retrieveForDrafting(
     return retrieveSemantic(ctx, {
       customerAccountId: bid.customerAccountId,
       question: `${question.text} ${question.section}`,
-      asAt: bid.deadline,
+      asAt: day,
     });
   }
 
@@ -173,7 +188,7 @@ async function retrieveForDrafting(
     ...retrieveFor(ctx, {
       customerAccountId: bid.customerAccountId,
       question: `${question.text} ${question.section}`,
-      asAt: bid.deadline,
+      asAt: day,
     }),
     acuConsumed: 0,
   };
@@ -689,7 +704,10 @@ export async function composeGapRequest(
         'with `note`: an array of paragraph strings.',
       payload: {
         buyer: bid.buyerName,
-        deadline: bid.deadline,
+        // What the customer is told to work to. A rolling submission has no
+        // return date, and inventing one to put in a message to a contractor
+        // is how a made-up date becomes the date everybody plans around.
+        ...(bid.deadline ? { deadline: bid.deadline } : { deadline: 'rolling — there is no return date' }),
         missing: open.map((gap) => ({
           question: numberOf.get(gap.questionId) ?? '',
           asked: gap.promptToClient,

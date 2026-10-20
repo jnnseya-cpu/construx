@@ -234,8 +234,14 @@ export async function bidonguest(root) {
           rows: bidList.map((bid) => [
             bid.buyerName,
             humanise(bid.scheme),
-            date(bid.deadline),
-            bid.daysLeft < 0 ? badge('past', 'bad') : String(bid.daysLeft),
+            // In the customer's own words: a submission with no return date is
+            // "ongoing", not a blank cell and not today's date under "Due".
+            bid.rolling ? badge('ongoing', 'info') : date(bid.deadline),
+            bid.daysLeft === null
+              ? html`<span style="font-size:12px;color:var(--text-3)">no closing date</span>`
+              : bid.daysLeft < 0
+                ? badge('past', 'bad')
+                : String(bid.daysLeft),
             String(bid.questions),
             bid.openGaps === 0 ? badge('nothing', 'good') : badge(String(bid.openGaps), 'warn'),
             // Deliberately plain words rather than the internal status. "In

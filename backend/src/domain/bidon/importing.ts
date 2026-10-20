@@ -364,7 +364,14 @@ export function importableTenders(
 export function importBid(
   ctx: EngineContext,
   input: { tenderId: string; engagementId: string; documentIds?: string[]; scheme?: Bid['scheme'] },
-): { bid: Bid; copied: string[]; files: Array<{ hash: string; description: string }>; note: string } {
+): {
+  bid: Bid;
+  copied: string[];
+  files: Array<{ hash: string; description: string }>;
+  /** Whether it produced a rolling submission, because the two behave differently. */
+  rolling: boolean;
+  note: string;
+} {
   requireModule(ctx.grantedModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
 
@@ -372,15 +379,22 @@ export function importBid(
   requireOpenEngagement(ctx, input.engagementId);
 
   const index = tenderFileIndex(ctx);
+  /*
+   * No deadline recorded is not an error any more.
+   *
+   * It used to be refused, on the reasoning that every certificate-expiry check
+   * in a pack is judged against a return date. That reasoning holds for an ITT
+   * and is wrong for the thing the standard section increasingly records: a
+   * dynamic market under the Procurement Act accepts applications at any point
+   * in its life and has no return date to record. Refusing the import left the
+   * only options as inventing a date or not using the module.
+   *
+   * So a tender with no deadline imports as a **rolling** bid, judged against
+   * the day it is read. The import says which it produced, because the two
+   * behave differently for the rest of the bid's life.
+   */
   const digest = digestOf(invitation, index);
-  if (!digest.deadline) {
-    throw new DomainError(
-      'BID_ON_TENDER_NO_DEADLINE',
-      `${digest.reference || input.tenderId} has no return deadline recorded, and every certificate-expiry check in ` +
-        'a pack is judged against one. Record the deadline in the standard section first.',
-      422,
-    );
-  }
+  const rolling = digest.deadline === '';
 
   // The documents to carry over: the ones named, or all of them.
   const available = digest.documents;
@@ -400,7 +414,7 @@ export function importBid(
     engagementId: input.engagementId,
     buyerName: digest.clientName || digest.reference || 'Unnamed buyer',
     scheme: input.scheme ?? 'ITT',
-    deadline: digest.deadline,
+    ...(rolling ? { rolling: true as const } : { deadline: digest.deadline }),
     ...(digest.reference ? { buyerReference: digest.reference } : {}),
     sourceTenderId: input.tenderId,
   });
@@ -424,13 +438,18 @@ export function importBid(
     bid: imported,
     copied,
     files,
+    rolling,
     note:
-      files.length > 0
+      (rolling
+        ? `${bid.reference} is a rolling submission: that tender records no return date, so every expiry and ` +
+          'declaration in the pack is judged against the day it is read rather than against a date nobody set. '
+        : '') +
+      (files.length > 0
         ? `${bid.reference} carries ${files.length} file(s) already in the evidence store. Read the questionnaire ` +
           'from one of them — nothing has to be uploaded again.'
-        : `${bid.reference} carries the transmittal's list of ${copied.length} document(s) and the deadline. No file ` +
-          'is registered against that tender in the standard section, so the questionnaire itself still has to be ' +
-          'given to the parser as pasted text or as a file.',
+        : `${bid.reference} carries the transmittal's list of ${copied.length} document(s). No file is registered ` +
+          'against that tender in the standard section, so the questionnaire itself still has to be given to the ' +
+          'parser as pasted text or as a file.'),
   };
 }
 
@@ -513,6 +532,8 @@ export function resyncBid(
   bid: Bid;
   rewordedQuestions: string[];
   answersReopened: number;
+  /** The source gained a return date, so a rolling submission is now a dated one. */
+  becameDated: boolean;
   note: string;
 } {
   requireModule(ctx.grantedModules, 'BID_ON');
@@ -597,10 +618,24 @@ export function resyncBid(
     ...(files.length > 0 ? { sourceFiles: files } : {}),
     // Only drafting again where something actually moved.
     status: reworded.length > 0 ? 'DRAFTING' : bid.status,
-    // The deadline follows the source, because every expiry verdict in the pack
-    // is judged against it and a stale one scores certificates against a date
-    // the buyer has moved.
-    deadline: now.deadline || bid.deadline,
+    /*
+     * The deadline follows the source, because every expiry verdict in the pack
+     * is judged against it and a stale one scores certificates against a date
+     * the buyer has moved.
+     *
+     * Including the transition that matters most: a dynamic market that has
+     * since issued a dated tender notice to its members. The bid stops being
+     * rolling and becomes dated, which changes what every verdict in it means —
+     * a certificate that was current "today" may lapse before the new return
+     * date. That is reported in the note rather than left for somebody to
+     * notice from a changed column.
+     */
+    ...(now.deadline
+      ? { deadline: now.deadline }
+      : bid.deadline
+        ? { deadline: bid.deadline }
+        : {}),
+    ...(now.deadline ? {} : bid.rolling ? { rolling: true as const } : {}),
     sourceDigest: {
       ...now,
       documents: now.documents,
@@ -615,16 +650,23 @@ export function resyncBid(
     nextState: { ...resynced },
   });
 
+  const became = bid.rolling === true && now.deadline !== '';
   return {
     bid: resynced,
     rewordedQuestions: reworded.map((question) => question.number),
     answersReopened,
+    becameDated: became,
     note:
-      reworded.length === 0
+      (became
+        ? `${bid.reference} was a rolling submission and the source now carries a return date of ${now.deadline}. ` +
+          'Every expiry and declaration in the pack is judged against that date from now on instead of against the ' +
+          'day it is read, so re-read the certificates: one that was current today may lapse before the return. '
+        : '') +
+      (reworded.length === 0
         ? 'Nothing was reworded, so no answer was reopened. The deadline, the document list and the files now match ' +
           'the source.'
         : `${reworded.length} question(s) were reworded (${reworded.map((q) => q.number).join(', ')}) and ` +
           `${answersReopened} approved answer(s) went back for review. Every version is kept — the answer approved ` +
-          'against the old wording is what a dispute about the old wording would turn on.',
+          'against the old wording is what a dispute about the old wording would turn on.'),
   };
 }

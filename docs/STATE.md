@@ -26943,6 +26943,92 @@ about a vendor contract, which is the same contract the no-training question is
 about. A test asserts the refusal so it is recorded here rather than discovered
 on a host.
 
+### Bid-On: a submission with no return date
+
+`rolling` on the bid, `judgedOn` as the one place that decides which day a pack
+is judged against, and `backend/tests/bidonrolling.test.ts`.
+
+**The problem it solves.** Everything in the module judged expiry, insurance and
+declarations against the bid's deadline, which is right for an ITT: that is the
+day the buyer reads it, and a certificate lapsing the week before return is not
+evidence for that submission. Two things a provider actually chases have no such
+day — a **dynamic market** under the Procurement Act, which accepts applications
+at any point in its life and cannot cap its membership, and a **registration
+that is maintained** rather than returned, such as UVDB or Constructionline.
+
+The available workaround was to put a target date in the deadline field, and
+that is exactly what this exists to prevent. Every verdict in the pack would
+then be judged against a date somebody made up, and *"this certificate lapses
+before the deadline"* would be a statement about an invention.
+
+**So a rolling bid carries no deadline at all.** `deadline` became optional and
+`rolling?: true` was added — `true` only, never `false`, so absent means dated
+and every bid written before this replays as exactly what it was, with no
+migration and no backfilled flag anybody would have to trust. `createBid`
+requires **exactly one** of the two and the refusals name which mistake was
+made: a bid with neither is somebody who forgot the deadline, and a bid with both
+is a dated bid wearing the wrong label.
+
+**`judgedOn` is the one place that decides the day**, because the alternative is
+each caller deciding — and a screen judging against today while the export gate
+judged against a deadline would disagree about whether a certificate is valid,
+which is the only question either is being asked. A dated bid answers its
+deadline; a rolling bid answers the day it is being read.
+
+**The position publishes the day it used.** `judgementDay` is on every
+`bidPosition`, because on a rolling bid the answer changes daily and a readiness
+figure somebody screenshots is worthless without the date it was true on. The
+rubric's input field is still called `deadline` and was deliberately not
+renamed — on a dated bid that is exactly what it is, and renaming a member of a
+closed union for cosmetic reasons is what rule 3 forbids.
+
+**A rolling pack goes backwards on its own, and that is the point.** The test
+asserts it with no event in between: the same record, exportable read on one
+day, red read on a later one once the cited certificate has lapsed. That is the
+behaviour a maintained registration needs and the one a dated bid cannot
+express.
+
+**Nothing invents a countdown.** `daysLeft` is `null` rather than zero — a
+countdown of 0 would read as "due today" on something with no due date at all.
+The register sorts rolling bids last, because they are never the thing with the
+least time left, and never counts one as late: a permanent false alarm against
+every membership a provider maintains is how a register stops being read. The
+agent skips every deadline-pressure finding on a rolling bid and raises a
+different one instead — a membership pack that cannot be exported has **nothing
+forcing it**, so it sits unfinished indefinitely while a dated bid has a
+deadline that makes somebody finish it.
+
+**The pack does not print a return date it does not have.** `renderPack` prints
+"Submitted on a rolling basis, judged on <date>" in place of "Return by", and
+the customer's own screen says "ongoing" rather than showing today's date under
+*Due*. A gap request to the contractor says "rolling — there is no return date"
+rather than carrying an invented one into a message somebody will plan around.
+
+**The transition that matters is handled.** A dynamic market that later issues a
+dated tender notice to its members: on resync the bid stops being rolling and
+becomes dated, `becameDated` is on the result, and the note says to re-read the
+certificates — a certificate that was current "today" may lapse before the new
+return date, so every verdict in the pack just changed meaning.
+
+**One path this shape does not reach, stated because the first draft of its test
+was titled as though it did.** `importBid` no longer refuses a tender with no
+return date — it imports it as rolling — but that branch is **not reachable
+through the standard section today**: `recordInvitation` requires a return date
+by design, since the deadline is registered the hour the ITT lands before
+anybody has read a word of it, so the digest always carries one. The branch is
+defensive. It costs nothing, because importing was always a shortcut: a dynamic
+market application is started here with `rolling: true` and never needs the
+tender recorded in the standard section at all. Making that section able to
+record a dateless invitation would mean changing its countdown, its
+clarifications and its re-review rules, and that is **not built**.
+
+**Also not built, and deliberately:** reopening an exported rolling pack. A
+membership is maintained, so the obvious request is to amend and resubmit — but
+the record of what was sent must stay what was sent, which is the rule the whole
+module rests on. A renewal is a new bid, the same answer the module already
+gives for a prequalification stage followed by an ITT stage: two bids off one
+invitation.
+
 **Still outstanding, and recorded rather than quietly fixed:** the
 `semantic-search` route's own provider. `datalayer/embeddingProvider()` still
 returns `undefined`, and its docstring now says why — the blocker is no longer

@@ -358,10 +358,16 @@ export async function bidon(root) {
           bid.customerName,
           bid.buyerName,
           humanise(bid.scheme),
-          date(bid.deadline),
-          bid.daysLeft < 0
-            ? badge(`${Math.abs(bid.daysLeft)} over`, 'bad')
-            : badge(`${bid.daysLeft}d`, bid.daysLeft <= 5 ? 'warn' : ''),
+          // A rolling submission has no return date and no countdown. Showing
+          // today's date under "Due" would be a date nobody set, and a
+          // countdown of 0 would read as due today on something with no due
+          // date at all.
+          bid.rolling ? badge('rolling', 'info') : date(bid.deadline),
+          bid.daysLeft === null
+            ? html`<span style="font-size:12px;color:var(--text-3)">no return date</span>`
+            : bid.daysLeft < 0
+              ? badge(`${Math.abs(bid.daysLeft)} over`, 'bad')
+              : badge(`${bid.daysLeft}d`, bid.daysLeft <= 5 ? 'warn' : ''),
           String(bid.questions),
           String(bid.approved),
           bid.openGaps === 0 ? '—' : badge(String(bid.openGaps), 'warn'),
@@ -1031,11 +1037,27 @@ export async function bidon(root) {
             { value: 'CUSTOM', label: 'Something else' },
           ],
           hint: 'Which rubric the answers are scored against.' },
-        { name: 'deadline', label: 'Return deadline', type: 'date',
-          hint: 'The day the buyer reads it. Every certificate expiry is judged against this, not against today.' },
+        { name: 'deadline', label: 'Return deadline', type: 'date', required: false,
+          hint:
+            'The day the buyer reads it. Every certificate expiry is judged against this, not against today. Leave ' +
+            'it blank only if you tick rolling below.' },
+        { name: 'rolling', label: 'No return date', type: 'select', required: false,
+          options: [
+            { value: '', label: 'There is a return deadline' },
+            { value: 'true', label: 'Rolling — a dynamic market or a maintained registration' },
+          ],
+          hint:
+            'A dynamic market accepts applications at any point in its life, and a UVDB or Constructionline ' +
+            'registration is maintained rather than returned. Neither has a return date, so a rolling bid is judged ' +
+            'against the day it is read — which means its readiness moves on its own as certificates age.' },
         { name: 'buyerReference', label: 'Buyer’s reference', type: 'text', required: false },
       ],
-      transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
+      transform: (v) => ({
+        ...Object.fromEntries(
+          Object.entries(v).filter(([key, value]) => key !== 'rolling' && String(value ?? '').trim()),
+        ),
+        ...(v.rolling === 'true' ? { rolling: true } : {}),
+      }),
     },
     'import-bid': {
       title: 'Import a tender as a bid',
@@ -1842,10 +1864,14 @@ function bidDetail(position, estimate, source) {
         ${readiness.exportable ? badge('ready to export', 'ok') : badge(humanise(bid.status), BID_TONE[bid.status] ?? '')}
       </h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-        ${customer.legalName} · ${humanise(bid.scheme)} · due ${date(bid.deadline)}.
+        ${customer.legalName} · ${humanise(bid.scheme)} ·
+        ${bid.rolling ? html`no return date` : html`due ${date(bid.deadline)}`}.
         ${readiness.summary}
-        Every verdict is judged against the deadline rather than against today, because that is the day the buyer
-        reads it.
+        ${bid.rolling
+          ? html`Every verdict is judged against <b>${date(position.judgementDay)}</b>, the day this was read, and is
+              re-judged on every read — a membership nobody returns has no other honest date to judge against.`
+          : html`Every verdict is judged against the deadline rather than against today, because that is the day the
+              buyer reads it.`}
       </p>
       ${
         limits.length > 0
