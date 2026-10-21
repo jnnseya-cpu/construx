@@ -13631,6 +13631,9 @@ export const ROUTES: Route[] = [
         engagementId: stringField,
         buyerName: { type: 'string', minLength: 3, maxLength: 200 },
         scheme: { type: 'string', enum: [...bidOnBids.BID_SCHEME] },
+        stage: { type: 'string', enum: [...bidOnBids.BID_STAGE] },
+        followsBidId: stringField,
+        clarificationDeadline: { type: 'string', minLength: 10, maxLength: 10 },
         deadline: { type: 'string', minLength: 10, maxLength: 10 },
         rolling: { type: 'boolean' },
         buyerReference: { type: 'string', maxLength: 120 },
@@ -13866,6 +13869,86 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.bidId as string,
         ctx.params.answerId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications',
+    description:
+      'Raise a question for the buyer that a person spotted. The module raises most of these itself — a question with no stated limit, a returnable with no stated format, an amendment that shifts a risk — and this is the door for the ones only a reader finds',
+    schema: {
+      type: 'object',
+      required: ['severity', 'subject', 'question'],
+      properties: {
+        severity: { type: 'string', enum: ['CRITICAL', 'MAJOR', 'MINOR'] },
+        subject: { type: 'string', minLength: 3, maxLength: 200 },
+        question: { type: 'string', minLength: 20, maxLength: 4000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.raiseClarification(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications/:clarificationId/asked',
+    description:
+      'Record that a question actually went to the buyer, and their reference for it. Takes the date rather than assuming today, because the whole value of the field is answering whether it got in before their window shut. Recorded even where it went late — that is a fact, and often one worth having',
+    schema: {
+      type: 'object',
+      properties: {
+        askedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        buyerReference: { type: 'string', maxLength: 120 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.markClarificationAsked(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.clarificationId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications/:clarificationId/answer',
+    description:
+      'Record the buyer’s answer in their own words. A buyer’s answer to a clarification is part of the tender documents from the moment they give it, usually issued to every bidder, so a paraphrase of it is a new claim with nobody’s name on it. What the answer changes — a stated limit, a waived document, a moved date — is a separate act, so the change and the authority for it are two entries',
+    schema: {
+      type: 'object',
+      required: ['answer'],
+      properties: {
+        answer: { type: 'string', minLength: 20, maxLength: 8000 },
+        answeredOn: { type: 'string', minLength: 10, maxLength: 10 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.recordClarificationAnswer(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.clarificationId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications/:clarificationId/withdraw',
+    description:
+      'Drop a question without asking it, with the reason. The module will raise the same subject again the next time a register is added to or a schedule re-read, and a withdrawal is what stops that — so it has to say why, or the next person sees a dropped question and no way to know whether it was answered elsewhere, judged irrelevant, or simply missed',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.withdrawClarification(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.clarificationId as string,
         body(ctx),
       ),
   },

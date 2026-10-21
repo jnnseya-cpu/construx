@@ -146,6 +146,48 @@ export type BidAnswerVersion = {
   overrideReason?: string;
 };
 
+export const BID_STAGE = ['PQQ', 'ITT', 'SINGLE_STAGE'] as const;
+export type BidStage = (typeof BID_STAGE)[number];
+
+export const CLARIFICATION_STATUS = ['RAISED', 'ASKED', 'ANSWERED', 'WITHDRAWN'] as const;
+export type ClarificationStatus = (typeof CLARIFICATION_STATUS)[number];
+
+export const CLARIFICATION_SOURCE = ['LIMITS', 'RETURNABLES', 'AMENDMENTS', 'PERSON'] as const;
+export type ClarificationSource = (typeof CLARIFICATION_SOURCE)[number];
+
+/**
+ * A question for the buyer, and what has happened to it.
+ *
+ * `Clarification` from `domain/tenderintake.ts` carries the question itself —
+ * severity, subject, and the words it would be asked in — and that stays the
+ * source of truth for it. What is added here is the **lifecycle**, because a
+ * clarification that nobody sent is not a clarification, it is a note.
+ *
+ * A two-stage procurement is why this needs states at all. A PQQ has its own
+ * clarification deadline, weeks before the ITT exists; the ITT has another.
+ * Asking at the wrong stage is asking too late, and a buyer's answer at the PQQ
+ * stage is a fact the ITT inherits. None of that is expressible in a list of
+ * notes.
+ */
+export type BidClarification = Clarification & {
+  id: string;
+  status: ClarificationStatus;
+  /** Which part of the module noticed it, or a person. */
+  source: ClarificationSource;
+  raisedAt: string;
+  raisedBy: string;
+  /** When it actually went to the buyer, and their own reference for it. */
+  askedAt?: string;
+  askedBy?: string;
+  buyerReference?: string;
+  /** What the buyer said, in their words. */
+  answer?: string;
+  answeredAt?: string;
+  recordedBy?: string;
+  /** Why it was dropped without being asked. */
+  withdrawnReason?: string;
+};
+
 export const RETURNABLE_OWNER = ['PROVIDER', 'CUSTOMER'] as const;
 export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
 
@@ -287,6 +329,39 @@ export type Bid = {
   buyerReference?: string;
   scheme: BidScheme;
   /**
+   * Which stage of the procurement this pack is.
+   *
+   * A PQQ and the ITT that follows it are **two submissions to one buyer about
+   * one job**, with separate question sets, separate deadlines, separate
+   * clarification windows and separate outcomes. Treating them as one bid loses
+   * the PQQ's own result; treating them as unrelated loses the fact that the
+   * ITT exists only because the PQQ was won, and that everything said at the
+   * PQQ stage is on the record the ITT is read against.
+   *
+   * `SINGLE_STAGE` is the honest default for the many procurements that are one
+   * questionnaire and done — a registration, a dynamic market application, an
+   * open ITT with no prequalification.
+   */
+  stage: BidStage;
+  /**
+   * The PQQ this ITT came out of, where there was one.
+   *
+   * One direction only, and the later bid holds the link: a PQQ exists before
+   * anybody knows whether an ITT will follow, so a forward pointer would be a
+   * field that is empty exactly when it matters and backfilled afterwards.
+   */
+  followsBidId?: string;
+  /**
+   * The day the buyer stops accepting questions.
+   *
+   * Separate from the return deadline and almost always well before it, which
+   * is the whole reason it is here. A clarification raised after this date
+   * cannot be asked at all: a point that could have been negotiated becomes a
+   * risk that has to be priced or accepted, and nothing else in the pack tells
+   * anybody that window has shut.
+   */
+  clarificationDeadline?: string;
+  /**
    * The day the buyer reads it. Every expiry is judged against this.
    *
    * Absent on a rolling submission, and absent rather than invented. See
@@ -350,7 +425,7 @@ export type Bid = {
    * deadline has passed. `Clarification` is the standard section's own type,
    * reused rather than restated.
    */
-  clarifications: Clarification[];
+  clarifications: BidClarification[];
   /**
    * The last reading of a schedule of amendments, where one has been read.
    *
@@ -462,6 +537,12 @@ export function createBid(
     engagementId: string;
     buyerName: string;
     scheme: BidScheme;
+    /** PQQ, the ITT that follows it, or a one-stage procurement. Defaults to one stage. */
+    stage?: BidStage;
+    /** The PQQ this ITT came out of. Implies `stage: 'ITT'` where the stage is not given. */
+    followsBidId?: string;
+    /** The day the buyer stops accepting questions. Earlier than the return. */
+    clarificationDeadline?: string;
     deadline?: string;
     /** No return date: a dynamic market, or a registration that is maintained. */
     rolling?: true;
@@ -506,6 +587,63 @@ export function createBid(
     throw new DomainError('BID_ON_DEADLINE_INVALID', 'A deadline is a date', 400);
   }
 
+  /*
+   * The stage, and the PQQ behind it.
+   *
+   * Giving a `followsBidId` and calling the bid a PQQ is a contradiction — a
+   * prequalification does not follow a prequalification for the same job — so
+   * the stage is inferred as ITT where it is not stated and refused where it
+   * is stated as something else. The predecessor has to be a PQQ this person
+   * can already see, for the same customer: a link to another customer's PQQ
+   * would be the one leak this module exists to prevent, dressed as a
+   * convenience.
+   */
+  const stage: BidStage = input.stage ?? (input.followsBidId ? 'ITT' : 'SINGLE_STAGE');
+  if (input.followsBidId) {
+    if (stage !== 'ITT') {
+      throw new DomainError(
+        'BID_ON_STAGE_CONTRADICTS',
+        `A bid that follows a prequalification is the ITT stage, not ${stage}. Leave the stage out and it is taken ` +
+          'as the ITT.',
+        400,
+      );
+    }
+    const previous = requireBid(ctx, input.followsBidId);
+    if (previous.customerAccountId !== customer.id) {
+      throw new DomainError(
+        'BID_ON_PREDECESSOR_NOT_THIS_CUSTOMER',
+        `${previous.reference} belongs to another customer. An ITT follows that customer's own prequalification, and ` +
+          'nothing else.',
+        409,
+      );
+    }
+    if (previous.stage !== 'PQQ') {
+      throw new DomainError(
+        'BID_ON_PREDECESSOR_NOT_PQQ',
+        `${previous.reference} is the ${previous.stage.toLowerCase().replace('_', ' ')} stage, so nothing follows ` +
+          'it. An ITT follows a prequalification.',
+        409,
+      );
+    }
+  }
+
+  // A window for questions that closes after the buyer has read the submission
+  // is not a window. On a rolling bid there is no return to be before.
+  const clarificationDeadline = input.clarificationDeadline?.slice(0, 10);
+  if (clarificationDeadline !== undefined) {
+    if (Number.isNaN(Date.parse(clarificationDeadline))) {
+      throw new DomainError('BID_ON_CLARIFICATION_DATE_INVALID', 'A clarification deadline is a date', 400);
+    }
+    if (deadline && clarificationDeadline > deadline) {
+      throw new DomainError(
+        'BID_ON_CLARIFICATION_AFTER_RETURN',
+        `The clarification deadline of ${clarificationDeadline} falls after the return deadline of ${deadline}. A ` +
+          'window for questions that closes after the buyer has read the submission is not a window.',
+        422,
+      );
+    }
+  }
+
   const weights = input.weights ?? DEFAULT_WEIGHTS;
   const weightTotal = Object.values(weights).reduce((sum, weight) => sum + weight, 0);
   if (Math.abs(weightTotal - 1) > 0.001) {
@@ -528,6 +666,9 @@ export function createBid(
     buyerName: requireText(input.buyerName, NAME_MIN, 'BID_ON_NAME_TOO_SHORT', 'A buyer name'),
     ...(input.buyerReference?.trim() ? { buyerReference: input.buyerReference.trim() } : {}),
     scheme: input.scheme,
+    stage,
+    ...(input.followsBidId ? { followsBidId: input.followsBidId } : {}),
+    ...(clarificationDeadline ? { clarificationDeadline } : {}),
     ...(deadline ? { deadline } : {}),
     ...(input.rolling ? { rolling: true as const } : {}),
     status: 'CREATED',
@@ -683,7 +824,7 @@ export function confirmQuestions(
   const next: Bid = {
     ...bid,
     questions,
-    clarifications: mergeClarifications(bid.clarifications, raised),
+    clarifications: raiseClarifications(ctx, bid.clarifications, raised, 'LIMITS'),
     questionsConfirmedAt: new Date().toISOString(),
     questionsConfirmedBy: ctx.auth.actorId,
     status: 'DRAFTING',
@@ -1045,6 +1186,300 @@ export function rejectAnswer(
   return { bid: next, answer: rejected };
 }
 
+// --- Clarification requests --------------------------------------------------
+
+/**
+ * Why a clarification has states at all.
+ *
+ * Three of the four sources raise these automatically — a question with no
+ * stated limit, a mandatory returnable with no stated format, an amendment that
+ * shifts a risk — and a note nobody sent is worth nothing. What decides whether
+ * a bid team got the benefit is whether the question reached the buyer **before
+ * their clarification deadline**, which on a two-stage procurement is a
+ * different date at each stage and is always well before the return.
+ *
+ * So: raised, asked, answered, withdrawn. The buyer's own reference is recorded
+ * because that is what their answer will quote back, and their answer is
+ * recorded in their words because a paraphrase of a buyer's answer is a new
+ * claim with nobody's name on it.
+ */
+
+function requireClarification(bid: Bid, clarificationId: string): BidClarification {
+  const held = bid.clarifications.find((entry) => entry.id === clarificationId);
+  if (!held) {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_NOT_FOUND',
+      `No clarification ${clarificationId} on ${bid.reference}`,
+      404,
+    );
+  }
+  return held;
+}
+
+/** Add a question a person spotted. `U` on `BID_SERVICES`. */
+export function raiseClarification(
+  ctx: EngineContext,
+  bidId: string,
+  input: { severity: Clarification['severity']; subject: string; question: string },
+): { bid: Bid; clarification: BidClarification } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const subject = requireText(input.subject, NAME_MIN, 'BID_ON_SUBJECT_TOO_SHORT', 'A subject');
+  const question = requireText(input.question, PROMPT_MIN, 'BID_ON_QUESTION_TOO_SHORT', 'A question for the buyer');
+
+  if (bid.clarifications.some((entry) => entry.subject === subject)) {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_DUPLICATE',
+      `${bid.reference} already has a clarification about "${subject}". Two questions to a buyer about one subject ` +
+        'invites two answers that have to be reconciled.',
+      409,
+    );
+  }
+
+  const next: Bid = {
+    ...bid,
+    clarifications: raiseClarifications(ctx, bid.clarifications, [{ severity: input.severity, subject, question }], 'PERSON'),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_CLARIFICATION_RAISED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, clarification: next.clarifications[next.clarifications.length - 1]! };
+}
+
+/**
+ * Record that a question actually went to the buyer. `U` on `BID_SERVICES`.
+ *
+ * Takes the date rather than assuming today, because somebody records this
+ * after the fact as often as at the time, and a wrong date here is worse than
+ * none: the whole value of the field is answering "did we get it in before
+ * their window shut".
+ *
+ * Asking **after** the clarification deadline is recorded rather than refused.
+ * It is a fact, and often a fact worth having — a buyer may answer a late
+ * question and may not — so the record carries it and the position says plainly
+ * that it went late. Refusing would make the honest entry impossible and leave
+ * the question looking un-asked for ever.
+ */
+export function markClarificationAsked(
+  ctx: EngineContext,
+  bidId: string,
+  clarificationId: string,
+  input: { askedOn?: string; buyerReference?: string },
+): { bid: Bid; clarification: BidClarification; late: boolean } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const held = requireClarification(bid, clarificationId);
+
+  if (held.status === 'ANSWERED') {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_ANSWERED',
+      `${held.subject} has already been answered by the buyer. Asking it again would invite a second answer that has ` +
+        'to be reconciled with the first.',
+      409,
+    );
+  }
+  if (held.status === 'WITHDRAWN') {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_WITHDRAWN',
+      `${held.subject} was withdrawn. Raise it again rather than sending something somebody decided not to ask.`,
+      409,
+    );
+  }
+
+  const askedOn = (input.askedOn ?? new Date().toISOString()).slice(0, 10);
+  const late = bid.clarificationDeadline !== undefined && askedOn > bid.clarificationDeadline;
+
+  const asked: BidClarification = {
+    ...held,
+    status: 'ASKED',
+    askedAt: askedOn,
+    askedBy: ctx.auth.actorId,
+    ...(input.buyerReference?.trim() ? { buyerReference: input.buyerReference.trim() } : {}),
+  };
+
+  const next: Bid = {
+    ...bid,
+    clarifications: bid.clarifications.map((entry) => (entry.id === clarificationId ? asked : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_CLARIFICATION_ASKED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, clarification: asked, late };
+}
+
+/**
+ * Record the buyer's answer. `U` on `BID_SERVICES`.
+ *
+ * In their words, verbatim, because a buyer's answer to a clarification is part
+ * of the tender documents from the moment they give it — usually issued to
+ * every bidder — and a paraphrase of it is a new claim with nobody's name on
+ * it. What the answer *changes* is a separate act: a stated word limit goes on
+ * the question, a waived document goes on the register, a moved date goes on
+ * the bid. This records what was said and nothing else, so that the change and
+ * the authority for it are two entries rather than one.
+ */
+export function recordClarificationAnswer(
+  ctx: EngineContext,
+  bidId: string,
+  clarificationId: string,
+  input: { answer: string; answeredOn?: string },
+): { bid: Bid; clarification: BidClarification } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const held = requireClarification(bid, clarificationId);
+
+  if (held.status === 'RAISED') {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_NOT_ASKED',
+      `${held.subject} is not recorded as having been asked, so there is nobody whose answer this would be. Record ` +
+        'that it went to the buyer first — the date it went is the thing a dispute about a late question turns on.',
+      409,
+    );
+  }
+  if (held.status === 'WITHDRAWN') {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_WITHDRAWN',
+      `${held.subject} was withdrawn before it was asked.`,
+      409,
+    );
+  }
+
+  const answered: BidClarification = {
+    ...held,
+    status: 'ANSWERED',
+    answer: requireText(input.answer, PROMPT_MIN, 'BID_ON_ANSWER_TOO_SHORT', "The buyer's answer"),
+    answeredAt: (input.answeredOn ?? new Date().toISOString()).slice(0, 10),
+    recordedBy: ctx.auth.actorId,
+  };
+
+  const next: Bid = {
+    ...bid,
+    clarifications: bid.clarifications.map((entry) => (entry.id === clarificationId ? answered : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_CLARIFICATION_ANSWERED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, clarification: answered };
+}
+
+/**
+ * Drop a question without asking it. `U` on `BID_SERVICES`.
+ *
+ * With a reason, because the module raises most of these itself and will raise
+ * the same subject again the next time a register is added to. A withdrawal is
+ * what stops that, so it has to carry why — otherwise the next person sees a
+ * question that was dropped and no way to know whether it was answered
+ * elsewhere, judged irrelevant, or simply missed.
+ */
+export function withdrawClarification(
+  ctx: EngineContext,
+  bidId: string,
+  clarificationId: string,
+  input: { reason: string },
+): { bid: Bid; clarification: BidClarification } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const held = requireClarification(bid, clarificationId);
+
+  if (held.status === 'ANSWERED') {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_ANSWERED',
+      `${held.subject} has been answered by the buyer. Their answer is part of the tender documents and does not ` +
+        'become un-given because we would rather not have asked.',
+      409,
+    );
+  }
+
+  const withdrawn: BidClarification = {
+    ...held,
+    status: 'WITHDRAWN',
+    withdrawnReason: requireText(input.reason, REASON_MIN, 'BID_ON_REASON_TOO_SHORT', 'A reason'),
+  };
+
+  const next: Bid = {
+    ...bid,
+    clarifications: bid.clarifications.map((entry) => (entry.id === clarificationId ? withdrawn : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_CLARIFICATION_WITHDRAWN',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, clarification: withdrawn };
+}
+
+/** What the clarification position is, judged on a day. */
+export type ClarificationStanding = {
+  raised: number;
+  asked: number;
+  answered: number;
+  withdrawn: number;
+  /** Raised and not asked, where the window has already shut. */
+  missed: number;
+  /** Days until the buyer stops accepting questions. Null where no date is set. */
+  daysToAsk: number | null;
+  summary: string;
+};
+
+export function clarificationStanding(bid: Bid, asAt?: string): ClarificationStanding {
+  const day = (asAt ?? new Date().toISOString()).slice(0, 10);
+  const count = (status: ClarificationStatus) => bid.clarifications.filter((entry) => entry.status === status).length;
+
+  const shut = bid.clarificationDeadline !== undefined && bid.clarificationDeadline < day;
+  const raised = count('RAISED');
+  const daysToAsk =
+    bid.clarificationDeadline === undefined
+      ? null
+      : Math.ceil((Date.parse(bid.clarificationDeadline) - Date.parse(day)) / 86_400_000);
+
+  return {
+    raised,
+    asked: count('ASKED'),
+    answered: count('ANSWERED'),
+    withdrawn: count('WITHDRAWN'),
+    missed: shut ? raised : 0,
+    daysToAsk,
+    summary:
+      bid.clarifications.length === 0
+        ? 'Nothing to ask the buyer.'
+        : `${raised} to ask, ${count('ASKED')} awaiting an answer, ${count('ANSWERED')} answered` +
+          (count('WITHDRAWN') > 0 ? `, ${count('WITHDRAWN')} withdrawn` : '') +
+          '.' +
+          (bid.clarificationDeadline === undefined
+            ? ' No clarification deadline is recorded, so nothing here knows when the window shuts — and it is ' +
+              'almost always well before the return.'
+            : shut
+              ? ` The window shut on ${bid.clarificationDeadline}.` +
+                (raised > 0
+                  ? ` ${raised} question(s) were never asked: each is now a point that has to be priced or accepted ` +
+                    'rather than negotiated.'
+                  : '')
+              : ` ${daysToAsk} day(s) left to ask, until ${bid.clarificationDeadline}.`),
+  };
+}
+
 // --- Returnables -------------------------------------------------------------
 
 /**
@@ -1160,7 +1595,7 @@ export function recordReturnables(
   const next: Bid = {
     ...bid,
     returnables: [...bid.returnables, ...added],
-    clarifications: mergeClarifications(bid.clarifications, raised),
+    clarifications: raiseClarifications(ctx, bid.clarifications, raised, 'RETURNABLES'),
   };
 
   write(ctx, {
@@ -1322,15 +1757,35 @@ export function returnableReadiness(bid: Bid, asAt?: string): ReturnableInput {
 }
 
 /**
- * Add clarifications without accumulating the same one twice.
+ * Turn questions noticed by the module into clarifications on the record.
  *
  * Matched on subject, because these are raised again every time a register is
- * added to and a list that repeated "no stated format" nine times is a list
- * nobody reads to the end.
+ * added to or a schedule is re-read, and a list repeating "no stated format"
+ * nine times is a list nobody reads to the end. A subject already **withdrawn**
+ * is not raised again either: somebody decided not to ask it, and a module that
+ * put it back would be overruling them every time the page reloaded.
  */
-function mergeClarifications(held: Clarification[], raised: Clarification[]): Clarification[] {
+export function raiseClarifications(
+  ctx: EngineContext,
+  held: BidClarification[],
+  raised: Clarification[],
+  source: ClarificationSource,
+): BidClarification[] {
   const subjects = new Set(held.map((entry) => entry.subject));
-  return [...held, ...raised.filter((entry) => !subjects.has(entry.subject))];
+  const now = new Date().toISOString();
+  return [
+    ...held,
+    ...raised
+      .filter((entry) => !subjects.has(entry.subject))
+      .map((entry) => ({
+        ...entry,
+        id: ulid(),
+        status: 'RAISED' as const,
+        source,
+        raisedAt: now,
+        raisedBy: ctx.auth.actorId,
+      })),
+  ];
 }
 
 // --- Gaps --------------------------------------------------------------------
@@ -1470,8 +1925,10 @@ export type BidPosition = {
   readiness: PackReadiness;
   /** What has to be returned rather than answered, and where each one stands. */
   returnables: BidReturnable[];
-  /** What to ask the buyer, raised from the questions and from the amendments. */
-  clarifications: Clarification[];
+  /** What to ask the buyer, raised from the questions, the register and the amendments. */
+  clarifications: BidClarification[];
+  /** Where those stand, and how long is left to ask them. */
+  clarificationStanding: ClarificationStanding;
   openGaps: BidGap[];
   limits: string[];
 };
@@ -1496,7 +1953,24 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
 
   const bid = requireBid(ctx, bidId);
   const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
+
+  /*
+   * Two different dates, and conflating them was a real bug.
+   *
+   * `day` is the day the pack is *judged* against — the deadline on a dated
+   * bid, because that is when the buyer reads it and a certificate lapsing
+   * before then is no use. `readOn` is simply today. Expiry and declarations
+   * use the first; the clarification window uses the second, because a question
+   * can only be asked now and whether the window has shut is a fact about today
+   * rather than about the return.
+   *
+   * Passing `day` to the clarification standing made every unasked question on
+   * a dated bid read as missed, since the deadline is always on or after the
+   * clarification deadline. Caught by a test reading a pack five weeks before
+   * its window shut and being told the window had shut.
+   */
   const day = judgedOn(bid, asAt);
+  const readOn = (asAt ?? new Date().toISOString()).slice(0, 10);
   const scored = scoreBid(ctx, bid, customer, day);
 
   const { questions: _q, answers: _a, gaps: _g, ...header } = bid;
@@ -1528,11 +2002,9 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
           : '.'),
     );
   }
-  if (bid.clarifications.length > 0) {
-    limits.push(
-      `${bid.clarifications.length} clarification(s) are outstanding for the buyer. They are only useful before ` +
-        'their clarification deadline, which is almost always well before the return.',
-    );
+  const standing = clarificationStanding(bid, readOn);
+  if (standing.raised > 0 || standing.missed > 0) {
+    limits.push(standing.summary);
   }
   if (bid.rolling) {
     limits.push(
@@ -1561,6 +2033,7 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
     ),
     returnables: bid.returnables,
     clarifications: bid.clarifications,
+    clarificationStanding: clarificationStanding(bid, readOn),
     openGaps: bid.gaps.filter((entry) => !entry.resolvedAt),
     limits,
   };
@@ -1778,7 +2251,15 @@ export type BidRegister = {
     returnablesOutstanding: number;
     /** Of those, the ones only the customer can produce — their rates, their signature. */
     returnablesWithCustomer: number;
+    /** Raised and not yet asked. The ones still worth doing something about. */
     clarifications: number;
+    /** Raised, never asked, and the window has shut. Each is a point that cannot be negotiated now. */
+    clarificationsMissed: number;
+    stage: BidStage;
+    followsBidId?: string;
+    clarificationDeadline?: string;
+    /** Whether a schedule of amendments has been read on this bid. */
+    amendmentsReviewed: boolean;
     readinessPercent: number | null;
     exportable: boolean;
     /** Null where there is no deadline to count down to. */
@@ -1851,7 +2332,16 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
         returnablesWithCustomer: bid.returnables.filter(
           (entry) => entry.status === 'OUTSTANDING' && entry.owner === 'CUSTOMER',
         ).length,
-        clarifications: bid.clarifications.length,
+        clarifications: bid.clarifications.filter((entry) => entry.status === 'RAISED').length,
+        clarificationsMissed: clarificationStanding(bid, day).missed,
+        stage: bid.stage,
+        ...(bid.followsBidId ? { followsBidId: bid.followsBidId } : {}),
+        ...(bid.clarificationDeadline ? { clarificationDeadline: bid.clarificationDeadline } : {}),
+        // So a screen knows whether there is a reading to fetch without
+        // opening every pack to find out. The observations themselves are not
+        // on the row: a register is a list, and one carrying a paragraph per
+        // bid is a list nobody can scan.
+        amendmentsReviewed: bid.amendmentsReview !== undefined,
         readinessPercent: readiness.readinessPercent,
         exportable: readiness.exportable,
         // Null on a rolling bid, not zero and not a large number: there is no

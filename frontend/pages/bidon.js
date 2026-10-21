@@ -344,6 +344,14 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'resolve-gap', label: 'Close a gap', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'raise-clarification', label: 'Raise a question for the buyer', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'clarification-asked', label: 'Record that we asked it', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'clarification-answer', label: 'Record the buyer’s answer', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'clarification-withdraw', label: 'Withdraw a question', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'record-returnables', label: 'Record what has to be returned',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'supply-returnable', label: 'Mark a returnable done', tone: 'quiet',
@@ -359,13 +367,16 @@ export async function bidon(root) {
         ]))}
       </div>
       ${table({
-        headers: ['Ref', 'Customer', 'Buyer', 'Scheme', 'Due', 'Left', 'Questions', 'Approved', 'Gaps', 'To return', 'Readiness', 'State', ''],
-        align: ['', '', '', '', '', 'num', 'num', 'num', 'num', 'num', 'num', '', ''],
+        headers: ['Ref', 'Customer', 'Buyer', 'Scheme', 'Stage', 'Due', 'Left', 'Questions', 'Approved', 'Gaps', 'To return', 'To ask', 'Readiness', 'State', ''],
+        align: ['', '', '', '', '', '', 'num', 'num', 'num', 'num', 'num', 'num', 'num', '', ''],
         rows: bidList.map((bid) => [
           bid.reference,
           bid.customerName,
           bid.buyerName,
           humanise(bid.scheme),
+          bid.stage === 'SINGLE_STAGE'
+            ? html`<span style="font-size:12px;color:var(--text-3)">one stage</span>`
+            : badge(humanise(bid.stage), bid.stage === 'PQQ' ? '' : 'info'),
           // A rolling submission has no return date and no countdown. Showing
           // today's date under "Due" would be a date nobody set, and a
           // countdown of 0 would read as due today on something with no due
@@ -385,6 +396,14 @@ export async function bidon(root) {
           bid.returnablesOutstanding === 0
             ? '—'
             : html`<span title="${bid.returnablesWithCustomer} with the customer">${badge(String(bid.returnablesOutstanding), 'bad')}</span>`,
+          // Questions for the buyer, and the ones whose window has already
+          // shut. A missed one cannot be fixed on this bid, which is exactly
+          // why it has to be visible rather than quietly dropped.
+          bid.clarificationsMissed > 0
+            ? badge(`${bid.clarificationsMissed} missed`, 'bad')
+            : bid.clarifications === 0
+              ? '—'
+              : badge(String(bid.clarifications), 'warn'),
           bid.readinessPercent === null ? '—' : `${bid.readinessPercent}%`,
           bid.exportable
             ? badge('ready to export', 'ok')
@@ -1051,6 +1070,27 @@ export async function bidon(root) {
             { value: 'CUSTOM', label: 'Something else' },
           ],
           hint: 'Which rubric the answers are scored against.' },
+        { name: 'stage', label: 'Stage', type: 'select', required: false,
+          options: [
+            { value: '', label: 'One stage — a registration, an open ITT, a dynamic market' },
+            { value: 'PQQ', label: 'PQQ — prequalification, with an ITT to follow if we get through' },
+            { value: 'ITT', label: 'ITT — the tender stage' },
+          ],
+          hint:
+            'A PQQ and the ITT after it are two submissions to one buyer about one job, with separate deadlines, ' +
+            'separate question sets and separate clarification windows.' },
+        { name: 'followsBidId', label: 'The PQQ it follows', type: 'select', required: false,
+          options: [
+            { value: '', label: 'Nothing — this is not a second stage' },
+            ...bidList
+              .filter((bid) => bid.stage === 'PQQ')
+              .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })),
+          ],
+          hint: 'Links the ITT to the prequalification it came out of. Only that customer’s own PQQ is offered.' },
+        { name: 'clarificationDeadline', label: 'Questions to the buyer close', type: 'date', required: false,
+          hint:
+            'The day they stop accepting questions — almost always weeks before the return, and the date nobody ' +
+            'watches. Set it and everything here counts down to it rather than to the return.' },
         { name: 'deadline', label: 'Return deadline', type: 'date', required: false,
           hint:
             'The day the buyer reads it. Every certificate expiry is judged against this, not against today. Leave ' +
@@ -1172,6 +1212,90 @@ export async function bidon(root) {
       ],
       transform: () => ({}),
       ai: true,
+    },
+    'raise-clarification': {
+      title: 'Raise a question for the buyer',
+      intent:
+        'The module raises most of these itself — a question with no stated limit, a returnable with no stated ' +
+        'format, an amendment that shifts a risk. This is the door for the ones only a reader finds. It is a ' +
+        'question to ask, not a note to keep: a clarification nobody sent is worth nothing, and a buyer’s window ' +
+        'for them shuts well before the return.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/clarifications`,
+      submitLabel: 'Raise',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'severity', label: 'How much it matters', type: 'select',
+          options: [
+            { value: 'CRITICAL', label: 'Critical — we cannot price or insure it as it stands' },
+            { value: 'MAJOR', label: 'Major — it changes what we would commit to' },
+            { value: 'MINOR', label: 'Minor — it changes how we answer' },
+          ] },
+        { name: 'subject', label: 'Subject', type: 'text',
+          hint: 'Short. One subject per question — two questions about one subject invites two answers to reconcile.' },
+        { name: 'question', label: 'The question, as you would ask it', type: 'textarea', rows: 5,
+          hint: 'In the words it will be sent in. Buyers usually issue clarification answers to every bidder.' },
+      ],
+      transform: ({ bidId: _b, ...rest }) => rest,
+    },
+    'clarification-asked': {
+      title: 'Record that we asked it',
+      intent:
+        'The date is the point. A clarification is only worth having if it reached the buyer before their window ' +
+        'shut, and that date is almost always weeks before the return. Recorded even where it went late — that is ' +
+        'a fact, and a buyer may or may not answer a late question.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/clarifications/${v.clarificationId}/asked`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList
+            .filter((bid) => bid.clarifications > 0)
+            .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.clarifications} to ask` })) },
+        { name: 'clarificationId', label: 'Question id', type: 'text', hint: 'From the opened pack above.' },
+        { name: 'askedOn', label: 'The day it went', type: 'date', required: false,
+          hint: 'Blank is today. Put the real date if you are recording it after the fact.' },
+        { name: 'buyerReference', label: 'Their reference', type: 'text', required: false,
+          hint: 'The buyer’s own number for it, which is what their answer will quote back.' },
+      ],
+      transform: ({ bidId: _b, clarificationId: _c, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'clarification-answer': {
+      title: 'Record the buyer’s answer',
+      intent:
+        'In their words, verbatim. A buyer’s answer to a clarification is part of the tender documents from the ' +
+        'moment they give it — usually issued to every bidder — so a paraphrase of it is a new claim with nobody’s ' +
+        'name on it. What the answer changes is a separate act: a stated limit goes on the question, a waived ' +
+        'document on the register, a moved date on the bid.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/clarifications/${v.clarificationId}/answer`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'clarificationId', label: 'Question id', type: 'text' },
+        { name: 'answer', label: 'What they said', type: 'textarea', rows: 6,
+          hint: 'Verbatim. Not a summary.' },
+        { name: 'answeredOn', label: 'The day they answered', type: 'date', required: false },
+      ],
+      transform: ({ bidId: _b, clarificationId: _c, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'clarification-withdraw': {
+      title: 'Withdraw a question',
+      intent:
+        'For one that will not be asked. The reason is required because the module raises most of these itself and ' +
+        'will raise the same subject again next time a register is added to — the withdrawal is what stops that, so ' +
+        'it has to say why. Otherwise the next person sees a dropped question with no way to know whether it was ' +
+        'answered elsewhere, judged irrelevant, or simply missed.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/clarifications/${v.clarificationId}/withdraw`,
+      submitLabel: 'Withdraw',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'clarificationId', label: 'Question id', type: 'text' },
+        { name: 'reason', label: 'Why it will not be asked', type: 'textarea', rows: 3 },
+      ],
+      transform: ({ bidId: _b, clarificationId: _c, ...rest }) => rest,
     },
     'record-returnables': {
       title: 'Record what has to be returned',
@@ -1983,7 +2107,12 @@ function bidDetail(position, estimate, source) {
       </h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
         ${customer.legalName} · ${humanise(bid.scheme)} ·
-        ${bid.rolling ? html`no return date` : html`due ${date(bid.deadline)}`}.
+        ${bid.stage === 'SINGLE_STAGE' ? 'one stage' : humanise(bid.stage)}${
+          bid.followsBidId ? html`, following the prequalification` : ''
+        } ·
+        ${bid.rolling ? html`no return date` : html`due ${date(bid.deadline)}`}${
+          bid.clarificationDeadline ? html` · questions close ${date(bid.clarificationDeadline)}` : ''
+        }.
         ${readiness.summary}
         ${bid.rolling
           ? html`Every verdict is judged against <b>${date(position.judgementDay)}</b>, the day this was read, and is
@@ -2098,15 +2227,43 @@ function bidDetail(position, estimate, source) {
         // customer, and time-critical in a different way: a clarification
         // deadline is almost always well before the return.
         (position.clarifications ?? []).length > 0
-          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
-              <b>${position.clarifications.length} question(s) to ask the buyer.</b>
-              A clarification deadline is almost always well before the return, so these stop being askable before
-              the bid stops being writable.
-              ${position.clarifications.map((entry) => html`<div style="margin-top:5px">
-                ${badge(humanise(entry.severity), entry.severity === 'CRITICAL' ? 'bad' : entry.severity === 'MAJOR' ? 'warn' : '')}
-                <b>${entry.subject}</b> — ${entry.question}
-              </div>`)}
-            </div></div>`
+          ? html`<div style="padding:11px 17px 0">
+              <h2 style="margin:0 0 4px;font-size:14px">Questions for the buyer</h2>
+              <p style="margin:0 0 6px;font-size:12.5px;color:var(--text-3)">
+                ${position.clarificationStanding?.summary ?? ''}
+                A question nobody sent is worth nothing, and a buyer usually issues their answers to every bidder —
+                so the words matter and so does the date it went.
+              </p>
+              ${table({
+                headers: ['', 'Subject', 'The question', 'Raised by', 'Asked', 'Their answer', 'Standing', 'id'],
+                rows: position.clarifications.map((entry) => [
+                  badge(
+                    humanise(entry.severity),
+                    entry.severity === 'CRITICAL' ? 'bad' : entry.severity === 'MAJOR' ? 'warn' : '',
+                  ),
+                  entry.subject,
+                  entry.question,
+                  // Which part of the module noticed it, or a person. Worth
+                  // showing: a reader treats "the amendments reading spotted
+                  // this" differently from "a colleague asked for this".
+                  humanise(entry.source),
+                  entry.askedAt
+                    ? html`${date(entry.askedAt)}${entry.buyerReference
+                        ? html` <span style="font-size:12px;color:var(--text-3)">${entry.buyerReference}</span>`
+                        : ''}`
+                    : '—',
+                  entry.answer ?? '—',
+                  entry.status === 'ANSWERED'
+                    ? badge('answered', 'ok')
+                    : entry.status === 'ASKED'
+                      ? badge('awaiting an answer', 'warn')
+                      : entry.status === 'WITHDRAWN'
+                        ? html`<span title="${entry.withdrawnReason ?? ''}">${badge('withdrawn', '')}</span>`
+                        : badge('not asked yet', 'bad'),
+                  html`<code style="font-size:11px;color:var(--text-3)">${entry.id}</code>`,
+                ]),
+              })}
+            </div>`
           : ''
       }
       ${

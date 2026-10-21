@@ -271,6 +271,10 @@ const bidOnPackAgent: AgentDefinition = {
     if (!register || register.bids.length === 0) return empty;
 
     const findings: Finding[] = [];
+    // This agent's own reading date. The register's countdowns are computed
+    // against it already; the clarification window is a second date and has to
+    // be counted against the same day or the two findings would disagree.
+    const today = new Date().toISOString().slice(0, 10);
 
     for (const bid of register.bids) {
       const sent = ['SUBMITTED', 'WON', 'LOST'].includes(bid.status);
@@ -368,17 +372,49 @@ const bidOnPackAgent: AgentDefinition = {
         });
       }
 
-      if (bid.clarifications > 0 && bid.daysLeft <= 21) {
+      /*
+       * The clarification window, which is the deadline nobody watches.
+       *
+       * Where the bid records one, this counts down to **that** date rather
+       * than the return — asking on the last day before a return is asking
+       * weeks too late. Where it does not, the return is the only date
+       * available and the finding says so, because "no clarification deadline
+       * recorded" is itself worth fixing.
+       */
+      const daysToAsk = bid.clarificationDeadline
+        ? Math.ceil((Date.parse(bid.clarificationDeadline) - Date.parse(today)) / 86_400_000)
+        : null;
+
+      if (bid.clarificationsMissed > 0) {
         findings.push({
-          key: `bidon:clarifications:${bid.id}`,
+          key: `bidon:clarifications-missed:${bid.id}`,
           severity: 'ATTENTION',
           summary:
-            `${bid.reference} has ${bid.clarifications} question(s) for the buyer that nobody has asked, with ` +
-            `${bid.daysLeft} day(s) to the return.`,
+            `${bid.reference} for ${bid.customerName} has ${bid.clarificationsMissed} question(s) that were never ` +
+            `put to the buyer, and their window shut on ${bid.clarificationDeadline}.`,
+          consequence:
+            'Each of those is now a point that has to be priced or accepted rather than negotiated. Nothing can be ' +
+            'done about this bid; what can be done is to decide whether each point is still worth pricing for, and ' +
+            'to record the clarification deadline earlier next time.',
+          evidence: [{ refType: 'BidOnBid', refId: bid.id, note: 'The window has shut' }],
+        });
+      } else if (bid.clarifications > 0 && (daysToAsk === null ? bid.daysLeft <= 21 : daysToAsk <= 10)) {
+        findings.push({
+          key: `bidon:clarifications:${bid.id}`,
+          severity: daysToAsk !== null && daysToAsk <= 3 ? 'URGENT' : 'ATTENTION',
+          summary:
+            `${bid.reference} has ${bid.clarifications} question(s) for the buyer that nobody has asked` +
+            (daysToAsk === null
+              ? `, with ${bid.daysLeft} day(s) to the return and no clarification deadline recorded.`
+              : `, and ${daysToAsk} day(s) left to ask them.`),
           consequence:
             'A buyer’s clarification deadline is almost always well before their return deadline, so these stop ' +
             'being askable before the bid stops being writable. A point that could have been negotiated becomes a ' +
-            'risk that has to be priced or accepted.',
+            'risk that has to be priced or accepted.' +
+            (daysToAsk === null
+              ? ' Record the clarification deadline on the bid and this counts down to the date that actually ' +
+                'governs it.'
+              : ''),
           evidence: [{ refType: 'BidOnBid', refId: bid.id, note: 'Raised from the question list or the amendments' }],
         });
       }

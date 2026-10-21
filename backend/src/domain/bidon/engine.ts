@@ -19,6 +19,7 @@ import {
   ANSWER_TYPE,
   bidsOf,
   judgedOn,
+  raiseClarifications,
   latestAnswer,
   recordAnswer,
   scoreAnswer,
@@ -1198,7 +1199,7 @@ export async function reviewAmendments(
 
   const next: Bid = {
     ...bid,
-    clarifications: [...bid.clarifications, ...fresh],
+    clarifications: raiseClarifications(ctx, bid.clarifications, fresh, 'AMENDMENTS'),
     amendmentsReview: {
       observations,
       contractForm: input.contractForm ?? '',

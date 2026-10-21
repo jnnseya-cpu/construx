@@ -80,27 +80,73 @@ export async function bidonguest(root) {
   const live = workspace?.liveDeclarations ?? [];
   const all = workspace?.declarations ?? [];
 
-  // Everything the provider is waiting on, from every pack, in one list. The
-  // whole point of batching gaps is that a customer answers them in a sitting
-  // rather than one email at a time, and that only works if they are together.
-  const asked = await Promise.all(
+  /*
+   * Everything the provider is waiting on, from every pack, in one list.
+   *
+   * The whole point of batching is that a customer answers in a sitting rather
+   * than one email at a time, and that only works if the items are together.
+   * So gaps and **documents** are one list here, because from this side of the
+   * screen they are one thing: stuff to send back. A priced cost model and a
+   * signed order form are not "gaps in the evidence" to a contractor, they are
+   * two more items on the same errand.
+   *
+   * Only the packs that have something outstanding or a contract reading are
+   * opened. A page that read every pack to find out would spend a hundred
+   * reads to render four rows.
+   */
+  const opened = await Promise.all(
     bidList
-      .filter((bid) => bid.openGaps > 0)
+      .filter((bid) => bid.openGaps > 0 || bid.returnablesWithCustomer > 0 || bid.amendmentsReviewed)
       .map((bid) =>
         api
           .read(`/v1/bid-on/bids/${bid.id}`, 'BID_SERVICES', 'COMMERCIAL_L3')
-          .then((position) =>
-            position.openGaps.map((gap) => ({
-              bid,
-              gap,
-              question:
-                position.questions.find((entry) => entry.question.id === gap.questionId)?.question ?? null,
-            })),
-          )
-          .catch(() => []),
+          .then((position) => ({ bid, position }))
+          .catch(() => null),
       ),
   );
-  const gaps = asked.flat();
+  const packs = opened.filter(Boolean);
+
+  const gaps = packs.flatMap(({ bid, position }) =>
+    position.openGaps.map((gap) => ({
+      kind: 'QUESTION',
+      bid,
+      what: gap.promptToClient,
+      about: (() => {
+        const question = position.questions.find((entry) => entry.question.id === gap.questionId)?.question;
+        return question ? `${question.number} ${question.text}` : '—';
+      })(),
+      asked: gap.raisedAt,
+      due: null,
+    })),
+  );
+
+  // Only the documents that are theirs. A provider-owned returnable is our own
+  // task on their bid, and putting our to-do list on their screen is the same
+  // mistake as putting the readiness percentage on it.
+  const documents = packs.flatMap(({ bid, position }) =>
+    (position.returnables ?? [])
+      .filter((item) => item.owner === 'CUSTOMER' && item.status === 'OUTSTANDING')
+      .map((item) => ({
+        kind: 'DOCUMENT',
+        bid,
+        what:
+          `${item.title}` +
+          (item.format ? ` — as ${item.format}` : '') +
+          (item.signatureRequired ? ', signed' : '') +
+          (item.mandatory ? '' : ' (optional)'),
+        about: `${item.reference}, from the invitation`,
+        asked: item.recordedAt,
+        // Our own date where there is one: that is the date that actually
+        // binds them, and it is earlier than the buyer's on purpose.
+        due: item.internalDueBy ?? null,
+      })),
+  );
+
+  const wanted = [...gaps, ...documents];
+
+  // What the amendments reading found, where one has been run. Observations
+  // only — the questions it raised go to the buyer, and those are ours to ask.
+  const contracts = packs.filter(({ position }) => position.bid.amendmentsReview);
 
   render(
     root,
@@ -113,12 +159,15 @@ export async function bidonguest(root) {
       </p>
 
       ${
-        gaps.length > 0
+        wanted.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
-              <h2 style="padding:15px 17px 0">We need ${gaps.length} thing(s) from you</h2>
+              <h2 style="padding:15px 17px 0">We need ${wanted.length} thing(s) from you</h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-                All of it in one list rather than an email each, so you can gather it in one go. Each one holds up
-                exactly one answer — the rest of the submission is being written while you find these.
+                All of it in one list rather than an email each, so you can gather it in one go. Some are answers we
+                cannot write without something from you; some are documents the buyer asked for that only your
+                company can produce — your own rates, your own signature. A question holds up one answer and the rest
+                of the submission carries on; a <b>document</b> the buyer requires holds up the whole submission,
+                which is why those are marked.
               </p>
               <div style="padding:11px 17px 0">
                 ${raw(commandBar([
@@ -129,17 +178,66 @@ export async function bidonguest(root) {
                 ]))}
               </div>
               ${table({
-                headers: ['Bid', 'Question', 'What we need', 'Asked', 'Due'],
-                rows: gaps.map((entry) => [
+                headers: ['Bid', 'For', 'What we need', 'Kind', 'Asked', 'We need it by'],
+                rows: wanted.map((entry) => [
                   entry.bid.buyerName,
-                  entry.question ? `${entry.question.number} ${entry.question.text}` : '—',
-                  entry.gap.promptToClient,
-                  date(entry.gap.raisedAt),
-                  entry.bid.daysLeft < 0
-                    ? badge('past the deadline', 'bad')
-                    : badge(`${entry.bid.daysLeft} day(s)`, entry.bid.daysLeft <= 5 ? 'warn' : ''),
+                  entry.about,
+                  entry.what,
+                  entry.kind === 'DOCUMENT'
+                    ? badge('document the buyer requires', 'bad')
+                    : badge('answer', 'warn'),
+                  date(entry.asked),
+                  // Our own date where one is set, because that is the date
+                  // that binds; otherwise the countdown to the buyer's return,
+                  // and nothing at all where there is no return date.
+                  entry.due
+                    ? badge(date(entry.due), 'warn')
+                    : entry.bid.daysLeft === null
+                      ? html`<span style="font-size:12px;color:var(--text-3)">no closing date</span>`
+                      : entry.bid.daysLeft < 0
+                        ? badge('past the deadline', 'bad')
+                        : badge(`${entry.bid.daysLeft} day(s)`, entry.bid.daysLeft <= 5 ? 'warn' : ''),
                 ]),
               })}
+            </div>`
+          : ''
+      }
+
+      ${
+        /*
+         * The contract, as amended.
+         *
+         * This is on their screen because they are the ones who sign it. It is
+         * put in front of them as what it is — a first pass by a model over the
+         * amendments, for their own adviser to look at — and never as advice,
+         * because it is not and because nobody here has accepted anything on
+         * their behalf. The questions the reading raised are not shown: those
+         * go to the buyer, and buyer contact on a live bid is the provider's to
+         * manage, not something to invite from two directions at once.
+         */
+        contracts.length > 0
+          ? html`<div class="card pad0" style="margin-bottom:14px">
+              <h2 style="padding:15px 17px 0">The contract, as amended</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                Where a buyer amends a standard contract, we read the amendments and list what they change compared
+                with the unamended form. <b>This is not legal advice and we have accepted nothing on your behalf</b> —
+                it is a first pass, written by a model, to put in front of whoever advises you on contracts. The
+                amendments are where a term contract's risk usually sits, and the time to look at them is now rather
+                than at the first dispute.
+              </p>
+              ${contracts.map(({ bid, position }) => html`<div style="padding:11px 17px 0">
+                <div class="actions" style="justify-content:space-between;align-items:baseline">
+                  <b>${bid.buyerName}</b>
+                  <span style="font-size:12px;color:var(--text-3)">
+                    ${position.bid.amendmentsReview.contractForm || 'the form named in the invitation'} · read
+                    ${date(position.bid.amendmentsReview.reviewedAt)}
+                  </span>
+                </div>
+                ${position.bid.amendmentsReview.observations.map(
+                  (line) => html`<p style="margin:5px 0;font-size:13px;line-height:1.55">${line}</p>`,
+                )}
+              </div>`)}
+              <div style="height:12px"></div>
             </div>`
           : ''
       }

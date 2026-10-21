@@ -425,7 +425,16 @@ describe('an unstated length limit becomes a question for the buyer', () => {
     assert.match(raised.subject, /2 question\(s\) state no length limit/);
     assert.match(raised.question, /A1, A2/);
     assert.doesNotMatch(raised.question, /Q1|Q2/);
-    assert.ok(position.limits.some((line) => /clarification\(s\) are outstanding for the buyer/.test(line)));
+    // The standing, not a bare count: one to ask, nothing asked, and — on this
+    // bid — no clarification deadline recorded, which is itself worth saying
+    // because nothing then knows when the window shuts.
+    assert.equal(position.clarificationStanding.raised, 1);
+    assert.equal(position.clarificationStanding.asked, 0);
+    assert.equal(position.clarificationStanding.daysToAsk, null);
+    assert.match(position.clarificationStanding.summary, /No clarification deadline is recorded/);
+    assert.ok(position.limits.some((line) => /No clarification deadline is recorded/.test(line)));
+    assert.equal(position.clarifications[0]?.status, 'RAISED');
+    assert.equal(position.clarifications[0]?.source, 'LIMITS');
   });
 
   it('raises nothing where every limit is stated', () => {

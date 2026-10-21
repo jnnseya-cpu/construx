@@ -27147,8 +27147,119 @@ a `CUSTOMER` returnable that appears in the request sent to them. And the pack
 internal dates is not something a buyer should read off the front page of a
 submission.
 
+### Bid-On: the customer's own side of the register and the contract
+
+`frontend/pages/bidonguest.js`. Two additions, each decided by what is theirs.
+
+**Their documents join the gap list rather than getting a table of their own.**
+The screen's whole principle is everything asked for, from every pack, in one
+list — batching only works if the items are together. From the customer's side a
+priced cost model and a signed order form are not "gaps in the evidence", they
+are two more items on the same errand, so they are one list with a kind on each
+row and the date *we* need it by, which is earlier than the buyer's on purpose.
+A question holds up one answer; a required document holds up the whole
+submission, and the rows say which.
+
+**Only their own returnables.** A `PROVIDER`-owned returnable is the provider's
+task on their bid, and putting our to-do list on their screen is the same
+mistake as putting the readiness percentage on it. The filter is in the screen
+rather than the API: this is a presentation choice about the provider's own
+work, not the wall between two customers, which stays where it is.
+
+**The amended contract is theirs because they sign it.** The observations go on
+their screen, framed as what they are — a first pass by a model over the
+amendments, for whoever advises them — with *"this is not legal advice and we
+have accepted nothing on your behalf"* said on the page rather than implied. The
+**clarifications it raised are not shown**: those go to the buyer, and buyer
+contact on a live bid is the provider's to manage rather than something to invite
+from two directions at once.
+
+Only the packs with something outstanding or a contract reading are opened, and
+`amendmentsReviewed` is on the register row so the screen knows which without
+reading every pack to find out.
+
+### Bid-On: two stages, and the questions you get to ask at each
+
+`stage`, `followsBidId` and `clarificationDeadline` on the bid, the clarification
+lifecycle, four commands, four routes, four console doors and
+`backend/tests/bidonstages.test.ts`.
+
+**A PQQ and the ITT after it are two submissions to one buyer about one job.**
+Separate question sets, separate return dates, separate clarification windows,
+separate outcomes. Treating them as one bid loses the PQQ's own result; treating
+them as unrelated loses the fact that the ITT exists only because the PQQ was
+won. So `stage` is `PQQ | ITT | SINGLE_STAGE`, and `SINGLE_STAGE` is the honest
+default for the many procurements that are one questionnaire and done — a
+registration, a dynamic market application, an open ITT with no prequalification.
+Calling those ITT would imply a prequalification that never happened.
+
+`followsBidId` is on the **later** bid, one direction only: a PQQ exists before
+anybody knows whether an ITT will follow, so a forward pointer would be empty
+exactly when it mattered and backfilled afterwards. The stage is inferred as ITT
+from the link where it is not stated, refused where it is stated as something
+else, and the predecessor must be a `PQQ` **for the same customer** — a link to
+another customer's prequalification would be the one leak this module exists to
+prevent, dressed as a convenience, and a test asserts the refusal.
+
+**`clarificationDeadline` is the date nobody watches.** It is separate from the
+return and almost always weeks before it, which is the whole reason it is on the
+record. A question raised after it cannot be asked at all: a point that could
+have been negotiated becomes a risk that has to be priced or accepted, and
+nothing else in the pack told anybody the window had shut. One that falls *after*
+the return is refused — a window for questions that closes after the buyer has
+read the submission is not a window.
+
+**A clarification got states, because a note nobody sent is worth nothing.**
+`BidClarification` **extends** `tenderintake.Clarification` rather than replacing
+it: the standard section's type stays the source of truth for the question itself
+— severity, subject, and the words it would be asked in — and the lifecycle is
+added on top. `RAISED → ASKED → ANSWERED`, with `WITHDRAWN` beside them, plus
+`source` (`LIMITS`, `RETURNABLES`, `AMENDMENTS`, `PERSON`) because a reader
+treats *"the amendments reading spotted this"* differently from *"a colleague
+asked for this"*.
+
+- **Asking late is recorded, not refused.** It is a fact, and often one worth
+  having — a buyer may answer a late question and may not. Refusing would make
+  the honest entry impossible and leave the question looking un-asked for ever.
+  `late` comes back on the result and the standing counts what the window closed
+  on.
+- **The buyer's answer is kept verbatim.** It is part of the tender documents
+  from the moment they give it, usually issued to every bidder, so a paraphrase
+  is a new claim with nobody's name on it. What the answer *changes* — a stated
+  limit, a waived document, a moved date — is a separate act, so the change and
+  the authority for it are two entries rather than one.
+- **An answer cannot be recorded against something nobody sent**, because there
+  would be nobody whose answer it was.
+- **An answered question cannot be withdrawn.** The buyer's answer does not
+  become un-given because we would rather not have asked.
+- **A withdrawn subject is not raised again.** The module raises most of these
+  itself and would otherwise put the same question back every time a register was
+  added to, overruling the person who dropped it on every page load. The reason
+  is mandatory for exactly that purpose.
+
+**The agent now counts down to the right date.** Where a clarification deadline
+is recorded it watches that one at ten days and urgent at three; where it is not,
+it falls back to the return and says *"no clarification deadline is recorded"*,
+because not knowing when the window shuts is itself the finding. A window that
+has already closed with questions unasked is its own finding, and it says what
+is still available: decide whether each point is worth pricing for, and record
+the date earlier next time.
+
+**A real bug this work surfaced, caught by its own test.** `bidPosition` was
+passing the pack's *judgement day* to the clarification standing. On a dated bid
+that is the return deadline, which is always on or after the clarification
+deadline — so **every unasked question read as missed**, five weeks before the
+window actually shut. The two dates are now distinct in the function: `day` for
+expiry and declarations, because that is when the buyer reads it, and `readOn`
+for the clarification window, because whether a question can still be asked is a
+fact about today.
+
 **Still outstanding, and recorded rather than quietly fixed:** the
-`semantic-search` route's own provider. `datalayer/embeddingProvider()` still
+`semantic-search` route's own provider; and carrying a PQQ's approved answers
+forward into the ITT that follows it. The link is now on the record, so the
+second is reachable, but nothing yet offers a prior answer as a candidate — and
+when it is built it must offer and never paste, on the same terms as
+`domain/answers.ts`. `datalayer/embeddingProvider()` still
 returns `undefined`, and its docstring now says why — the blocker is no longer
 configuration but **metering**: that signature has no `EngineContext`, so an
 `embed` built from the adapter would bill a vendor with no hold, no wallet check

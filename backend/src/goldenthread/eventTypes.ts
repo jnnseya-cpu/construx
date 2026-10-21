@@ -2453,6 +2453,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_RETURNABLES_RECORDED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_RETURNABLE_SUPPLIED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_RETURNABLE_WAIVED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  // Questions to the buyer, and their answers. Human-only: a question that
+  // went to a buyer is a fact somebody is accountable for, and a buyer's answer
+  // is part of the tender documents from the moment they give it. The module
+  // raises them itself under the events above; sending one and recording what
+  // came back is a person's act.
+  def('BID_ON_CLARIFICATION_RAISED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_CLARIFICATION_ASKED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_CLARIFICATION_ANSWERED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_CLARIFICATION_WITHDRAWN', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   // A reading of an amended contract, which produces questions for the buyer
   // and nothing else. `aiAllowed` because a model genuinely authors the
   // reading; it decides nothing, recommends nothing and accepts nothing.
