@@ -719,7 +719,16 @@ const STOPWORDS = new Set([
   'does', 'did', 'not', 'may', 'each', 'other', 'than', 'then', 'there', 'they', 'them', 'also', 'such', 'these',
 ]);
 
-function distinctTerms(text: string): string[] {
+/**
+ * The words in a question worth matching on.
+ *
+ * Exported because the carry-forward matches one question's wording against
+ * another's and must do it the same way retrieval matches a question against a
+ * passage. Two implementations of "distinctive terms" would mean a question
+ * that retrieves evidence well and finds no prior answer, for no reason a
+ * reader could discover.
+ */
+export function distinctTerms(text: string): string[] {
   return [
     ...new Set(
       text
@@ -732,7 +741,7 @@ function distinctTerms(text: string): string[] {
 }
 
 /** The share of the question's distinctive terms a passage actually uses. */
-function overlap(terms: string[], text: string): number {
+export function overlap(terms: string[], text: string): number {
   if (terms.length === 0) return 0;
   const body = text.toLowerCase();
   const found = terms.filter((term) => body.includes(term)).length;

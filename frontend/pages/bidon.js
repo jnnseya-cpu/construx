@@ -720,6 +720,55 @@ export async function bidon(root) {
    * instead, because an online portal has a box per question and what somebody
    * wants is to paste.
    */
+
+  /*
+   * What this customer has already answered.
+   *
+   * Two reads rather than one: the board says which questions have something
+   * worth reading, and only then is one question's candidates fetched.
+   * Fetching every question's candidates to render the list would be sixty
+   * reads for a list somebody scans once.
+   */
+  root.addEventListener('click', async (event) => {
+    const open = event.target.closest('[data-carry]');
+    if (!open) return;
+    const panel = root.querySelector('#carry-detail');
+    if (!panel) return;
+    open.disabled = true;
+    try {
+      const board = await api.read(
+        `/v1/bid-on/bids/${open.dataset.carry}/carry-forward`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(panel, carryPanel(board, open.dataset.carry));
+    } catch (error) {
+      render(panel, notice(error.detail ?? error.message, 'err'));
+    } finally {
+      open.disabled = false;
+    }
+  });
+
+  root.addEventListener('click', async (event) => {
+    const open = event.target.closest('[data-prior]');
+    if (!open) return;
+    const slot = root.querySelector('#prior-detail');
+    if (!slot) return;
+    open.disabled = true;
+    try {
+      const offer = await api.read(
+        `/v1/bid-on/bids/${open.dataset.priorBid}/questions/${open.dataset.prior}/prior-answers`,
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      render(slot, priorPanel(offer));
+    } catch (error) {
+      render(slot, notice(error.detail ?? error.message, 'err'));
+    } finally {
+      open.disabled = false;
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-render]');
     if (!button) return;
@@ -1462,11 +1511,20 @@ export async function bidon(root) {
             { value: 'false', label: 'No — this ends the bid at the gate' },
           ],
           hint: 'The hard rule that ends a bid on a "no" reads this field. Prose alone leaves it unanswered.' },
+        { name: 'carriedFromBidId', label: 'Carried forward from this bid', type: 'text', required: false,
+          hint:
+            'Where you wrote this from an earlier approved answer. Both ids are on the candidate card in "What ' +
+            'have we answered before?". Verified against that bid and this customer, so it is provenance rather ' +
+            'than a label.' },
+        { name: 'carriedFromAnswerId', label: '…and this answer', type: 'text', required: false },
       ],
-      transform: ({ bidId: _b, body, yesNo, ...rest }) => ({
+      transform: ({ bidId: _b, body, yesNo, carriedFromBidId, carriedFromAnswerId, ...rest }) => ({
         ...rest,
         body: String(body ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
         ...(String(yesNo ?? '').trim() === '' ? {} : { yesNo: yesNo === 'true' }),
+        ...(String(carriedFromBidId ?? '').trim() && String(carriedFromAnswerId ?? '').trim()
+          ? { carriedFrom: { bidId: String(carriedFromBidId).trim(), answerId: String(carriedFromAnswerId).trim() } }
+          : {}),
       }),
     },
     'parse-questionnaire': {
@@ -2075,6 +2133,129 @@ export async function bidon(root) {
   });
 }
 
+
+/**
+ * Which questions have something to read first.
+ *
+ * Sorted by what is useful rather than by question number: the unanswered ones
+ * with a strong prior answer are where somebody should start, and a list in
+ * source order buries them among the fifty that have nothing.
+ */
+function carryPanel(board, bidId) {
+  const useful = board.questions
+    .filter((entry) => entry.candidates > 0)
+    .sort(
+      (a, b) =>
+        Number(a.answered) - Number(b.answered) ||
+        b.fromLineage - a.fromLineage ||
+        (b.best ?? 0) - (a.best ?? 0),
+    );
+
+  return html`
+    <div style="margin-top:11px">
+      <div class="notice ${raw(useful.length === 0 ? 'warn' : 'info')}" style="margin:0 0 10px">
+        <div>
+          ${board.summary}
+          ${board.follows
+            ? html`<div style="margin-top:4px">
+                This is the ${humanise(board.stage)} stage, following ${board.follows.reference}. Answers from that
+                pack are offered first.
+              </div>`
+            : ''}
+        </div>
+      </div>
+      ${table({
+        headers: ['#', 'Section', 'Answered here', 'Candidates', 'From the PQQ', 'Best match', ''],
+        align: ['', '', '', 'num', 'num', 'num', ''],
+        rows: useful.map((entry) => [
+          entry.number,
+          entry.section,
+          entry.answered ? badge('yes', 'ok') : badge('not yet', 'warn'),
+          String(entry.candidates),
+          entry.fromLineage === 0 ? '—' : badge(String(entry.fromLineage), 'info'),
+          entry.best === null ? '—' : pct(entry.best * 100, 0),
+          html`<button class="btn sm" data-prior="${entry.questionId}" data-prior-bid="${bidId}">Read them</button>`,
+        ]),
+        empty: 'Nothing to carry forward',
+        emptyDetail:
+          'Either every question with a prior answer is already answered here, or this customer’s earlier bids do ' +
+          'not cover these questions. The second submission is where this starts paying for itself.',
+      })}
+      <div id="prior-detail"></div>
+    </div>
+  `;
+}
+
+/**
+ * The candidates for one question.
+ *
+ * Each shown with the two things reading an old pack by hand would miss:
+ * whether its citations are still current on this bid's date, and whether it
+ * fits this question's limit. The ids are on the card because reusing one means
+ * writing an answer that names it, and the command needs them.
+ */
+function priorPanel(offer) {
+  return html`
+    <div style="margin-top:11px">
+      <div class="notice ${raw(offer.candidates.length === 0 ? 'warn' : 'info')}" style="margin:0 0 10px">
+        <div>
+          <b>${offer.question.number} — ${offer.candidates.length} candidate(s)</b>
+          <div>${offer.note}</div>
+          ${offer.limits.map((line) => html`<div style="margin-top:4px">${line}</div>`)}
+        </div>
+      </div>
+      ${offer.candidates.map(
+        (candidate) => html`<div style="padding:9px 0;border-top:1px solid var(--line)">
+          <div class="actions" style="justify-content:space-between;align-items:baseline">
+            <b>
+              ${candidate.bidReference} · ${candidate.buyerName}
+              ${candidate.fromLineage
+                ? badge('from the PQQ this follows', 'info')
+                : badge(humanise(candidate.stage), '')}
+              ${candidate.outcome
+                ? badge(humanise(candidate.outcome), candidate.outcome === 'WON' ? 'ok' : '')
+                : ''}
+            </b>
+            <span style="font-size:12px;color:var(--text-3)">
+              wording match ${pct(candidate.match * 100, 0)}${candidate.score === null
+                ? ''
+                : ` · scored ${candidate.score}`} · ${candidate.words} words
+              ${candidate.withinLimit === false ? badge('over this limit', 'warn') : ''}
+            </span>
+          </div>
+          <div style="font-size:12.5px;color:var(--text-3);margin:3px 0">
+            It answered: ${candidate.question.number} ${candidate.question.text}
+          </div>
+          ${candidate.body.map((line) => html`<p style="margin:5px 0;font-size:13px;line-height:1.55">${line}</p>`)}
+          ${
+            candidate.citations.length === 0
+              ? html`<div class="notice warn" style="margin:6px 0"><div>
+                  No citation at all. Reusing this means finding the evidence for it now — an uncited claim in a
+                  submission is one the customer cannot stand behind.
+                </div></div>`
+              : html`<div style="font-size:12px;margin:5px 0">
+                  ${candidate.citations.map((citation) => html`<span style="margin-right:10px">
+                    ${citation.current
+                      ? badge('current', 'ok')
+                      : citation.withdrawn
+                        ? badge('withdrawn', 'bad')
+                        : badge('lapsed', 'bad')}
+                    ${citation.reference} ${citation.title}${citation.expiresOn
+                      ? ` · expires ${citation.expiresOn}`
+                      : ''}
+                  </span>`)}
+                </div>`
+          }
+          <div style="font-size:11.5px;color:var(--text-3)">
+            To reuse it, write the answer and name this one:
+            <code>${candidate.bidId}</code> / <code>${candidate.answerId}</code>
+          </div>
+        </div>`,
+      )}
+    </div>
+  `;
+}
+
 /** "a, b, c" to a list, or nothing at all when it is empty. */
 function listOf(value, key) {
   const list = String(value ?? '')
@@ -2188,6 +2369,16 @@ function bidDetail(position, estimate, source) {
             </div></div>`
           : ''
       }
+      <div style="padding:11px 17px 0">
+        <!--
+          Carry-forward is a read and costs nothing, but it is a second screen's
+          worth of detail on a pack that is already long — so it is a button
+          rather than always-on. On a sixty-question ITT the first question a
+          writer asks is "what have we already answered", and this is it.
+        -->
+        <button class="btn sm quiet" data-carry="${bid.id}">What have we answered before?</button>
+      </div>
+      <div id="carry-detail" style="padding:0 17px"></div>
       ${
         // The returnables, where there are any. Above the questions table
         // deliberately: a pack can read 92% on answers and be unsendable for an

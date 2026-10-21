@@ -144,6 +144,17 @@ export type BidAnswerVersion = {
   /** A reviewer's score override, with the reason that justifies it. */
   overrideScore?: number;
   overrideReason?: string;
+  /**
+   * The earlier approved answer this one was written from.
+   *
+   * On the record rather than in somebody's memory, because the question a
+   * reviewer asks about a reused answer is "reused from what, and was that one
+   * any good" — and because a buyer who reads a PQQ and an ITT that say
+   * different things about the same subject is entitled to notice. It is a
+   * label on provenance, never a claim that the text is unchanged: reuse goes
+   * through this command and is checked exactly as a fresh answer is.
+   */
+  carriedFrom?: { bidId: string; bidReference: string; answerId: string; questionNumber: string };
 };
 
 export const BID_STAGE = ['PQQ', 'ITT', 'SINGLE_STAGE'] as const;
@@ -865,6 +876,16 @@ export function recordAnswer(
     yesNo?: boolean;
     authorship?: 'HUMAN' | 'AI_DRAFTED';
     provider?: string;
+    /**
+     * The earlier approved answer this was written from, where it was.
+     *
+     * Reuse comes through this command rather than through one of its own, so
+     * a carried-forward answer is checked exactly as hard as a fresh one: the
+     * same citation check against this customer's current evidence, the same
+     * versioning, the same review state. What this field adds is the
+     * provenance, verified rather than taken on trust.
+     */
+    carriedFrom?: { bidId: string; answerId: string };
   },
 ): { bid: Bid; answer: BidAnswerVersion } {
   requireModule(ctx.grantedModules, 'BID_ON');
@@ -930,6 +951,10 @@ export function recordAnswer(
     };
   });
 
+  // Verified before the answer is built, so a bad lineage refuses the write
+  // rather than being recorded as a label nobody checked.
+  const carriedFrom = input.carriedFrom ? requireCarriedFrom(ctx, bid, input.carriedFrom) : undefined;
+
   const previous = bid.answers.filter((entry) => entry.questionId === question.id);
   const answer: BidAnswerVersion = {
     id: ulid(),
@@ -941,6 +966,7 @@ export function recordAnswer(
     ...(input.yesNo === undefined ? {} : { yesNo: input.yesNo }),
     authorship: input.authorship ?? 'HUMAN',
     ...(input.provider ? { provider: input.provider } : {}),
+    ...(carriedFrom ? { carriedFrom } : {}),
     status: 'IN_REVIEW',
     writtenAt: new Date().toISOString(),
     writtenBy: ctx.auth.actorId,
@@ -1184,6 +1210,58 @@ export function rejectAnswer(
   });
 
   return { bid: next, answer: rejected };
+}
+
+/**
+ * Check that an answer being carried forward is one this bid may carry.
+ *
+ * Called by `recordAnswer` where the caller names a `carriedFrom`, so the
+ * lineage on the record is a fact rather than a label. The checks are the ones
+ * that would otherwise be nobody's job: it has to be an approved answer, of
+ * this customer, on another of their bids.
+ */
+function requireCarriedFrom(
+  ctx: EngineContext,
+  bid: Bid,
+  input: { bidId: string; answerId: string },
+): { bidId: string; bidReference: string; answerId: string; questionNumber: string } {
+  const source = bidsOf(ctx).find((entry) => entry.id === input.bidId);
+  if (!source || source.customerAccountId !== bid.customerAccountId) {
+    throw new DomainError(
+      'BID_ON_CARRY_NOT_THIS_CUSTOMER',
+      'That bid is not this customer’s. An answer is carried forward from the same company’s own earlier ' +
+        'submission and from nowhere else.',
+      404,
+    );
+  }
+  if (source.id === bid.id) {
+    throw new DomainError(
+      'BID_ON_CARRY_SAME_BID',
+      'An answer cannot be carried forward from the bid it is already on. A new version of an answer on this bid is ' +
+        'simply the next version.',
+      400,
+    );
+  }
+  const answer = source.answers.find((entry) => entry.id === input.answerId);
+  if (!answer) {
+    throw new DomainError('BID_ON_CARRY_ANSWER_NOT_FOUND', `No answer ${input.answerId} on ${source.reference}`, 404);
+  }
+  if (answer.status !== 'APPROVED') {
+    throw new DomainError(
+      'BID_ON_CARRY_NOT_APPROVED',
+      `That answer on ${source.reference} is ${answer.status.toLowerCase().replace('_', ' ')}, not approved. ` +
+        'Carrying forward is for answers somebody put their name to; anything else is a draft being moved between ' +
+        'packs.',
+      409,
+    );
+  }
+  const asked = source.questions.find((entry) => entry.id === answer.questionId);
+  return {
+    bidId: source.id,
+    bidReference: source.reference,
+    answerId: answer.id,
+    questionNumber: asked?.number ?? '',
+  };
 }
 
 // --- Clarification requests --------------------------------------------------

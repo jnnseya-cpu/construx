@@ -146,6 +146,7 @@ import * as bidOnBids from '../domain/bidon/bids.ts';
 import * as bidOnEngine from '../domain/bidon/engine.ts';
 import * as bidOnBilling from '../domain/bidon/billing.ts';
 import * as bidOnImporting from '../domain/bidon/importing.ts';
+import * as bidOnCarry from '../domain/bidon/carryforward.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -6281,8 +6282,13 @@ export const ROUTES: Route[] = [
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/semantic-search',
-    description: 'Search the record by meaning, or state plainly why it cannot',
+    ai: { engine: 'EXECUTIVE', taskType: 'semantic_search', capability: 'EMBEDDING' },
+    // POST because it spends ACUs and reaches a provider, `readOnly` because it
+    // creates nothing — the same shape `/v1/site/posts/audit` already uses, and
+    // the reason the gateway answers 200 rather than 201 for a search result.
     readOnly: true,
+    description:
+      'Search the record by meaning, or state plainly why it cannot. A metered model call: it embeds the question and the passages in scope, so it is quoted before it runs, held against the wallet, refused where no vendor is cleared for the material, and recorded as an execution. There is no vector cache — each search embeds its scope again, which is cheap rather than free because an embedding is priced per input token with no output side — and a scope past the character ceiling is refused by name rather than sent',
     schema: {
       type: 'object',
       required: ['query'],
@@ -6321,15 +6327,21 @@ export const ROUTES: Route[] = [
       // current prose once, not forty times weighted forty-fold.
       const unique = new Map(passages.map((passage) => [`${passage.ref.refType}:${passage.ref.refId}:${passage.field}`, passage]));
 
+      // Built once, because building it twice would mean two providers and two
+      // metered calls for one search.
+      const provider = embeddingProvider(projectContext(platform, ctx));
+
       return retrieve({
         query,
         passages: [...unique.values()],
         ...(limit ? { limit } : {}),
-        // No provider is configured here, and that is the honest state: the
-        // orchestrator routes reasoning, not embeddings, and inventing vectors
-        // to make this endpoint answer would be the exact failure the module
-        // exists to refuse. It returns a stated refusal until one exists.
-        ...(embeddingProvider() ? { provider: embeddingProvider()! } : {}),
+        // `undefined` where `AI_EMBEDDING_PROVIDER` is unset, which is the state
+        // every deployment starts in. `retrieve` then returns the refusal that
+        // names the variable rather than falling back to keyword matching
+        // dressed as semantic search — a cheaper answer wearing the expensive
+        // one's clothes is worse than no answer, because nobody can tell which
+        // they got.
+        ...(provider ? { provider } : {}),
       });
     },
   },
@@ -13780,6 +13792,14 @@ export const ROUTES: Route[] = [
             additionalProperties: false,
           },
         },
+        // Where this answer was written from an earlier approved one. Verified
+        // against that bid and that customer, not taken on trust.
+        carriedFrom: {
+          type: 'object',
+          required: ['bidId', 'answerId'],
+          properties: { bidId: stringField, answerId: stringField },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },
@@ -13870,6 +13890,28 @@ export const ROUTES: Route[] = [
         ctx.params.bidId as string,
         ctx.params.answerId as string,
         body(ctx),
+      ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/carry-forward',
+    readOnly: true,
+    description:
+      'Which questions on this pack have a prior approved answer worth reading first. On a sixty-question ITT that is the whole of the decision about where to start, and counting them one at a time from a browser would be sixty reads to render a list',
+    handler: (platform, ctx) =>
+      bidOnCarry.carryForwardBoard(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/questions/:questionId/prior-answers',
+    readOnly: true,
+    description:
+      'This customer’s own earlier approved answers, offered against one question. Candidates only — nothing is written into the bid, because an answer pasted unchanged into the next submission is boilerplate and boilerplate is what a buyer marks down. Each one’s citations are re-checked against this bid’s date and its length against this question’s limit, which is what reading an old pack by hand would miss',
+    handler: (platform, ctx) =>
+      bidOnCarry.priorAnswers(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.questionId as string,
       ),
   },
   {

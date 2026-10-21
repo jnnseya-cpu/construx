@@ -27254,12 +27254,110 @@ expiry and declarations, because that is when the buyer reads it, and `readOn`
 for the clarification window, because whether a question can still be asked is a
 fact about today.
 
-**Still outstanding, and recorded rather than quietly fixed:** the
-`semantic-search` route's own provider; and carrying a PQQ's approved answers
-forward into the ITT that follows it. The link is now on the record, so the
-second is reachable, but nothing yet offers a prior answer as a candidate — and
-when it is built it must offer and never paste, on the same terms as
-`domain/answers.ts`. `datalayer/embeddingProvider()` still
+### Bid-On: carrying a PQQ's answers forward
+
+`domain/bidon/carryforward.ts`, two reads, a console panel, `carriedFrom` on an
+answer and `backend/tests/bidoncarry.test.ts`.
+
+**What it is for.** A PQQ asks "describe your health and safety management
+arrangements"; eight weeks later the ITT for the same job asks "set out your
+health and safety management system". It is the same answer, a person already
+approved it, and the alternative to finding it is writing it again — a draft, a
+review, and a second version of the company's position that may not match the
+first. A buyer who reads both documents is entitled to notice.
+
+**It offers and it does not paste.** The same rule as `domain/answers.ts` and
+checked the same way: the test reads this file's source and asserts the absence
+of `applyAnswer`, `pasteAnswer`, `insertAnswer`, `fillQuestion`, `copyAnswer`,
+any `write(` and any `eventType:`. An absence cannot be exercised by calling it.
+The scan strips comments first, because the file's own docstring names those
+functions precisely in order to say they are absent — a scanner reading prose
+would fail a file for explaining itself and pass one that said nothing.
+
+**Reuse goes through `recordAnswer`.** Not through a command of its own, so a
+carried-forward answer gets the same citation check against this customer's
+current evidence, the same versioning and the same `IN_REVIEW` start as a fresh
+one. What is added is `carriedFrom`, **verified** rather than labelled: it has to
+be an approved answer, on another bid, of the same customer. The lineage is then
+on the record, because the question a reviewer asks about a reused answer is
+"reused from what, and was that one any good".
+
+**Three things it checks that reading an old pack by hand would miss.**
+
+- **The citations, against *this* bid's date.** An answer approved in March
+  citing a certificate that lapsed in April is not reusable against a June
+  return, and nothing about reading the prose would tell you. Each candidate
+  reports which citations are current, lapsed or withdrawn.
+- **The length, against *this* question's limit.** A 500-word PQQ answer against
+  a 300-word ITT question is still worth offering as a starting point; saying so
+  is the difference between a useful offer and a trap. `withinLimit` is `null`
+  where the question states no limit, because unknown is not the same as fine.
+- **The lineage.** An answer from the prequalification this bid actually follows
+  is a different proposition from one out of an unrelated bid two years ago, even
+  where the wording matches better. Those sort first and are marked.
+
+**A higher floor than retrieval's**, and argued: `MINIMUM_CARRY_MATCH` is 0.3
+against retrieval's 0.2. A loosely matched *passage* is material a drafter may
+or may not use; a loosely matched *prior answer* is a finished, approved,
+confident-sounding answer to a different question, and the reader's instinct is
+to use what is offered. Offering none is better. Lineage answers that fall below
+the floor are **counted and named** rather than dropped silently, so somebody
+who knows the PQQ answered something similar is told it was looked at.
+
+`distinctTerms` and `overlap` are now exported from `evidence.ts` and reused
+rather than restated: two implementations of "distinctive terms" would mean a
+question that retrieves evidence well and finds no prior answer, for no reason a
+reader could discover. The section counts towards the match because two questions
+under one heading are genuinely more likely to be the same question — which the
+test suite found the hard way, by writing a deliberately unrelated question under
+a related heading and watching it match.
+
+**The board is a second read, not a loop.** On a sixty-question ITT, *which*
+questions have something to carry forward is the whole of the decision about
+where to start; counting them one at a time from the browser would be sixty reads
+to render a list. It stops counting a question once it is answered here, while
+still leaving the candidates readable.
+
+### The semantic-search route is metered
+
+The entry above recorded this as blocked on metering rather than configuration,
+and that is what changed. `embeddingProvider` now takes an `EngineContext` and
+returns a provider whose `embed` routes through `runAI` — so an embedding call is
+held, charged, recorded as an `AIExecution`, refused on an empty wallet and
+refused where no vendor is cleared for the material, exactly as a reasoning call
+is. The route declares `ai: { engine: 'EXECUTIVE', taskType: 'semantic_search',
+capability: 'EMBEDDING' }` and is therefore quoted before it runs.
+
+**`EXECUTIVE` because it is unphased by design.** A search spans the whole
+record; binding it to a phased engine would make it refuse during `CONCEPT` or
+`OPERATIONS` for no reason anybody could discover from the question they asked.
+
+**`readOnly` stays on**, and the reason is worth stating because removing it was
+the first thing tried: `readOnly` means *creates nothing*, not *writes nothing*.
+`/v1/site/posts/audit` already established that shape — a POST that spends and
+reaches a provider but creates no entity — and it is also what makes the gateway
+answer 200 rather than 201 for a search result. Taking it off changed the status
+code, which a test caught.
+
+**There is still no stand-in, and `undefined` still means what it meant.** The
+argument is unchanged and it is the one place in this codebase with no local
+fallback: a stand-in narrative is visibly a stand-in, and a stand-in *vector* is
+not readable by anybody — it ranks, sorts and scores exactly like a real one. A
+deployment with `AI_EMBEDDING_PROVIDER` unset gets the refusal that names the
+variable.
+
+**A cost characteristic, stated because it is surprising.** `vectorindex.ts`
+stores no vectors on purpose, so **each search embeds its scope again**.
+Embeddings are priced per input token with no output side at roughly a hundredth
+of a reasoning call, so this is cheap rather than free, and it is quoted. A scope
+past `SEMANTIC_SEARCH_MAX_CHARS` (400,000 characters) is refused by name with the
+figure in the message, which is better than a 502 from a vendor or a charge for a
+call that failed. A vector cache would change this and there is no measured need
+for one.
+
+**Still outstanding:** nothing named in the Bid-On chapter above. The remaining
+entries for this module are the ones in "Where the directive does not yet apply"
+at the top of this file, which are platform-wide rather than Bid-On's. `datalayer/embeddingProvider()` still
 returns `undefined`, and its docstring now says why — the blocker is no longer
 configuration but **metering**: that signature has no `EngineContext`, so an
 `embed` built from the adapter would bill a vendor with no hold, no wallet check

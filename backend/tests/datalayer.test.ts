@@ -443,11 +443,20 @@ describe('semantic retrieval, and what makes it refuse', () => {
     assert.equal(passages[0]!.field, 'description');
   });
 
-  it('has no local stand-in, deliberately', () => {
+  it('has no local stand-in, deliberately', async () => {
     // Every other stand-in in this codebase is visibly a stand-in on its
     // output. A stand-in embedding is a vector, which nobody can read, and its
     // results rank and score exactly like real ones.
-    assert.equal(embeddingProvider(), undefined);
+    //
+    // It now takes a context, because the provider it returns meters every call
+    // through `runAI`. With no `AI_EMBEDDING_PROVIDER` configured — the state
+    // every deployment starts in and the state these tests run in — the answer
+    // is still `undefined`, and `semantic-search` still returns the refusal
+    // that names the variable.
+    const platform = new Platform();
+    const seeded = await seedDemoProject(platform);
+    const ctx = platform.context(seeded.users.owner!.auth, seeded.projectId);
+    assert.equal(embeddingProvider(ctx), undefined);
   });
 });
 
