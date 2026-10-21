@@ -292,6 +292,22 @@ export type ReadinessInput = Array<{
   verdict: Verdict;
 }>;
 
+/**
+ * A returnable, as readiness needs to see one.
+ *
+ * Deliberately narrow: this file decides whether a pack may go, and for that it
+ * needs to know only whether something mandatory is still outstanding. Format,
+ * page limit, signature and owner are the register's business, not the gate's.
+ */
+export type ReturnableInput = Array<{
+  reference: string;
+  title: string;
+  mandatory: boolean;
+  outstanding: boolean;
+  /** Why it is still outstanding, in the words the gate will refuse with. */
+  reason?: string;
+}>;
+
 export type PackReadiness = {
   /** The weighted mean of answer scores, using each question's own weighting. */
   readinessPercent: number | null;
@@ -303,6 +319,14 @@ export type PackReadiness = {
   green: number;
   /** Mandatory answers that are red or unapproved. Each one blocks the export. */
   blocking: Array<{ index: number; reason: string }>;
+  /**
+   * Mandatory returnables nobody has supplied. Each one blocks the export too.
+   *
+   * Kept in its own list rather than merged into `blocking`, because that one is
+   * indexed into the question array and a returnable has no question. Keyed by
+   * the buyer's own reference, which is what a reviewer will look for.
+   */
+  returnablesOutstanding: Array<{ reference: string; title: string; reason: string }>;
   exportable: boolean;
   summary: string;
 };
@@ -319,8 +343,21 @@ export type PackReadiness = {
  * Export is blocked while any mandatory answer is red or unapproved — both, not
  * either. An approved red is still a rejection at the gate, and an unapproved
  * green has had no person's name on it.
+ *
+ * ## Returnables count too, and that is the second half of a submission
+ *
+ * An ITT is rarely only questions. A signed order form, a priced cost model, a
+ * schedule of amendments accepted or qualified — a submission missing one of
+ * those is rejected exactly as completely as one missing an answer, and a
+ * readiness figure that read 100% while the order form was unsigned would be
+ * the most expensive kind of wrong this module could be.
+ *
+ * `returnables` is optional, so a pack that has none behaves precisely as it
+ * did before they existed: the figure, the blocking list and the gate are all
+ * unchanged. A pack that has them cannot go while a mandatory one is
+ * outstanding.
  */
-export function packReadiness(answers: ReadinessInput): PackReadiness {
+export function packReadiness(answers: ReadinessInput, returnables: ReturnableInput = []): PackReadiness {
   const total = answers.length;
   const weighted = answers.filter((entry) => (entry.weighting ?? 0) > 0);
   const basis = weighted.length > 0 ? weighted : answers.map((entry) => ({ ...entry, weighting: 1 }));
@@ -357,6 +394,18 @@ export function packReadiness(answers: ReadinessInput): PackReadiness {
   const approved = answers.filter((entry) => entry.approved).length;
   const answeredCount = answers.filter((entry) => entry.verdict.weightedScore > 0 || entry.approved).length;
 
+  // The returnables half. Only the mandatory outstanding ones gate; an optional
+  // one that nobody supplied is a decision, not a defect.
+  const returnablesOutstanding = returnables
+    .filter((entry) => entry.mandatory && entry.outstanding)
+    .map((entry) => ({
+      reference: entry.reference,
+      title: entry.title,
+      reason: entry.reason ?? 'Nobody has supplied it, and the buyer asked for it.',
+    }));
+
+  const answersDone = total > 0 && blocking.length === 0;
+
   return {
     readinessPercent,
     answered: answeredCount,
@@ -366,7 +415,8 @@ export function packReadiness(answers: ReadinessInput): PackReadiness {
     amber,
     green,
     blocking,
-    exportable: total > 0 && blocking.length === 0,
+    returnablesOutstanding,
+    exportable: answersDone && returnablesOutstanding.length === 0,
     summary:
       total === 0
         ? 'Nothing parsed yet.'
@@ -375,6 +425,13 @@ export function packReadiness(answers: ReadinessInput): PackReadiness {
           (blocking.length > 0
             ? `. ${blocking.length} mandatory answer(s) are red or unapproved, so the pack cannot be exported.`
             : '. Every mandatory answer is approved and out of red.') +
+          (returnablesOutstanding.length > 0
+            ? ` ${returnablesOutstanding.length} mandatory returnable(s) are outstanding — ` +
+              `${returnablesOutstanding.map((entry) => entry.reference).join(', ')} — and a submission missing one ` +
+              'is rejected as completely as one missing an answer.'
+            : returnables.length > 0
+              ? ` All ${returnables.length} returnable(s) are accounted for.`
+              : '') +
           (weighted.length === 0 && total > 0
             ? ' No question carries a stated weighting, so the readiness figure is an unweighted mean.'
             : ''),

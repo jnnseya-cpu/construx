@@ -341,6 +341,48 @@ const bidOnPackAgent: AgentDefinition = {
         });
       }
 
+      /*
+       * The returnables half, and on a pack like a measured term contract it is
+       * the finding most likely to save a submission.
+       *
+       * An unsigned order form or an unpriced cost model is not visible in a
+       * readiness percentage — that figure is about answers — so a pack can
+       * read 92% and be unsendable for a reason nobody is looking at. A
+       * signature is also a lead time rather than a task, which is why this
+       * fires earlier than the not-ready finding above.
+       */
+      if (bid.returnablesOutstanding > 0 && bid.daysLeft <= 21) {
+        findings.push({
+          key: `bidon:returnables:${bid.id}`,
+          severity: bid.daysLeft <= 7 ? 'URGENT' : 'ATTENTION',
+          summary:
+            `${bid.reference} for ${bid.customerName} has ${bid.returnablesOutstanding} returnable(s) outstanding ` +
+            `with ${bid.daysLeft} day(s) to the return.`,
+          consequence:
+            'A submission missing a required document is rejected exactly as completely as one missing an answer, ' +
+            'and none of this shows in the readiness figure, which is about answers. Where one needs a signature ' +
+            'it is a lead time rather than a task.',
+          evidence: [
+            { refType: 'BidOnBid', refId: bid.id, note: `Readiness ${bid.readinessPercent ?? 0}% on answers alone` },
+          ],
+        });
+      }
+
+      if (bid.clarifications > 0 && bid.daysLeft <= 21) {
+        findings.push({
+          key: `bidon:clarifications:${bid.id}`,
+          severity: 'ATTENTION',
+          summary:
+            `${bid.reference} has ${bid.clarifications} question(s) for the buyer that nobody has asked, with ` +
+            `${bid.daysLeft} day(s) to the return.`,
+          consequence:
+            'A buyer’s clarification deadline is almost always well before their return deadline, so these stop ' +
+            'being askable before the bid stops being writable. A point that could have been negotiated becomes a ' +
+            'risk that has to be priced or accepted.',
+          evidence: [{ refType: 'BidOnBid', refId: bid.id, note: 'Raised from the question list or the amendments' }],
+        });
+      }
+
       if (bid.openGaps > 0 && bid.daysLeft <= 14) {
         findings.push({
           key: `bidon:gaps-waiting:${bid.id}`,

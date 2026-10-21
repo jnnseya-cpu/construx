@@ -243,7 +243,14 @@ export async function bidonguest(root) {
                 ? badge('past', 'bad')
                 : String(bid.daysLeft),
             String(bid.questions),
-            bid.openGaps === 0 ? badge('nothing', 'good') : badge(String(bid.openGaps), 'warn'),
+            // Questions and documents together, because from the customer's
+            // side they are one list: things we are waiting for from them. A
+            // priced cost model and a signed order form are theirs, and
+            // showing only the questions would say "nothing" while we wait on
+            // the one document the buyer cared about.
+            bid.openGaps + bid.returnablesWithCustomer === 0
+              ? badge('nothing', 'good')
+              : badge(String(bid.openGaps + bid.returnablesWithCustomer), 'warn'),
             // Deliberately plain words rather than the internal status. "In
             // review" means something to a bid team; "we are checking it"
             // means something to a contractor.

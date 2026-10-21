@@ -13871,6 +13871,100 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/returnables',
+    description:
+      'Record what the invitation requires to be returned rather than answered — an order form to sign, a cost model to price, a schedule of amendments. Appends rather than replacing, because a person finds these across nine documents over an afternoon, and refuses a reference already held. A mandatory one outstanding blocks the export exactly as a red answer does',
+    schema: {
+      type: 'object',
+      required: ['returnables'],
+      properties: {
+        returnables: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['reference', 'title', 'mandatory', 'owner'],
+            properties: {
+              reference: { type: 'string', minLength: 1, maxLength: 64 },
+              title: { type: 'string', minLength: 3, maxLength: 300 },
+              mandatory: { type: 'boolean' },
+              owner: { type: 'string', enum: [...bidOnBids.RETURNABLE_OWNER] },
+              format: { type: 'string', maxLength: 120 },
+              pageLimit: { type: 'integer', minimum: 1 },
+              fileSizeLimitMb: { type: 'integer', minimum: 1 },
+              signatureRequired: { type: 'boolean' },
+              internalDueBy: { type: 'string', minLength: 10, maxLength: 10 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.recordReturnables(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/returnables/:returnableId/supplied',
+    description:
+      'Record that a returnable exists and is done. Point it at the filed item that is it wherever possible — a returnable citing its evidence can be checked by somebody else in ten seconds, and one that merely says done can only be checked by asking whoever ticked it',
+    schema: {
+      type: 'object',
+      properties: {
+        evidenceId: stringField,
+        note: { type: 'string', maxLength: 600 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.supplyReturnable(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.returnableId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/returnables/:returnableId/waive',
+    description:
+      'Record that a returnable is not required after all — the buyer confirmed it by clarification, or it does not apply to this bidder. Approval rather than update, because it removes a gate, and the reason is mandatory: a waiver with none is indistinguishable from a document nobody chased',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.waiveReturnable(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.returnableId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/amendments',
+    ai: { engine: 'TENDER', taskType: 'bid_on_amendments', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description:
+      'Read a schedule of amendments for what it shifts, and raise the questions to ask the buyer. An unamended standard form is a known quantity; the same contract with twenty amendments is a different contract. It produces questions and observations only — it accepts nothing, qualifies nothing, and says nothing about whether a clause is enforceable, because that decision binds a company',
+    schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', minLength: 200, maxLength: 200000 },
+        hash: stringField,
+        contractForm: { type: 'string', maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEngine.reviewAmendments(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/gaps',
     description:
       'Raise a gap: something nobody can answer from the evidence held. It pauses its own question and nothing else, so the rest of the pack keeps drafting while the customer is asked',

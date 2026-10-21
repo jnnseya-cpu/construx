@@ -2,6 +2,7 @@ import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
 import { requireModule } from '../../identity/modules.ts';
+import type { Clarification } from '../tenderintake.ts';
 import { requireVisibleCustomer } from './customers.ts';
 import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
 import { depositStanding, invoicesOf, requireFundedEngagement } from './billing.ts';
@@ -678,15 +679,30 @@ const clamp = (value: number): number => (Number.isFinite(value) ? Math.min(100,
 export async function composeGapRequest(
   ctx: EngineContext,
   bidId: string,
-): Promise<{ note: string; gaps: number; acuConsumed: number }> {
+): Promise<{ note: string; gaps: number; returnables: number; acuConsumed: number }> {
   const bid = gate(ctx, bidId);
   authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const open = bid.gaps.filter((entry) => !entry.resolvedAt);
-  if (open.length === 0) {
+  /*
+   * The customer's own returnables belong in this message too.
+   *
+   * A priced cost model and a signed order form are the customer's to produce
+   * — the provider writes prose, the contractor prices their own rates and
+   * signs their own contract. Those are not gaps in the evidence and they are
+   * exactly as missing, and asking for them in a second message a week later is
+   * how a submission goes out short of the one document the buyer cared about.
+   * One request, everything in it.
+   */
+  const theirs = bid.returnables.filter(
+    (entry) => entry.owner === 'CUSTOMER' && entry.status === 'OUTSTANDING',
+  );
+
+  if (open.length === 0 && theirs.length === 0) {
     throw new DomainError(
       'BID_ON_NO_GAPS',
-      `${bid.reference} has no open gap, so there is nothing to ask for. Nothing was spent.`,
+      `${bid.reference} has no open gap and nothing outstanding with the customer, so there is nothing to ask for. ` +
+        'Nothing was spent.',
       409,
     );
   }
@@ -712,11 +728,22 @@ export async function composeGapRequest(
           question: numberOf.get(gap.questionId) ?? '',
           asked: gap.promptToClient,
         })),
+        documents: theirs.map((entry) => ({
+          reference: entry.reference,
+          what: entry.title,
+          ...(entry.format ? { format: entry.format } : {}),
+          ...(entry.signatureRequired ? { signature: 'needs signing' } : {}),
+          ...(entry.internalDueBy ? { weNeedItBy: entry.internalDueBy } : {}),
+          mandatory: entry.mandatory,
+        })),
         constraint:
           'One message, grouped so the reader can gather things in one go rather than one item at a time. Plain ' +
           'English for somebody who runs a contracting business and does not write bids: no procurement jargon, no ' +
           'question numbers as the only identifier, and say what each thing is for. Name the return date and what ' +
-          'happens to the submission without each item. Ask for nothing that is not in the list.',
+          'happens to the submission without each item. Ask for nothing that is not in the list. `documents` are ' +
+          'things only they can produce — their own rates, their own signature — so ask for those as documents to ' +
+          'send back rather than as questions to answer, name the format where one is stated, say which need ' +
+          'signing, and give the date we need each by rather than the buyer\u2019s.',
       },
     },
     toWrites: () => [],
@@ -733,7 +760,7 @@ export async function composeGapRequest(
     throw new DomainError('BID_ON_NOTHING_COMPOSED', 'Nothing came back. The gaps are unchanged.', 502);
   }
 
-  return { note, gaps: open.length, acuConsumed: result.acuConsumed };
+  return { note, gaps: open.length, returnables: theirs.length, acuConsumed: result.acuConsumed };
 }
 
 // --- The Retriever's own two commands ----------------------------------------
@@ -1013,4 +1040,179 @@ export async function retrieveSemantic(
   });
 
   return { ...retrieval, acuConsumed: result.acuConsumed };
+}
+
+// --- The amendments reading --------------------------------------------------
+
+/**
+ * Read a schedule of amendments for what it shifts. `X` on `BID_SERVICES`.
+ *
+ * ## What this is, and the three things it is not
+ *
+ * A measured term contract arrives as an unamended standard form plus a
+ * schedule of amendments, and the amendments are where the risk lives. An
+ * unamended JCT MTC is a known quantity; the same contract with twenty
+ * amendments is a different contract, and the commonest way a term contract
+ * goes wrong is that nobody read them until the first dispute.
+ *
+ * So this reads them and produces **questions for the buyer** and **points to
+ * put in front of whoever advises the customer**. It is not:
+ *
+ * - **Legal advice.** It says nothing about whether a clause is enforceable or
+ *   what it would mean in court. The output is phrased as questions and
+ *   observations, and the record says a model wrote them.
+ * - **A decision.** It does not accept, reject or qualify anything. Accepting
+ *   an amended contract binds a company, and no agent mandate in this platform
+ *   reaches an act that binds one — the clarifications it raises are things to
+ *   ask before anybody decides.
+ * - **A substitute for reading them.** It is a first pass over a document
+ *   somebody still has to read. Its value is that the questions are on the
+ *   table before the clarification deadline rather than after it, which is the
+ *   difference between a point that can be negotiated and one that cannot.
+ *
+ * The clarifications land on the bid beside the ones the question list raised,
+ * because they are the same thing: something to ask the buyer while asking is
+ * still possible.
+ */
+export async function reviewAmendments(
+  ctx: EngineContext,
+  bidId: string,
+  input: { text?: string; hash?: string; contractForm?: string },
+): Promise<{
+  bid: Bid;
+  clarifications: Clarification[];
+  observations: string[];
+  /** False where the reading found nothing the bid did not already hold. */
+  recorded: boolean;
+  acuConsumed: number;
+}> {
+  const bid = gate(ctx, bidId);
+  authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (!input.text?.trim() && !input.hash) {
+    throw new DomainError(
+      'BID_ON_NOTHING_TO_REVIEW',
+      'Give it the schedule of amendments: the text, or the hash of a file already in the evidence store.',
+      400,
+    );
+  }
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_amendments',
+    // A schedule of amendments as a file is a document a vision model reads;
+    // pasted clauses are text. The capability follows the input, for the same
+    // reason the parser's does.
+    capability: input.hash ? 'PERCEPTION' : 'REASONING',
+    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+    request: {
+      task:
+        'Read this schedule of amendments to a standard form construction contract. Return JSON with ' +
+        '`clarifications`: an array of { severity, subject, question } where severity is CRITICAL, MAJOR or MINOR, ' +
+        'and `observations`: an array of plain-English strings describing what each significant amendment changes ' +
+        'compared with the unamended form.',
+      payload: {
+        contractForm: input.contractForm ?? 'the standard form named in the invitation',
+        buyer: bid.buyerName,
+        ...(input.text ? { amendments: input.text } : {}),
+        ...(input.hash ? { documentHash: input.hash } : {}),
+        constraint:
+          'Report what the amendments change and what you would ask the buyer about them. Do not advise whether to ' +
+          'accept, reject or qualify anything, do not state whether a clause is enforceable, and do not describe ' +
+          'anything as legal advice — a contractor reading this is deciding whether to put it in front of their own ' +
+          'adviser, which is the decision this is for. Mark CRITICAL only where an amendment moves a risk a ' +
+          'subcontractor cannot price or insure: unlimited liability, a cap removed, fitness for purpose, pay-when-' +
+          'paid, a right of set-off without notice, a retention or payment period materially extended, or ' +
+          'termination at will. Say nothing about clauses the schedule does not amend. Where the schedule is short ' +
+          'or routine, return few findings or none rather than padding — a list of twenty points nobody reads is ' +
+          'worse than three that get asked.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: NO_PROVIDER,
+  });
+
+  const output = result.output as { clarifications?: unknown; observations?: unknown };
+  const severities = new Set(['CRITICAL', 'MAJOR', 'MINOR']);
+  const clarifications: Clarification[] = (Array.isArray(output.clarifications) ? output.clarifications : [])
+    .map((entry) => entry as { severity?: unknown; subject?: unknown; question?: unknown })
+    .filter((entry) => String(entry.subject ?? '').trim() && String(entry.question ?? '').trim())
+    .map((entry) => ({
+      // An unrecognised severity becomes MAJOR rather than being dropped. A
+      // point the model thought worth raising is worth asking even where it
+      // mislabelled how urgent it is, and silently discarding it would make the
+      // reading look cleaner than it was.
+      severity: (severities.has(String(entry.severity)) ? String(entry.severity) : 'MAJOR') as Clarification['severity'],
+      subject: String(entry.subject).trim(),
+      question: String(entry.question).trim(),
+    }));
+
+  const observations = (Array.isArray(output.observations) ? output.observations : [])
+    .map((line) => String(line).trim())
+    .filter(Boolean);
+
+  if (clarifications.length === 0 && observations.length === 0) {
+    throw new DomainError(
+      'BID_ON_NOTHING_READ',
+      'Nothing came back from the amendments. The bid is unchanged, and the schedule still has to be read by ' +
+        'somebody.',
+      502,
+    );
+  }
+
+  // Merged on subject, so re-reading a longer version of the same schedule adds
+  // what is new rather than duplicating what was already asked.
+  const held = new Set(bid.clarifications.map((entry) => entry.subject));
+  const fresh = clarifications.filter((entry) => !held.has(entry.subject));
+
+  /*
+   * A second reading that found nothing new writes nothing.
+   *
+   * Found by the ledger refusing the commit: re-reading the same schedule
+   * produced byte-identical state and `NO_OP_CHANGE` fired. Two fixes were
+   * available and only one is honest. Refusing the command would lose the
+   * caller the result of a run they have already paid for — the model was
+   * called, the wallet moved, and the findings are in hand. Making the state
+   * differ by a timestamp would put an event on an append-only ledger whose
+   * only content is that somebody pressed the button again.
+   *
+   * So the findings come back, the spend is reported, and nothing is written.
+   * `recorded` says which happened, because "nothing new" and "nothing read"
+   * are different answers and the caller should be able to tell them apart.
+   */
+  const sameObservations =
+    bid.amendmentsReview !== undefined &&
+    bid.amendmentsReview.observations.length === observations.length &&
+    bid.amendmentsReview.observations.every((line, index) => line === observations[index]);
+
+  if (fresh.length === 0 && sameObservations) {
+    return {
+      bid,
+      clarifications,
+      observations,
+      recorded: false,
+      acuConsumed: result.acuConsumed,
+    };
+  }
+
+  const next: Bid = {
+    ...bid,
+    clarifications: [...bid.clarifications, ...fresh],
+    amendmentsReview: {
+      observations,
+      contractForm: input.contractForm ?? '',
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: ctx.auth.actorId,
+      provider: result.provider,
+    },
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_AMENDMENTS_REVIEWED',
+    entity: { refType: 'BidOnBid', refId: bid.id },
+    nextState: { ...next },
+  });
+
+  return { bid: next, clarifications, observations, recorded: true, acuConsumed: result.acuConsumed };
 }

@@ -7,6 +7,10 @@ import { renderDocx } from '../../export/docx.ts';
 import { renderXlsx } from '../../export/xlsx.ts';
 import type { ClientBranding, DocumentBlock } from '../../export/exporter.ts';
 import { hashEvidence } from '../../core/canonical.ts';
+// The standard section's own clarification type, reused rather than restated: a
+// question for the buyer is the same thing whichever module raised it, and two
+// shapes for it would eventually say different things about the same tender.
+import type { Clarification } from '../tenderintake.ts';
 import { liveDeclarations, requireVisibleCustomer, type CustomerAccount } from './customers.ts';
 import { requireOpenEngagement, engagementsOf, type Engagement } from './engagements.ts';
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
@@ -16,6 +20,7 @@ import {
   verdictFor,
   type CriterionScores,
   type PackReadiness,
+  type ReturnableInput,
   type Verdict,
 } from './rubric.ts';
 
@@ -141,6 +146,76 @@ export type BidAnswerVersion = {
   overrideReason?: string;
 };
 
+export const RETURNABLE_OWNER = ['PROVIDER', 'CUSTOMER'] as const;
+export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
+
+export const RETURNABLE_STATUS = ['OUTSTANDING', 'SUPPLIED', 'WAIVED'] as const;
+export type ReturnableStatus = (typeof RETURNABLE_STATUS)[number];
+
+/**
+ * One thing the invitation requires to be returned, as opposed to answered.
+ *
+ * ## Why this exists at all
+ *
+ * A pack is rarely only questions. A measured term contract arrives as nine
+ * documents: the questionnaire, an order form to complete and sign, a cost
+ * model to price, a schedule of amendments to accept or qualify, a stock list,
+ * a specification, a code of conduct. Three of those carry questions and five
+ * are **obligations with no question attached**, and a submission missing a
+ * signed order form is rejected exactly as completely as one missing an answer.
+ *
+ * Before this existed, readiness read 100% on such a pack with the order form
+ * unsigned, because readiness was about answers and nothing in the module knew
+ * those documents existed as obligations. That is the most expensive kind of
+ * wrong this module could be: it is confidently wrong at the one moment nobody
+ * re-checks.
+ *
+ * The shape is `TenderDeliverable`'s from `domain/tenderintake.ts`, deliberately
+ * — the standard section already worked out what a returnable needs to carry,
+ * and a second, subtly different answer to the same question is how two screens
+ * end up disagreeing about whether a submission is complete. What is added here
+ * is `owner` as a two-value enum rather than a role, because in this module the
+ * only distinction that matters is whether the provider produces it or the
+ * customer does.
+ */
+export type BidReturnable = {
+  id: string;
+  /** The buyer's own reference — "Appendix 2". Never renumbered, for the same reason a question is not. */
+  reference: string;
+  title: string;
+  /** Mandatory ones gate the export. An optional one left out is a decision, not a defect. */
+  mandatory: boolean;
+  /** What the buyer will accept — PDF, native spreadsheet, a signed original. */
+  format?: string;
+  pageLimit?: number;
+  fileSizeLimitMb?: number;
+  /** A wet or qualified signature. A lead time rather than a task. */
+  signatureRequired?: boolean;
+  /**
+   * Who produces it.
+   *
+   * The distinction the whole register turns on. The provider writes prose; the
+   * customer prices their own rates and signs their own contract. A cost model
+   * is `CUSTOMER` and belongs in the request that goes to them, not on a bid
+   * writer's list of things they have failed to do.
+   */
+  owner: ReturnableOwner;
+  /** Our own date, earlier than the buyer's, and the one that actually binds. */
+  internalDueBy?: string;
+  status: ReturnableStatus;
+  /** The evidence item that is it, where one was filed. */
+  evidenceId?: string;
+  suppliedAt?: string;
+  suppliedBy?: string;
+  supplyNote?: string;
+  /** Why it turned out not to be required. Mandatory on a waiver. */
+  waivedReason?: string;
+  waivedAt?: string;
+  waivedBy?: string;
+  recordedAt: string;
+  recordedBy: string;
+};
+
 export type BidGap = {
   id: string;
   questionId: string;
@@ -260,6 +335,37 @@ export type Bid = {
   questionsConfirmedBy?: string;
   answers: BidAnswerVersion[];
   gaps: BidGap[];
+  /**
+   * What has to be returned rather than answered. Empty on a pack that is all
+   * questions, which is why adding this changed nothing for the bids that
+   * already existed.
+   */
+  returnables: BidReturnable[];
+  /**
+   * What to ask the buyer before their clarification deadline.
+   *
+   * Two sources, one concept. A question with no stated word limit and an
+   * amendment that shifts risk onto the bidder are both *questions for the
+   * buyer*, and both are useless if they surface after the clarification
+   * deadline has passed. `Clarification` is the standard section's own type,
+   * reused rather than restated.
+   */
+  clarifications: Clarification[];
+  /**
+   * The last reading of a schedule of amendments, where one has been read.
+   *
+   * The observations, not a verdict. Nothing here accepts or qualifies
+   * anything: a model's reading of an amended contract is a first pass that
+   * puts the questions on the table before the clarification deadline, and the
+   * decision it informs binds a company, which no agent mandate reaches.
+   */
+  amendmentsReview?: {
+    observations: string[];
+    contractForm: string;
+    reviewedAt: string;
+    reviewedBy: string;
+    provider: string;
+  };
   exportedAt?: string;
   exportedBy?: string;
   outcome?: { outcome: 'SUBMITTED' | 'WON' | 'LOST'; on: string; by: string; feedback?: string };
@@ -431,6 +537,8 @@ export function createBid(
     questions: [],
     answers: [],
     gaps: [],
+    returnables: [],
+    clarifications: [],
     createdAt: new Date().toISOString(),
     createdBy: ctx.auth.actorId,
   };
@@ -538,9 +646,44 @@ export function confirmQuestions(
     };
   });
 
+  /*
+   * An unstated word limit is a question for the buyer, not a free hand.
+   *
+   * The standard section raises clarifications for *dates* on its own — a
+   * deadline with no time zone, a return time that occurs twice — because a
+   * date nobody questioned is how a submission misses by an hour. Limits have
+   * exactly the same shape and nothing raised them: a portal box with no stated
+   * limit is answered at whatever length somebody felt like, and the two
+   * outcomes are an answer truncated by the portal or one a reader stops
+   * reading. Either is avoidable by asking.
+   *
+   * Only on text answers, and only where it is worth a question: a yes/no or a
+   * numeric field has no length to limit, and raising one per question on a
+   * hundred-question pack would produce a list nobody reads to the end.
+   */
+  const unstated = questions.filter(
+    (question) => question.wordLimit === undefined && (question.answerType === 'TEXT' || question.answerType === 'TABLE'),
+  );
+  const raised: Clarification[] = [];
+  if (unstated.length > 0) {
+    raised.push({
+      severity: 'MINOR',
+      subject: `${unstated.length} question(s) state no length limit`,
+      question:
+        `Is there a word or page limit for ${unstated
+          .slice(0, 8)
+          .map((question) => question.number)
+          .join(', ')}` +
+        (unstated.length > 8 ? ` and ${unstated.length - 8} other(s)` : '') +
+        '? Where a limit is not stated we will answer at a length we judge appropriate, and anything past a limit ' +
+        'a portal applies silently is not read at all.',
+    });
+  }
+
   const next: Bid = {
     ...bid,
     questions,
+    clarifications: mergeClarifications(bid.clarifications, raised),
     questionsConfirmedAt: new Date().toISOString(),
     questionsConfirmedBy: ctx.auth.actorId,
     status: 'DRAFTING',
@@ -902,6 +1045,294 @@ export function rejectAnswer(
   return { bid: next, answer: rejected };
 }
 
+// --- Returnables -------------------------------------------------------------
+
+/**
+ * Record what the invitation requires to be returned. `U` on `BID_SERVICES`.
+ *
+ * Additive rather than a confirmation step, and that is deliberate. The
+ * question list is confirmed **once**, because an answer approved against one
+ * question and silently reattached to another is worse than the parsing error
+ * it would fix. A returnable register is the opposite: a person finds the order
+ * form in appendix 2, the cost model in appendix 5 and the amendments in
+ * appendix 3 as they read nine documents over an afternoon, and a register that
+ * had to be right in one go is a register nobody fills in. So this appends, and
+ * refuses a reference it already holds rather than quietly replacing it — two
+ * entries for appendix 2 is two things a reviewer has to check separately.
+ */
+export function recordReturnables(
+  ctx: EngineContext,
+  bidId: string,
+  input: {
+    returnables: Array<{
+      reference: string;
+      title: string;
+      mandatory: boolean;
+      owner: ReturnableOwner;
+      format?: string;
+      pageLimit?: number;
+      fileSizeLimitMb?: number;
+      signatureRequired?: boolean;
+      internalDueBy?: string;
+    }>;
+  },
+): { bid: Bid; added: number; clarifications: Clarification[] } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+
+  if (input.returnables.length === 0) {
+    throw new DomainError('BID_ON_NOTHING_TO_RECORD', 'Name at least one returnable', 400);
+  }
+
+  const held = new Set(bid.returnables.map((entry) => entry.reference.toLowerCase()));
+  const now = new Date().toISOString();
+  const added: BidReturnable[] = [];
+  const raised: Clarification[] = [];
+
+  for (const entry of input.returnables) {
+    const reference = requireText(entry.reference, 1, 'BID_ON_REFERENCE_REQUIRED', 'A returnable reference');
+    if (held.has(reference.toLowerCase())) {
+      throw new DomainError(
+        'BID_ON_RETURNABLE_DUPLICATE',
+        `${reference} is already on this bid's register. Two entries for one appendix is two things a reviewer has ` +
+          'to check separately, and the second says nothing the first did not.',
+        409,
+      );
+    }
+    held.add(reference.toLowerCase());
+
+    const title = requireText(entry.title, NAME_MIN, 'BID_ON_TITLE_TOO_SHORT', 'A returnable title');
+
+    // Our own date cannot fall after the buyer's. On a rolling submission there
+    // is no buyer's date to fall after, so there is nothing to check.
+    if (entry.internalDueBy && bid.deadline && entry.internalDueBy.slice(0, 10) > bid.deadline) {
+      throw new DomainError(
+        'BID_ON_INTERNAL_DATE_AFTER_RETURN',
+        `${reference} carries an internal date of ${entry.internalDueBy}, which is after the return deadline of ` +
+          `${bid.deadline}. The internal date is the one that binds, and one set after the return binds nothing.`,
+        422,
+      );
+    }
+
+    added.push({
+      id: ulid(),
+      reference,
+      title,
+      mandatory: entry.mandatory,
+      owner: entry.owner,
+      ...(entry.format?.trim() ? { format: entry.format.trim() } : {}),
+      ...(entry.pageLimit === undefined ? {} : { pageLimit: entry.pageLimit }),
+      ...(entry.fileSizeLimitMb === undefined ? {} : { fileSizeLimitMb: entry.fileSizeLimitMb }),
+      ...(entry.signatureRequired ? { signatureRequired: true } : {}),
+      ...(entry.internalDueBy ? { internalDueBy: entry.internalDueBy.slice(0, 10) } : {}),
+      status: 'OUTSTANDING',
+      recordedAt: now,
+      recordedBy: ctx.auth.actorId,
+    });
+
+    // A signature is a lead time, not a task, and a mandatory one with no
+    // internal date ahead of the return is how a wet signature is discovered on
+    // the last afternoon.
+    if (entry.signatureRequired && entry.mandatory && !entry.internalDueBy) {
+      raised.push({
+        severity: 'MAJOR',
+        subject: `${reference} needs a signature and has no internal date`,
+        question:
+          `${title} requires a signature and no internal date has been set for it. A wet or qualified signature is ` +
+          'a lead time rather than a task. Confirm who signs it and by when.',
+      });
+    }
+    // A format nobody recorded is a submission rejected on a filename, which is
+    // rejected as completely as one rejected on price.
+    if (entry.mandatory && !entry.format?.trim()) {
+      raised.push({
+        severity: 'MINOR',
+        subject: `${reference} has no stated format`,
+        question:
+          `In what format should ${title} be returned — PDF, the native spreadsheet, or a signed original? A ` +
+          'submission rejected on a format is rejected as completely as one rejected on price.',
+      });
+    }
+  }
+
+  const next: Bid = {
+    ...bid,
+    returnables: [...bid.returnables, ...added],
+    clarifications: mergeClarifications(bid.clarifications, raised),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_RETURNABLES_RECORDED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, added: added.length, clarifications: raised };
+}
+
+function requireReturnable(bid: Bid, returnableId: string): BidReturnable {
+  const returnable = bid.returnables.find((entry) => entry.id === returnableId);
+  if (!returnable) {
+    throw new DomainError('BID_ON_RETURNABLE_NOT_FOUND', `No returnable ${returnableId} on ${bid.reference}`, 404);
+  }
+  return returnable;
+}
+
+/**
+ * Mark a returnable supplied. `U` on `BID_SERVICES`.
+ *
+ * `evidenceId` is optional and is strongly preferred: a returnable pointing at
+ * the filed item that is it can be checked by somebody else in ten seconds,
+ * and one that merely says "done" can only be checked by asking whoever ticked
+ * it. Where it is given it has to be this customer's own item, for the same
+ * reason a citation does — the filter is not a formality in a module where two
+ * customers compete for the same framework.
+ */
+export function supplyReturnable(
+  ctx: EngineContext,
+  bidId: string,
+  returnableId: string,
+  input: { evidenceId?: string; note?: string },
+): { bid: Bid; returnable: BidReturnable } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const returnable = requireReturnable(bid, returnableId);
+
+  if (returnable.status === 'SUPPLIED') {
+    throw new DomainError(
+      'BID_ON_RETURNABLE_SUPPLIED',
+      `${returnable.reference} is already recorded as supplied on ${returnable.suppliedAt?.slice(0, 10)}.`,
+      409,
+    );
+  }
+
+  if (input.evidenceId) {
+    const item = evidenceOf(ctx).find((entry) => entry.id === input.evidenceId);
+    if (!item || item.customerAccountId !== bid.customerAccountId) {
+      throw new DomainError(
+        'BID_ON_EVIDENCE_NOT_THIS_CUSTOMER',
+        'That evidence item is not this customer\u2019s own. A returnable can only point at something filed for the ' +
+          'customer whose submission it is.',
+        404,
+      );
+    }
+    if (item.withdrawnAt) {
+      throw new DomainError(
+        'BID_ON_EVIDENCE_WITHDRAWN',
+        `${item.reference} has been withdrawn, so it cannot be what satisfies ${returnable.reference}.`,
+        409,
+      );
+    }
+  }
+
+  const supplied: BidReturnable = {
+    ...returnable,
+    status: 'SUPPLIED',
+    ...(input.evidenceId ? { evidenceId: input.evidenceId } : {}),
+    ...(input.note?.trim() ? { supplyNote: input.note.trim() } : {}),
+    suppliedAt: new Date().toISOString(),
+    suppliedBy: ctx.auth.actorId,
+  };
+
+  const next: Bid = {
+    ...bid,
+    returnables: bid.returnables.map((entry) => (entry.id === returnableId ? supplied : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_RETURNABLE_SUPPLIED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, returnable: supplied };
+}
+
+/**
+ * Record that a returnable is not required after all. `A` on `BID_SERVICES`.
+ *
+ * Approval rather than update, because this is the one command here that
+ * removes a gate. The reason is mandatory and is the point: a waiver with none
+ * is indistinguishable from a returnable nobody chased, and the difference
+ * matters when a submission comes back rejected for a missing document.
+ */
+export function waiveReturnable(
+  ctx: EngineContext,
+  bidId: string,
+  returnableId: string,
+  input: { reason: string },
+): { bid: Bid; returnable: BidReturnable } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const returnable = requireReturnable(bid, returnableId);
+
+  if (returnable.status === 'SUPPLIED') {
+    throw new DomainError(
+      'BID_ON_RETURNABLE_SUPPLIED',
+      `${returnable.reference} has already been supplied, so there is nothing to waive.`,
+      409,
+    );
+  }
+
+  const waived: BidReturnable = {
+    ...returnable,
+    status: 'WAIVED',
+    waivedReason: requireText(input.reason, REASON_MIN, 'BID_ON_REASON_TOO_SHORT', 'A reason'),
+    waivedAt: new Date().toISOString(),
+    waivedBy: ctx.auth.actorId,
+  };
+
+  const next: Bid = {
+    ...bid,
+    returnables: bid.returnables.map((entry) => (entry.id === returnableId ? waived : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_RETURNABLE_WAIVED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  return { bid: next, returnable: waived };
+}
+
+/** What readiness needs to know about the register. */
+export function returnableReadiness(bid: Bid, asAt?: string): ReturnableInput {
+  const day = judgedOn(bid, asAt);
+  return bid.returnables.map((entry) => ({
+    reference: entry.reference,
+    title: entry.title,
+    mandatory: entry.mandatory,
+    outstanding: entry.status === 'OUTSTANDING',
+    reason:
+      entry.owner === 'CUSTOMER'
+        ? `Waiting on the customer${entry.internalDueBy ? `, due ${entry.internalDueBy}` : ''}.` +
+          (entry.internalDueBy && entry.internalDueBy < day ? ' That date has passed.' : '')
+        : `Nobody has supplied it${entry.signatureRequired ? ', and it needs a signature' : ''}` +
+          (entry.internalDueBy ? `, due ${entry.internalDueBy}` : '') +
+          '.' +
+          (entry.internalDueBy && entry.internalDueBy < day ? ' That date has passed.' : ''),
+  }));
+}
+
+/**
+ * Add clarifications without accumulating the same one twice.
+ *
+ * Matched on subject, because these are raised again every time a register is
+ * added to and a list that repeated "no stated format" nine times is a list
+ * nobody reads to the end.
+ */
+function mergeClarifications(held: Clarification[], raised: Clarification[]): Clarification[] {
+  const subjects = new Set(held.map((entry) => entry.subject));
+  return [...held, ...raised.filter((entry) => !subjects.has(entry.subject))];
+}
+
 // --- Gaps --------------------------------------------------------------------
 
 /**
@@ -1037,6 +1468,10 @@ export type BidPosition = {
   customer: { id: string; reference: string; legalName: string };
   questions: ScoredQuestion[];
   readiness: PackReadiness;
+  /** What has to be returned rather than answered, and where each one stands. */
+  returnables: BidReturnable[];
+  /** What to ask the buyer, raised from the questions and from the amendments. */
+  clarifications: Clarification[];
   openGaps: BidGap[];
   limits: string[];
 };
@@ -1081,6 +1516,24 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
     );
   }
 
+  const outstanding = bid.returnables.filter((entry) => entry.status === 'OUTSTANDING');
+  if (outstanding.length > 0) {
+    const theirs = outstanding.filter((entry) => entry.owner === 'CUSTOMER');
+    limits.push(
+      `${outstanding.length} returnable(s) are outstanding: ` +
+        `${outstanding.map((entry) => entry.reference).join(', ')}` +
+        (theirs.length > 0
+          ? `. ${theirs.length} of those are the customer's to produce — a priced cost model or a signed contract is ` +
+            'theirs, not a bid writer\u2019s, and they appear in the request that goes to them.'
+          : '.'),
+    );
+  }
+  if (bid.clarifications.length > 0) {
+    limits.push(
+      `${bid.clarifications.length} clarification(s) are outstanding for the buyer. They are only useful before ` +
+        'their clarification deadline, which is almost always well before the return.',
+    );
+  }
   if (bid.rolling) {
     limits.push(
       `This is a rolling submission with no return date, so every expiry and declaration is judged against today ` +
@@ -1102,7 +1555,12 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
         approved: entry.answer?.status === 'APPROVED',
         verdict: entry.verdict,
       })),
+      // The second half of a submission. Empty on a pack that is all questions,
+      // which is why this changed nothing for the bids that already existed.
+      returnableReadiness(bid, day),
     ),
+    returnables: bid.returnables,
+    clarifications: bid.clarifications,
     openGaps: bid.gaps.filter((entry) => !entry.resolvedAt),
     limits,
   };
@@ -1204,10 +1662,24 @@ export function exportBid(ctx: EngineContext, bidId: string): { bid: Bid; readin
         return `${question?.number ?? entry.index} — ${entry.reason}`;
       })
       .join('; ');
+    const missing = position.readiness.returnablesOutstanding
+      .map((entry) => `${entry.reference} ${entry.title} — ${entry.reason}`)
+      .join('; ');
+
+    // Both halves in one refusal, each only where it applies. A gate that said
+    // "mandatory answers are red" when the real problem was an unsigned order
+    // form would send somebody to re-read answers that are fine.
     throw new DomainError(
       'BID_ON_NOT_EXPORTABLE',
-      `${bid.reference} cannot be exported. ${position.readiness.blocking.length} mandatory answer(s) are red or ` +
-        `unapproved: ${named}. A submission missing a mandatory response is not marked down, it is rejected, and ` +
+      `${bid.reference} cannot be exported. ` +
+        (position.readiness.blocking.length > 0
+          ? `${position.readiness.blocking.length} mandatory answer(s) are red or unapproved: ${named}. `
+          : '') +
+        (position.readiness.returnablesOutstanding.length > 0
+          ? `${position.readiness.returnablesOutstanding.length} mandatory returnable(s) are outstanding: ` +
+            `${missing}. `
+          : '') +
+        'A submission missing a mandatory response or a required document is not marked down, it is rejected, and ' +
         'everything else in it is spent for nothing.',
       422,
     );
@@ -1302,6 +1774,11 @@ export type BidRegister = {
     questions: number;
     approved: number;
     openGaps: number;
+    /** Returnables nobody has supplied or waived. Mandatory ones block the export. */
+    returnablesOutstanding: number;
+    /** Of those, the ones only the customer can produce — their rates, their signature. */
+    returnablesWithCustomer: number;
+    clarifications: number;
     readinessPercent: number | null;
     exportable: boolean;
     /** Null where there is no deadline to count down to. */
@@ -1347,6 +1824,7 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
           approved: entry.answer?.status === 'APPROVED',
           verdict: entry.verdict,
         })),
+        returnableReadiness(bid, day),
       );
       return {
         id: bid.id,
@@ -1362,6 +1840,18 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
         questions: bid.questions.length,
         approved: readiness.approved,
         openGaps: bid.gaps.filter((entry) => !entry.resolvedAt).length,
+        // The half a readiness percentage cannot see. Counted separately on the
+        // row because "92% ready" beside "order form unsigned" is the only
+        // honest way to show both at once.
+        returnablesOutstanding: bid.returnables.filter((entry) => entry.status === 'OUTSTANDING').length,
+        // Split out, because the customer's own screen has to show what is
+        // waiting on *them* — a priced cost model is theirs — and lumping it
+        // in with the provider's own outstanding documents would tell a
+        // contractor they are late for something they were never asked for.
+        returnablesWithCustomer: bid.returnables.filter(
+          (entry) => entry.status === 'OUTSTANDING' && entry.owner === 'CUSTOMER',
+        ).length,
+        clarifications: bid.clarifications.length,
         readinessPercent: readiness.readinessPercent,
         exportable: readiness.exportable,
         // Null on a rolling bid, not zero and not a large number: there is no

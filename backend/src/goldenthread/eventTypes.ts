@@ -2446,6 +2446,17 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_ANSWER_SCORED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_ANSWER_APPROVED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
   def('BID_ON_ANSWER_REJECTED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  // The other half of a submission: what has to be returned rather than
+  // answered. Human-only, all three. Recording the register is a person reading
+  // nine documents; saying a signed order form exists is a statement somebody
+  // is accountable for; and waiving one removes a gate, which is a decision.
+  def('BID_ON_RETURNABLES_RECORDED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_RETURNABLE_SUPPLIED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_RETURNABLE_WAIVED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  // A reading of an amended contract, which produces questions for the buyer
+  // and nothing else. `aiAllowed` because a model genuinely authors the
+  // reading; it decides nothing, recommends nothing and accepts nothing.
+  def('BID_ON_AMENDMENTS_REVIEWED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_GAP_RAISED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_GAP_RESOLVED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_BID_EXPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),

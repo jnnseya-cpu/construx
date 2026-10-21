@@ -27029,6 +27029,124 @@ module rests on. A renewal is a new bid, the same answer the module already
 gives for a prequalification stage followed by an ITT stage: two bids off one
 invitation.
 
+### Bid-On: what has to be returned, and what has to be asked
+
+`returnables` and `clarifications` on the bid, `reviewAmendments` in the engine,
+four routes, four console doors and `backend/tests/bidonreturnables.test.ts`.
+
+**The failure this closes, stated as it was found.** A measured term contract
+arrives as nine documents. Three carry questions; five are obligations with no
+question attached — an order form to complete and sign, a cost model to price, a
+schedule of amendments to accept or qualify, a stock list, a specification. A
+submission missing a signed order form is rejected exactly as completely as one
+missing an answer. Readiness on such a pack read **100% with the order form
+unsigned**, because readiness was about answers and nothing in the module knew
+those documents existed as obligations. That is the most expensive kind of wrong
+available here: confidently wrong at the one moment nobody re-checks.
+
+**The shape is `TenderDeliverable`'s, deliberately.** The standard section had
+already worked out what a returnable carries — reference, title, mandatory,
+format, page and size limits, signature, owner, our own internal date — and a
+second subtly different answer to the same question is how two screens end up
+disagreeing about whether a submission is complete. What is added is `owner` as
+a two-value enum rather than a role, because in this module the only distinction
+that matters is whether the provider produces it or the customer does.
+
+**It gates through `packReadiness`, not beside it.** The alternative was a
+separate check in `exportBid`, and that would have left `readiness.exportable`
+saying true while the export refused — the exact disagreement between the screen
+and the gate the module's design forbids. `packReadiness` takes returnables as an
+**optional second argument**, so a pack with none behaves precisely as it did
+before they existed; a test asserts the two calls are deep-equal. The refusal
+names the documents rather than the answers, because a gate that said "mandatory
+answers are red" when the real problem was an unsigned order form would send
+somebody to re-read answers that are fine.
+
+**Additive, and the register appends.** The question list is confirmed *once* —
+an answer approved against one question and reattached to another is worse than
+the parsing error it would fix. A returnable register is the opposite: a person
+finds the order form in appendix 2 and the cost model in appendix 5 as they read
+nine documents over an afternoon, and a register that had to be right in one go
+is one nobody fills in. So `recordReturnables` appends and refuses a reference it
+already holds. An internal date after the buyer's return date is refused: the
+internal date is the one that binds, and one set after the return binds nothing.
+
+**Supplying points at evidence; waiving takes approval.** A returnable citing the
+filed item that *is* it can be checked by somebody else in ten seconds; one that
+merely says "done" can only be checked by asking whoever ticked it. The citation
+is held to the same wall as an answer's — it must be this customer's own item.
+A waiver removes a gate, so it sits on `A` rather than `U` and the reason is
+mandatory: a waiver with none is indistinguishable from a document nobody
+chased, and the difference matters when a submission comes back rejected for a
+missing one.
+
+**The customer's own documents go in the request that goes to them.** A priced
+cost model and a signed contract are the contractor's to produce, not a bid
+writer's, so `composeGapRequest` now carries outstanding `CUSTOMER` returnables
+alongside the open gaps — asking for them in a second message a week later is
+how a submission goes out short of the one document the buyer cared about. The
+register publishes `returnablesWithCustomer` separately so the customer's own
+screen counts them under "waiting on you", while the provider's screen shows the
+full outstanding count beside the readiness percentage. *"92% ready"* next to
+*"1 to return"* is the only honest way to show both at once.
+
+**An unstated limit is a question, not a free hand.** The standard section raises
+clarifications for dates on its own — a deadline with no time zone, a return time
+that occurs twice — because a date nobody questioned is how a submission misses
+by an hour. Limits have the same shape and nothing raised them, so a portal box
+with no stated limit was answered at whatever length somebody felt like, and the
+outcomes are an answer truncated by the portal or one a reader stops reading.
+`confirmQuestions` now raises **one** clarification for the lot, naming the
+first eight question numbers — one per question on a hundred-question pack would
+produce a list nobody reads to the end — and only for `TEXT` and `TABLE`, since a
+yes/no has no length to limit. `recordReturnables` raises the same kind for a
+mandatory signature with no internal date (a signature is a lead time, not a
+task) and for a mandatory returnable with no stated format.
+
+**`Clarification` is the standard section's own type, reused.** A question for
+the buyer is the same thing whichever module raised it, and two shapes for it
+would eventually say different things about the same tender. The two sources —
+the question list and the amendments — are one concept: something to ask while
+asking is still possible, since a clarification deadline is almost always well
+before the return.
+
+**The amendments reading, and the three things it is not.** An unamended standard
+form is a known quantity; the same contract with twenty amendments is a different
+contract, and the commonest way a term contract goes wrong is that nobody read
+them until the first dispute. `reviewAmendments` is a model call that produces
+questions for the buyer and observations for whoever advises the customer. It is
+**not legal advice** — it says nothing about enforceability and the prompt
+forbids it; **not a decision** — it accepts, rejects and qualifies nothing,
+because that binds a company and no agent mandate here reaches an act that does;
+and **not a substitute for reading them** — it is a first pass whose value is
+that the questions are on the table before the clarification deadline rather
+than after it. A test asserts that the status, the questions, the answers and the
+returnables are all byte-identical after a reading. A finding whose severity the
+model mislabelled is kept as `MAJOR` rather than dropped: a point worth raising
+is worth asking even where the label was wrong, and discarding it would make the
+reading look cleaner than it was.
+
+**A second reading that found nothing new writes nothing.** Found by the ledger
+refusing the commit with `NO_OP_CHANGE`. Two fixes were available and only one is
+honest: refusing the command would lose the caller the result of a run they have
+already paid for, and making the state differ by a timestamp would put an event
+on an append-only ledger whose only content is that somebody pressed the button
+again. So the findings come back, the spend is reported, and `recorded: false`
+says which happened — "nothing new" and "nothing read" are different answers.
+
+**The agent watches both halves.** An outstanding returnable fires at 21 days
+rather than 7, because a signature is a lead time; and it says in the finding
+that none of it shows in the readiness figure, which is about answers. An unasked
+clarification fires on the same horizon, because a point that could have been
+negotiated becomes a risk that has to be priced or accepted.
+
+**What is deliberately not here.** Bid-On does not price the cost model — that is
+measurement, it belongs to the customer, and the register's answer is to make it
+a `CUSTOMER` returnable that appears in the request sent to them. And the pack
+`renderPack` produces still contains only answers: a checklist of our own
+internal dates is not something a buyer should read off the front page of a
+submission.
+
 **Still outstanding, and recorded rather than quietly fixed:** the
 `semantic-search` route's own provider. `datalayer/embeddingProvider()` still
 returns `undefined`, and its docstring now says why — the blocker is no longer

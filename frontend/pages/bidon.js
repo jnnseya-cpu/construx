@@ -344,6 +344,14 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'resolve-gap', label: 'Close a gap', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'record-returnables', label: 'Record what has to be returned',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'supply-returnable', label: 'Mark a returnable done', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'waive-returnable', label: 'Waive a returnable', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
+          { id: 'review-amendments', label: 'Read the schedule of amendments',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'export-bid', label: 'Export the pack',
             permitted: can('BID_SERVICES', 'I'), reason: blockedReason('BID_SERVICES', 'I') },
           { id: 'record-bid-outcome', label: 'Record the outcome', tone: 'quiet',
@@ -351,8 +359,8 @@ export async function bidon(root) {
         ]))}
       </div>
       ${table({
-        headers: ['Ref', 'Customer', 'Buyer', 'Scheme', 'Due', 'Left', 'Questions', 'Approved', 'Gaps', 'Readiness', 'State', ''],
-        align: ['', '', '', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],
+        headers: ['Ref', 'Customer', 'Buyer', 'Scheme', 'Due', 'Left', 'Questions', 'Approved', 'Gaps', 'To return', 'Readiness', 'State', ''],
+        align: ['', '', '', '', '', 'num', 'num', 'num', 'num', 'num', 'num', '', ''],
         rows: bidList.map((bid) => [
           bid.reference,
           bid.customerName,
@@ -371,6 +379,12 @@ export async function bidon(root) {
           String(bid.questions),
           String(bid.approved),
           bid.openGaps === 0 ? '—' : badge(String(bid.openGaps), 'warn'),
+          // Beside the readiness figure, because that figure is about answers
+          // and cannot see this. "92% ready" next to "1 to return" is the only
+          // honest way to show both at once.
+          bid.returnablesOutstanding === 0
+            ? '—'
+            : html`<span title="${bid.returnablesWithCustomer} with the customer">${badge(String(bid.returnablesOutstanding), 'bad')}</span>`,
           bid.readinessPercent === null ? '—' : `${bid.readinessPercent}%`,
           bid.exportable
             ? badge('ready to export', 'ok')
@@ -1159,6 +1173,110 @@ export async function bidon(root) {
       transform: () => ({}),
       ai: true,
     },
+    'record-returnables': {
+      title: 'Record what has to be returned',
+      intent:
+        'The half of a submission that is not answers. An order form to sign, a cost model the customer prices, a ' +
+        'schedule of amendments to accept or qualify — a submission missing one of those is rejected exactly as ' +
+        'completely as one missing an answer, and none of it shows in a readiness percentage. Adds to the register ' +
+        'rather than replacing it, because these are found across nine documents over an afternoon.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/returnables`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'returnables', label: 'The returnables', type: 'textarea', rows: 10,
+          hint:
+            'One per line as "ref | what it is | M or O | PROVIDER or CUSTOMER | format | pages | MB | SIG | our ' +
+            'date". Only the first four matter; the rest may be blank. M is mandatory and gates the export. ' +
+            'CUSTOMER means only they can produce it — their rates, their signature — and it goes into the request ' +
+            'that we send them. SIG means it needs signing, which is a lead time rather than a task.' },
+      ],
+      transform: ({ returnables }) => ({
+        returnables: String(returnables ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 4 && parts[0] && parts[1])
+          .map((parts) => ({
+            reference: parts[0],
+            title: parts[1],
+            mandatory: String(parts[2] ?? '').toUpperCase().startsWith('M'),
+            owner: String(parts[3] ?? 'PROVIDER').toUpperCase().startsWith('C') ? 'CUSTOMER' : 'PROVIDER',
+            ...(parts[4] ? { format: parts[4] } : {}),
+            ...(parts[5] ? { pageLimit: Number(parts[5]) } : {}),
+            ...(parts[6] ? { fileSizeLimitMb: Number(parts[6]) } : {}),
+            ...(String(parts[7] ?? '').toUpperCase().includes('SIG') ? { signatureRequired: true } : {}),
+            ...(parts[8] ? { internalDueBy: parts[8] } : {}),
+          })),
+      }),
+    },
+    'supply-returnable': {
+      title: 'Mark a returnable done',
+      intent:
+        'Point it at the filed item that is it wherever you can. A returnable citing its evidence can be checked by ' +
+        'somebody else in ten seconds; one that merely says done can only be checked by asking whoever ticked it.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/returnables/${v.returnableId}/supplied`,
+      submitLabel: 'Mark done',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList
+            .filter((bid) => bid.returnablesOutstanding > 0)
+            .map((bid) => ({
+              value: bid.id,
+              label: `${bid.reference} — ${bid.buyerName} · ${bid.returnablesOutstanding} outstanding`,
+            })),
+          hint: 'Only a bid with something outstanding. Open the pack above and the register carries the ids.' },
+        { name: 'returnableId', label: 'Returnable id', type: 'text', hint: 'From the register in the opened pack.' },
+        { name: 'evidenceId', label: 'The item that is it', type: 'text', required: false,
+          hint: 'An evidence id from this customer’s own library. Strongly preferred over a bare note.' },
+        { name: 'note', label: 'Note', type: 'text', required: false,
+          hint: 'Where it went, who signed it, which version.' },
+      ],
+      transform: ({ bidId: _b, returnableId: _r, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'waive-returnable': {
+      title: 'Waive a returnable',
+      intent:
+        'For one the buyer has confirmed is not required, or that does not apply to this bidder. It removes a gate, ' +
+        'so it takes approval and the reason is mandatory — a waiver with no reason is indistinguishable from a ' +
+        'document nobody chased, and the difference matters when a submission comes back rejected for a missing one.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/returnables/${v.returnableId}/waive`,
+      submitLabel: 'Waive',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList
+            .filter((bid) => bid.returnablesOutstanding > 0)
+            .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'returnableId', label: 'Returnable id', type: 'text' },
+        { name: 'reason', label: 'Why it is not required', type: 'textarea', rows: 3,
+          hint: 'Name who confirmed it and when. This is what somebody reads if the submission is rejected for it.' },
+      ],
+      transform: ({ bidId: _b, returnableId: _r, ...rest }) => rest,
+    },
+    'review-amendments': {
+      title: 'Read the schedule of amendments',
+      intent:
+        'An unamended standard form is a known quantity; the same contract with twenty amendments is a different ' +
+        'contract, and the commonest way a term contract goes wrong is that nobody read them until the first ' +
+        'dispute. This produces questions to ask the buyer and observations to put in front of whoever advises the ' +
+        'customer. It accepts nothing, qualifies nothing and says nothing about whether a clause is enforceable — ' +
+        'that decision binds a company, and no agent here reaches one.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/amendments`,
+      submitLabel: 'Read it',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'contractForm', label: 'The form it amends', type: 'text', required: false,
+          hint: 'As the invitation names it — "JCT Measured Term Contract 2024". The reading is against the unamended form.' },
+        { name: 'text', label: 'The amendments', type: 'textarea', rows: 14, required: false,
+          hint: 'Paste the schedule. Or give the hash below of a file already in the evidence store.' },
+        { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false },
+      ],
+      transform: ({ bidId: _b, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+      ai: true,
+    },
     'confirm-questions': {
       title: 'Confirm the question list',
       intent:
@@ -1938,6 +2056,73 @@ function bidDetail(position, estimate, source) {
               <b>To finish this pack: ${money(estimate.chargeMinor)} across ${estimate.runs} agent run(s).</b>
               ${estimate.summary}
               ${estimate.limits.map((line) => html`<div style="margin-top:4px">${line}</div>`)}
+            </div></div>`
+          : ''
+      }
+      ${
+        // The returnables, where there are any. Above the questions table
+        // deliberately: a pack can read 92% on answers and be unsendable for an
+        // unsigned order form, and the thing nobody is looking at belongs where
+        // they are looking.
+        (position.returnables ?? []).length > 0
+          ? html`<div style="padding:11px 17px 0">
+              <h2 style="margin:0 0 4px;font-size:14px">What has to be returned</h2>
+              <p style="margin:0 0 6px;font-size:12.5px;color:var(--text-3)">
+                Not answers. A submission missing a required document is rejected exactly as completely as one
+                missing an answer, and none of this is in the readiness figure above.
+              </p>
+              ${table({
+                headers: ['Ref', 'What', 'Who', 'Format', 'Limit', 'Sign', 'We need it by', 'Standing', 'id'],
+                align: ['', '', '', '', 'num', '', '', '', ''],
+                rows: position.returnables.map((item) => [
+                  item.mandatory ? html`${item.reference} ${badge('must', 'warn')}` : item.reference,
+                  item.title,
+                  item.owner === 'CUSTOMER' ? badge('customer', 'info') : 'us',
+                  item.format ?? html`<span style="font-size:12px;color:var(--text-3)">not stated</span>`,
+                  item.pageLimit ? `${item.pageLimit}pp` : item.fileSizeLimitMb ? `${item.fileSizeLimitMb}MB` : '—',
+                  item.signatureRequired ? badge('signature', 'warn') : '—',
+                  item.internalDueBy ? date(item.internalDueBy) : '—',
+                  item.status === 'SUPPLIED'
+                    ? badge('done', 'ok')
+                    : item.status === 'WAIVED'
+                      ? html`<span title="${item.waivedReason ?? ''}">${badge('waived', '')}</span>`
+                      : badge('outstanding', item.mandatory ? 'bad' : 'warn'),
+                  html`<code style="font-size:11px;color:var(--text-3)">${item.id}</code>`,
+                ]),
+              })}
+            </div>`
+          : ''
+      }
+      ${
+        // Questions for the buyer. Separate from gaps, which go to the
+        // customer, and time-critical in a different way: a clarification
+        // deadline is almost always well before the return.
+        (position.clarifications ?? []).length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              <b>${position.clarifications.length} question(s) to ask the buyer.</b>
+              A clarification deadline is almost always well before the return, so these stop being askable before
+              the bid stops being writable.
+              ${position.clarifications.map((entry) => html`<div style="margin-top:5px">
+                ${badge(humanise(entry.severity), entry.severity === 'CRITICAL' ? 'bad' : entry.severity === 'MAJOR' ? 'warn' : '')}
+                <b>${entry.subject}</b> — ${entry.question}
+              </div>`)}
+            </div></div>`
+          : ''
+      }
+      ${
+        // What the amendments reading found. Observations, not a verdict —
+        // nothing here accepts or qualifies anything.
+        position.bid.amendmentsReview
+          ? html`<div class="notice info" style="margin:11px 17px 0"><div>
+              <b>The schedule of amendments, as read on ${date(position.bid.amendmentsReview.reviewedAt)}</b>
+              by ${position.bid.amendmentsReview.provider}${
+                position.bid.amendmentsReview.contractForm
+                  ? html`, against ${position.bid.amendmentsReview.contractForm}`
+                  : ''
+              }.
+              Observations only — nothing here accepts, qualifies or advises on a clause, and the decision it
+              informs binds a company.
+              ${position.bid.amendmentsReview.observations.map((line) => html`<div style="margin-top:4px">${line}</div>`)}
             </div></div>`
           : ''
       }
