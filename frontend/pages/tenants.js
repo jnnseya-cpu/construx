@@ -68,6 +68,13 @@ export async function tenants(root) {
   const byId = new Map(rows.map((tenant) => [tenant.id, tenant]));
   const unreachable = rows.filter((tenant) => tenant.administrators === 0);
   const eng = engine && !engine.error ? engine : null;
+  // Which modules are allocated only under a signed agreement, read from the
+  // register rather than listed here. The rule is the module's own
+  // (`requiresAgreementRef` in its registry) and the platform refuses a grant
+  // that does not name one, so a second copy of the list in the browser would
+  // be the duplicate that goes stale the day a module is added.
+  const needsAgreement = new Set((register?.modules ?? []).filter((definition) => definition.registry?.requiresAgreementRef).map((definition) => definition.id));
+  const agreementModules = (register?.modules ?? []).filter((definition) => needsAgreement.has(definition.id)).map((definition) => definition.name);
   const attention = new Map((eng?.attention ?? []).map((entry) => [entry.tenantId, entry.flags]));
   const totals = eng?.results.totals;
 
@@ -445,7 +452,12 @@ export async function tenants(root) {
                 headers: ['Tenancy', 'Module', 'Status', 'Granted', 'Reason', 'Revoked', ''],
                 rows: register.grants.filter((grant) => grant.status === 'ACTIVE' || showRevoked).map((grant) => [
                   grant.legalName,
-                  grant.moduleName,
+                  // The agreement under the module name, where the allocation
+                  // names one. "Which agreement is this company working under"
+                  // is the question the reference exists to answer, and a
+                  // register that held it without showing it would not answer
+                  // it.
+                  grant.agreementRef ? html`${grant.moduleName}<div class="metric-sub">${grant.agreementRef}</div>` : grant.moduleName,
                   badge(grant.status.toLowerCase(), grant.status === 'ACTIVE' ? 'ok' : 'warn'),
                   html`${date(grant.grantedAt)}<div class="metric-sub">${grant.grantedByName}</div>`,
                   grant.status === 'ACTIVE' ? grant.reason : grant.revokedReason ?? grant.reason,
@@ -454,7 +466,7 @@ export async function tenants(root) {
                     : '—',
                   grant.status === 'ACTIVE'
                     ? html`<button class="btn quiet danger sm" data-module-decision="REVOKED" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Revoke</button>`
-                    : html`<button class="btn quiet sm" data-module-decision="ACTIVE" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}">Grant again</button>`,
+                    : html`<button class="btn quiet sm" data-module-decision="ACTIVE" data-tenant="${grant.tenantId}" data-module="${grant.moduleId}" data-name="${grant.legalName}" data-module-name="${grant.moduleName}" data-needs-agreement="${needsAgreement.has(grant.moduleId) ? 'yes' : ''}" data-agreement="${grant.agreementRef ?? ''}">Grant again</button>`,
                 ]),
                 // Revoked grants stay on the record on purpose: "who had this,
                 // and between which dates" is what an access review asks. They
@@ -1466,15 +1478,29 @@ export async function tenants(root) {
     button.addEventListener('click', async () => {
       const { moduleDecision, tenant, module, name, moduleName } = button.dataset;
       const revoke = moduleDecision === 'REVOKED';
+      // Asked for on a re-grant of a module allocated under an agreement, and
+      // never on a revocation — the platform refuses the grant without it and
+      // deliberately does not ask for it to take access back.
+      const agreement = !revoke && button.dataset.needsAgreement === 'yes';
       const result = await command({
         title: `${revoke ? 'Revoke' : 'Grant again'} — ${moduleName} for ${name}`,
         intent: revoke
           ? 'The module closes for this tenancy on its next request: routes, commands and agents alike. What was written stays on the ledger. The reason is recorded against the decision.'
-          : 'The module reopens for this tenancy. The earlier grant and revocation stay on the register.',
+          : agreement
+            ? 'The module reopens for this tenancy under the agreement named below. The earlier grant and revocation stay on the register, and so does the agreement each was made under.'
+            : 'The module reopens for this tenancy. The earlier grant and revocation stay on the register.',
         path: `/v1/admin/tenants/${tenant}/modules/${module}`,
         submitLabel: revoke ? 'Revoke' : 'Grant',
-        fields: [{ name: 'reason', label: 'Reason', hint: 'In your own words. Recorded against the decision.' }],
-        transform: (values) => ({ status: moduleDecision, reason: values.reason }),
+        fields: [
+          { name: 'reason', label: 'Reason', hint: 'In your own words. Recorded against the decision.' },
+          // The last reference is offered rather than assumed: a re-grant is
+          // usually under the same agreement, and where it is a new one the
+          // operator is the only person who knows that.
+          ...(agreement
+            ? [{ name: 'agreementRef', label: 'Agreement', value: button.dataset.agreement || '', hint: 'The signed contract or order reference this allocation is made under.' }]
+            : []),
+        ],
+        transform: (values) => ({ status: moduleDecision, reason: values.reason, ...(agreement && values.agreementRef ? { agreementRef: values.agreementRef } : {}) }),
       });
       if (result) again();
     });
@@ -1566,13 +1592,34 @@ export async function tenants(root) {
             ],
           },
           { name: 'reason', label: 'Reason', hint: 'Why this company, in your own words. Recorded against the decision.' },
+          // Optional on the form and required by the module, which is why the
+          // hint names which ones. The decision is not the browser's: the
+          // platform refuses a grant that needs an agreement and does not name
+          // one, and the refusal arrives against this field. Conditioning the
+          // input on the module picked above would mean a form that re-renders
+          // itself, which is a mechanism this console does not have and does
+          // not need for one field.
+          {
+            name: 'agreementRef',
+            label: 'Agreement',
+            required: false,
+            hint: agreementModules.length
+              ? `The signed contract or order reference. Required for ${agreementModules.join(', ')}; ignored by the rest, and never asked for on a revocation.`
+              : 'The signed contract or order reference, where the module is allocated under one.',
+          },
           { name: 'validFrom', label: 'Starts (optional — scheduled until then)', type: 'date', iso: true, required: false },
           { name: 'validTo', label: 'Expires (optional — closes from that day)', type: 'date', iso: true, required: false },
         ],
         // `moduleId` went into the address, so it is dropped from the body —
         // the route's schema is `additionalProperties: false` and would refuse
         // it, correctly.
-        transform: (values) => ({ status: values.status, reason: values.reason, ...(values.validFrom ? { validFrom: values.validFrom } : {}), ...(values.validTo ? { validTo: values.validTo } : {}) }),
+        transform: (values) => ({
+          status: values.status,
+          reason: values.reason,
+          ...(values.agreementRef ? { agreementRef: values.agreementRef } : {}),
+          ...(values.validFrom ? { validFrom: values.validFrom } : {}),
+          ...(values.validTo ? { validTo: values.validTo } : {}),
+        }),
       });
 
       if (choice) {

@@ -481,3 +481,103 @@ describe('what a module is not', () => {
     assert.equal(closed.standing.mayWrite, true);
   });
 });
+
+/**
+ * A module that is allocated only under a signed agreement has to be
+ * allocatable.
+ *
+ * `BID_ON` declares `requiresAgreementRef` in its registry and the platform
+ * refuses a grant that does not name one. The endpoint's schema is
+ * `additionalProperties: false` and had no `agreementRef` on it — so the
+ * reference could not be sent, and sending nothing was refused. The module was
+ * listed in the register, enforced on every route and impossible to grant
+ * through the product: capability that reads as present from every direction
+ * and is reachable from none.
+ *
+ * Covered over HTTP rather than at the platform, because the platform was
+ * never wrong. `bidon.test.ts` already asserts the refusal; what was missing
+ * was a way to satisfy it.
+ */
+describe('a module allocated under an agreement, over HTTP', () => {
+  const AGREEMENT: ModuleId = 'BID_ON';
+
+  it('refuses the allocation without the agreement, and names the field', async () => {
+    const reply = await call('POST', `/v1/admin/tenants/${tenantId()}/modules/${AGREEMENT}`, {
+      token: tokenFor('operator'),
+      body: { status: 'ACTIVE', reason: 'Allocating it without the paperwork' },
+    });
+    assert.equal(reply.status, 422);
+    assert.equal(reply.body.title, 'MODULE_AGREEMENT_REQUIRED');
+    assert.match(reply.body.detail, /only under a signed agreement/);
+    // Against the input it belongs to. The console shows a problem+json field
+    // error on the field, and an operator who can see which box is empty does
+    // not have to read a paragraph to find out.
+    assert.deepEqual(
+      (reply.body.errors ?? []).map((entry: { field: string }) => entry.field),
+      ['agreementRef'],
+    );
+    assert.deepEqual(platform.grantedModules(tenantId()), []);
+  });
+
+  it('refuses a reference too short to be one, at the schema', async () => {
+    const reply = await call('POST', `/v1/admin/tenants/${tenantId()}/modules/${AGREEMENT}`, {
+      token: tokenFor('operator'),
+      body: { status: 'ACTIVE', reason: 'A reference that is not one', agreementRef: 'x' },
+    });
+    assert.equal(reply.status, 400);
+    assert.deepEqual(platform.grantedModules(tenantId()), []);
+  });
+
+  it('allocates with the agreement, reads it back, and puts it on the register', async () => {
+    const reply = await call('POST', `/v1/admin/tenants/${tenantId()}/modules/${AGREEMENT}`, {
+      token: tokenFor('operator'),
+      body: {
+        status: 'ACTIVE',
+        reason: 'Bid support delivered to their own customers from January',
+        agreementRef: 'MSA-2026-014',
+      },
+    });
+    assert.equal(reply.status, 201);
+    assert.equal(reply.body.agreementRef, 'MSA-2026-014');
+    // Read back in the sentence the operator sees, which is the first and
+    // cheapest chance to notice a reference typed wrongly.
+    assert.match(reply.body.effect, /Allocated under MSA-2026-014/);
+    assert.deepEqual(platform.grantedModules(tenantId()), [AGREEMENT]);
+
+    const register = await call('GET', '/v1/admin/modules', { token: tokenFor('operator') });
+    const mine = register.body.grants.find(
+      (entry: { tenantId: string; moduleId: string }) => entry.tenantId === tenantId() && entry.moduleId === AGREEMENT,
+    );
+    assert.equal(mine.agreementRef, 'MSA-2026-014', 'the register cannot say which agreement this company works under');
+  });
+
+  it('takes it back without asking for the paperwork, and keeps the reference on the record', async () => {
+    const reply = await call('POST', `/v1/admin/tenants/${tenantId()}/modules/${AGREEMENT}`, {
+      token: tokenFor('operator'),
+      body: { status: 'REVOKED', reason: 'Agreement not renewed' },
+    });
+    assert.equal(reply.status, 201);
+    assert.deepEqual(platform.grantedModules(tenantId()), []);
+
+    // An allocation made in error must be undoable without first finding the
+    // agreement it was made under — and the agreement it was made under is
+    // still what an access review reads.
+    const register = await call('GET', '/v1/admin/modules', { token: tokenFor('operator') });
+    const mine = register.body.grants.find(
+      (entry: { tenantId: string; moduleId: string }) => entry.tenantId === tenantId() && entry.moduleId === AGREEMENT,
+    );
+    assert.equal(mine.status, 'REVOKED');
+    assert.equal(mine.agreementRef, 'MSA-2026-014');
+  });
+
+  it('leaves a module that never needed one alone', async () => {
+    const reply = await call('POST', `/v1/admin/tenants/${tenantId()}/modules/${MODULE}`, {
+      token: tokenFor('operator'),
+      body: { status: 'ACTIVE', reason: 'Still granted on the reason alone' },
+    });
+    assert.equal(reply.status, 201);
+    assert.equal(reply.body.agreementRef, undefined);
+    assert.doesNotMatch(reply.body.effect, /Allocated under/);
+    revoke();
+  });
+});

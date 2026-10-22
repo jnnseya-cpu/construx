@@ -27431,3 +27431,57 @@ suites — `article`, `visibility`, `publicsurface`, `discovery`, `analytics`,
 `POSTS` rather than typing one: twenty-two posts needed no test edited. Four
 stale "six" references in `site/blog.ts` comments were made count-free in the
 same change, since they describe `POSTS.length` and were already wrong at seven.
+
+## The module that could not be allocated
+
+Reported from use: allocating **CONSTRUX Bid-On** answered
+`MODULE_AGREEMENT_REQUIRED`, and there was no way to satisfy it.
+
+`BID_ON` declares `requiresAgreementRef: true` in its registry and
+`setModuleGrant` refuses an `ACTIVE` grant that does not name the agreement —
+both correct, both deliberate, both already covered by `bidon.test.ts`. What
+was missing was the other half. `POST /v1/admin/tenants/:tenantId/modules/:moduleId`
+is `additionalProperties: false` and its schema had no `agreementRef`, so the
+reference could not be sent at all: omit it and the platform refused, include
+it and the gateway refused it as an unknown property. The console's two module
+forms never asked for it either.
+
+**This is the pay-less-notice hole again, and it reads as capability from every
+direction.** The module is in `MODULES`, published on the operator's register,
+enforced on every Bid-On route, described on the permissions matrix, and was
+impossible to grant through the product. Everything that works in
+`bidon.test.ts` works because the fixtures call `platform.setModuleGrant`
+directly, which no screen can do.
+
+**The fix is the vertical, not the schema line.**
+
+- `agreementRef` is on the route schema, `minLength: 3`, **optional there and
+  required by the module**. A route that demanded it of every module would have
+  broken `ETABLIX`'s allocation, which exists, works and never needed the field.
+  Not asked for on a revocation, for the reason the platform does not ask: an
+  allocation made in error must be undoable without first finding the paperwork.
+- The refusal now carries a **field error** on `agreementRef`. The console
+  surfaces problem+json field errors against the input they belong to, so the
+  operator sees which box is empty instead of reading a paragraph to work it out.
+- The grant response **reads the reference back** in its `effect` sentence —
+  the first and cheapest moment to notice one typed wrongly.
+- The operator's register **shows it** under the module name. A register that
+  held the reference without displaying it could not answer the question the
+  reference exists for.
+- Both console forms ask for it. The allocation form asks optionally with a
+  hint naming the modules that require one, **derived from
+  `registry.requiresAgreementRef` on the published register** rather than listed
+  in the browser — the rule stays the module's own. The per-module *Grant again*
+  button knows whether that module needs one, asks only then, and offers the
+  previous reference as the value, because a re-grant is usually under the same
+  agreement and where it is not, the operator is the only person who knows.
+- A revoked grant keeps its `agreementRef`, which is what an access review reads.
+
+Five tests over HTTP in `modules.test.ts`, deliberately not at the platform
+level: the platform was never wrong. They assert the refusal and its field, the
+schema refusing a one-character reference, the allocation succeeding and
+appearing on the register with its agreement, the revocation needing no
+paperwork while keeping the reference, and `ETABLIX` still granted on the reason
+alone.
+
+Verified: `npm run typecheck` clean, 7600 tests pass.

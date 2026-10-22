@@ -2346,6 +2346,20 @@ export const ROUTES: Route[] = [
         // this hands a named company capability that is not on the price list,
         // and a record of that with no stated basis is unreviewable.
         reason: { type: 'string', minLength: 3 },
+        // The signed agreement this allocation is made under.
+        //
+        // Optional here and required by the module, not by the route. A module
+        // declares `requiresAgreementRef` in its own registry — `BID_ON` does
+        // because it is sold to a provider who sells onward to its own
+        // customers, `ETABLIX` does not and never needed the field — and
+        // `setModuleGrant` refuses the grant by name where one is missing. A
+        // route that demanded it of every module would break the allocation
+        // that already works; a route that did not accept it at all made the
+        // module that needs it unallocatable, which is what this is fixing.
+        //
+        // Not required on a revocation, for the same reason the platform does
+        // not: taking access away must not wait on finding the paperwork.
+        agreementRef: { type: 'string', minLength: 3 },
         // Scheduled start and expiry (Enterprise / Group v1.0 §7). Either may
         // be omitted; a grant with neither is from now, open-ended.
         validFrom: { type: 'string' },
@@ -2366,13 +2380,14 @@ export const ROUTES: Route[] = [
       if (!isModuleId(moduleId)) {
         throw new DomainError('MODULE_UNKNOWN', `${moduleId} is not a module this platform has`, 404);
       }
-      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; validFrom?: string; validTo?: string }>(ctx);
+      const input = body<{ status: 'ACTIVE' | 'REVOKED'; reason: string; agreementRef?: string; validFrom?: string; validTo?: string }>(ctx);
       const grant = platform.setModuleGrant({
         moduleId,
         tenantId: ctx.params.tenantId!,
         status: input.status,
         reason: input.reason,
         decidedBy: actor.actorId,
+        ...(input.agreementRef ? { agreementRef: input.agreementRef } : {}),
         ...(input.validFrom ? { validFrom: input.validFrom } : {}),
         ...(input.validTo ? { validTo: input.validTo } : {}),
       });
@@ -2384,7 +2399,12 @@ export const ROUTES: Route[] = [
         // switch does: an operator should see what they have just handed over.
         effect:
           grant.status === 'ACTIVE'
-            ? `${MODULES[moduleId].name} is now available to this tenancy alongside everything else it holds.`
+            ? `${MODULES[moduleId].name} is now available to this tenancy alongside everything else it holds.` +
+              // Read back where there is one, because the whole point of the
+              // reference is that somebody can answer which agreement this
+              // company is working under — and the first chance to check it
+              // was typed correctly is the moment it was typed.
+              (grant.agreementRef ? ` Allocated under ${grant.agreementRef}.` : '')
             : `${MODULES[moduleId].name} is closed to this tenancy. Records already written stay on the ledger and stay readable to the operator.`,
       };
     },

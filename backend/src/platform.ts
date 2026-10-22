@@ -2917,6 +2917,12 @@ export class Platform {
         `${MODULES[input.moduleId].name} is allocated only under a signed agreement, so the allocation has to name ` +
           'it. Without the reference nobody can answer which agreement this company is working under when the fee, ' +
           'the renewal or a dispute comes up.',
+        422,
+        // Named as a field error rather than left as a banner. The console
+        // surfaces problem+json field errors against the input they belong to,
+        // and "which agreement" is answerable at the keyboard — a refusal that
+        // only says the sentence makes the operator find the field themselves.
+        [{ field: 'agreementRef', message: 'The contract or order reference this allocation is made under' }],
       );
     }
     // The tenancy has to exist. Without this a typo in a tenant id writes a
