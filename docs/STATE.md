@@ -27534,3 +27534,32 @@ records, and it would give nine documents one title — and an evidence item is
 cited by its title.
 
 Verified: `npm run typecheck` clean, 7605 tests pass.
+
+## The engagement form asked for terms it could see were not there
+
+Reported from the first afternoon of use: opening an engagement answered
+`BID_ON_TERMS_INCOMPLETE` — "an engagement needs a billing basis, a fee and a
+currency; name a service from the catalogue to take them from it, or state all
+three."
+
+The refusal is correct and the message says exactly what to do. The form is
+what was wrong. Every terms field read *take it from the service* and offered to
+leave itself blank, and the catalogue picker's default was *Price it directly* —
+on a tenancy with no service defined, which is every tenancy on its first
+afternoon, that is a form inviting a submission the platform then refuses.
+
+So the three fields now read the catalogue they depend on. Where no live service
+exists, the basis loses its "take it from the service" option (left in, it is
+the default choice and sends nothing, which is the refusal again), the basis and
+the fee are required, the currency defaults to `GBP`, and the picker says
+*Nothing in the catalogue — price it below* instead of implying a choice. Where
+a service does exist, nothing changes. The basis hint also now states the rule
+`requireBasis` enforces, because `BID_ON_BASIS_MISMATCH` was the next refusal
+waiting behind this one.
+
+`priceable` — the live offerings — is hoisted once rather than filtered inline
+in each field, since two fields and three hints turn on whether it is empty.
+Withdrawn services stay on the catalogue and out of the pickers: an engagement
+signed against one is unaffected, and what was sold stays readable.
+
+Verified: `npm run typecheck` clean, 7605 tests pass.

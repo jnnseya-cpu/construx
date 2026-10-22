@@ -92,6 +92,15 @@ export async function bidon(root) {
   const invoiceList = invoices?.invoices ?? [];
   const engagementList = engagements?.engagements ?? [];
   const offeringList = offerings?.offerings ?? [];
+  /**
+   * The services an engagement can actually be priced from.
+   *
+   * Withdrawn ones are kept on the catalogue — an engagement signed against one
+   * is unaffected and the record of what was sold stays readable — but nothing
+   * new is priced from one, so the forms offer the live ones only. Hoisted
+   * because two fields and three hints depend on whether this is empty.
+   */
+  const priceable = offeringList.filter((entry) => entry.active);
 
   const customerOptions = customerList
     .filter((customer) => customer.status === 'ACTIVE')
@@ -1979,22 +1988,40 @@ export async function bidon(root) {
         { name: 'customerId', label: 'Customer', type: 'select', options: customerOptions },
         { name: 'name', label: 'What the work is', type: 'text',
           hint: '"UVDB prequalification", "Q1 tender submissions", "Bid retainer 2027".' },
+        // The catalogue, and what the form says when there is nothing in it.
+        //
+        // Every terms field below used to read "take it from the service" and
+        // offer to leave itself blank. On a tenancy with no service defined —
+        // which is every tenancy on its first afternoon — that is an invitation
+        // to submit a form the platform then refuses for incomplete terms. The
+        // refusal is right and says what to do; the form should not have asked
+        // for it. So where the catalogue is empty, the three terms are the only
+        // route and the fields say so.
         { name: 'offeringId', label: 'From the catalogue', type: 'select', required: false,
           options: [
-            { value: '', label: 'Price it directly' },
-            ...offeringList.filter((o) => o.active).map((o) => ({ value: o.id, label: `${o.reference} — ${o.name}` })),
+            { value: '', label: priceable.length > 0 ? 'Price it directly' : 'Nothing in the catalogue — price it below' },
+            ...priceable.map((o) => ({ value: o.id, label: `${o.reference} — ${o.name}` })),
           ],
-          hint: 'Fills in the type, fee, basis, deposit and deliverables. Every one can still be changed below.' },
+          hint: priceable.length > 0
+            ? 'Fills in the type, fee, basis, deposit and deliverables. Every one can still be changed below.'
+            : 'No service is defined yet, so state the basis, the fee and the currency below. Defining one first fills all three in and prices every later engagement from it.' },
         { name: 'type', label: 'Engagement type', type: 'select',
           options: Object.entries(TYPE_MEANING).map(([value, meaning]) => ({ value, label: `${humanise(value)} — ${meaning}` })) },
-        { name: 'billingBasis', label: 'Billing basis', type: 'select', required: false,
+        { name: 'billingBasis', label: 'Billing basis', type: 'select', required: priceable.length === 0,
           options: [
-            { value: '', label: 'Take it from the service' },
+            // Offered only where there is a service to take it from. Left in
+            // with an empty catalogue it is the default choice and sends
+            // nothing, which is the refusal again.
+            ...(priceable.length > 0 ? [{ value: '', label: 'Take it from the service' }] : []),
             ...['FIXED_FEE', 'MONTHLY', 'PER_CYCLE', 'PER_STAGE', 'AS_AGREED'].map((value) => ({ value, label: humanise(value) })),
-          ] },
-        { name: 'fee', label: 'Fee', type: 'number', required: false,
-          hint: 'In whole currency units. Leave blank to take the service’s starting price.' },
-        { name: 'currency', label: 'Currency', type: 'text', required: false, placeholder: 'GBP' },
+          ],
+          hint: 'It has to fit the type above: a one-off takes a fixed fee or as-agreed, a continuous one is billed per cycle or monthly, a staged one per stage.' },
+        { name: 'fee', label: 'Fee', type: 'number', required: priceable.length === 0,
+          hint: priceable.length > 0
+            ? 'In whole currency units. Leave blank to take the service’s starting price.'
+            : 'In whole currency units. There is no service to take it from, so it is needed here.' },
+        { name: 'currency', label: 'Currency', type: 'text', required: false, placeholder: 'GBP',
+          ...(priceable.length === 0 ? { value: 'GBP' } : {}) },
         { name: 'schedule', label: 'Repeats', type: 'select', required: false,
           options: [
             { value: '', label: 'Does not repeat' },
