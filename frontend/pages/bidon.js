@@ -832,6 +832,28 @@ export async function bidon(root) {
   });
 
   /*
+   * The hash of a filed document, onto the clipboard.
+   *
+   * Delegated on the page rather than bound to the rows, because the library
+   * panel is rendered after this handler is attached and again every time a
+   * different customer is opened — binding per row would work once.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-copy-hash]');
+    if (!button) return;
+    const hash = button.dataset.copyHash;
+    try {
+      await navigator.clipboard?.writeText(hash);
+      toast('Copied', 'The document’s hash is on the clipboard. Paste it into the parser or the amendments reading.', 'ok');
+    } catch {
+      // A browser that refuses clipboard access is not a failure to report as
+      // one: the hash is on the button's own tooltip, so there is still a way
+      // to read it.
+      toast('Not copied', 'This browser would not write to the clipboard. The full hash is in the button’s tooltip.', 'warn');
+    }
+  });
+
+  /*
    * The paid search.
    *
    * A POST, because it embeds the question and that is a model call. The answer
@@ -1443,8 +1465,9 @@ export async function bidon(root) {
         { name: 'contractForm', label: 'The form it amends', type: 'text', required: false,
           hint: 'As the invitation names it — "JCT Measured Term Contract 2024". The reading is against the unamended form.' },
         { name: 'text', label: 'The amendments', type: 'textarea', rows: 14, required: false,
-          hint: 'Paste the schedule. Or give the hash below of a file already in the evidence store.' },
-        { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false },
+          hint: 'Paste the schedule. Or file it in the customer’s library and give its hash below.' },
+        { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false,
+          hint: 'File the document in the library first, then press Copy hash on its row.' },
       ],
       transform: ({ bidId: _b, ...rest }) =>
         Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
@@ -1541,9 +1564,9 @@ export async function bidon(root) {
         { name: 'bidId', label: 'Bid', type: 'select',
           options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
         { name: 'text', label: 'Pasted from the portal', type: 'textarea', rows: 10, required: false,
-          hint: 'Paste the questions. Leave blank and give a file hash instead for a PDF, including a scan.' },
+          hint: 'Paste the questions. Leave blank and give a filed document’s hash instead for a PDF, including a scan.' },
         { name: 'hash', label: 'Or a document hash', type: 'text', required: false,
-          hint: 'A file already in the evidence store. A scan is read by a vision model rather than refused.' },
+          hint: 'File the questionnaire in the customer’s library first, then press Copy hash on its row. A scan is read by a vision model rather than refused.' },
       ],
       transform: ({ bidId: _b, ...rest }) =>
         Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
@@ -1786,8 +1809,18 @@ export async function bidon(root) {
           ] },
         { name: 'title', label: 'Title', type: 'text',
           hint: 'As a reviewer looking for it would describe it.' },
-        { name: 'hash', label: 'File hash', type: 'text',
-          hint: 'The hash of the file already uploaded to the evidence store, which refuses bytes that do not hash to the address they claim.' },
+        // The file itself, not a hash somebody obtained elsewhere.
+        //
+        // This field asked for a hash as text, which is a true description of
+        // what the command takes and left no way to produce one from a
+        // browser: a tender arrives as nine PDFs, and the operator was reduced
+        // to a shell and `sha256sum`. `type: 'file'` is the console's own
+        // mechanism for exactly this — it hashes in the browser, files the
+        // record, uploads the bytes after it is accepted, and queues them on
+        // the device where the connection cannot carry them. Nothing new is
+        // built here; the field was simply the wrong type.
+        { name: 'hash', label: 'The file', type: 'file',
+          hint: 'Hashed in this browser. The record is filed first and the bytes follow it, so a dropped connection leaves a record naming a document rather than bytes nothing names.' },
         { name: 'validFrom', label: 'Valid from', type: 'date', required: false },
         { name: 'expiresOn', label: 'Current until', type: 'date', required: false,
           hint: 'Required for a certificate or an insurance schedule. Everything else may genuinely not lapse.' },
@@ -2576,8 +2609,8 @@ function evidencePanel(library) {
     <div style="margin-top:11px">
       <p class="metric-sub">${library.summary}</p>
       ${table({
-        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing'],
-        align: ['', '', '', '', '', 'num', 'num', '', ''],
+        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing', ''],
+        align: ['', '', '', '', '', 'num', 'num', '', '', ''],
         rows: library.evidence.map((item) => [
           item.reference,
           humanise(item.type),
@@ -2599,6 +2632,14 @@ function evidencePanel(library) {
             : item.currentNow
               ? badge('current', 'ok')
               : badge('lapsed', 'bad'),
+          // The address, where somebody needs it.
+          //
+          // The parser and the amendments reading take a document by its hash,
+          // and a hash truncated for display is not one anybody can use. It is
+          // put on the clipboard rather than printed into the row: sixty-nine
+          // characters of hex in a table makes every other column unreadable,
+          // and nobody transcribes one by hand anyway.
+          html`<button class="btn quiet sm" type="button" data-copy-hash="${item.hash}" title="${item.hash}">Copy hash</button>`,
         ]),
         empty: 'Nothing filed for this customer',
         emptyDetail:

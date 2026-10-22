@@ -27485,3 +27485,52 @@ paperwork while keeping the reference, and `ETABLIX` still granted on the reason
 alone.
 
 Verified: `npm run typecheck` clean, 7600 tests pass.
+
+## The file behind a Bid-On evidence item
+
+Reported from use, and the report was half right — which is worth recording,
+because the half that was wrong was mine.
+
+**What was not broken.** `POST /v1/evidence/:hash` refuses bytes unless a
+ledger record already names the hash, and it resolves that record through
+`EvidenceItem`. A Bid-On evidence item is a `BidOnEvidence` record, so this
+looked like a path that could never resolve — and the conclusion drawn from
+reading it was that a Bid-On document's file could not be stored at all.
+`fileEvidence` registers an `EvidenceItem` as well, deliberately, "so the file
+is not in a second register beside the one the audit trail already reads". The
+upload resolves through that record, the bytes store, and the file serves back.
+
+That is a load-bearing consequence of a decision made for a different reason,
+which is exactly the kind of thing that holds until somebody refactors it with
+nothing watching. `bidonfile.test.ts` now pins it: the item names a platform
+evidence record, the bytes go over the wire and come back, a mismatched body is
+still refused `EVIDENCE_HASH_MISMATCH`, and a hash nothing has filed is still a
+404.
+
+**What was broken, and it is the half an operator meets.** There was no way to
+do any of it from the console. The evidence form's `hash` field was
+`type: 'text'` — a true description of what the command takes, and no way to
+produce one from a browser. Filing the nine PDFs of a real tender meant a shell
+and `sha256sum`, which is not a thing a bid writer has. Two commands that take
+a document *by* its hash — the questionnaire parser and the amendments reading
+— then asked for a value the console never showed anywhere.
+
+**The fix is a field type, not a mechanism.** `command.js` has handled this
+since the field modules were built: `type: 'file'` hashes in the browser, files
+the record first, uploads the bytes after the command is accepted, and queues
+them on the device where the connection cannot carry them. The field was simply
+the wrong type. Nothing was added to the backend, and nothing new exists in the
+browser.
+
+Beside it, the library's rows now carry **Copy hash**, because the parser and
+the amendments reading take a document by its hash and a hash truncated for
+display is not one anybody can use. It goes to the clipboard rather than into
+the row — sixty-nine characters of hex makes every other column unreadable, and
+nobody transcribes one by hand. A browser that refuses clipboard access says so
+and leaves the full value on the button's tooltip.
+
+`multiple` is deliberately not set on that field. One field can file many
+records, and it would give nine documents one title — and an evidence item is
+cited by its title.
+
+Verified: `npm run typecheck` clean, 7605 tests pass.
