@@ -6,7 +6,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
+import { rejectsCode } from './helpers.ts';
 import * as customers from '../src/domain/bidon/customers.ts';
+import * as bidEngine from '../src/domain/bidon/engine.ts';
 import * as bidEvidence from '../src/domain/bidon/evidence.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { findByHash } from '../src/evidence/registry.ts';
@@ -166,5 +168,55 @@ describe('a Bid-On evidence item can hold its file', () => {
       body: Buffer.from('Appendix 9, which does not exist', 'utf8'),
     });
     assert.equal(response.status, 404);
+  });
+});
+
+/**
+ * The Reader, and the one place a stand-in would become a citation.
+ *
+ * Every other agent in the module was reachable and this one did not exist, so
+ * the passages a drafter cites had to be typed by hand — nine documents of
+ * prose transcribed by a bid writer before anything could be drafted, which is
+ * the bulk of the labour the module exists to remove.
+ *
+ * What is asserted is the refusal, because the refusal is the feature. A
+ * stand-in reading returns a hash-derived narrative; filed as this customer's
+ * evidence it would be retrieved against their questions, cited by the drafter
+ * and read by a buyer as the company's own words. Elsewhere a stand-in is
+ * visibly a stand-in. Here it becomes a citation.
+ */
+describe('reading a filed document', () => {
+  it('refuses the local stand-in before anything is charged', async () => {
+    const bytes = Buffer.from('Assessments shall be completed within ten working days of instruction.', 'utf8');
+    const hash = hashBytes(bytes);
+    const item = bidEvidence.fileEvidence(asProvider(), {
+      customerAccountId: customerId,
+      type: 'OTHER',
+      title: 'RFX1000209 App 6 — EPC Specification',
+      hash,
+    });
+
+    const before = platform.wallet(seed.tenantId).snapshot().balanceMinor;
+    const error = await rejectsCode(
+      () => bidEngine.readEvidence(asProvider(), item.id),
+      'NO_PERCEPTION_PROVIDER',
+    );
+    assert.match(String(error.message), /reads nothing/);
+    assert.match(String(error.message), /read by a buyer as the company’s own words/);
+
+    // Nothing charged, and nothing filed. A refusal that had already spent the
+    // customer's balance would be the worse half of both outcomes.
+    assert.equal(platform.wallet(seed.tenantId).snapshot().balanceMinor, before, 'the wallet moved on a refused read');
+    const unchanged = bidEvidence.evidenceOf(asProvider()).find((entry) => entry.id === item.id)!;
+    assert.equal(unchanged.chunks.length, 0, 'passages were filed by a provider that was refused');
+  });
+
+  it('is offered in the console, and so is typing them by hand', () => {
+    const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend', 'pages', 'bidon.js'), 'utf8');
+    // Both doors, deliberately. The agent is what somebody should reach for;
+    // the recorder stays for a correction and for a document no provider reads.
+    assert.match(page, /'read-evidence': \{/, 'the Reader has no console door');
+    assert.match(page, /label: 'Read it for me'/);
+    assert.match(page, /label: 'Type the passages myself'/, 'the hand-typed route was replaced rather than kept');
   });
 });

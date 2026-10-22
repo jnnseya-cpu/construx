@@ -531,7 +531,13 @@ export async function bidon(root) {
             reason: customerOptions.length === 0
               ? 'Open a customer workspace first — evidence belongs to a customer, not to the provider.'
               : blockedReason('BID_SERVICES', 'C') },
-          { id: 'record-extraction', label: 'Record what was read out of it', tone: 'quiet',
+          // Before the hand-typed recorder, because it is what somebody should
+          // reach for: nine documents of passages transcribed by a bid writer
+          // is the labour this module exists to remove, and the recorder
+          // beside it is for a correction or a document a provider cannot read.
+          { id: 'read-evidence', label: 'Read it for me',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
+          { id: 'record-extraction', label: 'Type the passages myself', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'withdraw-evidence', label: 'Withdraw an item', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
@@ -1844,6 +1850,23 @@ export async function bidon(root) {
           ? { consent: { subject: String(consentSubject).trim(), basis: String(consentBasis ?? '').trim() } }
           : {}),
       }),
+    },
+    'read-evidence': {
+      title: 'Read a filed document',
+      intent:
+        'A vision model reads the document and files the passages a drafter cites — the document’s own words, with ' +
+        'its page or clause where it shows one. A scan is read rather than refused. The passages are what every ' +
+        'answer is drafted from and cited against, so a sentence the document does not contain would be a false ' +
+        'statement made in the customer’s name: the local stand-in is refused before anything is charged, and the ' +
+        'cost of the run is quoted before it starts. Reading it again replaces what is there.',
+      path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/read`,
+      submitLabel: 'Read it',
+      ai: true,
+      fields: [
+        { name: 'evidenceId', label: 'Evidence id', type: 'text',
+          hint: 'From the library above — click the id on its row and it is on the clipboard.' },
+      ],
+      transform: () => ({}),
     },
     'record-extraction': {
       title: 'Record what was read out of a document',

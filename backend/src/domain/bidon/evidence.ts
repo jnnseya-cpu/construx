@@ -146,7 +146,15 @@ export type BidOnEvidence = {
 
 const TITLE_MIN = 4;
 const REASON_MIN = 12;
-const CHUNK_MIN_CHARS = 40;
+/**
+ * The shortest a passage may be and still be worth indexing.
+ *
+ * Exported because the Reader states it to the model it asks to read a
+ * document: a provider told to return anything at all returns headings and
+ * single words, and the floor is then enforced twice — once by asking, once by
+ * `recordExtraction` dropping what came back anyway.
+ */
+export const CHUNK_MIN_CHARS = 40;
 
 function requireText(value: string, min: number, code: string, what: string): string {
   const text = value.trim();

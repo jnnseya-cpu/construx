@@ -13628,6 +13628,17 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/bid-on/evidence/:evidenceId/read',
+    ai: { engine: 'TENDER', taskType: 'bid_on_read', capability: 'PERCEPTION' },
+    quoteScope: 'TENANT',
+    description:
+      'Read a filed document into the passages a drafter cites, through a vision model so a scan is read rather than refused. The passages are the document’s own words: a sentence it does not contain, cited in a submission, is a false statement made in the customer’s name — so the local stand-in is refused before anything is charged. Writes through the same command a person uses, so there is one definition of a passage',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngine.readEvidence(tenantContext(platform, ctx), ctx.params.evidenceId as string),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/bid-on/evidence/:evidenceId/embedding',
     ai: { engine: 'TENDER', taskType: 'bid_on_embed', capability: 'EMBEDDING' },
     quoteScope: 'TENANT',

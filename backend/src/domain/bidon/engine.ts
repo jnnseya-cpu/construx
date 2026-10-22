@@ -7,10 +7,13 @@ import { requireVisibleCustomer } from './customers.ts';
 import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
 import { depositStanding, invoicesOf, requireFundedEngagement } from './billing.ts';
 import {
+  CHUNK_MIN_CHARS,
   evidenceCurrentOn,
   evidenceOf,
+  recordExtraction,
   requireEvidence,
   retrieveFor,
+  type BidOnEvidence,
   type EvidenceType,
   type Retrieval,
 } from './evidence.ts';
@@ -331,6 +334,144 @@ export async function parseQuestionnaire(
   });
 
   return { bid: next, proposed, acuConsumed: result.acuConsumed };
+}
+
+// --- The Reader --------------------------------------------------------------
+
+/**
+ * Read a filed document into the passages a drafter cites. `X` on `BID_SERVICES`.
+ *
+ * ## The gap this closes
+ *
+ * Every other agent in this module was reachable and this one did not exist, so
+ * the passages had to be **typed by hand** — `recordExtraction` is a textarea.
+ * On a real invitation that is nine documents of prose transcribed by a bid
+ * writer before the drafter has anything to cite, which is the bulk of the
+ * labour the module exists to remove. The parser already reads a questionnaire
+ * from a filed file, including a scan, through the perception capability; this
+ * is the same act pointed at the rest of the library.
+ *
+ * ## It writes through the same door as a person
+ *
+ * The output goes to `recordExtraction`, which is what the hand-typed route
+ * calls: the same chunk floor, the same refusal when nothing usable comes back,
+ * the same dropping of `semanticModel` on a re-read, and the same
+ * `BID_ON_EVIDENCE_EXTRACTED` event — which the catalogue already allows an
+ * agent to author. A second write path would be a second definition of what a
+ * passage is, and the retriever would eventually find them ranking differently.
+ *
+ * ## No stand-in, and this is the one place it would do real damage
+ *
+ * `requireModel` refuses the local engines before anything is charged. A
+ * stand-in "reading" returns a hash-derived narrative, and those sentences
+ * would be filed as this customer's evidence, retrieved against their
+ * questions, cited by the drafter and read by a buyer as the company's own
+ * statement. Everywhere else a stand-in is visibly a stand-in; here it would
+ * become a citation.
+ *
+ * ## Re-reading is allowed, and says so
+ *
+ * A document re-read replaces its passages — a corrected specification is
+ * worth re-reading and the old passages are about a document nobody holds any
+ * more. `reread` is returned so the caller can say what happened rather than
+ * reporting a second charge as a first one.
+ */
+export async function readEvidence(
+  ctx: EngineContext,
+  evidenceId: string,
+): Promise<{ item: BidOnEvidence; chunks: number; reread: boolean; acuConsumed: number }> {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  // Throws if this person is not assigned to the customer.
+  const evidence = requireEvidence(ctx, evidenceId);
+  if (evidence.withdrawnAt) {
+    throw new DomainError(
+      'BID_ON_EVIDENCE_WITHDRAWN',
+      `${evidence.reference} has been withdrawn. Reading it would pay to index a document nobody may cite.`,
+      409,
+    );
+  }
+
+  const reread = evidence.chunks.length > 0;
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_read',
+    // A filed document is a document. The parser makes the same choice for the
+    // same reason: offering a reasoning model a scanned policy produces a
+    // confident reading of nothing.
+    capability: 'PERCEPTION',
+    inputRefs: [{ refType: 'BidOnEvidence', refId: evidence.id }],
+    attribution: { customerAccountId: evidence.customerAccountId },
+    request: {
+      task:
+        'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
+        'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
+      payload: {
+        documentHash: evidence.hash,
+        title: evidence.title,
+        kind: evidence.type,
+        constraint:
+          'Quote the document. Every passage must be the document’s own words — not a summary, not a paraphrase ' +
+          'and not a conclusion drawn from it: these passages are cited in a submission to a buyer as the ' +
+          'company’s own statement, and a sentence the document does not contain is a false statement made in its ' +
+          'name. Keep each passage whole enough to stand on its own in front of an evaluator — a figure, a ' +
+          'commitment, a scope line, an accreditation, a date — and give its page or clause in `pageRef` where the ' +
+          `document shows one. Drop anything shorter than ${CHUNK_MIN_CHARS} characters: it ranks against a ` +
+          'question as well as a paragraph does and tells a drafter nothing. Read the whole document in its own ' +
+          'order. Do not answer anything and do not add commentary.',
+      },
+    },
+    // Nothing is committed from the output here. The write happens below,
+    // through the command a person uses, so there is one definition of a
+    // passage rather than two.
+    toWrites: () => [],
+    requireModel: {
+      code: 'NO_PERCEPTION_PROVIDER',
+      message:
+        'This deployment is running the local stand-in, which reads nothing — it derives its answer from a hash of ' +
+        'its inputs. Passages invented that way would be filed as this customer’s evidence, cited by the drafter ' +
+        'and read by a buyer as the company’s own words. Configure a perception provider and set AI_MODE=live.',
+    },
+  });
+
+  const output = result.output as { passages?: unknown; lines?: unknown };
+  const passages = (Array.isArray(output.passages) ? output.passages : [])
+    .map((row) => row as Record<string, unknown>)
+    .map((row) => ({
+      text: String(row.text ?? '').trim(),
+      ...(row.pageRef == null || String(row.pageRef).trim() === '' ? {} : { pageRef: String(row.pageRef).trim() }),
+    }))
+    .filter((passage) => passage.text.length > 0);
+
+  const lines = (Array.isArray(output.lines) ? output.lines : [])
+    .map((line) => String(line ?? '').trim())
+    .filter(Boolean);
+
+  if (passages.length === 0) {
+    // Refused rather than written as an empty reading. `recordExtraction` would
+    // refuse this too, with a message about the chunk floor; this one says the
+    // truer thing — the provider answered and there was nothing in the answer,
+    // which is a different problem from a document of short lines.
+    throw new DomainError(
+      'BID_ON_NOTHING_READ',
+      `Nothing came back for ${evidence.reference}. The item is unchanged and still citable as an attachment — a ` +
+        'document with no passages has not been read, and filing an empty reading would make it look as though it ' +
+        'had been.',
+      502,
+    );
+  }
+
+  // The same door a person uses. The chunk floor, the refusal when nothing
+  // survives it, and the dropped `semanticModel` on a re-read are all its
+  // rules, applied once.
+  const item = recordExtraction(ctx, evidenceId, {
+    extractedText: lines.length > 0 ? lines : passages.map((passage) => passage.text),
+    chunks: passages,
+  });
+
+  return { item, chunks: item.chunks.length, reread, acuConsumed: result.acuConsumed };
 }
 
 // --- The Drafter -------------------------------------------------------------

@@ -27724,3 +27724,63 @@ The pre-existing invariant — "the total equals the sum of every row" — was t
 overstatement written down as a test, and now sums the rows the estate holds.
 
 Verified: `npm run typecheck` clean, 7606 tests pass.
+
+## The Reader: the agent that was missing, and the labour it was leaving
+
+Asked for plainly: the agents should do 95% of the work. They could not, and the
+reason was one absent agent rather than anything about the five that exist.
+
+**Every other agent was reachable and this one did not exist.** The Parser reads
+a questionnaire, the Drafter writes an answer, the Scorer marks it, the Gap
+writer composes the covering message, the Retriever ranks the library — and the
+passages the Retriever ranks and the Drafter cites had to be **typed by hand**.
+`recordExtraction` is a textarea. On a real invitation that is nine documents of
+prose transcribed by a bid writer before anything can be drafted, which is the
+bulk of the labour this module exists to remove. The capability was already
+there and pointed at one document: the Parser reads a filed file by its hash
+through the perception capability, scans included. `readEvidence` is the same
+act pointed at the rest of the library.
+
+**It writes through the same door a person uses.** The output goes to
+`recordExtraction` — the same chunk floor, the same refusal when nothing
+survives it, the same dropping of `semanticModel` on a re-read, the same
+`BID_ON_EVIDENCE_EXTRACTED` event, which the catalogue already permits an agent
+to author. A second write path would be a second definition of what a passage
+is, and the retriever would eventually find them ranking differently.
+`CHUNK_MIN_CHARS` is now exported, because the Reader states the floor to the
+model as well as enforcing it after: a provider told to return anything at all
+returns headings and single words.
+
+**The stand-in is refused, and this is the one place it would do real damage.**
+Everywhere else in this platform a stand-in is visibly a stand-in — somebody
+reads it and can tell. Here it would become a **citation**: hash-derived
+sentences filed as this customer's evidence, retrieved against their questions,
+cited by the Drafter and read by a buyer as the company's own words. So
+`requireModel` refuses `NO_PERCEPTION_PROVIDER` before anything is charged, and
+the test asserts the wallet did not move and no passage was filed.
+
+**Both doors stay.** The console offers *Read it for me* first, because that is
+what somebody should reach for, and *Type the passages myself* beside it for a
+correction or a document no provider can read. Replacing the manual route would
+have been removing a working path to make a point.
+
+`doors.test.ts` caught the route before any of this was wired up — 298 write
+routes with no hand-built door, up from 297 — which is the ratchet doing exactly
+its job: a command without a panel is a capability nobody can reach.
+
+**What the agents now do, and what stays human by construction.** The Reader
+reads every document, the Parser proposes the question list, the Retriever
+ranks, the Drafter writes each answer with its citations, the Scorer marks it
+against the five criteria, the amendments reading finds the contract risk and
+raises the clarifications, and the Gap writer composes the one message to the
+customer. Five acts are not delegable and never will be: confirming the question
+list against the source, approving an answer, confirming a declaration, waiving
+a returnable, and being the second person in the two-person check. That is the
+5%, and every one of them is a signature rather than a keystroke.
+
+**Still outstanding and not ours:** on a deployment running `AI_MODE=local` the
+Reader, the Parser and the Drafter all refuse by name, correctly. The agents do
+the work on a deployment with a configured provider, a funded wallet and
+`AI_PROVIDER_CLEARANCE` naming that vendor at `COMMERCIAL_L3`.
+
+Verified: `npm run typecheck` clean, 7608 tests pass.
