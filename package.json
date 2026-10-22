@@ -5,7 +5,7 @@
   "description": "CONSTRUX — AI-agent Construction Operating System covering the full asset lifecycle: Concept to 30+ year O&M.",
   "type": "module",
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=22.23.4"
   },
   "scripts": {
     "start": "node backend/src/main.ts",

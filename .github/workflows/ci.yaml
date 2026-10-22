@@ -56,7 +56,12 @@ jobs:
           # Matches the engines field and the container base image. Native type
           # stripping is what makes the no-build-step decision work, and it is
           # version-sensitive.
-          node-version: '22.18'
+          #
+          # The LTS line rather than a minor, for the reason the Dockerfile
+          # gives: a minor-level pin caps security patches, and CI proving the
+          # suite on a runtime older than production runs is proof of the wrong
+          # thing.
+          node-version: '22'
           cache: npm
 
       - name: Install

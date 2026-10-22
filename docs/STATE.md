@@ -27608,3 +27608,50 @@ Verified: `npm run typecheck` clean, 7605 tests pass. `bidonfile.test.ts` now
 asserts that every id a Bid-On command asks for — question, answer, gap,
 returnable, clarification and evidence — is offered somewhere on the screen,
 which is the invariant that was broken rather than any one column.
+
+## A pin that looked like discipline and behaved like neglect
+
+Node published security releases on 21 October 2026; the fixed versions are
+22.23.4, 24.22.1 and 26.12.1 or later. This deployment runs Node 22 in a
+container built from `deploy/Dockerfile`.
+
+**The pin was `node:22.18-bookworm-slim`, and that is the finding.** That tag
+only ever resolves to the newest **22.18.x**. `docker compose pull`,
+`docker compose build --pull` and every automatic image refresh would have run
+to completion, reported success, and never crossed to 22.23.4 — so the ordinary
+remedy for a Node advisory could not reach this image however often it ran. A
+minor-level pin silently caps security patches: it looks like reproducibility
+discipline and behaves like neglect, and the failure is invisible because the
+update command succeeds.
+
+Raised in every place the version is stated, which was four and a lock file:
+
+| Where | Was | Is |
+|---|---|---|
+| `deploy/Dockerfile` | `node:22.18-bookworm-slim` | `node:22-bookworm-slim` |
+| `.github/workflows/ci.yaml` | `22.18` | `22` |
+| `package.json` / `package-lock.json` `engines` | `>=22.18.0` | `>=22.23.4` |
+| `README.md` | Node 22.18 or later | Node 22.23.4 or later |
+
+**The line rather than the minor, deliberately.** Node 22 is LTS and compatible
+across its line by policy, so the line is the right granularity for an image an
+operator rebuilds by hand: one rebuild takes the current patch. `engines` states
+the floor the platform actually requires — which is now a *security* floor, not
+a feature one — and the running container's image digest records what in fact
+shipped. CI moves with it, because a suite proving itself on a runtime older
+than production runs is proof of the wrong thing.
+
+Native type stripping is what makes the no-build-step decision work and it is
+version-sensitive, which is why these three were pinned together in the first
+place. They still are; the granularity is what changed.
+
+**Deliberately not added:** the runtime version on the readiness screen. It
+would be the first `Capability.detail` to carry a literal value, against that
+type's stated contract, for a check `docker exec construx node -v` answers in
+five seconds — and `/readyz` is public, so a version there is free
+fingerprinting.
+
+Verified: `npm run typecheck` clean, 7605 tests pass. The suite was run on
+22.22.0, which is itself below the new floor — the floor is a statement about
+what a deployment must run, and `engine-strict` is unset, so it warns rather
+than blocking a development machine.

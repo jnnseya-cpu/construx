@@ -11,7 +11,19 @@
 # something ever gains a runtime dependency this image gets it rather than
 # failing mysteriously at 3am.
 
-FROM node:22.18-bookworm-slim
+# Pinned to the LTS *line*, not to a minor.
+#
+# `node:22.18` was the pin until the October 2026 advisory, and it is what made
+# that advisory unreachable: the tag only ever resolves to the newest 22.18.x,
+# so `docker compose build --pull` could not reach the 22.23.4 that carries the
+# fix however often it ran. A pin that silently caps security patches is worse
+# than a looser one — it looks like discipline and behaves like neglect.
+#
+# Node 22 is LTS and compatible across its line by policy, so the line is the
+# right granularity here: one rebuild takes the current patch. `engines` in
+# package.json states the floor the platform actually requires, and the running
+# container's image digest records what in fact shipped.
+FROM node:22-bookworm-slim
 
 # tini reaps zombies and forwards signals. Without an init, SIGTERM reaches PID 1
 # and Node's default handler is to ignore it — the platform's graceful shutdown,

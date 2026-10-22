@@ -20,7 +20,8 @@ done here, and which existing mechanism to reuse rather than rebuild.
 
 ## Running it
 
-Node 22.18 or later. There is nothing to build and no runtime dependencies.
+Node 22.23.4 or later — the October 2026 security releases. There is nothing
+to build and no runtime dependencies.
 
 ```bash
 npm install          # dev-only: TypeScript and @types/node
