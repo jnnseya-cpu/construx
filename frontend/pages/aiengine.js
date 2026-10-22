@@ -191,8 +191,23 @@ export async function aiengine(root) {
                   headers: ['Credential', 'Where from', 'Key', 'Set', 'What stops without it'],
                   rows: (credentials?.credentials ?? []).map((entry) => [
                     html`${entry.label}<div class="metric-sub"><code>${entry.name}</code></div>`,
+                    // Both, where both hold one.
+                    //
+                    // A single badge read "this store" and said nothing about
+                    // the environment still carrying a key — which is exactly
+                    // the key nobody is tracking: superseded, unused, often
+                    // revoked at the vendor, and still sitting in a file on the
+                    // host. The operator who set one from here is the person
+                    // who needs to be told to go and remove the other.
                     entry.stored
-                      ? badge('this store', 'ok')
+                      ? html`${badge('this store', 'ok')}${
+                          entry.fromEnvironment
+                            ? html`<div class="metric-sub" style="margin-top:4px">
+                                The environment also holds one and it is not being used. Remove it from
+                                <code>.env</code> so there is one key to account for.
+                              </div>`
+                            : ''
+                        }`
                       : entry.fromEnvironment
                         ? badge('environment', '')
                         : badge('not set', 'bad'),

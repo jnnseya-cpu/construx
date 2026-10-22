@@ -27991,3 +27991,20 @@ on `platform-settlements`: one path carrying two subjects is how a permission
 written for one grants the other. `consoleforms.test.ts` caught the collision.
 
 Verified: `npm run typecheck` clean, 7624 tests pass.
+
+### A key in both places, said rather than hidden
+
+Reported within minutes of the store shipping: `OPENAI_API_KEY` set twice —
+once in `.env` over SSH, once from the console.
+
+The precedence was right and the panel was not. `CredentialState` has carried
+both `stored` and `fromEnvironment` from the start, and the table rendered one
+badge through a ternary: "this store", with nothing about the environment still
+holding a key. That hidden one is exactly the key nobody is tracking —
+superseded, unused, often revoked at the vendor, and still sitting in a file on
+the host. The person who set one from the console is the person who needs to be
+told to go and remove the other.
+
+The row now says both, and says which is being used.
+
+Verified: `npm run typecheck` clean; the credential and console-form suites pass.
