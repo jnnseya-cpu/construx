@@ -52,6 +52,8 @@ import { DomainError } from '../core/errors.ts';
  * with nothing.
  */
 
+let cache: StoreFile | undefined;
+
 /** The label the encryption key is derived under. Its own, so it shares nothing. */
 const KEY_LABEL = 'construx/credential-store/v1';
 
@@ -147,7 +149,24 @@ type StoreFile = { version: 1; credentials: Record<string, StoredCredential> };
  * there is nowhere durable to put it, and the store holds nothing rather than
  * writing a key into a directory nobody is backing up.
  */
+let pathOverride: string | undefined;
+
+/**
+ * Test seam, and the only one.
+ *
+ * `config` is built from the environment once at import, so a test cannot set
+ * `CREDENTIAL_STORE_PATH` and have it read — and a test that wrote to the
+ * deployment's real path would be a test that rewrites a production key. This
+ * is explicit rather than clever for that reason, and nothing in the platform
+ * calls it.
+ */
+export function useCredentialStore(path: string | undefined): void {
+  pathOverride = path;
+  cache = undefined;
+}
+
 function storePath(): string | undefined {
+  if (pathOverride !== undefined) return pathOverride;
   if (config.credentials.path !== '') return config.credentials.path;
   if (config.ledger.journalPath === '') return undefined;
   return join(dirname(config.ledger.journalPath), 'credentials.enc');
@@ -189,8 +208,6 @@ function unseal(sealed: string): string | undefined {
     return undefined;
   }
 }
-
-let cache: StoreFile | undefined;
 
 function load(): StoreFile {
   if (cache) return cache;

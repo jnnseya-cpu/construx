@@ -27933,3 +27933,61 @@ That path is only reached by a scan now, but an adapter that mislabels what it
 sends is wrong whether or not a caller currently depends on it.
 
 Verified: `npm run typecheck` clean, 7615 tests pass.
+
+## The credential store: an operator sets a key without a shell
+
+Asked for after an afternoon that made the case better than any argument could:
+two keys pasted as placeholder text, a 401 that read as a platform fault, and a
+production `.env` edited with `sed -i` over SSH.
+
+**One rule shapes all of it: a secret never enters the Golden Thread.** That
+chain is append-only and hash-chained, and it is copied into the journal, every
+snapshot, every backup and the object store. A key written there could never be
+rotated out by anybody, and the honest remedy would be destroying the record. So
+the **value** goes to an encrypted file beside the journal, and the **act** goes
+on the chain: `PLATFORM_CREDENTIAL_SET` carries the name, the key id, who
+decided and why.
+
+**No route returns a value, to anybody, including the operator who typed it.**
+The register answers whether each credential is set, where from — this store or
+the environment — and the key id, which is the first eight hex characters of its
+SHA-256: enough to tell one key from another and to confirm a rotation landed,
+and not a key. `credentials.test.ts` asserts the absence three ways, because
+each is a way this could have been built wrong and looked right: no route
+returns one, the whole ledger does not contain one, and the file on disk is not
+the key.
+
+**AES-256-GCM, and what that is and is not worth.** The key is derived from
+`GATEWAY_JWT_SECRET` with HKDF under its own label, exactly as `secrets.ts`
+derives one per purpose. Stated plainly in the file: this protects the file, not
+the process. Anybody who can read the running container's environment can derive
+it — and could have read `.env` anyway. What it buys is narrow and real: a
+stolen volume, a copied backup or a stray `cat` of the data directory yields
+ciphertext. Writing it in the clear would have bought nothing and read as though
+it had.
+
+**A closed list, not a key/value store.** Five credentials: the three AI vendors
+and Stripe's two. An open store would accept `OPENAI_KEY`, store it, show it as
+set, change nothing about how the platform behaves — and leave a screen that is
+*evidence* the key was configured. Each entry says what stops without it, in the
+words of somebody deciding whether to go and find the value.
+
+**The environment still wins where the store holds nothing**, and that order is
+deliberate: the store is the newer, revocable place, so clearing a credential
+falls back to `.env` rather than leaving the platform with nothing. Clearing is
+a distinct act from setting an empty one, and the record says whether anything
+still supplies it — "cleared" with nothing behind it is a capability that has
+stopped.
+
+The seam was already there. `remote.ts` read each vendor key through
+`key: () => config.ai.openaiKey`, a late-bound function, so the store slotted in
+at three lines; `stripe.ts` gained two accessors so its four call sites share one
+precedence rule rather than four chances to disagree.
+
+**Named apart from `/v1/admin/credentials`**, which is the tenancy's own
+credential posture — passkeys, factors, what has gone stale — a different
+subject with a different audience. The route table already carries that warning
+on `platform-settlements`: one path carrying two subjects is how a permission
+written for one grants the other. `consoleforms.test.ts` caught the collision.
+
+Verified: `npm run typecheck` clean, 7624 tests pass.

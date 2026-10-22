@@ -1,7 +1,9 @@
 import { api } from '../lib/api.js';
 import { barChart, heatmap, pieChart } from '../lib/charts.js';
 import { head, providerName, refusal } from '../lib/estate.js';
-import { badge, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
+import { command, commandBar } from '../lib/command.js';
+import { blockedReason, can } from '../app.js';
+import { badge, date, html, humanise, raw, render, table, time, toast } from '../lib/ui.js';
 
 /**
  * The AI engine.
@@ -21,11 +23,14 @@ import { badge, html, humanise, raw, render, table, time, toast } from '../lib/u
  */
 
 export async function aiengine(root) {
-  const [plane, evaluation, agents, ladder] = await Promise.all([
+  const [plane, evaluation, agents, ladder, credentials] = await Promise.all([
     api.get('/v1/ai/control-plane').catch((error) => ({ error })),
     api.get('/v1/admin/ai/evaluation').catch((error) => ({ error })),
     api.get('/v1/agents/fleet').catch(() => null),
     api.get('/v1/agents/ladder').catch(() => null),
+    // Which keys this deployment holds. Never a value — the route has none to
+    // return, which is the property the whole store exists to have.
+    api.get('/v1/admin/platform-credentials').catch((error) => ({ error })),
   ]);
 
   if (plane.error) {
@@ -157,6 +162,57 @@ export async function aiengine(root) {
           </div>
         </div>
         <div class="card pad0">
+          <h2 style="padding:15px 17px 0">Keys</h2>
+          <div class="metric-sub" style="padding:0 17px 10px">
+            <!--
+              The panel that ends the SSH session. What is deliberately absent
+              is any way to read a key back: the route has no value to return,
+              because the platform needs one and nobody else does — including
+              the operator who typed it. The key id is eight hex characters of
+              its SHA-256, which tells one key from another and confirms a
+              rotation landed without being a key.
+            -->
+            Set from here rather than from a shell. The value is encrypted into a store beside the journal and never
+            enters the ledger — that chain is append-only and is copied into every backup, so a key written there
+            could not be rotated out by anybody. What the chain records is that you set it, when and why.
+          </div>
+          ${credentials?.error
+            ? html`<div style="padding:0 17px 14px">${refusal('The credential register', credentials.error)}</div>`
+            : html`
+                <div style="padding:0 17px 11px">
+                  ${raw(commandBar([
+                    { id: 'set-credential', label: 'Set a key',
+                      permitted: can('PLATFORM_ADMINISTRATION', 'U'), reason: blockedReason('PLATFORM_ADMINISTRATION', 'U') },
+                    { id: 'clear-credential', label: 'Clear one', tone: 'quiet',
+                      permitted: can('PLATFORM_ADMINISTRATION', 'U'), reason: blockedReason('PLATFORM_ADMINISTRATION', 'U') },
+                  ]))}
+                </div>
+                ${table({
+                  headers: ['Credential', 'Where from', 'Key', 'Set', 'What stops without it'],
+                  rows: (credentials?.credentials ?? []).map((entry) => [
+                    html`${entry.label}<div class="metric-sub"><code>${entry.name}</code></div>`,
+                    entry.stored
+                      ? badge('this store', 'ok')
+                      : entry.fromEnvironment
+                        ? badge('environment', '')
+                        : badge('not set', 'bad'),
+                    // The id, never the key. Shown for the stored one only:
+                    // the platform does not hash what the environment holds,
+                    // because that would mean reading it to describe it.
+                    entry.keyId ? html`<code style="font-size:11px">${entry.keyId}</code>` : '—',
+                    entry.setAt
+                      ? html`${date(entry.setAt)}<div class="metric-sub">${entry.reason ?? ''}</div>`
+                      : '—',
+                    html`<span style="font-size:12.5px;color:var(--text-3)">${entry.unlocks}</span>`,
+                  ]),
+                  empty: 'No credential is configurable on this deployment.',
+                })}
+                ${credentials?.note
+                  ? html`<div class="metric-sub" style="padding:10px 17px 14px">${credentials.note}</div>`
+                  : ''}
+              `}
+        </div>
+        <div class="card pad0">
           <h2 style="padding:15px 17px 0">What each engine asks of each kind of model</h2>
           <div class="metric-sub" style="padding:0 17px 10px">
             <!--
@@ -271,6 +327,74 @@ export async function aiengine(root) {
         : ''}
     `,
   );
+
+  /*
+   * Setting a key, and clearing one.
+   *
+   * The value field is ordinary text rather than a password input on purpose:
+   * an operator pasting a 164-character key needs to be able to see that it
+   * arrived whole, and the commonest failure on this box was a truncated
+   * paste. It is never rendered back, so there is nothing to conceal on a
+   * second visit.
+   */
+  for (const button of root.querySelectorAll('[data-command="set-credential"]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Set a key',
+        intent:
+          'Encrypted into a store beside the journal, never into the ledger — that chain is append-only and copied ' +
+          'into every backup, so a key written there could not be rotated out. The chain records that you set it, ' +
+          'when and why. Nothing here, and no route anywhere, reads a key back.',
+        path: (values) => `/v1/admin/platform-credentials/${values.name}`,
+        submitLabel: 'Set it',
+        fields: [
+          { name: 'name', label: 'Which', type: 'select',
+            options: (credentials?.credentials ?? []).map((entry) => ({
+              value: entry.name,
+              label: `${entry.label}${entry.stored ? ' — replacing the one stored' : entry.fromEnvironment ? ' — overriding the environment' : ''}`,
+            })) },
+          { name: 'value', label: 'The key', type: 'text',
+            hint: 'Paste it whole, with no quotes. A vendor shows a secret once, at creation — there is nothing to copy from their list afterwards.' },
+          { name: 'reason', label: 'Why', type: 'text',
+            hint: 'Recorded against the decision. "Rotated after the old one was revoked."' },
+        ],
+        transform: ({ name: _n, ...rest }) => rest,
+      });
+      if (result) {
+        toast('Set', result.effect, 'ok');
+        aiengine(root);
+      }
+    });
+  }
+
+  for (const button of root.querySelectorAll('[data-command="clear-credential"]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Clear a key',
+        intent:
+          'Takes the override out of the store. Not the same as setting an empty one: the platform falls back to ' +
+          'whatever the environment holds, which may be nothing — and where it is nothing, what that key unlocks ' +
+          'stops.',
+        path: (values) => `/v1/admin/platform-credentials/${values.name}/clear`,
+        submitLabel: 'Clear it',
+        fields: [
+          { name: 'name', label: 'Which', type: 'select',
+            options: (credentials?.credentials ?? [])
+              .filter((entry) => entry.stored)
+              .map((entry) => ({
+                value: entry.name,
+                label: `${entry.label}${entry.fromEnvironment ? ' — falls back to the environment' : ' — nothing else supplies it'}`,
+              })) },
+          { name: 'reason', label: 'Why', type: 'text' },
+        ],
+        transform: ({ name: _n, ...rest }) => rest,
+      });
+      if (result) {
+        toast('Cleared', result.effect, result.fromEnvironment ? 'ok' : 'warn');
+        aiengine(root);
+      }
+    });
+  }
 
   document.getElementById('probe-providers')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

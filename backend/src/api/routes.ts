@@ -284,6 +284,7 @@ import { exposure as exposurePage } from '../site/pages.ts';
 import { evaluateAccess, SENSITIVITY_CLEARANCE, WRITE_PHASE_GATES } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import { MODULES, isModuleId, requireModule , grantLifecycle } from '../identity/modules.ts';
+import { credentialStates, isCredentialName } from '../identity/credentials.ts';
 import { createMfaChallenge, decoyMfaResponse, identityLock, refreshTokens, revokeToken, shapeMfaResponse, verifyMfaChallenge, verifyToken, type AuthContext } from '../identity/auth.ts';
 import { lockedSubjects } from '../identity/lockout.ts';
 import * as lockout from '../identity/lockout.ts';
@@ -2406,6 +2407,111 @@ export const ROUTES: Route[] = [
               // was typed correctly is the moment it was typed.
               (grant.agreementRef ? ` Allocated under ${grant.agreementRef}.` : '')
             : `${MODULES[moduleId].name} is closed to this tenancy. Records already written stay on the ledger and stay readable to the operator.`,
+      };
+    },
+  },
+  /*
+   * The credentials an operator sets without a shell.
+   *
+   * Three routes and not one of them returns a value. `GET` answers whether
+   * each is set, where from, and the key id — eight hex characters of its
+   * SHA-256, which tells one key from another and confirms a rotation landed
+   * without being a key. There is deliberately no route that reads one back:
+   * the platform needs the value and nobody else does, including the operator
+   * who typed it.
+   */
+  {
+    method: 'GET',
+    // `/v1/admin/credentials` is already taken by the tenancy's own credential
+    // posture — passkeys, factors, what has gone stale — which is a different
+    // subject with a different audience. Named apart rather than shared, for
+    // the reason stated on `/v1/projects/:projectId/platform-settlements`: one
+    // path carrying two subjects is how a permission written for one grants
+    // the other.
+    pattern: '/v1/admin/platform-credentials',
+    readOnly: true,
+    description:
+      'Which credentials this deployment holds, where each came from and the key id of what is stored. Never a value — no route returns one, and the store exists so a key travels from the vendor’s dialog to the platform and no further',
+    handler: (platform, ctx) => {
+      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may see the credential register', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      void platform;
+      return {
+        credentials: credentialStates(),
+        // Said on the payload rather than left to the screen, because it is the
+        // fact that decides whether any of this is durable.
+        note:
+          config.ledger.journalPath === '' && config.credentials.path === ''
+            ? 'This deployment has no durable path for the store, so a credential set here could not survive the container and is refused. Set LEDGER_JOURNAL_PATH or CREDENTIAL_STORE_PATH.'
+            : 'Stored encrypted beside the journal. The ledger records that each was set, by whom and why — never the value.',
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/platform-credentials/:name',
+    description:
+      'Set a credential the platform calls a vendor with. The value is encrypted into a store beside the journal and never enters the ledger — that chain is append-only and copied into every backup, so a key written there could not be rotated out by anybody',
+    schema: {
+      type: 'object',
+      required: ['value', 'reason'],
+      properties: {
+        value: { type: 'string', minLength: 8, maxLength: 4000 },
+        reason: { type: 'string', minLength: 8, maxLength: 400 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may set a credential', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const name = ctx.params.name as string;
+      if (!isCredentialName(name)) {
+        // Refused rather than stored. An open store would accept OPENAI_KEY,
+        // show it as set, change nothing about how the platform behaves, and
+        // leave a screen that is evidence the key was configured.
+        throw new DomainError(
+          'CREDENTIAL_UNKNOWN',
+          `${name} is not a credential this platform reads. Setting it would change nothing and would show as configured.`,
+          404,
+        );
+      }
+      const input = body<{ value: string; reason: string }>(ctx);
+      const state = platform.setPlatformCredential({ name, value: input.value, decidedBy: actor.actorId, reason: input.reason });
+      return {
+        ...state,
+        effect: `${state.label} is now served from the credential store. The next call to that vendor uses it; nothing already in flight changes.`,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/platform-credentials/:name/clear',
+    description:
+      'Take a credential out of the store. Not the same as setting an empty one: the override goes and the platform falls back to whatever the environment holds, which may be nothing',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 8, maxLength: 400 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may clear a credential', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const name = ctx.params.name as string;
+      if (!isCredentialName(name)) {
+        throw new DomainError('CREDENTIAL_UNKNOWN', `${name} is not a credential this platform reads.`, 404);
+      }
+      const state = platform.clearPlatformCredential({ name, decidedBy: actor.actorId, reason: body<{ reason: string }>(ctx).reason });
+      return {
+        ...state,
+        effect: state.fromEnvironment
+          ? `${state.label} is cleared from the store and falls back to the environment, which holds one.`
+          : `${state.label} is cleared and nothing else supplies it. Whatever it unlocks stops until one is set.`,
       };
     },
   },
