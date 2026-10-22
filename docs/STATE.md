@@ -28008,3 +28008,64 @@ told to go and remove the other.
 The row now says both, and says which is being used.
 
 Verified: `npm run typecheck` clean; the credential and console-form suites pass.
+
+## The walk: what should have existed before anybody opened Bid-On
+
+A user tried to run a real tender through this module and hit **eight blockers
+in a day**, every one of them in the path between "open a customer" and "export
+a pack": a module that could not be allocated, a form offering terms it could
+see were absent, an evidence form with no file picker, a library row missing the
+id its own commands took, a pack missing the question and answer ids, no agent
+that could read a document, three commands that sent a document's *name* instead
+of the document, and every attachment sent as an image so PDF, Word and Excel
+all failed.
+
+**None of it was subtle, and 7,600 passing tests saw none of it.** The suite
+asserts refusals, invariants and arithmetic — the domain. It never once walked
+the path a person walks. `doors.test.ts` checks that every write route has a
+console door and never checks that the door **opens**; `tools/walk.mjs` loads
+pages and catches errors but operates nothing, and `bidon` was not even in its
+list. A command can be perfectly correct and completely unreachable, and that
+is the whole class this module shipped with.
+
+`tools/bidon-walk.mjs` performs the sequence in a real browser and fails naming
+the step that could not be completed: allocate the module, define a service,
+open a customer, assign the writer, open and activate an engagement, open a bid,
+file a document through the picker, read the id and the hash off the library
+row, open the Reader, record passages, confirm the question list, record the
+returnables, read the question and returnable ids off the pack, write an answer,
+read the answer id, score it, approve it as a second person, be refused the
+export while a document is outstanding, supply it, export. **Twenty-five steps.**
+
+**It needs no provider**, which is what makes it a tool anybody runs rather than
+one nobody does. On `AI_MODE=local` every agent refuses by name, so the walk
+drives the manual twin of each AI command and separately asserts that the
+Reader's panel *opens and refuses by name* — which is precisely where the
+unreachable-id defects lived.
+
+**Writing it found five more things**, and that is the point rather than an
+aside:
+
+1. It reproduced `BID_ON_TERMS_INCOMPLETE` on its first run by leaving the
+   catalogue picker on its default — the same refusal the first user hit.
+2. The setup steps were written under the bid writer and failed on the service
+   catalogue: the director holds `G` and `A`, the writer holds authorship. The
+   walk had the roles wrong, and the module was right.
+3. The writer could not see the customer at all, because a workspace is visible
+   to whoever opened it and to assigned staff — restrictive by default, working
+   exactly as designed, and a step the walk had skipped.
+4. The writer is offered **no approval control at all**, rather than a disabled
+   one. That is stronger than the `BID_ON_SELF_APPROVAL` refusal behind it, and
+   it is the half a domain test cannot see.
+5. Reading a value off one screen to use on another is the module's weakest
+   seam. The walk had to learn that the export picker labels a bid by its own
+   reference and carries no buyer name — which is exactly the kind of thing
+   that costs a person ten minutes and a tool one assertion.
+
+**Bid-On is not sellable until this passes unattended**, and it now passes three
+runs in a row. That is the bar, and it replaces an opinion about readiness with
+a command anybody can run.
+
+Still true and not changed by this: the walk proves the path is *reachable*, not
+that every refusal in the module is correct. The domain suite does that. Neither
+proves the module is finished.
