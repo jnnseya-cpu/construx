@@ -806,7 +806,7 @@ describe('the Bid Engine refuses the local stand-in before it charges', () => {
 
   it('refuses to read a questionnaire on it, and changes nothing', async () => {
     await assert.rejects(
-      () => engine.parseQuestionnaire(asProviderAdmin(), engineBid.id, { text: '4.1 Describe your safety system' }),
+      () => engine.parseQuestionnaire(asProviderAdmin(), platform.evidence, engineBid.id, { text: '4.1 Describe your safety system' }),
       (error: Error & { code?: string }) => {
         assert.equal(error.code, 'NO_REASONING_PROVIDER');
         return true;
@@ -819,7 +819,7 @@ describe('the Bid Engine refuses the local stand-in before it charges', () => {
 
   it('refuses to parse with nothing to parse, before it reaches a provider', async () => {
     await assert.rejects(
-      () => engine.parseQuestionnaire(asProviderAdmin(), engineBid.id, {}),
+      () => engine.parseQuestionnaire(asProviderAdmin(), platform.evidence, engineBid.id, {}),
       (error: Error & { code?: string }) => {
         assert.equal(error.code, 'BID_ON_NOTHING_TO_PARSE');
         return true;
@@ -895,7 +895,7 @@ describe('the Bid Engine refuses the local stand-in before it charges', () => {
 
     const confirmed = bids.requireBid(asProviderAdmin(), engineBid.id);
     for (const [name, call] of [
-      ['parse', () => engine.parseQuestionnaire(asProviderAdmin(), confirmed.id, { text: 'anything' })],
+      ['parse', () => engine.parseQuestionnaire(asProviderAdmin(), platform.evidence, confirmed.id, { text: 'anything' })],
       ['draft', () => engine.draftAnswer(asProviderAdmin(), confirmed.id, { questionId: confirmed.questions[0]!.id })],
       ['gap request', () => engine.composeGapRequest(asProviderAdmin(), confirmed.id)],
     ] as const) {

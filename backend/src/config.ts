@@ -271,6 +271,19 @@ export const config = {
    * correct for a test run and is total data loss on restart anywhere else —
    * so `assertProductionSafety` refuses to stay quiet about it.
    */
+  /**
+   * Where the credential store keeps what an operator sets from the console.
+   *
+   * Empty means "beside the journal", which is the right default: the two
+   * belong to the same volume and the same backup, and a deployment whose
+   * journal survives a host while its credentials do not is one that comes back
+   * up unable to call anything. Set it only to put the file somewhere else.
+   *
+   * The value is never a secret; the file it names holds encrypted ones.
+   */
+  credentials: {
+    path: str('CREDENTIAL_STORE_PATH', ''),
+  },
   ledger: {
     journalPath: str('LEDGER_JOURNAL_PATH', ''),
     /**

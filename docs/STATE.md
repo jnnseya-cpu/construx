@@ -27841,3 +27841,49 @@ configuration rather than the platform's design — a different question, which 
 how the two got conflated in the first place.
 
 Verified: `npm run typecheck` clean, 7613 tests pass.
+
+## Three commands took a document by its hash and never sent the document
+
+Found by running the Reader against a real appendix: `BID_ON_NOTHING_READ`
+against a file that had uploaded perfectly.
+
+The questionnaire parser, the amendments reading and the Reader all accept a
+document "by its hash", and all three put `documentHash: 'sha256:…'` into the
+payload **and sent nothing else**. A model handed the *name* of a file it cannot
+open answers from the name: it returns nothing, or worse, something. Two of the
+three have been in the module since it was built; the third I wrote this
+afternoon by copying the pattern, which is how a defect becomes a convention.
+
+`engines/perception.ts` has done it correctly since it was written, and the
+correction is its sequence: fetch the file, check the platform holds it, check
+the size, check the adapter can be handed a file at all, and put it on `media`
+where every adapter already reads it. `documentMedia()` is that sequence for
+this module's three callers, so there is one of it rather than three.
+
+**The refusals now come before the spend, and each names a different problem.**
+`BID_ON_FILE_NOT_HELD` — the record exists and its bytes were never supplied,
+which is the operator's to fix and was previously indistinguishable from a model
+returning nothing. `BID_ON_FILE_TOO_LARGE` — over `AI_PERCEPTION_MAX_BYTES`,
+refused by name rather than as a provider error. `BID_ON_PROVIDER_CANNOT_READ` —
+no configured adapter is multimodal, which on the local engines is the honest
+first answer and is truer than the stand-in refusal behind it. `requireModel`
+still guards what this cannot reach: a multimodal adapter answering
+synthetically.
+
+The amendments reading is where this mattered most. A model answering from a
+filename would have reported **no amendments** on a four-year measured term
+contract — a confident, plausible, catastrophic nothing.
+
+## The hash and the id are two different values, and the refusal now says so
+
+A library row carries both: the item's **id**, which the Reader, the extraction
+recorder, the embedder, `Close a gap` and `Mark a returnable done` all take, and
+the document's **content hash**, which the parser and the amendments reading
+take. Copying the wrong one produced `No evidence sha256:309b…`, which reads as
+the document being missing and sends somebody looking for an upload that worked.
+
+`requireEvidence` now recognises a value that says it is a hash and says which
+is which, with the field named so the console marks the input. One branch, and
+it removes the commonest way to lose ten minutes on this screen.
+
+Verified: `npm run typecheck` clean, 7613 tests pass.

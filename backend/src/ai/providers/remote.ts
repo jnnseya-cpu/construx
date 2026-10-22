@@ -1,4 +1,5 @@
 import { config } from '../../config.ts';
+import { credential } from '../../identity/credentials.ts';
 import { canonicalize } from '../../core/canonical.ts';
 import { DomainError } from '../../core/errors.ts';
 import type { AIProvider } from '../../goldenthread/types.ts';
@@ -514,9 +515,16 @@ function excerpt(text: string): string {
  * answer when it grows a third branch.
  */
 const PROVIDERS: Record<AIProvider, { endpoint: Endpoint; key: () => string }> = {
-  OPENAI: { endpoint: OPENAI_ENDPOINT, key: () => config.ai.openaiKey },
-  GEMINI: { endpoint: GEMINI_ENDPOINT, key: () => config.ai.geminiKey },
-  ANTHROPIC: { endpoint: ANTHROPIC_ENDPOINT, key: () => config.ai.anthropicKey },
+  // The credential store first, then the environment.
+  //
+  // That order because the store is the newer and revocable place: clearing a
+  // credential there falls back to whatever `.env` holds rather than leaving
+  // the platform with nothing. A deployment configured entirely through the
+  // environment behaves exactly as it did — these getters are already
+  // late-bound, which is what let a runtime store slot in at three lines.
+  OPENAI: { endpoint: OPENAI_ENDPOINT, key: () => credential('OPENAI_API_KEY') ?? config.ai.openaiKey },
+  GEMINI: { endpoint: GEMINI_ENDPOINT, key: () => credential('GEMINI_API_KEY') ?? config.ai.geminiKey },
+  ANTHROPIC: { endpoint: ANTHROPIC_ENDPOINT, key: () => credential('ANTHROPIC_API_KEY') ?? config.ai.anthropicKey },
 };
 
 /** Whether a configured string names a provider the platform can actually call. */

@@ -1,6 +1,8 @@
+import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
+import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
 import type { Clarification } from '../tenderintake.ts';
 import { requireVisibleCustomer } from './customers.ts';
@@ -233,6 +235,7 @@ const NO_PROVIDER = {
  */
 export async function parseQuestionnaire(
   ctx: EngineContext,
+  store: EvidenceStore,
   bidId: string,
   input: { text?: string; hash?: string },
 ): Promise<{ bid: Bid; proposed: ParsedQuestion[]; acuConsumed: number }> {
@@ -256,6 +259,11 @@ export async function parseQuestionnaire(
     );
   }
 
+  // A questionnaire given as a file is sent as a file. It used to travel as
+  // `documentHash` alone, which is the name of a document rather than the
+  // document, and a model handed a name answers from the name.
+  const media = input.hash ? await documentMedia(ctx, store, input.hash, 'the questionnaire') : undefined;
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_parse',
@@ -267,6 +275,7 @@ export async function parseQuestionnaire(
     inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
+      ...(media ? { media } : {}),
       task:
         'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
         'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
@@ -336,6 +345,70 @@ export async function parseQuestionnaire(
   return { bid: next, proposed, acuConsumed: result.acuConsumed };
 }
 
+/**
+ * The bytes behind a hash, as a provider can actually be given them.
+ *
+ * ## The defect this closes
+ *
+ * Three commands in this module take a document "by its hash" — the
+ * questionnaire parser, the amendments reading and the Reader — and all three
+ * put `documentHash: 'sha256:…'` into the payload and sent nothing else. A
+ * model handed the *name* of a file it cannot open answers from the name: it
+ * returns nothing, or worse, something. The first real use produced
+ * `BID_ON_NOTHING_READ` against a document that had uploaded perfectly, which
+ * is the kindest way this could have surfaced.
+ *
+ * `engines/perception.ts` has done it correctly since it was written: fetch the
+ * file, check the platform actually holds it, check the size, check the adapter
+ * can be handed one at all, and put it on `media` where the adapters read it.
+ * This is that sequence, for the module's own three callers.
+ *
+ * Every refusal here names the thing to go and fix, because each is a different
+ * problem: a record whose bytes were never supplied, a file too large to send,
+ * and a deployment whose provider cannot read a file at all.
+ */
+async function documentMedia(
+  ctx: EngineContext,
+  store: EvidenceStore,
+  hash: string,
+  what: string,
+): Promise<{ contentType: string; base64: string; hash: string }> {
+  if (!(await store.holds(ctx.tenantId, hash))) {
+    throw new DomainError(
+      'BID_ON_FILE_NOT_HELD',
+      `The platform holds the hash of ${what} but not the file itself, so there is nothing for a model to read. ` +
+        'Supply the file against that evidence record and try again.',
+      409,
+    );
+  }
+
+  const file = await store.fetch(ctx.tenantId, hash);
+  if (file.bytes.length > config.ai.perceptionMaxBytes) {
+    throw new DomainError(
+      'BID_ON_FILE_TOO_LARGE',
+      `${what} is ${Math.round(file.bytes.length / 1_048_576)}MB and a file over ` +
+        `${Math.round(config.ai.perceptionMaxBytes / 1_048_576)}MB cannot be sent to a provider in one request. ` +
+        'Split it, or paste the text instead.',
+      413,
+    );
+  }
+
+  // The honesty gate, in the words `perception.ts` uses: an adapter that cannot
+  // be handed a file will answer anyway — deterministically, confidently and
+  // fictionally — and that answer would be filed as this customer's evidence.
+  const adapter = ctx.orchestrator.adapterFor('PERCEPTION');
+  if (!adapter.multimodal) {
+    throw new DomainError(
+      'BID_ON_PROVIDER_CANNOT_READ',
+      'No provider configured on this deployment can be handed a file. Reading a document needs a multimodal ' +
+        'provider; the local engines compute, they do not perceive.',
+      503,
+    );
+  }
+
+  return { contentType: file.contentType, base64: file.bytes.toString('base64'), hash };
+}
+
 // --- The Reader --------------------------------------------------------------
 
 /**
@@ -378,6 +451,7 @@ export async function parseQuestionnaire(
  */
 export async function readEvidence(
   ctx: EngineContext,
+  store: EvidenceStore,
   evidenceId: string,
 ): Promise<{ item: BidOnEvidence; chunks: number; reread: boolean; acuConsumed: number }> {
   requireModule(ctx.grantedModules, 'BID_ON');
@@ -395,6 +469,10 @@ export async function readEvidence(
 
   const reread = evidence.chunks.length > 0;
 
+  // The file itself, not its name. Fetched before the call so a document whose
+  // bytes were never supplied is refused without spending anything.
+  const media = await documentMedia(ctx, store, evidence.hash, `${evidence.reference} — ${evidence.title}`);
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_read',
@@ -408,8 +486,12 @@ export async function readEvidence(
       task:
         'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
         'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
+      media,
       payload: {
+        // The hash travels in the payload as well as on the media, so the
+        // answer names the document it read.
         documentHash: evidence.hash,
+        contentType: media.contentType,
         title: evidence.title,
         kind: evidence.type,
         constraint:
@@ -1218,6 +1300,7 @@ export async function retrieveSemantic(
  */
 export async function reviewAmendments(
   ctx: EngineContext,
+  store: EvidenceStore,
   bidId: string,
   input: { text?: string; hash?: string; contractForm?: string },
 ): Promise<{
@@ -1239,6 +1322,11 @@ export async function reviewAmendments(
     );
   }
 
+  // Same correction as the parser: a schedule of amendments given as a file is
+  // sent as a file. This is the one of the three where a model answering from a
+  // filename would be most expensive — it would report no amendments.
+  const media = input.hash ? await documentMedia(ctx, store, input.hash, 'the schedule of amendments') : undefined;
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_amendments',
@@ -1249,6 +1337,7 @@ export async function reviewAmendments(
     inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
+      ...(media ? { media } : {}),
       task:
         'Read this schedule of amendments to a standard form construction contract. Return JSON with ' +
         '`clarifications`: an array of { severity, subject, question } where severity is CRITICAL, MAJOR or MINOR, ' +

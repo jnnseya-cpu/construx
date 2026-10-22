@@ -538,7 +538,7 @@ describe('the amendments reading asks questions and decides nothing', () => {
       ],
     });
 
-    const result = await engine.reviewAmendments(admin, bidId, {
+    const result = await engine.reviewAmendments(admin, platform.evidence, bidId, {
       text: 'A'.repeat(300),
       contractForm: 'JCT Measured Term Contract 2024',
     });
@@ -564,7 +564,7 @@ describe('the amendments reading asks questions and decides nothing', () => {
     });
 
     const before = bids.requireBid(admin, bidId);
-    await engine.reviewAmendments(admin, bidId, { text: 'A'.repeat(300) });
+    await engine.reviewAmendments(admin, platform.evidence, bidId, { text: 'A'.repeat(300) });
     const after = bids.requireBid(admin, bidId);
 
     // Everything that decides anything is untouched: the status, the questions,
@@ -580,7 +580,7 @@ describe('the amendments reading asks questions and decides nothing', () => {
       clarifications: [{ severity: 'EXTREMELY BAD', subject: 'Fitness for purpose implied', question: 'Is this intended?' }],
       observations: [],
     });
-    const result = await engine.reviewAmendments(admin, bidId, { text: 'A'.repeat(300) });
+    const result = await engine.reviewAmendments(admin, platform.evidence, bidId, { text: 'A'.repeat(300) });
     // Dropped, it would make the reading look cleaner than it was; a point
     // worth raising is worth asking even where the label was wrong.
     assert.equal(result.clarifications.length, 1);
@@ -589,12 +589,12 @@ describe('the amendments reading asks questions and decides nothing', () => {
 
   it('refuses an empty reading rather than recording one', async () => {
     const { admin, bidId } = await withReader({ clarifications: [], observations: [] });
-    await rejectsCode(() => engine.reviewAmendments(admin, bidId, { text: 'A'.repeat(300) }), 'BID_ON_NOTHING_READ');
+    await rejectsCode(() => engine.reviewAmendments(admin, platform.evidence, bidId, { text: 'A'.repeat(300) }), 'BID_ON_NOTHING_READ');
   });
 
   it('refuses to run with nothing to read', async () => {
     const { admin, bidId } = await withReader({ clarifications: [], observations: [] });
-    await rejectsCode(() => engine.reviewAmendments(admin, bidId, {}), 'BID_ON_NOTHING_TO_REVIEW');
+    await rejectsCode(() => engine.reviewAmendments(admin, platform.evidence, bidId, {}), 'BID_ON_NOTHING_TO_REVIEW');
   });
 
   it('does not merge the same subject twice on a second reading', async () => {
@@ -602,10 +602,10 @@ describe('the amendments reading asks questions and decides nothing', () => {
       clarifications: [{ severity: 'MAJOR', subject: 'Set-off without notice', question: 'Will the buyer give notice?' }],
       observations: ['Amendment 7 permits set-off without prior notice.'],
     });
-    const first = await engine.reviewAmendments(admin, bidId, { text: 'A'.repeat(300) });
+    const first = await engine.reviewAmendments(admin, platform.evidence, bidId, { text: 'A'.repeat(300) });
     assert.equal(first.recorded, true);
 
-    const again = await engine.reviewAmendments(admin, bidId, { text: 'A'.repeat(400) });
+    const again = await engine.reviewAmendments(admin, platform.evidence, bidId, { text: 'A'.repeat(400) });
     // A list that repeated the same point every time somebody re-read a longer
     // version of the schedule is a list nobody reads to the end.
     assert.equal(bids.bidPosition(admin, bidId).clarifications.length, 1);

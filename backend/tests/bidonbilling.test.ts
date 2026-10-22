@@ -167,7 +167,7 @@ describe('the deposit blocks the spend and nothing else', () => {
 
     // The spend is what is refused, on every one of the four AI commands.
     for (const [name, call] of [
-      ['parse', () => engine.parseQuestionnaire(asProviderAdmin(), bid.id, { text: 'anything' })],
+      ['parse', () => engine.parseQuestionnaire(asProviderAdmin(), platform.evidence, bid.id, { text: 'anything' })],
       ['draft', () => engine.draftAnswer(asProviderAdmin(), bid.id, { questionId: bid.questions[0]!.id })],
       ['score', () => engine.scoreAnswerWithAI(asProviderAdmin(), bid.id, written.answer.id)],
       ['gap request', () => engine.composeGapRequest(asProviderAdmin(), bid.id)],

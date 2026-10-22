@@ -196,6 +196,29 @@ export function evidenceOf(ctx: EngineContext): BidOnEvidence[] {
 export function requireEvidence(ctx: EngineContext, evidenceId: string): BidOnEvidence {
   const record = ctx.ledger.get({ refType: 'BidOnEvidence', refId: evidenceId });
   if (!record || record.tenantId !== ctx.tenantId) {
+    /*
+     * The commonest way to get here, and it is the screen's fault rather than
+     * the caller's.
+     *
+     * A library row carries two copyable values: the item's id, which these
+     * commands take, and the document's content hash, which the questionnaire
+     * parser and the amendments reading take. Somebody who copies the wrong one
+     * gets "no evidence sha256:309b…", reads it as the document being missing,
+     * and goes looking for an upload that worked perfectly.
+     *
+     * So the refusal recognises what it was handed. A value is a hash rather
+     * than an id when it says so, and saying which is which costs one branch.
+     */
+    if (evidenceId.startsWith('sha256:')) {
+      throw new DomainError(
+        'BID_ON_EVIDENCE_NOT_FOUND',
+        'That is a document hash, not an evidence id. The hash is what the questionnaire parser and the amendments ' +
+          'reading take; these commands take the item itself. Both are on the library row — the id is the short ' +
+          'underlined code, and Copy hash is the button beside it.',
+        404,
+        [{ field: 'evidenceId', message: 'The short underlined code on the library row, not the Copy hash button' }],
+      );
+    }
     throw new DomainError('BID_ON_EVIDENCE_NOT_FOUND', `No evidence ${evidenceId}`, 404);
   }
   const evidence = record.state as unknown as BidOnEvidence;

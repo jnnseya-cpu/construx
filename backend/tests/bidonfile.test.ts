@@ -186,7 +186,7 @@ describe('a Bid-On evidence item can hold its file', () => {
  * visibly a stand-in. Here it becomes a citation.
  */
 describe('reading a filed document', () => {
-  it('refuses the local stand-in before anything is charged', async () => {
+  it('refuses before a charge: no file held, then no provider that can read one', async () => {
     const bytes = Buffer.from('Assessments shall be completed within ten working days of instruction.', 'utf8');
     const hash = hashBytes(bytes);
     const item = bidEvidence.fileEvidence(asProvider(), {
@@ -197,12 +197,37 @@ describe('reading a filed document', () => {
     });
 
     const before = platform.wallet(seed.tenantId).snapshot().balanceMinor;
-    const error = await rejectsCode(
-      () => bidEngine.readEvidence(asProvider(), item.id),
-      'NO_PERCEPTION_PROVIDER',
+
+    // Before any of that: a record whose bytes were never supplied. Refused
+    // first and without a provider call, because "we hold the hash and not the
+    // file" is a different problem from "no provider can read a file", and the
+    // one the operator can actually fix.
+    const missing = await rejectsCode(
+      () => bidEngine.readEvidence(asProvider(), platform.evidence, item.id),
+      'BID_ON_FILE_NOT_HELD',
     );
-    assert.match(String(error.message), /reads nothing/);
-    assert.match(String(error.message), /read by a buyer as the company’s own words/);
+    assert.match(String(missing.message), /holds the hash .* but not the file/);
+
+    // With the file supplied, the stand-in refusal is what stands between an
+    // invented passage and this customer's evidence library.
+    const stored = await fetch(`${base}/v1/evidence/${encodeURIComponent(hash)}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenFor('owner')}`, 'content-type': 'application/pdf' },
+      body: bytes,
+    });
+    assert.equal(stored.status, 201);
+
+    // On the local engines the honest refusal comes one gate earlier than the
+    // stand-in check: no adapter here can be *handed* a file at all. That is
+    // the truer statement of what is wrong, and like the one behind it, it
+    // lands before anything is charged. `requireModel` still guards the case
+    // this cannot reach — a multimodal adapter answering synthetically.
+    const error = await rejectsCode(
+      () => bidEngine.readEvidence(asProvider(), platform.evidence, item.id),
+      'BID_ON_PROVIDER_CANNOT_READ',
+    );
+    assert.match(String(error.message), /can be handed a file/);
+    assert.match(String(error.message), /they do not perceive/);
 
     // Nothing charged, and nothing filed. A refusal that had already spent the
     // customer's balance would be the worse half of both outcomes.
