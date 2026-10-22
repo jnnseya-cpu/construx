@@ -27784,3 +27784,60 @@ the work on a deployment with a configured provider, a funded wallet and
 `AI_PROVIDER_CLEARANCE` naming that vendor at `COMMERCIAL_L3`.
 
 Verified: `npm run typecheck` clean, 7608 tests pass.
+
+## Correcting what a filed document says about itself
+
+Reported from the first real tender, and it is the plainest kind of gap: nine
+appendices filed in a batch, two of them titled "Appendix 1", **and no way to
+fix it**. The platform had `withdrawEvidence` and nothing else — so the only
+route was to withdraw the item and file it again, which breaks every citation
+already made against it and leaves two records of one document for a reviewer
+to reconcile.
+
+The title is not cosmetic. It is how a reviewer finds the document, how the
+export names it, and on that particular tender it was the difference between the
+amendments reading reading the schedule of amendments and reading the contract
+particulars and reporting no amendments.
+
+`correctEvidence` takes the title, the kind and the dates it is current
+between. The filing rules hold on the way through — a `CERTIFICATE`
+reclassified from `OTHER` without the day it lapses is the same safety check
+switched off, reached by a different route — and a correction that would change
+nothing is refused by name rather than left to the ledger's no-op refusal, which
+would say nothing about what the caller was trying to do.
+
+**The hash cannot be corrected.** It is the document. Changing it would leave
+every citation already made pointing at a record that now claims different
+bytes, which is the one thing a content address exists to prevent. A wrong
+*file* is a withdrawal and a fresh filing, because those are two documents and
+the record should say so.
+
+**Nothing is overwritten.** Each correction appends to `corrections` with what
+each field was, what it became, who said so and why. A title corrected in place
+would leave a reviewer unable to tell that the document they are reading used to
+be filed as something else.
+
+`BID_ON_EVIDENCE_CORRECTED` is new in the catalogue and `aiAllowed` stays false
+by its default — deliberately. Correcting what a document is called is somebody
+saying this is what it is, and an agent renaming evidence after an answer has
+cited it is the one way the citation check could be defeated with nothing
+looking wrong.
+
+## The AI engine's routing table rendered `[object Object]`
+
+Seen on a live deployment, in every row. The table read
+`headers: ['Capability', 'Goes to']` and put each row through `providerName`,
+which is for a vendor token. `ROUTING_MATRIX` does not map an engine to a
+vendor: it names, per engine, the work that needs a model which **reads** and
+the work that needs one which **reasons** — two string arrays. So the column
+header was wrong, the helper was wrong, and the prose under it ("realised
+routing differs from this every time a provider is unhealthy") described a
+question the table was not answering.
+
+It now shows what the matrix holds, under a heading that says what it is: the
+platform's own design, which work needs which kind of model. Which vendor serves
+each kind is the pair of cards directly above it, and that is this deployment's
+configuration rather than the platform's design — a different question, which is
+how the two got conflated in the first place.
+
+Verified: `npm run typecheck` clean, 7613 tests pass.

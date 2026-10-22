@@ -2434,6 +2434,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // but a number with no meaning.
   def('BID_ON_EVIDENCE_EMBEDDED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
   def('BID_ON_EVIDENCE_WITHDRAWN', 'BidOnEvidence', 'UPDATE', 'EVIDENCE'),
+  /*
+   * What a filed document says about itself, corrected.
+   *
+   * Not a second filing and not a deletion. A title is how a reviewer finds a
+   * document and how an export names it, and a tender's appendices are filed in
+   * a batch where mistyping one is ordinary — the platform had withdrawal and
+   * nothing else, so the only way to fix a title was to withdraw the item and
+   * file it again, which breaks every citation already made against it.
+   *
+   * `aiAllowed` stays false by the catalogue's default. Correcting what a
+   * document is called is somebody saying this is what it is, and an agent
+   * renaming evidence after an answer has cited it is the one way the citation
+   * check could be defeated without anything looking wrong.
+   */
+  def('BID_ON_EVIDENCE_CORRECTED', 'BidOnEvidence', 'UPDATE', 'EVIDENCE'),
   def('BID_ON_BID_CREATED', 'BidOnBid', 'CREATE', 'PROCUREMENT', { creates: true }),
   // Importing from the standard Tenders section, and pulling a later change in.
   // Human-only, both of them: an import decides that a tender is this

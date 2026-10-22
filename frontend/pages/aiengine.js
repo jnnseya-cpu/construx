@@ -157,16 +157,28 @@ export async function aiengine(root) {
           </div>
         </div>
         <div class="card pad0">
-          <h2 style="padding:15px 17px 0">What routes where</h2>
+          <h2 style="padding:15px 17px 0">What each engine asks of each kind of model</h2>
           <div class="metric-sub" style="padding:0 17px 10px">
-            The configured matrix. Realised routing differs from this every time a provider is unhealthy, and the ACU
-            economy screen shows the realised split.
+            <!--
+              This read "Capability / Goes to" and put each row through
+              providerName, which rendered [object Object] in every row of a
+              live deployment. ROUTING_MATRIX does not map an engine to a
+              vendor: it names, per engine, the work that needs a model which
+              reads and the work that needs one which reasons. Which vendor
+              serves each of those two kinds is the pair of cards above, and it
+              is a different question - one is the platform's design, the other
+              is this deployment's configuration.
+            -->
+            The platform's own design, not this deployment's configuration: which work needs a model that reads and
+            which needs one that reasons. Which vendor serves each kind is above, and the ACU economy screen shows
+            where the spend actually went.
           </div>
           ${table({
-            headers: ['Capability', 'Goes to'],
-            rows: Object.entries(plane.routingMatrix ?? {}).map(([capability, provider]) => [
-              humanise(capability),
-              providerName(provider),
+            headers: ['Engine', 'Needs a model that reads', 'Needs a model that reasons'],
+            rows: Object.entries(plane.routingMatrix ?? {}).map(([engine, kinds]) => [
+              humanise(engine),
+              (kinds?.perception ?? []).join(' · ') || '—',
+              (kinds?.reasoning ?? []).join(' · ') || '—',
             ]),
             empty: 'No routing is configured.',
           })}

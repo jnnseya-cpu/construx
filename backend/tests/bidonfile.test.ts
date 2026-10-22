@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
-import { rejectsCode } from './helpers.ts';
+import { rejectsCode, throwsCode } from './helpers.ts';
 import * as customers from '../src/domain/bidon/customers.ts';
 import * as bidEngine from '../src/domain/bidon/engine.ts';
 import * as bidEvidence from '../src/domain/bidon/evidence.ts';
@@ -218,5 +218,89 @@ describe('reading a filed document', () => {
     assert.match(page, /'read-evidence': \{/, 'the Reader has no console door');
     assert.match(page, /label: 'Read it for me'/);
     assert.match(page, /label: 'Type the passages myself'/, 'the hand-typed route was replaced rather than kept');
+  });
+});
+
+/**
+ * Correcting what a filed document says about itself.
+ *
+ * Reported from use, from a real tender: nine appendices filed in a batch, two
+ * of them titled "Appendix 1", and no way to fix it. The platform had
+ * withdrawal and nothing else — so the only route was to withdraw the item and
+ * file it again, which breaks every citation already made against it and
+ * leaves two records of one document for a reviewer to reconcile.
+ *
+ * The title is not cosmetic here: it is how a reviewer finds the document, how
+ * the export names it, and — on this particular tender — the difference
+ * between the amendments reading reading the schedule of amendments and reading
+ * the contract particulars and reporting no amendments.
+ */
+describe('correcting a filed document', () => {
+  const bytes = Buffer.from('Appendix 3. Amendment 14: the liability cap at clause 7.2 is deleted.', 'utf8');
+  const hash = hashBytes(bytes);
+  let id: string;
+
+  it('fixes a title and keeps what it used to say', () => {
+    id = bidEvidence.fileEvidence(asProvider(), {
+      customerAccountId: customerId,
+      type: 'OTHER',
+      // The mistake, exactly as it happened.
+      title: 'Appendix 1 - JCT MTC 2024 Recitals, Articles & Contract Particulars',
+      hash,
+    }).id;
+
+    const corrected = bidEvidence.correctEvidence(asProvider(), id, {
+      title: 'Appendix 3 - JCT MTC 2024 Schedule of Amendments',
+      reason: 'Filed under the wrong appendix number in the batch upload',
+    });
+
+    assert.equal(corrected.title, 'Appendix 3 - JCT MTC 2024 Schedule of Amendments');
+    assert.equal(corrected.hash, hash, 'the correction changed which document this is');
+    assert.equal(corrected.corrections?.length, 1);
+    const [entry] = corrected.corrections!;
+    assert.equal(entry!.reason, 'Filed under the wrong appendix number in the batch upload');
+    assert.equal(entry!.changed.title!.from, 'Appendix 1 - JCT MTC 2024 Recitals, Articles & Contract Particulars');
+    assert.equal(entry!.changed.title!.to, 'Appendix 3 - JCT MTC 2024 Schedule of Amendments');
+  });
+
+  it('refuses a correction that corrects nothing', () => {
+    throwsCode(
+      () =>
+        bidEvidence.correctEvidence(asProvider(), id, {
+          title: 'Appendix 3 - JCT MTC 2024 Schedule of Amendments',
+          reason: 'Pressing the button again changes nothing',
+        }),
+      'BID_ON_NOTHING_CORRECTED',
+    );
+  });
+
+  it('holds the filing rules on the way through', () => {
+    // Reclassifying to a kind that always lapses, without the day it lapses, is
+    // the same safety check switched off — arrived at by a different route.
+    throwsCode(
+      () => bidEvidence.correctEvidence(asProvider(), id, { type: 'INSURANCE', reason: 'Reclassifying it wrongly' }),
+      'BID_ON_EXPIRY_REQUIRED',
+    );
+  });
+
+  it('refuses to correct a withdrawn item', () => {
+    const spare = bidEvidence.fileEvidence(asProvider(), {
+      customerAccountId: customerId,
+      type: 'OTHER',
+      title: 'Appendix 8 - Contractor No Access Process',
+      hash: hashBytes(Buffer.from('No access process, notionally.', 'utf8')),
+    });
+    bidEvidence.withdrawEvidence(asProvider(), spare.id, { reason: 'Superseded by the reissued appendix' });
+
+    throwsCode(
+      () => bidEvidence.correctEvidence(asProvider(), spare.id, { title: 'Appendix 8 - reissued', reason: 'Trying to rename a withdrawn item' }),
+      'BID_ON_EVIDENCE_WITHDRAWN',
+    );
+  });
+
+  it('is offered in the console', () => {
+    const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend', 'pages', 'bidon.js'), 'utf8');
+    assert.match(page, /'correct-evidence': \{/, 'a mistyped title can still only be fixed by withdrawing the item');
+    assert.match(page, /label: 'Correct a title or a date'/);
   });
 });

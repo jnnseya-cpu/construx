@@ -539,6 +539,12 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'record-extraction', label: 'Type the passages myself', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          // Before withdrawal, because it is the lighter act and the one people
+          // actually need: a mistyped title on one of nine appendices filed in
+          // a batch, where withdrawing and filing again breaks every citation
+          // already made against it.
+          { id: 'correct-evidence', label: 'Correct a title or a date', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'withdraw-evidence', label: 'Withdraw an item', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'embed-evidence', label: 'Make an item searchable by meaning',
@@ -1867,6 +1873,40 @@ export async function bidon(root) {
           hint: 'From the library above — click the id on its row and it is on the clipboard.' },
       ],
       transform: () => ({}),
+    },
+    'correct-evidence': {
+      title: 'Correct what a document says about itself',
+      intent:
+        'Its title, its kind, the dates it is current between. Appended with what each field was and why, never ' +
+        'overwritten — a title is how a reviewer finds a document and how the export names it, so "it used to be ' +
+        'filed as something else" is a fact somebody may need. The file itself cannot be corrected: a wrong document ' +
+        'is a withdrawal and a fresh filing, because those are two documents and the record should say so.',
+      path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/correction`,
+      submitLabel: 'Correct it',
+      fields: [
+        { name: 'evidenceId', label: 'Evidence id', type: 'text',
+          hint: 'From the library above — click the id on its row and it is on the clipboard.' },
+        { name: 'title', label: 'Title', type: 'text', required: false,
+          hint: 'Leave blank to keep it. As a reviewer looking for it would describe it.' },
+        { name: 'type', label: 'Kind', type: 'select', required: false,
+          options: [
+            { value: '', label: 'Leave unchanged' },
+            { value: 'POLICY', label: 'Policy' },
+            { value: 'CERTIFICATE', label: 'Certificate — needs an expiry' },
+            { value: 'CASE_STUDY', label: 'Case study' },
+            { value: 'CV', label: 'CV' },
+            { value: 'STATS', label: 'Accident or performance statistics' },
+            { value: 'INSURANCE', label: 'Insurance — needs an expiry' },
+            { value: 'OTHER', label: 'Something else' },
+          ] },
+        { name: 'validFrom', label: 'Valid from', type: 'date', required: false },
+        { name: 'expiresOn', label: 'Current until', type: 'date', required: false,
+          hint: 'Required if you are reclassifying it as a certificate or an insurance schedule.' },
+        { name: 'reason', label: 'Why', type: 'text',
+          hint: 'At least twelve characters. Recorded against the correction — "filed under the wrong appendix number".' },
+      ],
+      transform: ({ evidenceId: _e, ...rest }) =>
+        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
     },
     'record-extraction': {
       title: 'Record what was read out of a document',

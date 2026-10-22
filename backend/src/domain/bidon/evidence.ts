@@ -142,6 +142,24 @@ export type BidOnEvidence = {
   withdrawnAt?: string;
   withdrawnBy?: string;
   withdrawnReason?: string;
+  /**
+   * What this record used to say about itself, and why it changed.
+   *
+   * Every correction, in order, never overwritten. A title is how a reviewer
+   * finds a document and how the export names it, so "it used to be called
+   * something else" is a fact somebody reading a submission two years later
+   * may need — and a field corrected in place tells them nothing.
+   */
+  corrections?: EvidenceCorrection[];
+};
+
+/** One correction to what a filed document says about itself. */
+export type EvidenceCorrection = {
+  at: string;
+  by: string;
+  reason: string;
+  /** Field by field, what it was and what it became. */
+  changed: Record<string, { from: unknown; to: unknown }>;
 };
 
 const TITLE_MIN = 4;
@@ -357,6 +375,118 @@ export function recordExtraction(
 
   write(ctx, {
     eventType: 'BID_ON_EVIDENCE_EXTRACTED',
+    entity: { refType: 'BidOnEvidence', refId: evidenceId },
+    nextState: { ...next },
+  });
+
+  return next;
+}
+
+/**
+ * Correct what a filed document says about itself. `U` on `BID_SERVICES`.
+ *
+ * ## Why this exists
+ *
+ * The platform had withdrawal and nothing else, so a mistyped title could only
+ * be fixed by withdrawing the item and filing it again — which breaks every
+ * citation already made against it and leaves two records of one document for a
+ * reviewer to reconcile. A tender's appendices are filed in a batch of nine and
+ * mistyping one is ordinary: on a real invitation two of them came through as
+ * "Appendix 1", and the amendments reading was one paste away from reading the
+ * contract particulars and reporting no amendments.
+ *
+ * ## What cannot be corrected, and why
+ *
+ * **The hash.** It is the document. Changing it would leave every citation
+ * already made pointing at a record that now claims different bytes, which is
+ * the one thing the content address exists to prevent. A wrong *file* is a
+ * withdrawal and a fresh filing — those are two documents, and the record
+ * should say so.
+ *
+ * The passages are not corrected here either: re-reading the document replaces
+ * them, which is `readEvidence` or `recordExtraction` and is a different act.
+ *
+ * ## Nothing is overwritten
+ *
+ * Each correction is appended to `corrections` with what each field was, what
+ * it became, who said so and why. A title corrected in place would leave a
+ * reviewer unable to tell that the document they are reading used to be filed
+ * as something else.
+ */
+export function correctEvidence(
+  ctx: EngineContext,
+  evidenceId: string,
+  input: { reason: string; title?: string; type?: EvidenceType; validFrom?: string; expiresOn?: string },
+): BidOnEvidence {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const evidence = requireEvidence(ctx, evidenceId);
+  if (evidence.withdrawnAt) {
+    throw new DomainError(
+      'BID_ON_EVIDENCE_WITHDRAWN',
+      `${evidence.reference} has been withdrawn. Correcting what a withdrawn item says about itself would change a ` +
+        'record nothing may cite, and leave the reason it was withdrawn describing a document that no longer reads ' +
+        'the same way.',
+      409,
+    );
+  }
+
+  const reason = requireText(input.reason, REASON_MIN, 'BID_ON_REASON_TOO_SHORT', 'A correction reason');
+  const title = input.title === undefined ? evidence.title : requireText(input.title, TITLE_MIN, 'BID_ON_TITLE_TOO_SHORT', 'An evidence title');
+  const type = input.type ?? evidence.type;
+  const validFrom = input.validFrom === undefined ? evidence.validFrom : input.validFrom.trim() || undefined;
+  const expiresOn = input.expiresOn === undefined ? evidence.expiresOn : input.expiresOn.trim() || undefined;
+
+  // The filing rules hold on a correction too. A `CERTIFICATE` reclassified
+  // from `OTHER` without the day it lapses is the same safety check switched
+  // off, arrived at by a different route.
+  if (MUST_EXPIRE.includes(type) && !expiresOn) {
+    throw new DomainError(
+      'BID_ON_EXPIRY_REQUIRED',
+      `A ${type.toLowerCase()} always lapses, so it is filed with the day it stops being current. Correct the ` +
+        'expiry in the same act as the kind, or nothing can refuse a submission that cites it after it has expired.',
+      400,
+    );
+  }
+  if (validFrom && expiresOn && expiresOn < validFrom) {
+    throw new DomainError('BID_ON_DATES_REVERSED', 'Evidence cannot expire before it becomes valid', 400);
+  }
+
+  const changed: Record<string, { from: unknown; to: unknown }> = {};
+  if (title !== evidence.title) changed.title = { from: evidence.title, to: title };
+  if (type !== evidence.type) changed.type = { from: evidence.type, to: type };
+  if (validFrom !== evidence.validFrom) changed.validFrom = { from: evidence.validFrom, to: validFrom };
+  if (expiresOn !== evidence.expiresOn) changed.expiresOn = { from: evidence.expiresOn, to: expiresOn };
+
+  if (Object.keys(changed).length === 0) {
+    // Refused by name rather than left to the ledger's own no-op refusal, which
+    // would say nothing about what the caller was trying to do.
+    throw new DomainError(
+      'BID_ON_NOTHING_CORRECTED',
+      `Nothing about ${evidence.reference} would change. A correction that corrects nothing still appends a reason ` +
+        'to the record, which later reads as a decision somebody took about this document.',
+      409,
+    );
+  }
+
+  const next: BidOnEvidence = {
+    ...evidence,
+    title,
+    type,
+    ...(validFrom ? { validFrom } : {}),
+    ...(expiresOn ? { expiresOn } : {}),
+    corrections: [
+      ...(evidence.corrections ?? []),
+      { at: new Date().toISOString(), by: ctx.auth.actorId, reason, changed },
+    ],
+  };
+  // A date cleared is a date gone from the record, not an empty string on it.
+  if (!validFrom) delete next.validFrom;
+  if (!expiresOn) delete next.expiresOn;
+
+  write(ctx, {
+    eventType: 'BID_ON_EVIDENCE_CORRECTED',
     entity: { refType: 'BidOnEvidence', refId: evidenceId },
     nextState: { ...next },
   });

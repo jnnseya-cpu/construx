@@ -13578,6 +13578,26 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/bid-on/evidence/:evidenceId/correction',
+    description:
+      'Correct what a filed document says about itself — its title, its kind, the dates it is current between. Appended with what each field was and why, never overwritten: a title is how a reviewer finds a document, and "it used to be called something else" is a fact somebody reading a submission two years later may need. The hash cannot be corrected, because it is the document',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: { type: 'string', minLength: 12, maxLength: 600 },
+        title: { type: 'string', minLength: 4, maxLength: 300 },
+        type: { type: 'string', enum: [...bidOnEvidence.EVIDENCE_TYPE] },
+        validFrom: { type: 'string' },
+        expiresOn: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnEvidence.correctEvidence(tenantContext(platform, ctx), ctx.params.evidenceId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/bid-on/evidence/:evidenceId/withdraw',
     description: 'Take an item out of use. Withdrawn, never deleted — a bid that cited it still cited it',
     schema: {
