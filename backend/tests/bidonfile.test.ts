@@ -208,26 +208,28 @@ describe('reading a filed document', () => {
     );
     assert.match(String(missing.message), /holds the hash .* but not the file/);
 
-    // With the file supplied, the stand-in refusal is what stands between an
-    // invented passage and this customer's evidence library.
+    // With the file supplied — and declared as what it actually is. Uploading
+    // these bytes as `application/pdf` is refused by inspection before
+    // anything else happens, which is its job: a file whose magic bytes
+    // disagree with what it claims to be is not read on this platform.
     const stored = await fetch(`${base}/v1/evidence/${encodeURIComponent(hash)}`, {
       method: 'POST',
-      headers: { authorization: `Bearer ${tokenFor('owner')}`, 'content-type': 'application/pdf' },
+      headers: { authorization: `Bearer ${tokenFor('owner')}`, 'content-type': 'text/plain' },
       body: bytes,
     });
     assert.equal(stored.status, 201);
 
-    // On the local engines the honest refusal comes one gate earlier than the
-    // stand-in check: no adapter here can be *handed* a file at all. That is
-    // the truer statement of what is wrong, and like the one behind it, it
-    // lands before anything is charged. `requireModel` still guards the case
-    // this cannot reach — a multimodal adapter answering synthetically.
+    // These bytes are text, so the platform reads them itself — no vision
+    // model, no multimodal requirement, and the same would be true of a Word
+    // order form or a priced spreadsheet. What stops it is the stand-in, which
+    // reads nothing: the refusal is the only thing standing between an invented
+    // passage and this customer's evidence library.
     const error = await rejectsCode(
       () => bidEngine.readEvidence(asProvider(), platform.evidence, item.id),
-      'BID_ON_PROVIDER_CANNOT_READ',
+      'NO_READING_PROVIDER',
     );
-    assert.match(String(error.message), /can be handed a file/);
-    assert.match(String(error.message), /they do not perceive/);
+    assert.match(String(error.message), /reads nothing/);
+    assert.match(String(error.message), /read by a buyer as the company’s own words/);
 
     // Nothing charged, and nothing filed. A refusal that had already spent the
     // customer's balance would be the worse half of both outcomes.
@@ -327,5 +329,72 @@ describe('correcting a filed document', () => {
     const page = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'frontend', 'pages', 'bidon.js'), 'utf8');
     assert.match(page, /'correct-evidence': \{/, 'a mistyped title can still only be fixed by withdrawing the item');
     assert.match(page, /label: 'Correct a title or a date'/);
+  });
+});
+
+/**
+ * Four formats, and only one of them needs a model that can see.
+ *
+ * A tender is a questionnaire, a Word order form, an Excel cost model and —
+ * often — a scanned code of conduct. Sending all four to a vision model was the
+ * first instinct and it is wrong twice: a provider refuses the ones it cannot
+ * take, and an extracted spreadsheet is a table where a transcribed one is a
+ * model's impression of a table. The figures in it are going into a tender.
+ *
+ * `evidence/ingest.ts` has drawn this line since it was written. These assert
+ * that the Reader sits on the right side of it.
+ */
+describe('reading the formats a tender actually arrives in', () => {
+  it('reads text natively rather than reaching for a vision model', async () => {
+    const bytes = Buffer.from(
+      'Appendix 6. The Contractor shall complete each assessment within ten working days of instruction and lodge ' +
+        'the certificate on the central register within five working days of completion.',
+      'utf8',
+    );
+    const hash = hashBytes(bytes);
+    const item = bidEvidence.fileEvidence(asProvider(), {
+      customerAccountId: customerId,
+      type: 'OTHER',
+      title: 'RFX1000209 App 6 — EPC Specification',
+      hash,
+    });
+    const stored = await fetch(`${base}/v1/evidence/${encodeURIComponent(hash)}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenFor('owner')}`, 'content-type': 'text/plain' },
+      body: bytes,
+    });
+    assert.equal(stored.status, 201);
+
+    // `NO_READING_PROVIDER` rather than `BID_ON_PROVIDER_CANNOT_READ`: the
+    // platform read the document itself and got as far as asking a model about
+    // the text. On a deployment with a provider this one succeeds, and it never
+    // needed a multimodal adapter at all.
+    await rejectsCode(() => bidEngine.readEvidence(asProvider(), platform.evidence, item.id), 'NO_READING_PROVIDER');
+  });
+
+  it('refuses a file whose bytes disagree with what it claims to be', async () => {
+    const bytes = Buffer.from('This is not a PDF, whatever the upload said.', 'utf8');
+    const hash = hashBytes(bytes);
+    const item = bidEvidence.fileEvidence(asProvider(), {
+      customerAccountId: customerId,
+      type: 'OTHER',
+      title: 'RFX1000209 App 2 — Order Form',
+      hash,
+    });
+    // Stored honestly as what it is, then read while claiming otherwise is not
+    // possible — so this asserts the inspection path directly, which is the one
+    // that would catch an executable inside a spreadsheet.
+    const stored = await fetch(`${base}/v1/evidence/${encodeURIComponent(hash)}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenFor('owner')}`, 'content-type': 'application/pdf' },
+      body: bytes,
+    });
+    assert.equal(stored.status, 201, 'the store takes the bytes; it is the reader that inspects them');
+
+    const error = await rejectsCode(
+      () => bidEngine.readEvidence(asProvider(), platform.evidence, item.id),
+      'BID_ON_FILE_BLOCKED',
+    );
+    assert.match(String(error.message), /refused by inspection/);
   });
 });

@@ -27887,3 +27887,49 @@ is which, with the field named so the console marks the input. One branch, and
 it removes the commonest way to lose ten minutes on this screen.
 
 Verified: `npm run typecheck` clean, 7613 tests pass.
+
+## PDF, Word, Excel and a scan — and only one of them needs a model that can see
+
+Reported in the plainest possible terms while testing: *"documents are picture,
+pdf, excel and word, so the system must be"*. It was right, and the correction
+is larger than adding two media types.
+
+**What was wrong.** Having just made the three hash-taking commands actually
+send the file, they sent all of it as an **image** — OpenAI refused the PDF with
+"Expected a base64-encoded data URL with an image MIME type", which was the good
+outcome. Word and Excel would have failed too, and no vision API takes either.
+
+**What the platform already had.** `evidence/ingest.ts` has drawn this line
+since it was written: `office.ts` reads a Word document and a spreadsheet,
+because both are XML in a ZIP; `pdftext.ts` reads a PDF carrying its words in
+its content streams; a text file is its own text. Only where the bytes do not
+carry the words — a scan, a photograph — is a model that can see required, and
+`extractText` reports `NEEDS_OCR` rather than guessing. The Bid-On commands were
+reaching past all of it.
+
+So `documentForReading` **reads natively where the bytes are the text and spends
+a vision call only on a scan**, and the capability follows the document rather
+than the command: an extracted order form goes to a reasoning model, a scanned
+one to a vision model. The cost difference is large and is not the argument.
+**An extracted cost model is a table; a transcribed one is a model's impression
+of a table**, and those figures are going into a tender.
+
+**Inspection runs here too**, not only at upload, because this is the moment the
+bytes are acted on. An executable inside a spreadsheet is an executable, and a
+tender appendix is exactly the sort of attachment that carries one. A file whose
+magic bytes disagree with what it claims to be is refused before a provider sees
+it.
+
+Five refusals, each naming a different problem, all before anything is charged:
+`BID_ON_FILE_NOT_HELD`, `BID_ON_FILE_BLOCKED`, `BID_ON_FORMAT_UNREADABLE`,
+`BID_ON_FILE_TOO_LARGE`, `BID_ON_PROVIDER_CANNOT_READ`. The stand-in refusal
+behind them is now `NO_READING_PROVIDER` — named for the act rather than the
+capability, because the capability is no longer fixed.
+
+**And the adapters now send a document as a document.** OpenAI takes a PDF as
+`input_file` with a filename derived from the hash rather than invented;
+Anthropic as a `document` block; Gemini's `inline_data` already took either.
+That path is only reached by a scan now, but an adapter that mislabels what it
+sends is wrong whether or not a caller currently depends on it.
+
+Verified: `npm run typecheck` clean, 7615 tests pass.

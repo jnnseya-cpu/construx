@@ -65,6 +65,7 @@ import {
   type CustomRole,
 } from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
+import { clearCredential, setCredential, type CredentialName, type CredentialState } from './identity/credentials.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
@@ -2994,6 +2995,82 @@ export class Platform {
     });
 
     return updated;
+  }
+
+  /**
+   * Set a credential the platform calls a vendor with, from the console.
+   *
+   * Two writes that must not become one. The **value** goes to the encrypted
+   * store beside the journal; the **act** goes on the chain. Putting the value
+   * on the chain would be irreversible — it is append-only and copied into the
+   * journal, every snapshot, every backup and the object store, so a key
+   * written there could never be rotated out by anybody, and the honest remedy
+   * would be destroying the record.
+   *
+   * The store is written first. If the chain write then failed the platform
+   * would hold a key nobody can account for, which is recoverable by looking;
+   * the other order would record a decision that did not happen.
+   */
+  setPlatformCredential(input: { name: CredentialName; value: string; decidedBy: string; reason: string }): CredentialState {
+    const state = setCredential(input.name, input.value, input.decidedBy, input.reason);
+
+    this.ledger.commit({
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'PLATFORM_CREDENTIAL_SET',
+      entity: { refType: 'PlatformCredential', refId: input.name },
+      // Name, key id, who and why. Never the value — see the event's own note.
+      nextState: {
+        id: input.name,
+        name: input.name,
+        label: state.label,
+        keyId: state.keyId,
+        setAt: state.setAt,
+        setBy: input.decidedBy,
+        reason: input.reason,
+      },
+    });
+
+    return state;
+  }
+
+  /**
+   * Take a credential out of the store.
+   *
+   * Not the same as setting an empty one: the override goes and the platform
+   * falls back to whatever the environment holds. Where the environment holds
+   * nothing either, what that credential unlocks stops — which is the point of
+   * being able to clear one.
+   */
+  clearPlatformCredential(input: { name: CredentialName; decidedBy: string; reason: string }): CredentialState {
+    const state = clearCredential(input.name);
+
+    this.ledger.commit({
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'PLATFORM_CREDENTIAL_CLEARED',
+      entity: { refType: 'PlatformCredential', refId: input.name },
+      nextState: {
+        id: input.name,
+        name: input.name,
+        label: state.label,
+        clearedAt: new Date().toISOString(),
+        clearedBy: input.decidedBy,
+        reason: input.reason,
+        // Stated on the record because it decides whether anything still
+        // works: clearing the store falls back to the environment, and
+        // "cleared" with nothing behind it is a capability that has stopped.
+        fallsBackToEnvironment: state.fromEnvironment,
+      },
+    });
+
+    return state;
   }
 
   /** Every grant ever made, live and revoked. The operator's register. */

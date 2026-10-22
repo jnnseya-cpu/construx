@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
+import { credential } from '../identity/credentials.ts';
 import { DomainError } from '../core/errors.ts';
 import { BILLING_CURRENCY } from './payments.ts';
 import {
@@ -54,8 +55,20 @@ const STRIPE_API = 'https://api.stripe.com/v1';
 /** How far out of date a signature may be. Stripe's own recommendation. */
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 
+/**
+ * The two Stripe secrets, wherever they were set.
+ *
+ * The credential store first, then the environment — the order every other
+ * consumer uses, and stated once here rather than at the four call sites that
+ * read these. Four copies of a precedence rule is four chances for one of them
+ * to read the environment while the operator is looking at a console that says
+ * the key was changed.
+ */
+const secretKeyNow = (): string => credential('STRIPE_SECRET_KEY') ?? config.stripe.secretKey;
+const webhookSecretNow = (): string => credential('STRIPE_WEBHOOK_SECRET') ?? config.stripe.webhookSecret;
+
 export function stripeConfigured(): boolean {
-  return config.stripe.secretKey !== '' && config.stripe.webhookSecret !== '';
+  return secretKeyNow() !== '' && webhookSecretNow() !== '';
 }
 
 // ------------------------------------------------------------- delivery health
@@ -97,7 +110,7 @@ export function resetWebhookHealth(): void {
  * carried its quotes into the environment — are both visible from the shape.
  */
 export function webhookSecretShape(): SecretShape {
-  return secretShape(config.stripe.webhookSecret, 'whsec_');
+  return secretShape(webhookSecretNow(), 'whsec_');
 }
 
 /** What is wrong with the card webhook and what to do next, or that nothing is. */
@@ -171,7 +184,7 @@ async function stripeRequest(
     response = await transport(`${STRIPE_API}${path}`, {
       method,
       headers: {
-        Authorization: `Bearer ${config.stripe.secretKey}`,
+        Authorization: `Bearer ${secretKeyNow()}`,
         ...(method === 'POST' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
         // Stripe pins behaviour to an API version. Sending ours means a version
         // rolled out on their side cannot change the shape of what we parse.
@@ -421,7 +434,7 @@ export function verifyWebhook(rawBody: Buffer, signatureHeader: string | undefin
     ));
   }
 
-  const expected = createHmac('sha256', config.stripe.webhookSecret)
+  const expected = createHmac('sha256', webhookSecretNow())
     .update(`${timestamp}.${rawBody.toString('utf8')}`)
     .digest('hex');
 

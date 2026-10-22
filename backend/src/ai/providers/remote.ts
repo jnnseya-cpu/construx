@@ -155,6 +155,24 @@ export function geminiSchema(schema: unknown): unknown {
   return out;
 }
 
+/**
+ * Whether an attachment is a document rather than a picture.
+ *
+ * Every adapter here sent whatever it was given as an **image**, which is right
+ * for a site photograph and wrong for a PDF — and a tender arrives as PDFs.
+ * OpenAI refused it outright ("Expected a base64-encoded data URL with an image
+ * MIME type"), which is the good outcome; the quiet one would have been a
+ * provider accepting the bytes and answering about nothing.
+ *
+ * Each vendor carries a document differently — OpenAI as `input_file` with a
+ * filename, Anthropic as a `document` block, Gemini as the same `inline_data`
+ * it uses for everything — so the branch lives at each call site and the
+ * question being asked lives here.
+ */
+function isDocument(contentType: string): boolean {
+  return contentType === 'application/pdf';
+}
+
 const OPENAI_ENDPOINT: Endpoint = {
   url: 'https://api.openai.com/v1/responses',
   headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }),
@@ -172,11 +190,21 @@ const OPENAI_ENDPOINT: Endpoint = {
         content: request.media
           ? [
               { type: 'input_text', text: JSON.stringify({ task: request.task, payload: request.payload }) },
-              // A data URL, which is what this API accepts for an inline image.
-              // Audio is not accepted on this endpoint, which is why the
-              // perception pipeline checks the media type against the task
-              // before it gets here rather than discovering it in a 400.
-              { type: 'input_image', image_url: `data:${request.media.contentType};base64,${request.media.base64}` },
+              // A data URL either way, under the part type this API expects
+              // for the kind of file it is. Audio is not accepted on this
+              // endpoint, which is why the perception pipeline checks the
+              // media type against the task before it gets here rather than
+              // discovering it in a 400.
+              isDocument(request.media.contentType)
+                ? {
+                    type: 'input_file',
+                    // Named from the hash rather than invented. The API wants a
+                    // filename and the platform does not keep one — the chain
+                    // is over content, not over what a device called the file.
+                    filename: `${(request.media.hash ?? 'document').replace(':', '-')}.pdf`,
+                    file_data: `data:${request.media.contentType};base64,${request.media.base64}`,
+                  }
+                : { type: 'input_image', image_url: `data:${request.media.contentType};base64,${request.media.base64}` },
             ]
           : JSON.stringify({ task: request.task, payload: request.payload }),
       },
@@ -328,7 +356,10 @@ const ANTHROPIC_ENDPOINT: Endpoint = {
           ...(request.media
             ? [
                 {
-                  type: 'image',
+                  // A PDF is a document to this API and an image is an image.
+                  // Sending one as the other is refused, which is the kind
+                  // outcome; the unkind one is a provider that accepts it.
+                  type: isDocument(request.media.contentType) ? 'document' : 'image',
                   source: {
                     type: 'base64',
                     media_type: request.media.contentType,

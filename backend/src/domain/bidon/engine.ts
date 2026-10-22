@@ -2,6 +2,7 @@ import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
+import { extractText, inspect } from '../../evidence/ingest.ts';
 import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
 import type { Clarification } from '../tenderintake.ts';
@@ -259,10 +260,9 @@ export async function parseQuestionnaire(
     );
   }
 
-  // A questionnaire given as a file is sent as a file. It used to travel as
-  // `documentHash` alone, which is the name of a document rather than the
-  // document, and a model handed a name answers from the name.
-  const media = input.hash ? await documentMedia(ctx, store, input.hash, 'the questionnaire') : undefined;
+  // A questionnaire given as a file is read before it is sent: natively where
+  // the bytes carry the words, as a scan only where they do not.
+  const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the questionnaire') : undefined;
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
@@ -271,11 +271,11 @@ export async function parseQuestionnaire(
     // a document a vision model reads. The capability follows the input rather
     // than being fixed, because offering a reasoning model a scan produces a
     // confident reading of nothing.
-    capability: input.hash ? 'PERCEPTION' : 'REASONING',
+    capability: document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
     inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
-      ...(media ? { media } : {}),
+      ...(document?.kind === 'MEDIA' ? { media: document.media } : {}),
       task:
         'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
         'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
@@ -285,6 +285,7 @@ export async function parseQuestionnaire(
         buyer: bid.buyerName,
         ...(input.text ? { questionnaire: input.text } : {}),
         ...(input.hash ? { documentHash: input.hash } : {}),
+        ...(document?.kind === 'TEXT' ? { questionnaire: document.text } : {}),
         constraint:
           'Keep the buyer’s own section headings and their own numbering exactly as printed, including suffixes ' +
           'like 4.1a — an export has to map onto their questionnaire, and a renumbered list is one a buyer cannot ' +
@@ -346,43 +347,99 @@ export async function parseQuestionnaire(
 }
 
 /**
- * The bytes behind a hash, as a provider can actually be given them.
+ * A filed document, in the form a model can actually be given it.
  *
- * ## The defect this closes
+ * ## Two findings, a few minutes apart, from one real tender
  *
- * Three commands in this module take a document "by its hash" — the
- * questionnaire parser, the amendments reading and the Reader — and all three
- * put `documentHash: 'sha256:…'` into the payload and sent nothing else. A
- * model handed the *name* of a file it cannot open answers from the name: it
- * returns nothing, or worse, something. The first real use produced
- * `BID_ON_NOTHING_READ` against a document that had uploaded perfectly, which
- * is the kindest way this could have surfaced.
+ * The first: three commands took a document "by its hash" and sent
+ * `documentHash: 'sha256:…'` and nothing else. A model handed the *name* of a
+ * file it cannot open answers from the name.
  *
- * `engines/perception.ts` has done it correctly since it was written: fetch the
- * file, check the platform actually holds it, check the size, check the adapter
- * can be handed one at all, and put it on `media` where the adapters read it.
- * This is that sequence, for the module's own three callers.
+ * The second, once the bytes were actually attached: every adapter sent them
+ * as an **image**. OpenAI refused the PDF outright, which was the good
+ * outcome. And a tender is not even mostly PDFs — this one is a questionnaire,
+ * a Word order form, an Excel cost model and a scanned code of conduct.
  *
- * Every refusal here names the thing to go and fix, because each is a different
- * problem: a record whose bytes were never supplied, a file too large to send,
- * and a deployment whose provider cannot read a file at all.
+ * ## The platform already reads all four, and better than a vision model would
+ *
+ * `evidence/ingest.ts` has done this since it was written: `office.ts` reads a
+ * Word document and a spreadsheet, because both are XML in a ZIP;
+ * `pdftext.ts` reads a PDF that carries its words in its content streams; a
+ * text file is its own text. Only where the bytes genuinely do not carry the
+ * words — a scan, a photograph — is a model that can see required, and
+ * `extractText` says so by reporting `NEEDS_OCR` rather than guessing.
+ *
+ * So the rule here is the platform's own: **read it natively where the bytes
+ * are the text, and spend a vision call only on a scan.** The cost difference
+ * is not the point, though it is large. The point is that an extracted cost
+ * model is a table and a transcribed one is a model's impression of a table,
+ * and the figures in it are going into a tender.
+ *
+ * ## Refused before anything is spent, by name
+ *
+ * A file the platform does not hold, one carrying something an inspection
+ * blocks, a format nothing reads, one too large to send, and a deployment with
+ * no provider that can see a scan — five different problems, five refusals,
+ * none of them a provider error discovered after the charge.
  */
-async function documentMedia(
+type DocumentForReading =
+  | { kind: 'TEXT'; text: string; note?: string }
+  | { kind: 'MEDIA'; media: { contentType: string; base64: string; hash: string }; note?: string };
+
+async function documentForReading(
   ctx: EngineContext,
   store: EvidenceStore,
   hash: string,
   what: string,
-): Promise<{ contentType: string; base64: string; hash: string }> {
+): Promise<DocumentForReading> {
   if (!(await store.holds(ctx.tenantId, hash))) {
     throw new DomainError(
       'BID_ON_FILE_NOT_HELD',
-      `The platform holds the hash of ${what} but not the file itself, so there is nothing for a model to read. ` +
-        'Supply the file against that evidence record and try again.',
+      `The platform holds the hash of ${what} but not the file itself, so there is nothing to read. Supply the file ` +
+        'against that evidence record and try again.',
       409,
     );
   }
 
   const file = await store.fetch(ctx.tenantId, hash);
+
+  // The same inspection every upload goes through, applied again here because
+  // this is the moment the bytes are about to be acted on. An executable inside
+  // a spreadsheet is an executable, and a tender appendix is exactly the sort
+  // of attachment that carries one.
+  const inspection = inspect({ bytes: file.bytes, declaredType: file.contentType });
+  if (inspection.verdict === 'BLOCKED') {
+    throw new DomainError(
+      'BID_ON_FILE_BLOCKED',
+      `${what} was refused by inspection: ${inspection.findings.map((finding) => `${finding.what} — ${finding.because}`).join(' ')}`,
+      422,
+    );
+  }
+
+  const extraction = extractText(file.bytes, inspection.actualType ?? file.contentType);
+
+  if (extraction.method === 'NATIVE') {
+    // The words, as the document itself carries them. A spreadsheet comes back
+    // as rows; prose comes back as prose.
+    const tables = (extraction.pageTables ?? []).flatMap((table) => table.rows ?? []);
+    const rows = tables.length > 0 ? tables : (extraction.tables ?? []);
+    const text = [extraction.text ?? '', ...rows.map((row) => row.join(' | '))].filter(Boolean).join('\n');
+    if (text.trim() !== '') {
+      return { kind: 'TEXT', text, ...(extraction.note ? { note: extraction.note } : {}) };
+    }
+  }
+
+  if (extraction.method === 'UNSUPPORTED') {
+    throw new DomainError(
+      'BID_ON_FORMAT_UNREADABLE',
+      `Nothing on this platform reads ${what}: ${extraction.reason ?? `the format is ${inspection.actualType ?? file.contentType}`}. ` +
+        'Save it as a PDF, a Word document, a spreadsheet or plain text, or paste the text instead.',
+      415,
+    );
+  }
+
+  // `NEEDS_OCR`, or a native read that produced nothing: the bytes do not carry
+  // their words, so this needs a model that can see.
   if (file.bytes.length > config.ai.perceptionMaxBytes) {
     throw new DomainError(
       'BID_ON_FILE_TOO_LARGE',
@@ -400,13 +457,18 @@ async function documentMedia(
   if (!adapter.multimodal) {
     throw new DomainError(
       'BID_ON_PROVIDER_CANNOT_READ',
-      'No provider configured on this deployment can be handed a file. Reading a document needs a multimodal ' +
-        'provider; the local engines compute, they do not perceive.',
+      `${what} carries no text of its own — it is a scan or a photograph — and no provider configured on this ` +
+        'deployment can be handed a file. Reading one needs a multimodal provider; the local engines compute, they ' +
+        'do not perceive.',
       503,
     );
   }
 
-  return { contentType: file.contentType, base64: file.bytes.toString('base64'), hash };
+  return {
+    kind: 'MEDIA',
+    media: { contentType: file.contentType, base64: file.bytes.toString('base64'), hash },
+    note: 'The document carries no text of its own, so it was read as a scan.',
+  };
 }
 
 // --- The Reader --------------------------------------------------------------
@@ -469,29 +531,33 @@ export async function readEvidence(
 
   const reread = evidence.chunks.length > 0;
 
-  // The file itself, not its name. Fetched before the call so a document whose
-  // bytes were never supplied is refused without spending anything.
-  const media = await documentMedia(ctx, store, evidence.hash, `${evidence.reference} — ${evidence.title}`);
+  // The document, in whatever form a model can be given it. Resolved before
+  // the call so a file the platform does not hold, cannot read, or would have
+  // to send to a provider that cannot see, is refused without spending.
+  const document = await documentForReading(ctx, store, evidence.hash, `${evidence.reference} — ${evidence.title}`);
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_read',
-    // A filed document is a document. The parser makes the same choice for the
-    // same reason: offering a reasoning model a scanned policy produces a
-    // confident reading of nothing.
-    capability: 'PERCEPTION',
+    // The capability follows the document rather than the command. A Word
+    // order form and a priced spreadsheet are text by the time they get here
+    // and want a model that reasons; a scanned code of conduct wants one that
+    // sees. Fixing this at PERCEPTION would have sent an extracted cost model
+    // to a vision model as prose.
+    capability: document.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
     inputRefs: [{ refType: 'BidOnEvidence', refId: evidence.id }],
     attribution: { customerAccountId: evidence.customerAccountId },
     request: {
       task:
         'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
         'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
-      media,
+      ...(document.kind === 'MEDIA' ? { media: document.media } : {}),
       payload: {
         // The hash travels in the payload as well as on the media, so the
         // answer names the document it read.
         documentHash: evidence.hash,
-        contentType: media.contentType,
+        ...(document.kind === 'TEXT' ? { document: document.text } : {}),
+        ...(document.note ? { howItWasRead: document.note } : {}),
         title: evidence.title,
         kind: evidence.type,
         constraint:
@@ -510,11 +576,15 @@ export async function readEvidence(
     // passage rather than two.
     toWrites: () => [],
     requireModel: {
-      code: 'NO_PERCEPTION_PROVIDER',
+      // Named for the act rather than the capability, because the capability
+      // now follows the document: an extracted Word order form is read by a
+      // reasoning model and a scanned one by a vision model, and the stand-in
+      // is refused for both.
+      code: 'NO_READING_PROVIDER',
       message:
         'This deployment is running the local stand-in, which reads nothing — it derives its answer from a hash of ' +
         'its inputs. Passages invented that way would be filed as this customer’s evidence, cited by the drafter ' +
-        'and read by a buyer as the company’s own words. Configure a perception provider and set AI_MODE=live.',
+        'and read by a buyer as the company’s own words. Configure a provider and set AI_MODE to staging or live.',
     },
   });
 
@@ -1322,10 +1392,10 @@ export async function reviewAmendments(
     );
   }
 
-  // Same correction as the parser: a schedule of amendments given as a file is
-  // sent as a file. This is the one of the three where a model answering from a
-  // filename would be most expensive — it would report no amendments.
-  const media = input.hash ? await documentMedia(ctx, store, input.hash, 'the schedule of amendments') : undefined;
+  // Same as the parser, and this is the one where reading the wrong thing
+  // costs most: a model answering from a filename would report no amendments
+  // on a four-year contract.
+  const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the schedule of amendments') : undefined;
 
   const result = await runAI(ctx, {
     engine: 'TENDER',
@@ -1333,11 +1403,11 @@ export async function reviewAmendments(
     // A schedule of amendments as a file is a document a vision model reads;
     // pasted clauses are text. The capability follows the input, for the same
     // reason the parser's does.
-    capability: input.hash ? 'PERCEPTION' : 'REASONING',
+    capability: document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
     inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
-      ...(media ? { media } : {}),
+      ...(document?.kind === 'MEDIA' ? { media: document.media } : {}),
       task:
         'Read this schedule of amendments to a standard form construction contract. Return JSON with ' +
         '`clarifications`: an array of { severity, subject, question } where severity is CRITICAL, MAJOR or MINOR, ' +
@@ -1348,6 +1418,9 @@ export async function reviewAmendments(
         buyer: bid.buyerName,
         ...(input.text ? { amendments: input.text } : {}),
         ...(input.hash ? { documentHash: input.hash } : {}),
+        // Extracted where the file carries its own words. A schedule of
+        // amendments is a Word document far more often than it is a scan.
+        ...(document?.kind === 'TEXT' ? { amendments: document.text } : {}),
         constraint:
           'Report what the amendments change and what you would ask the buyer about them. Do not advise whether to ' +
           'accept, reject or qualify anything, do not state whether a clause is enforceable, and do not describe ' +

@@ -265,6 +265,21 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // record has to carry all three. CREATE would refuse the third, and a second
   // record would leave two rows disagreeing about whether the company holds it.
   def('MODULE_GRANTED', 'ModuleGrant', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  /*
+   * An operator setting a credential the platform calls a vendor with.
+   *
+   * The event carries the credential's name, the key id — eight hex characters
+   * of its SHA-256, which identifies a key and is not one — who set it and
+   * why. It does not and must never carry the value: this chain is append-only
+   * and is copied into the journal, every snapshot, every backup and the object
+   * store, so a secret written here could not be rotated out by anybody.
+   *
+   * Recorded rather than left to the file, because "who gave this platform a
+   * key to spend money with" is an access-review question, and a file with no
+   * history cannot answer it.
+   */
+  def('PLATFORM_CREDENTIAL_SET', 'PlatformCredential', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('PLATFORM_CREDENTIAL_CLEARED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
   // Revocation is a plain UPDATE: there is nothing to take back from a company
   // that was never given it, and a revocation record with no grant behind it
   // would have to invent a grantor.

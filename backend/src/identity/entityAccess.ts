@@ -34,6 +34,15 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // customer, and a tenancy that could read its own grant through the generic
   // entity route would be reading the register of who else has been given it.
   ModuleGrant: { area: 'PLATFORM_ADMINISTRATION' },
+  /**
+   * That a credential was set, never what it is.
+   *
+   * The record carries the name, the key id, who decided and why. The value
+   * lives in the encrypted store beside the journal and never on the chain:
+   * the chain is append-only, so a key written to it could never be rotated
+   * out.
+   */
+  PlatformCredential: { area: 'PLATFORM_ADMINISTRATION' },
   PermissionPolicy: { area: 'PLATFORM_ADMINISTRATION' },
   ACUWallet: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   // Money entering the platform. Same area and sensitivity as the wallet it
