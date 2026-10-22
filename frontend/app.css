@@ -850,6 +850,14 @@ input:focus, select:focus, textarea:focus {
   box-shadow: inset 0 1px 2px rgba(0,0,0,.36), 0 0 0 3px rgba(255,106,26,.16);
 }
 
+/* An identifier a command asks you to name, clickable to copy.
+   Not a new colour and not a new component: the existing inline code styling,
+   plus the one affordance that says it does something. Several Bid-On commands
+   take a question, answer, gap, returnable or clarification by its id, and a
+   printed id nobody can copy is a value somebody transcribes by hand. */
+.idcell { cursor: pointer; border-bottom: 1px dotted currentColor; }
+.idcell:hover, .idcell:focus-visible { color: var(--text-2); }
+
 /* code block */
 .code {
   background: rgb(11,12,15); border: 1px solid var(--line);

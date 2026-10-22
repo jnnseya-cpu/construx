@@ -148,7 +148,14 @@ describe('a Bid-On evidence item can hold its file', () => {
     assert.match(form, /name: 'hash', label: '[^']*', type: 'file'/, 'the evidence form asks for a hash rather than for the file');
     // And the hash a filed document already has is obtainable, because the
     // parser and the amendments reading both take one.
-    assert.match(page, /data-copy-hash=/, 'nothing in the library offers a document’s hash to the two commands that ask for one');
+    assert.match(page, /data-copy-what="document hash"/, 'nothing in the library offers a document’s hash to the two commands that ask for one');
+    // And every id a Bid-On command takes by hand is readable where the command
+    // says it is. The forms ask for these "from the opened pack above", and the
+    // questions table printed neither a question id nor an answer id — so
+    // drafting, scoring, approving and raising a gap had no reachable subject.
+    for (const what of ['question id', 'answer id', 'gap id', 'returnable id', 'clarification id']) {
+      assert.match(page, new RegExp(`data-copy-what="${what}"`), `the opened pack never shows a ${what}, which a command asks to be typed`);
+    }
   });
 
   it('refuses bytes for a hash no Bid-On item has filed', async () => {

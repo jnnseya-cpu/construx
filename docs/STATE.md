@@ -27563,3 +27563,40 @@ Withdrawn services stay on the catalogue and out of the pickers: an engagement
 signed against one is unaffected, and what was sold stays readable.
 
 Verified: `npm run typecheck` clean, 7605 tests pass.
+
+## The pack did not show the ids its own commands ask for
+
+Reported as being stuck at the answering step, and it was a dead end rather
+than a misreading.
+
+Five Bid-On commands take their subject by id typed into the form — *Draft an
+answer* and *Raise a gap* take a `questionId`, *Score an answer* and *Approve
+an answer* take an `answerId`, *Close a gap* takes a `gapId` — and each field's
+hint says "from the opened pack above". The opened pack printed **neither**.
+The returnables table and the clarifications table beside it each printed their
+own id; the questions table had eleven columns and no id in any of them, and
+the open-gaps notice named the question number and the prompt but not the gap.
+
+So the whole answering half of the module was unreachable from the console: the
+platform worked, the forms were correct, and there was nowhere on the screen to
+read the one value they needed. The same shape as the module allocation that
+could not name its agreement — capability that reads as present from every
+direction and is reachable from none.
+
+The questions table now carries an `ids` column: the question id, and the
+answer id beneath it where an answer exists, because those are two different
+values and two different commands want them. The gaps notice carries the gap
+id. All of them, and the two tables that already printed theirs, are shortened
+to their last eight characters with the whole value on the title and **one
+click to copy** — a twenty-six character ULID in a twelve-column table makes
+every other column unreadable, and nobody transcribes one by hand.
+
+`data-copy-hash`, added for the evidence library an hour earlier, generalised
+to `data-copy` with `data-copy-what` naming the thing in the toast. One handler
+rather than one per kind of id. `.idcell` in `app.css` is the existing inline
+code styling plus the one affordance that says it does something: no new colour
+and no new component.
+
+Verified: `npm run typecheck` clean, 7605 tests pass. `bidonfile.test.ts` now
+asserts that every id a command asks for is offered somewhere on the screen,
+which is the invariant that was broken rather than any one column.

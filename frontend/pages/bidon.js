@@ -848,17 +848,18 @@ export async function bidon(root) {
    * different customer is opened — binding per row would work once.
    */
   root.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-copy-hash]');
+    const button = event.target.closest('[data-copy]');
     if (!button) return;
-    const hash = button.dataset.copyHash;
+    const value = button.dataset.copy;
+    const what = button.dataset.copyWhat ?? 'value';
     try {
-      await navigator.clipboard?.writeText(hash);
-      toast('Copied', 'The document’s hash is on the clipboard. Paste it into the parser or the amendments reading.', 'ok');
+      await navigator.clipboard?.writeText(value);
+      toast('Copied', `The ${what} is on the clipboard. Paste it into the command that asks for it.`, 'ok');
     } catch {
       // A browser that refuses clipboard access is not a failure to report as
-      // one: the hash is on the button's own tooltip, so there is still a way
-      // to read it.
-      toast('Not copied', 'This browser would not write to the clipboard. The full hash is in the button’s tooltip.', 'warn');
+      // one: the value is on the element's own tooltip and printed in the row,
+      // so there is still a way to read it.
+      toast('Not copied', `This browser would not write to the clipboard. The full ${what} is in the tooltip.`, 'warn');
     }
   });
 
@@ -2467,7 +2468,7 @@ function bidDetail(position, estimate, source) {
                     : item.status === 'WAIVED'
                       ? html`<span title="${item.waivedReason ?? ''}">${badge('waived', '')}</span>`
                       : badge('outstanding', item.mandatory ? 'bad' : 'warn'),
-                  html`<code style="font-size:11px;color:var(--text-3)">${item.id}</code>`,
+                  html`<code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${item.id}" data-copy-what="returnable id" title="${item.id}">${item.id.slice(-8)}</code>`,
                 ]),
               })}
             </div>`
@@ -2511,7 +2512,7 @@ function bidDetail(position, estimate, source) {
                       : entry.status === 'WITHDRAWN'
                         ? html`<span title="${entry.withdrawnReason ?? ''}">${badge('withdrawn', '')}</span>`
                         : badge('not asked yet', 'bad'),
-                  html`<code style="font-size:11px;color:var(--text-3)">${entry.id}</code>`,
+                  html`<code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${entry.id}" data-copy-what="clarification id" title="${entry.id}">${entry.id.slice(-8)}</code>`,
                 ]),
               })}
             </div>`
@@ -2535,8 +2536,8 @@ function bidDetail(position, estimate, source) {
           : ''
       }
       ${table({
-        headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict'],
-        align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', ''],
+        headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict', 'ids'],
+        align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
         rows: questions.map((entry) => [
           entry.question.number,
           entry.question.section,
@@ -2558,6 +2559,22 @@ function bidDetail(position, estimate, source) {
             entry.verdict.hardRules.length > 0 && entry.verdict.weightedBand !== 'RED'
               ? html`<span style="font-size:12px;color:var(--text-3)"> prose alone: ${entry.verdict.weightedBand} ${entry.verdict.weightedScore}</span>`
               : html`<span style="font-size:12px;color:var(--text-3)"> ${entry.verdict.weightedScore}</span>`
+          }`,
+          /*
+           * The two ids every answer command asks for.
+           *
+           * `Draft an answer`, `Write an answer`, `Score an answer`, `Approve
+           * an answer` and `Raise a gap` each take a question id or an answer
+           * id "from the opened pack above", and the pack printed neither —
+           * while the returnables and the clarifications beside it printed
+           * theirs. The commands were unreachable from this screen: the
+           * platform worked, the forms were correct, and there was nowhere to
+           * read the one value they needed. Click either to copy it.
+           */
+          html`<div><code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${entry.question.id}" data-copy-what="question id" title="${entry.question.id}">Q ${entry.question.id.slice(-8)}</code></div>${
+            entry.answer
+              ? html`<div><code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${entry.answer.id}" data-copy-what="answer id" title="${entry.answer.id}">A ${entry.answer.id.slice(-8)}</code></div>`
+              : ''
           }`,
         ]),
         empty: 'No question confirmed yet',
@@ -2593,6 +2610,7 @@ function bidDetail(position, estimate, source) {
                 (gap) => html`<div style="margin-top:6px">
                   ${questions.find((entry) => entry.question.id === gap.questionId)?.question.number ?? '—'} —
                   ${gap.promptToClient}
+                  <code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${gap.id}" data-copy-what="gap id" title="${gap.id}">${gap.id.slice(-8)}</code>
                 </div>`,
               )}
             </div></div>`
@@ -2666,7 +2684,7 @@ function evidencePanel(library) {
           // put on the clipboard rather than printed into the row: sixty-nine
           // characters of hex in a table makes every other column unreadable,
           // and nobody transcribes one by hand anyway.
-          html`<button class="btn quiet sm" type="button" data-copy-hash="${item.hash}" title="${item.hash}">Copy hash</button>`,
+          html`<button class="btn quiet sm" type="button" data-copy="${item.hash}" data-copy-what="document hash" title="${item.hash}">Copy hash</button>`,
         ]),
         empty: 'Nothing filed for this customer',
         emptyDetail:
