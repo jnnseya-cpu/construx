@@ -153,7 +153,7 @@ describe('a Bid-On evidence item can hold its file', () => {
     // says it is. The forms ask for these "from the opened pack above", and the
     // questions table printed neither a question id nor an answer id — so
     // drafting, scoring, approving and raising a gap had no reachable subject.
-    for (const what of ['question id', 'answer id', 'gap id', 'returnable id', 'clarification id']) {
+    for (const what of ['question id', 'answer id', 'gap id', 'returnable id', 'clarification id', 'evidence id']) {
       assert.match(page, new RegExp(`data-copy-what="${what}"`), `the opened pack never shows a ${what}, which a command asks to be typed`);
     }
   });

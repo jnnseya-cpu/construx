@@ -27597,6 +27597,14 @@ rather than one per kind of id. `.idcell` in `app.css` is the existing inline
 code styling plus the one affordance that says it does something: no new colour
 and no new component.
 
+The evidence library had the same hole and a worse symptom. Four commands take
+an **evidence id** — `Record what was read out of it`, `Make an item searchable
+by meaning`, `Close a gap` and `Mark a returnable done` — and two of their
+hints said the library row carried it. It did not: the row carried the
+*reference*, `EVD-0004`, which is neither the id nor what the route takes. The
+row now carries the id, clickable, beside the Copy hash button.
+
 Verified: `npm run typecheck` clean, 7605 tests pass. `bidonfile.test.ts` now
-asserts that every id a command asks for is offered somewhere on the screen,
+asserts that every id a Bid-On command asks for — question, answer, gap,
+returnable, clarification and evidence — is offered somewhere on the screen,
 which is the invariant that was broken rather than any one column.

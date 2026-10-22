@@ -2654,7 +2654,7 @@ function evidencePanel(library) {
     <div style="margin-top:11px">
       <p class="metric-sub">${library.summary}</p>
       ${table({
-        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing', ''],
+        headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing', 'ids'],
         align: ['', '', '', '', '', 'num', 'num', '', '', ''],
         rows: library.evidence.map((item) => [
           item.reference,
@@ -2677,14 +2677,23 @@ function evidencePanel(library) {
             : item.currentNow
               ? badge('current', 'ok')
               : badge('lapsed', 'bad'),
-          // The address, where somebody needs it.
-          //
-          // The parser and the amendments reading take a document by its hash,
-          // and a hash truncated for display is not one anybody can use. It is
-          // put on the clipboard rather than printed into the row: sixty-nine
-          // characters of hex in a table makes every other column unreadable,
-          // and nobody transcribes one by hand anyway.
-          html`<button class="btn quiet sm" type="button" data-copy="${item.hash}" data-copy-what="document hash" title="${item.hash}">Copy hash</button>`,
+          /*
+           * The two values the library's own commands ask to be typed.
+           *
+           * The id: `Record what was read out of it`, `Make an item searchable
+           * by meaning`, `Close a gap` and `Mark a returnable done` all take an
+           * evidence id, and two of their hints said it was on this row when it
+           * was not — the row carried the reference, EVD-0004, which is not the
+           * id and is not what the route takes.
+           *
+           * The hash: the questionnaire parser and the amendments reading take
+           * a document by its hash. Sixty-nine characters of hex printed into a
+           * ten-column table makes every other column unreadable, so it is a
+           * button onto the clipboard; the id is shortened and clickable, like
+           * every other id in this screen.
+           */
+          html`<div><code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${item.id}" data-copy-what="evidence id" title="${item.id}">${item.id.slice(-8)}</code></div>
+            <button class="btn quiet sm" type="button" style="margin-top:4px" data-copy="${item.hash}" data-copy-what="document hash" title="${item.hash}">Copy hash</button>`,
         ]),
         empty: 'Nothing filed for this customer',
         emptyDetail:
