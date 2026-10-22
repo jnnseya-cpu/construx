@@ -388,8 +388,23 @@ export async function enterprise(root) {
           <div class="metric-sub">
             ${mixed
               ? 'Mixed currencies — a single total would be a wrong number'
-              : `across ${portfolios.portfolios.length} portfolio${portfolios.portfolios.length === 1 ? '' : 's'}`}
+              : `held across ${portfolios.portfolios.length} portfolio${portfolios.portfolios.length === 1 ? '' : 's'}`}
           </div>
+          <!--
+            What the total leaves out, on the same card as the total.
+            A figure that quietly shrank when lost bids stopped counting is a
+            figure somebody stops trusting; said plainly, "we tendered this and
+            hold that" reads as the two facts it is. Absent entirely where
+            nothing is excluded, rather than a reassuring zero.
+          -->
+          ${estate.notHeld && estate.notHeld.projects > 0
+            ? html`<div class="metric-sub" style="margin-top:6px">
+                ${mixed ? '' : `${money(estate.notHeld.contractValueMinor, currency)} not counted — `}${estate.notHeld.projects}
+                project${estate.notHeld.projects === 1 ? '' : 's'} that never became work
+                (${Object.entries(estate.notHeld.byState).map(([state, count]) => `${count} ${humanise(state).toLowerCase()}`).join(', ')}).
+                The record stays; the value is not the estate's to count.
+              </div>`
+            : ''}
         </div>
         <div class="card">
           <h2>Forecast variance</h2>

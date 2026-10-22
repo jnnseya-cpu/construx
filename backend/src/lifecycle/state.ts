@@ -68,6 +68,28 @@ export type LifecycleStateDefinition = {
   reopenTo?: LifecycleState[];
   /** Whether the project is live delivery work for portfolio reporting. */
   live: boolean;
+  /**
+   * Whether the contract value on this project is value the business holds or
+   * has held.
+   *
+   * `live` answers "is the team on it now", which is the question capacity
+   * reporting asks. This answers a different one, and the portfolio total was
+   * answering neither: **is this money ours to count at all.**
+   *
+   * `false` for the three states where the project never became work — a bid
+   * lost, a bid withdrawn, a draft cancelled. The contract value on those is
+   * the sum somebody tendered, which is a real and useful number in a win-rate
+   * report and is not turnover, a commitment or a figure that belongs in the
+   * estate's total. A lost tender left in that total overstates the business by
+   * the value of every bid it did not win, and does it silently.
+   *
+   * `true` everywhere else, including the terminal states that *were* ours:
+   * a completed job is value the business held, and a terminated contract was a
+   * commitment somebody has to account for. Also true through the pre-award
+   * states, because a tender in progress is a figure a pipeline legitimately
+   * reports — what is wrong is counting one that is over and lost.
+   */
+  holdsValue: boolean;
   /** Whether it is finished, one way or another. */
   terminal: boolean;
 };
@@ -89,6 +111,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Project shell created',
     next: ['PRE_AWARD', 'CANCELLED'],
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -97,6 +120,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Minimum opportunity data validated',
     next: ['NEGOTIATION', 'AWARD_PENDING', 'CLOSED_LOST', 'WITHDRAWN', 'ON_HOLD'],
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -105,6 +129,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Submission issued or clarification active',
     next: ['PRE_AWARD', 'AWARD_PENDING', 'CLOSED_LOST', 'WITHDRAWN'],
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -113,6 +138,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Intent to award or executed contract pending',
     next: ['LIVE_MOBILISING', 'PRE_AWARD', 'CLOSED_LOST'],
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -121,6 +147,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Award gate approved',
     next: ['LIVE_ACTIVE', 'SUSPENDED', 'TERMINATED'],
     live: true,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -129,6 +156,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Mobilisation release approved',
     next: ['HANDOVER', 'SUSPENDED', 'TERMINATED'],
     live: true,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -137,6 +165,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Completion gate entered',
     next: ['OPERATIONS', 'CLOSED_COMPLETE'],
     live: true,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -145,6 +174,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Asset accepted into service',
     next: ['CLOSED_COMPLETE', 'SUSPENDED'],
     live: true,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -153,6 +183,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Authorised hold',
     next: ['PRE_AWARD', 'AWARD_PENDING', 'LIVE_ACTIVE', 'WITHDRAWN'],
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -163,6 +194,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     // Suspended work is not live work. A suspended job counted as live is how a
     // portfolio reports capacity it does not have.
     live: false,
+    holdsValue: true,
     terminal: false,
   },
   {
@@ -172,6 +204,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     next: [],
     reopenTo: ['PRE_AWARD'],
     live: false,
+    holdsValue: false,
     terminal: true,
   },
   {
@@ -181,6 +214,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     next: [],
     reopenTo: ['PRE_AWARD'],
     live: false,
+    holdsValue: false,
     terminal: true,
   },
   {
@@ -189,6 +223,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     entryCondition: 'Contract termination approved',
     next: ['CLOSED_COMPLETE'],
     live: false,
+    holdsValue: true,
     terminal: true,
   },
   {
@@ -198,6 +233,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     next: [],
     reopenTo: ['OPERATIONS'],
     live: false,
+    holdsValue: true,
     terminal: true,
   },
   {
@@ -207,6 +243,7 @@ export const LIFECYCLE_STATES: LifecycleStateDefinition[] = [
     next: [],
     reopenTo: ['DRAFT'],
     live: false,
+    holdsValue: false,
     terminal: true,
   },
 ];
@@ -227,6 +264,23 @@ export function lifecycleState(state: string): LifecycleStateDefinition {
 }
 
 /** What a person should see for a state code. Never the code itself. */
+/**
+ * Whether a project's contract value belongs in the estate's total.
+ *
+ * Read from the table rather than from a list of state names kept beside each
+ * report: three reports aggregate contract value and a fourth will, and a rule
+ * restated per caller is a rule that disagrees with itself the first time a
+ * state is added.
+ *
+ * An unrecognised state counts. A project whose lifecycle nobody recognises is
+ * a record to go and look at, and the safe reading of "we are not sure" is to
+ * leave the money in the total where somebody will notice it, rather than to
+ * quietly remove it.
+ */
+export function holdsContractValue(state: string): boolean {
+  return BY_STATE.get(state as LifecycleState)?.holdsValue ?? true;
+}
+
 export function lifecycleLabel(state: string): string {
   return BY_STATE.get(state as LifecycleState)?.label ?? String(state ?? '');
 }

@@ -4,7 +4,8 @@ import { classifyEntity } from '../identity/entityAccess.ts';
 import { evaluateAccess } from '../identity/abac.ts';
 import { AUTHZ_OPTIONS } from '../engines/context.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
-import { livePortfolios, liveProjects } from './structure.ts';
+import { holdsContractValue, type LifecycleState } from '../lifecycle/state.ts';
+import { currentLifecycleState, livePortfolios, liveProjects } from './structure.ts';
 
 /**
  * The enterprise position, computed rather than assembled in a browser.
@@ -33,6 +34,23 @@ export type ProjectRow = {
   projectId: string;
   name: string;
   phase: LifecyclePhase;
+  /**
+   * What the project *is*, beside where its work is.
+   *
+   * The phase answers "which stage" and says nothing about whether the job
+   * exists: a bid lost last March sits in `CONCEPT` for ever. The row carried
+   * only the phase, so a reader had no way to tell a live tender from a closed
+   * one, and neither did the total above it.
+   */
+  lifecycleState: LifecycleState;
+  /**
+   * Whether this row's value is in the estate total.
+   *
+   * Stated per row rather than left to be inferred from the state, because the
+   * row is where somebody asks "why does my total not match these numbers" and
+   * the answer has to be on the same screen as the question.
+   */
+  countedInTotal: boolean;
   sectorType: string;
   contractValueMinor: number;
   currency: string;
@@ -110,7 +128,29 @@ export type EnterpriseCommand = {
   estate: {
     projects: number;
     byPhase: Record<string, number>;
+    /**
+     * The value of work this business holds or has held.
+     *
+     * Every project whose lifecycle state says the value is ours to count —
+     * which is all of them except a bid lost, a bid withdrawn and a draft
+     * cancelled. Those three were in this figure until now, so the estate was
+     * overstated by the value of every tender the business did not win, and
+     * nothing on the screen said so.
+     */
     totalContractValueMinor: number;
+    /**
+     * What was left out, and never silently.
+     *
+     * A total that quietly shrinks is a total somebody stops trusting. This is
+     * the figure and the count beside it, so "we tendered £40M and hold £12M"
+     * is readable as the two facts it is rather than as one number that moved.
+     */
+    notHeld: {
+      projects: number;
+      contractValueMinor: number;
+      /** Which states they are in, with a count each. */
+      byState: Record<string, number>;
+    };
     /** The currency every figure above is in, or null where they differ. */
     currency: string | null;
   };
@@ -437,6 +477,9 @@ export function enterpriseCommand(
   const byPhase: Record<string, number> = {};
   const currencies = new Set<string>();
   let totalContractValueMinor = 0;
+  let notHeldProjects = 0;
+  let notHeldValueMinor = 0;
+  const notHeldByState: Record<string, number> = {};
 
   let forecastFinalValueMinor = 0;
   let forecastFinalCostMinor = 0;
@@ -460,15 +503,41 @@ export function enterpriseCommand(
     const name = String(state.name ?? projectId);
 
     byPhase[phase] = (byPhase[phase] ?? 0) + 1;
-    totalContractValueMinor += Number(state.contractValueMinor ?? 0);
     currencies.add(String(state.currency ?? 'GBP'));
+
+    /*
+     * Whether this project's value is the estate's to count.
+     *
+     * Read from the lifecycle table, which has declared it since the table was
+     * written — `live` for capacity, and now `holdsValue` for money. This
+     * aggregation read neither: it summed every project that had not been
+     * deleted, so a tender lost in March still carried its tendered value into
+     * the estate total in October, and deleting the project is refused once
+     * anything has been certified against it and would be the wrong answer
+     * anyway. The record of a lost bid is worth keeping; the money is not
+     * worth counting.
+     */
+    const lifecycleState = currentLifecycleState(state);
+    const counted = holdsContractValue(lifecycleState);
+    const value = Number(state.contractValueMinor ?? 0);
+    if (counted) {
+      totalContractValueMinor += value;
+    } else {
+      notHeldProjects += 1;
+      notHeldValueMinor += value;
+      notHeldByState[lifecycleState] = (notHeldByState[lifecycleState] ?? 0) + 1;
+    }
 
     const row: ProjectRow = {
       projectId,
       name,
       phase,
+      lifecycleState,
+      countedInTotal: counted,
       sectorType: String(state.sectorType ?? ''),
-      contractValueMinor: Number(state.contractValueMinor ?? 0),
+      // The project's own value, whether or not it is in the total. A row
+      // showing zero would be a lie about the project to make a column add up.
+      contractValueMinor: value,
       currency: String(state.currency ?? 'GBP'),
       openIssues: 0,
       portfolioId: String(state.portfolioId ?? ''),
@@ -586,6 +655,7 @@ export function enterpriseCommand(
       projects: projects.length,
       byPhase,
       totalContractValueMinor,
+      notHeld: { projects: notHeldProjects, contractValueMinor: notHeldValueMinor, byState: notHeldByState },
       // Null rather than a guess. Summing two currencies into one figure is a
       // wrong number that looks exactly like a right one.
       currency: currencies.size === 1 ? [...currencies][0]! : null,
@@ -668,7 +738,13 @@ function regionRows(ctx: EngineContext, rows: ProjectRow[]): RegionRow[] {
     const code = regionOf.get(row.portfolioId) ?? row.location?.continentCode ?? null;
     const entry = region(code);
     entry.projects += 1;
-    entry.contractValueMinor += row.contractValueMinor;
+    // The same rule as the estate total, read off the row rather than
+    // recomputed: a region whose commitment included three lost tenders was the
+    // same overstatement in a smaller place, and two implementations of "which
+    // value counts" would disagree the first time a state is added. The project
+    // is still counted in `projects` — it exists, and a region's project count
+    // that skipped it would hide the record somebody has to go and read.
+    if (row.countedInTotal) entry.contractValueMinor += row.contractValueMinor;
     entry.currencies.add(row.currency);
     addCountry(code, row.location?.countryCode);
   }

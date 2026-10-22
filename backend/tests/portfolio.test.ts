@@ -38,9 +38,12 @@ describe('the estate', () => {
 
     assert.ok(command.estate.projects > 0, 'the seeded tenancy reported no projects');
     assert.equal(command.estate.projects, command.projects.length, 'the count and the rows disagree');
+    // Summed over the rows whose value the estate holds, which is the rule
+    // rather than a convenience: this assertion used to sum every row, and that
+    // is exactly the overstatement the `notHeld` figures exist to end.
     assert.equal(
       command.estate.totalContractValueMinor,
-      command.projects.reduce((sum, p) => sum + p.contractValueMinor, 0),
+      command.projects.filter((p) => p.countedInTotal).reduce((sum, p) => sum + p.contractValueMinor, 0),
     );
   });
 
@@ -532,5 +535,96 @@ describe('the accountable manager', () => {
         }),
       'ACCESS_DENIED',
     );
+  });
+});
+
+/**
+ * A bid that was lost, and the money that stopped being the estate's.
+ *
+ * Reported from use: a tender recorded as a project, lost, and still carrying
+ * its tendered value in the portfolio total months later. The cause was not a
+ * missing command — `setLifecycleState` has recorded a loss properly since the
+ * lifecycle was built, with its reason, its history and its reopen gate. The
+ * cause was that the aggregation never read it: `liveProjects` filters on
+ * `status !== 'DELETED'` and nothing else, so the only way out of the total was
+ * deletion, which is refused once anything has been certified and would destroy
+ * the record of the bid anyway.
+ *
+ * The lifecycle table had already declared the answer. It carries `live` for
+ * capacity reporting — "a suspended job counted as live is how a portfolio
+ * reports capacity it does not have" — and now `holdsValue` for money, false on
+ * exactly the three states where the project never became work.
+ *
+ * What is asserted here is the arithmetic and the honesty: the total falls by
+ * precisely the lost value, the excluded figure is reported rather than
+ * dropped, and the project is still there to read.
+ */
+describe('a lost bid', () => {
+  it('leaves the estate total, says so, and stays on the record', () => {
+    const portfolioId = String(platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.state.id);
+    const VALUE = 1_250_000_00;
+
+    const { projectId } = structure.createProject(governance(), {
+      portfolioId,
+      name: 'Platform Housing EPC assessments — Witham',
+      sectorType: 'UTILITIES',
+      assetType: 'Housing stock',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Birmingham' },
+      contractValueMinor: VALUE,
+      currency: 'GBP',
+      plannedStart: '2027-01-01',
+      plannedCompletion: '2030-12-31',
+    });
+
+    const bidding = enterpriseCommand(governance());
+    const biddingRow = bidding.projects.find((row) => row.projectId === projectId)!;
+    // A tender in progress is a figure a pipeline legitimately reports. The
+    // fix is about a bid that is over, not about refusing to count a live one.
+    assert.equal(biddingRow.countedInTotal, true, 'a live pursuit stopped counting, which is a different bug');
+    assert.equal(biddingRow.lifecycleState, 'PRE_AWARD');
+
+    structure.setLifecycleState(
+      platform.context(seed.users.admin!.auth, projectId, { source: 'WEB' }),
+      {
+        to: 'CLOSED_LOST',
+        commercialOutcome: 'LOST',
+        reason: 'Priced 9% above the winner on the assessment rate; their mobilisation was four weeks shorter',
+        wonBy: 'Another assessor',
+      },
+    );
+
+    const after = enterpriseCommand(governance());
+
+    // The money, to the penny.
+    assert.equal(
+      after.estate.totalContractValueMinor,
+      bidding.estate.totalContractValueMinor - VALUE,
+      'the estate total did not fall by the value of the bid that was lost',
+    );
+
+    // And not silently. A total that quietly shrinks is a total somebody stops
+    // trusting, so the figure and the count are reported beside it.
+    assert.equal(after.estate.notHeld.projects, bidding.estate.notHeld.projects + 1);
+    assert.equal(after.estate.notHeld.contractValueMinor, bidding.estate.notHeld.contractValueMinor + VALUE);
+    assert.equal(after.estate.notHeld.byState.CLOSED_LOST, (bidding.estate.notHeld.byState.CLOSED_LOST ?? 0) + 1);
+
+    // Nothing was deleted. The bid is a record worth keeping — a win-rate
+    // review reads it, and so does anybody asking what we tendered.
+    assert.equal(after.estate.projects, bidding.estate.projects, 'the project left the estate rather than the total');
+    const row = after.projects.find((entry) => entry.projectId === projectId)!;
+    assert.ok(row, 'the lost project is no longer listed at all');
+    assert.equal(row.lifecycleState, 'CLOSED_LOST');
+    assert.equal(row.countedInTotal, false);
+    // The row still states the project's own value. A row showing zero would
+    // be a lie about the project in order to make a column add up.
+    assert.equal(row.contractValueMinor, VALUE);
+
+    // The same rule in the smaller place. A region's commitment including three
+    // lost tenders is the same overstatement, and two implementations of
+    // "which value counts" would disagree the first time a state is added.
+    const regionBefore = bidding.byRegion.find((entry) => entry.continentCode === 'EU')!;
+    const regionAfter = after.byRegion.find((entry) => entry.continentCode === 'EU')!;
+    assert.equal(regionAfter.contractValueMinor, regionBefore.contractValueMinor - VALUE);
+    assert.equal(regionAfter.projects, regionBefore.projects, 'the region stopped counting the project, not just its value');
   });
 });

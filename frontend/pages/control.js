@@ -445,6 +445,23 @@ export async function control(root) {
     api.get(`/v1/projects/${projectId}/family`).catch(() => null),
   ]);
 
+  /*
+   * Where this project can go from where it is.
+   *
+   * `next` is the ordinary set. The reopen set is deliberately excluded from
+   * this control: reopening a closed project is a separate authorised act with
+   * its own reason, and offering it in the same dropdown that advances a live
+   * project is how a lost bid becomes a live job by accident.
+   */
+  const here = (lifecycle?.states ?? []).find((entry) => entry.state === (project.lifecycleState ?? 'PRE_AWARD'));
+  const reachable = (here?.next ?? [])
+    .map((code) => (lifecycle?.states ?? []).find((entry) => entry.state === code))
+    .filter(Boolean);
+  // Declared here rather than beside the command spec that reads it. The
+  // command bar is assembled earlier in this function than the specs are, and
+  // a `const` referenced before its declaration is a dead screen rather than a
+  // dead control — the whole view throws.
+
   // The choosers for the responsibility form. A package named from the project's
   // own list and a firm named from the register, because a typed party name is
   // how one firm becomes two rows on a matrix.
@@ -614,17 +631,33 @@ export async function control(root) {
                         ? `This bid was closed as ${String(project.tenderOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
                         : blockedReason('PROJECT_SETUP', 'A'),
                   },
-                  {
-                    id: 'tenderOutcome',
-                    label: 'Move the lifecycle',
-                    permitted: can('PROJECT_SETUP', 'A') && project.commercialStatus !== 'CLOSED',
-                    reason:
-                      project.commercialStatus === 'CLOSED'
-                        ? `This bid was closed as ${String(project.commercialOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
-                        : blockedReason('PROJECT_SETUP', 'A'),
-                  },
                 ]
               : []),
+            /*
+             * The lifecycle, at every phase — not only on a bid.
+             *
+             * This sat inside the `phase === 'TENDER'` branch above, and that
+             * was the one place the two dimensions got conflated. The phase is
+             * where the work is; the lifecycle state is what the project is,
+             * and the module says so in four places. Gated on the phase, a
+             * project at `CONCEPT` could not be marked lost, a live job could
+             * not be put on hold, and a job in construction could not be
+             * suspended — the control was simply absent, which reads as the
+             * platform not allowing it rather than as a screen that forgot to
+             * offer it. A lost tender then kept its value in the estate total
+             * because there was no reachable way to say it was lost.
+             *
+             * Contract award stays above and stays on the tender phase: it is
+             * an award, not a lifecycle move, and it has its own gate.
+             */
+            {
+              id: 'tenderOutcome',
+              label: 'Move the lifecycle',
+              permitted: can('PROJECT_SETUP', 'A') && reachable.length > 0,
+              reason: !can('PROJECT_SETUP', 'A')
+                ? blockedReason('PROJECT_SETUP', 'A')
+                : `${here?.label ?? 'This state'} has nowhere ordinary to go. Reopening a closed project is a separate authorised act, deliberately not offered beside the control that advances a live one.`,
+            },
             {
               id: 'workstream',
               label: 'Open a workstream',
@@ -1261,19 +1294,6 @@ export async function control(root) {
       ...(v.source ? { source: v.source } : {}),
     }),
   };
-
-  /*
-   * Where this project can go from where it is.
-   *
-   * `next` is the ordinary set. The reopen set is deliberately excluded from
-   * this control: reopening a closed project is a separate authorised act with
-   * its own reason, and offering it in the same dropdown that advances a live
-   * project is how a lost bid becomes a live job by accident.
-   */
-  const here = (lifecycle?.states ?? []).find((entry) => entry.state === (project.lifecycleState ?? 'PRE_AWARD'));
-  const reachable = (here?.next ?? [])
-    .map((code) => (lifecycle?.states ?? []).find((entry) => entry.state === code))
-    .filter(Boolean);
 
   const COMMANDS = {
     responsibility: RESPONSIBILITY_COMMAND,

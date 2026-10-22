@@ -27655,3 +27655,72 @@ Verified: `npm run typecheck` clean, 7605 tests pass. The suite was run on
 22.22.0, which is itself below the new floor — the floor is a statement about
 what a deployment must run, and `engine-strict` is unset, so it warns rather
 than blocking a development machine.
+
+## A lost bid that kept its value in the portfolio
+
+Reported from use: a tender recorded as a project, lost, still carrying its
+tendered value in the estate total months later — and no way to update the
+project to say so.
+
+Two separate causes, and neither was a missing command.
+
+**The aggregation never read what the lifecycle already said.**
+`setLifecycleState` has recorded a loss properly since the lifecycle was built:
+`CLOSED_LOST` with its reason, its history entry, its evidence and a reopen gate
+that refuses a closed project becoming live by accident. `enterpriseCommand`
+read none of it. It summed `contractValueMinor` across `liveProjects`, which
+filters on `status !== 'DELETED'` and nothing else — so the only exit from the
+total was deletion, which is refused once anything has been certified against
+the project and would destroy the record of the bid anyway. The estate was
+overstated by the value of every tender the business did not win, silently, for
+as long as the records existed.
+
+The lifecycle table had already declared the shape of the answer. It carries
+`live` — "whether the project is live delivery work **for portfolio
+reporting**", with a note on `SUSPENDED` that "a suspended job counted as live
+is how a portfolio reports capacity it does not have". `live` answers the
+capacity question. The money question needed its own: **`holdsValue`**, false on
+exactly the three states where the project never became work — a bid lost, a bid
+withdrawn, a draft cancelled — and true everywhere else, including the terminal
+states that *were* ours and the pre-award states, because a tender in progress
+is a figure a pipeline legitimately reports. What is wrong is counting one that
+is over and lost. `holdsContractValue()` reads it, so three aggregations share
+one rule rather than keeping a list of state names each.
+
+**Nothing shrinks silently.** `estate.notHeld` carries the excluded count, the
+excluded value and the states they are in, and the Enterprise screen prints it
+under the total: "£1.25M not counted — 1 project that never became work (1
+closed lost). The record stays; the value is not the estate's to count." A total
+that quietly got smaller is a total somebody stops trusting; two stated facts
+are readable as what they are. The project row carries `lifecycleState` and
+`countedInTotal` for the same reason — the row is where somebody asks why the
+total does not match the column. The row still reports the project's **own**
+value: a row showing zero would be a lie about the project to make a column add
+up. `byRegion` applies the identical rule off the row, and still counts the
+project in its project count, because the record is there to be read.
+
+**The control was absent, not refused.** `Move the lifecycle` on Project Control
+sat inside `...(project.phase === 'TENDER' ? [...] : [])`. The phase is where
+the work is; the lifecycle state is what the project is, and this module says so
+in four places — then conflated them in the one place that mattered. Gated on
+the phase, a project at `CONCEPT` could not be marked lost, a live job could not
+be put on hold, and a job in construction could not be suspended: the button
+simply was not there, which reads as the platform refusing rather than as a
+screen that forgot to offer. *Convert to live project* stays on the tender
+phase, because an award is an award and has its own gate. The control is now
+offered at every phase, and refused with its reason where the state is terminal
+— reopening is a separate authorised act and deliberately not beside the control
+that advances a live project.
+
+`here` and `reachable` moved up the function to above the command bar. They were
+declared seven hundred lines below the point that now reads them, and a `const`
+referenced before its declaration is not a dead control but a dead screen.
+
+`portfolio.test.ts` asserts the arithmetic and the honesty: the total falls by
+precisely the lost value, `notHeld` reports it, the project is still listed and
+still readable at `CLOSED_LOST`, its row still states its own value, and the
+region's commitment falls by the same amount while its project count does not.
+The pre-existing invariant — "the total equals the sum of every row" — was the
+overstatement written down as a test, and now sums the rows the estate holds.
+
+Verified: `npm run typecheck` clean, 7606 tests pass.
