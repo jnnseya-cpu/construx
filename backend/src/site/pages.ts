@@ -458,7 +458,7 @@ export function blogPost(slug: string, platform?: Platform): string {
   // trusted markup and untrusted text stated in code rather than assumed.
   const stored = !fixed && platform?.ledger ? publishedPost(platform, slug) : undefined;
   const post = fixed
-    ? { ...fixed, paragraphs: fixed.body, date: fixed.date, authorship: undefined, keyword: undefined, metaDescription: undefined }
+    ? { ...fixed, paragraphs: fixed.body, date: fixed.date, authorship: undefined, keyword: undefined, metaDescription: fixed.metaDescription }
     : stored
       ? { ...stored, paragraphs: stored.body.map((line) => esc(line)), date: (stored.publishedAt ?? '').slice(0, 10) }
       : undefined;

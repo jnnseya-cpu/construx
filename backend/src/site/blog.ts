@@ -39,7 +39,7 @@ import { POSTS } from './posts.ts';
  *
  * **The hard-coded posts stay.** They are the engineering notes this project
  * actually produced and they are not migrated, rewritten or replaced. Published
- * records are added to them. `POSTS` remains the source of truth for those six;
+ * records are added to them. `POSTS` remains the source of truth for those;
  * this is the source of truth for everything after.
  */
 
@@ -120,7 +120,7 @@ function wordCount(body: string[]): number {
  * Derived once at draft time and then held, never recomputed. A slug is a
  * promise: it is what gets linked, shared and indexed, and retitling a post
  * must not break every link to it — the same rule `posts.ts` states for the
- * six that are hard-coded.
+ * ones that are hard-coded.
  */
 export function slugify(title: string): string {
   return title
@@ -293,7 +293,7 @@ export function publishedPost(platform: Platform, slug: string): BlogPost | unde
 /**
  * Is this slug already spoken for?
  *
- * Checked against the hard-coded six as well as the ledger. Two pages at one
+ * Checked against the hard-coded posts as well as the ledger. Two pages at one
  * address is the worst outcome available here: the router would answer with
  * whichever it found first, and a link that used to reach one would silently
  * start reaching the other.
@@ -802,7 +802,7 @@ export function blogPosition(
     // the blog look worse the moment somebody starts writing.
     averageScore: live.length === 0 ? null : Math.round(live.reduce((sum, post) => sum + post.score.score, 0) / live.length),
     totalViews: live.reduce((sum, post) => sum + post.views, 0),
-    // The six that ship in the source. Named so the totals here are not mistaken
+    // The ones that ship in the source. Named so the totals here are not mistaken
     // for the whole blog.
     fixed: POSTS.length,
     summary:

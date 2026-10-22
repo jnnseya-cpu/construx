@@ -27355,12 +27355,79 @@ figure in the message, which is better than a 502 from a vendor or a charge for 
 call that failed. A vector cache would change this and there is no measured need
 for one.
 
-**Still outstanding:** nothing named in the Bid-On chapter above. The remaining
-entries for this module are the ones in "Where the directive does not yet apply"
-at the top of this file, which are platform-wide rather than Bid-On's. `datalayer/embeddingProvider()` still
-returns `undefined`, and its docstring now says why — the blocker is no longer
-configuration but **metering**: that signature has no `EngineContext`, so an
-`embed` built from the adapter would bill a vendor with no hold, no wallet check
-and no `AIExecution` record, against the settled rule that nothing is charged
-without a ledger write. Closing it means giving semantic search the shape
-Bid-On's retrieval now has: a command with a context, quoted before it runs.
+**Still outstanding, and it is a deployment rather than a code change:** nothing
+in the Bid-On chapter above. The remaining entries for this module are the ones
+in "Where the directive does not yet apply" at the top of this file, which are
+platform-wide rather than Bid-On's. The one host-side item that still blocks live
+use is `AI_PROVIDER_CLEARANCE` naming a vendor at `COMMERCIAL_L3`: every AI
+command in the module handles another company's commercial material, so until a
+cleared vendor is named they all refuse with `AI_CLEARANCE_REQUIRED` — correctly,
+because clearance is a statement about the same vendor contract the no-training
+question turns on.
+
+The previous paragraph here said `embeddingProvider()` still returned
+`undefined` for want of metering. That was true when it was written and the
+section above it is what changed it; it is corrected rather than left to be read
+as current.
+
+## The blog sells the module, on what the module refuses to do
+
+Asked for: a post per Bid-On feature, each selling that feature on its
+distinguishing point. Fifteen were written into `site/posts.ts` beside the seven
+engineering notes, tagged `Bid-On`, one per capability: the wall between two
+rival customers inside one tenancy, the module grant and what survives its
+expiry, the scoring rubric and the five hard rules that override it, the five
+agents and what each is forbidden to do, the deposit gate, the contribution
+statement, the customer's own screen, tender import and resync, the rolling
+submission, the two retrieval methods, the returnable register, the clarification
+window and the two stages, the amendments reading, carry-forward, and the export.
+
+**They append; they do not replace.** `POSTS[0]` is pinned by
+`article.test.ts`, which asserts that `<code>PAY_LESS_NOTICE_GIVEN</code>`
+survives the linker — so a new post prepended would have broken a test that
+exists to protect the first note's markup. Nothing in the seven was edited.
+
+**Marketing copy is held to the stricter rule, not the looser one.** The file's
+own docstring now says so: a post may claim only behaviour that is built and
+covered by a test. No roadmap, no "will soon", and no typed figure the code could
+later disagree with — the lesson of *the number on our own landing page* applies
+hardest to a post written to sell something. Every claim in the fifteen was
+checked against the source as it was written, and the checking changed two
+sentences. A line attributing the refusal of an AI-confirmed declaration to the
+event catalogue was not written: the refusal is in the command, because a
+declaration is written as `BID_ON_CUSTOMER_UPDATED` and the guard is the
+customer-admin check — so the post says the platform refuses it, which is what
+is true. And the authorship sentence in the agents post was narrowed to what
+`def()` actually does — AI authorship is refused on every event that does not
+explicitly allow it, and the six in this module that do are extraction,
+embedding, drafting, scoring, the amendments reading and raising a gap. Nothing
+that approves, accepts or commits is among them.
+
+**`metaDescription` is now optional on a compiled post.** A standfirst is a deck
+written to be read on the page and runs past the 160 characters a result shows
+whole — so the seven older notes are cut mid-sentence in a search result. That is
+a real cost and not one worth rewriting their decks to fix, and it is worth not
+repeating on fifteen pages written to sell something. The renderer already read
+`post.metaDescription || post.standfirst` for stored posts; the compiled branch
+passed `undefined` and now passes the field. Each new post carries one between 70
+and 160 characters, asserted at the point of writing.
+
+**What is partial, and named rather than left to be found:** the new posts carry
+0–1 internal links each where the seven notes carry 1–3. The link glossary in
+`site/article.ts` maps a phrase to the public page that covers it, one link per
+destination per article — and **no public page covers Bid-On at all**. Three
+posts gained a link by using the right word where they had used a near-synonym
+(`golden thread`, `content hash`, `event catalogue`); the rest would need a
+glossary phrase forced into prose that is not about it, which is the SEO-driven
+writing this site refuses. The sweep reports compiled notes under
+`MIN_INTERNAL_LINKS` by name without scoring them, so this reads as what it is.
+The fix is a public Bid-On product page, which is **not built** — the module is
+sold on the blog and absent from the product pages, the navigation and the topic
+library.
+
+Verified: `npm run typecheck` clean; the full suite passes. The blog-touching
+suites — `article`, `visibility`, `publicsurface`, `discovery`, `analytics`,
+`api` — pass unchanged, which is the point of their deriving every count from
+`POSTS` rather than typing one: twenty-two posts needed no test edited. Four
+stale "six" references in `site/blog.ts` comments were made count-free in the
+same change, since they describe `POSTS.length` and were already wrong at seven.
