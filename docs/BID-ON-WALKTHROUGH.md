@@ -15,9 +15,19 @@ nobody can follow on the day.
 | Documents | Invitation to Tender, plus Appendices 1–8 |
 
 Every screen, button and field below is named as it appears. Where the platform
-will refuse you, it says so and why — those refusals are the point of the
-module, not obstacles in it, and each one is listed in
-[What it will refuse, and what to do](#what-it-will-refuse-and-what-to-do).
+will refuse you, it says so and why — and each refusal is listed in
+[What it will refuse, and what to do](#what-it-will-refuse-and-what-to-do) with
+the way through it.
+
+> **What changed after the first run of this document.** Nothing that names a
+> *document* asks you to copy an identifier any more: every such field is a
+> chooser. A document longer than one model request is read in parts rather than
+> refused. A question waiting on the customer can be drafted anyway, as your
+> decision, recorded on the answer. A pack that is not ready to send can be
+> read as a review copy. Semantic search uses the vendor key you already have.
+> The refusals those changes removed are gone from the table at the end; the one
+> real control — two people on an answer — is still there, with the three ways
+> through it.
 
 ---
 
@@ -247,23 +257,27 @@ or not a model can read the scan.
 Do all nine before you go on. The question list and the amendments reading both
 take a document.
 
-### 4.2 Open the library and read the ids off it
+### 4.2 Open the library
 
-Several commands below take an **evidence id** and one takes a **document
-hash**. Both are on the row, and both copy to the clipboard when you press them.
+**Bid-On → Evidence library → Whose library?** → pick your customer →
+**Open the library**. It defaults to the oldest customer, and reading the wrong
+library is how a run files its work against somebody else's document.
 
-1. **Bid-On → Evidence library**
-2. **Whose library?** → **pick your customer.** It defaults to the oldest one,
-   and reading the wrong library is how a run files its work against somebody
-   else's document.
-3. **Open the library**
-4. In the **ids** column press the short underlined code to copy the **evidence
-   id**; press **Copy hash** beneath it for the **document hash**
+**You no longer copy an id from anywhere.** Every command that acts on a
+document offers a **chooser**: your filed documents, grouped by customer, each
+one labelled with its reference and title and saying whether anything has been
+read out of it yet. The library screen is for *reading* the library — what has
+lapsed, what nothing has been read out of — not for harvesting identifiers.
 
-> `BID_ON_EVIDENCE_NOT_FOUND — No evidence sha256:…` means you pasted the hash
-> where the id was asked for. They are different things and the refusal now says
-> so: the id is the short underlined code on the row, the hash is behind **Copy
-> hash**.
+The row still carries the id and the hash, and both still copy when pressed, for
+anybody driving the API directly. Where a field does take a typed value, **all
+three work**: the id, the reference (`EVD-0003`) and the document hash.
+
+> Two refusals you can still meet, and what they mean now.
+> `BID_ON_EVIDENCE_AMBIGUOUS` — the same document is filed for two customers, so
+> a hash does not identify one record; pick the one you mean from the chooser.
+> `BID_ON_CUSTOMER_NOT_ASSIGNED` — that document belongs to a customer you are
+> not assigned to, which is a denial rather than a lookup failure.
 
 ### 4.3 Get the passages out of each document
 
@@ -271,16 +285,23 @@ Two ways, and the manual one always works.
 
 **With AI — Evidence library → Read it for me**
 
-- **Evidence id** → from 4.2
+- **The document** → choose it from the list
 
 It reads what the platform actually holds: a text-bearing PDF, a Word file or a
 spreadsheet is read directly; a scan or a photograph goes to a model that can
 see. On a deployment with no cleared vendor it refuses by name
 (`NO_READING_PROVIDER` or `AI_CLEARANCE_REQUIRED`) and costs nothing.
 
+**A document longer than one model request is read in parts**, one request per
+part, each its own charge — so a two-hundred-page appendix costs what two
+hundred pages cost rather than being refused. The result says how many parts it
+took. The model is not asked to re-type text the platform already extracted; it
+transcribes only a scan, where its reading is the only text of that document
+anybody will ever have.
+
 **By hand — Evidence → Type the passages myself**
 
-- **Evidence id** → from 4.2
+- **The document** → choose it from the list
 - **The passages** → one per line, optionally `page 4 | the passage`:
   ```
   page 3 | The Contractor shall complete each assessment within ten working days of instruction.
@@ -291,6 +312,26 @@ see. On a deployment with no cleared vendor it refuses by name
 Each passage is what a citation will open to. A passage too short to mean
 anything is dropped rather than indexed.
 
+### 4.4 Optional — make the library searchable by meaning
+
+**Evidence library → Make an item searchable by meaning** → choose a document
+that has been read.
+
+Without this, retrieval ranks on shared words, which finds a passage that uses
+the buyer's vocabulary and misses the one that says the same thing differently.
+With it, a question is matched against the *meaning* of your passages. A one-off
+cost per item, quoted before it runs, refused if the same model has already done
+it.
+
+It uses whichever vendor you have configured — the same key that answers every
+other AI call. `AI_EMBEDDING_PROVIDER` is only for pinning it to a particular
+vendor, or setting `off`. Items are never compared across models: a cosine
+between two models' vectors is not a weaker score, it is a number with no
+meaning.
+
+Skip it if you like. The drafter works either way and tells you which method it
+used.
+
 ---
 
 ## Part 5 — The question list
@@ -300,8 +341,14 @@ The buyer's own numbering, because the export has to match the source.
 **With AI — Bids → Read the questionnaire**
 
 - **Bid** → yours
-- **Pasted from the portal** → paste the question set, **or**
-- **Or a document hash** → the hash from 4.2
+- **The questionnaire, as a filed document** → choose it from the list, **or**
+- **Or paste it out of the portal** → for a portal that shows the questions on
+  screen with nothing to download
+
+One of those two, and the panel says so on the field if you press Read with both
+empty rather than sending it and refusing. A long questionnaire reads in parts,
+each part its own charge, and each part is told which part it is so it does not
+renumber anything to look complete.
 
 **By hand — Bids → Confirm the question list**
 
@@ -349,7 +396,7 @@ Only the first four matter; the rest may be blank.
 
 ## Part 7 — Answering
 
-### 7.1 Open the pack and take the ids
+### 7.1 Open the pack and take the ids off it
 
 **Bid-On → Bids →** press **Open** on your bid's row. Press the row's own
 button, not the row: the first table on this screen is *Import from Tender &
@@ -362,6 +409,12 @@ The opened pack carries, each copyable by pressing it:
 - a **question id** per question
 - a **returnable id** per returnable
 - an **answer id** per answer, once one exists
+- a **gap id** per open gap
+
+These four are still typed into their panels: they belong to this pack and the
+pack is the screen you are already on. Anything that names a **document** is a
+chooser now — including *Mark a returnable done* and *Close a gap*, where the
+item that discharges it is one of your filed documents.
 
 ### 7.2 Write the answer
 
@@ -370,9 +423,22 @@ The opened pack carries, each copyable by pressing it:
 - **Bid** → yours
 - **Question id** → from the pack
 - **Anything the drafter should know** → optional
+- **Draft it even though the customer has not come back** → for a question with
+  an open gap
 
 The panel quotes what the pass will cost before you commit, and will not submit
 until the price is on screen.
+
+Retrieval runs first, against this customer's evidence only. If nothing supports
+the question it **raises a gap instead of drafting** and costs nothing — a model
+asked to answer a question its evidence cannot support writes exactly the
+uncited claim that gets a submission thrown out.
+
+A question already waiting on the customer is refused *unless* you tick the box.
+Then the model is told what is outstanding and told not to write as though it
+were in hand, and the answer records that it was drafted over the gap — so
+whoever reviews it reads the draft and the open question together. Two days
+before a return that is usually the right call, and it is yours to make.
 
 **By hand — Bids → Write an answer**
 
@@ -421,6 +487,12 @@ Sign back in as the director.
 > there, because the screen does not offer an act that identity could never
 > complete.
 
+If you are testing on your own and meet `BID_ON_SELF_APPROVAL`, there are three
+ways on and the refusal names all of them. The one worth knowing: the rule
+applies to an answer a **person** wrote, so an agent's draft that you review and
+sign **is** the two-person check and is allowed. Draft it with the AI, read it
+properly, and approve that.
+
 **Reject with instructions** sends it back with what to change.
 
 ---
@@ -465,21 +537,41 @@ at mobilisation is one you have already agreed to carry for nothing.
 
 ---
 
-## Part 11 — The export
+## Part 11 — The pack, and the export
 
-**Bid-On → Bids → Export the pack** → pick the bid by its own reference,
-`BON-nnnn`.
+### 11.1 Read it before it is finished
 
-It will refuse while a mandatory returnable is outstanding —
-`BID_ON_NOT_EXPORTABLE — BON-0001 cannot be exported. 1 mandatory returnable is
-outstanding`. That is the gate doing its job the day before the return rather
-than the buyer doing it after.
+**Bids → Open** on your bid's row. At the foot of the pack are three buttons —
+**Word**, **Spreadsheet**, **Copy-ready text** — and they work whether or not
+the pack is ready to send.
+
+While anything is outstanding they say **"review copy"**, and that is what comes
+out: the file is named `REVIEW-…`, its first page (or first sheet, or first block
+of text) says `REVIEW COPY — NOT FOR SUBMISSION` and lists exactly what is
+outstanding. It is the pack, in the buyer's own structure, in source order —
+reviewing it is how it gets finished, and waiting until it was finished to read
+it was backwards.
+
+A file that ends up on somebody's desktop cannot be mistaken for the submission,
+which is the condition on this working at all.
+
+### 11.2 Export it
+
+**Bids → Export the pack** → pick the bid by its own reference, `BON-nnnn`.
+
+This is the act with the gate on it, and it refuses while a mandatory answer is
+unapproved or a mandatory returnable is outstanding —
+`BID_ON_NOT_EXPORTABLE — … 1 mandatory returnable is outstanding`, naming every
+blocking item rather than the first. That is the gate doing its job the day
+before the return rather than the buyer doing it after.
 
 For each one that is done: **Bids → Mark a returnable done** with the returnable
-id from the pack and a note. **Waive a returnable** where the buyer has agreed
-it does not apply — and the waiver goes on the record with it.
+id from the pack, a note, and the filed document that is it where there is one.
+**Waive a returnable** where the buyer has agreed it does not apply — and the
+waiver goes on the record with it.
 
-Then export again.
+Then export again. After the gate passes, the same three buttons produce the
+real file: no REVIEW in the name, no outstanding list on the front.
 
 ---
 
@@ -507,26 +599,35 @@ Without it the business loses the same money twice.
 | `NO_READING_PROVIDER` / `NO_REASONING_PROVIDER` | This deployment is on the local stand-in | Set a key (0.3) and clear the vendor (0.4), or use the manual twin of the command |
 | `AI_PROVIDER_ERROR — 401` | The key is wrong, truncated or revoked | Re-set it whole (0.3); if the row says *and in .env*, retire the file copy |
 | Wallet refusals | AI is prepaid and the wallet is empty | Credit it (0.2). No charge is ever taken without a ledger entry |
-| `BID_ON_EVIDENCE_NOT_FOUND — No evidence sha256:…` | A document hash where an evidence id was asked for | The short underlined code on the library row, not **Copy hash** |
+| `BID_ON_EVIDENCE_NOT_FOUND` | Nothing in the library is that value | Use the chooser. Typed, an id, a reference (`EVD-0003`) and a document hash all work |
+| `BID_ON_EVIDENCE_AMBIGUOUS` | The same document is filed for two customers, so a hash names two records | Pick the one you mean from the chooser |
+| `BID_ON_CUSTOMER_NOT_ASSIGNED` | That document belongs to a customer you are not assigned to | **Assign staff** (1.3), or work on the right customer |
+| `BID_ON_NOTHING_TO_PARSE` | Neither a document nor pasted text reached the parser | Choose the filed questionnaire, or paste the questions. The panel now says so on the field |
 | `BID_ON_NOTHING_READ` | The document is filed and nothing has been read out of it | **Read it for me**, or **Type the passages myself** (4.3) |
 | `BID_ON_FORMAT_UNREADABLE` | A scan with no text layer and no vision model | Clear a vendor with perception, or type the passages |
-| `BID_ON_SELF_APPROVAL` | One identity wrote and approved | Approve as the director (8.2). The writer is never shown the control |
-| `BID_ON_NOT_EXPORTABLE` | A mandatory returnable is outstanding | Mark it done or waive it (11) |
+| `BID_ON_GAP_OPEN` | That question is waiting on the customer | Close the gap, or tick **Draft it even though the customer has not come back** (7.2) |
+| `BID_ON_SELF_APPROVAL` | One identity wrote and approved | Approve as the director (8.2) — or let the drafter write it and sign that, which is the two-person check |
+| `BID_ON_NOT_EXPORTABLE` | A mandatory answer or returnable is outstanding | Mark it done or waive it (11.2). To *read* the pack now, take a review copy (11.1) |
+| `AI_EMBEDDING_NOT_CONFIGURED` | No vendor with an embedding endpoint has a key | Set a vendor key (0.3). Blank `AI_EMBEDDING_PROVIDER` now means "whichever is configured", not "off" |
+| `AI_INPUT_TOO_LARGE` | More than any cleared vendor's context window holds in one request | Nothing was sent or charged. The readers split a document themselves; this is for a payload that cannot be split |
+| `EVIDENCE_TOO_LARGE_TO_READ` | The file is held, and too large to hold in memory to inspect | It still downloads and streams. Raise `EVIDENCE_ANALYSE_MAX_BYTES`, or work from a smaller copy |
 
 ---
 
-## Where each id comes from
+## Where each value comes from
 
-Nothing asks you to invent one.
+Nothing asks you to invent one, and nothing that names a **document** asks you
+to type one at all.
 
-| Id | Where it is |
+| Value | Where it is |
 |---|---|
-| **Evidence id** | Evidence library → **Whose library?** → **Open the library** → the short underlined code in the **ids** column. Press to copy. |
-| **Document hash** | The same row → **Copy hash** |
+| **A document** | A chooser on every panel that acts on one, grouped by customer, each option saying whether anything has been read out of it |
 | **Question id** | Bids → **Open** on the bid's row → beside each question. Press to copy. |
 | **Answer id** | The opened pack → beside each answer, once one exists |
 | **Returnable id** | The opened pack → beside each returnable |
+| **Gap id** | The opened pack → beside each open gap |
 | **Bid reference** (`BON-nnnn`) | The opened pack. The export picker names a bid by this and carries no buyer name. |
+| **Evidence id / document hash** | Still on the library row, still copyable, for anybody driving the API directly |
 
 ---
 
