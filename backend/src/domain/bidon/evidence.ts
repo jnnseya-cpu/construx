@@ -322,11 +322,33 @@ export function fileEvidence(
       entry.customerAccountId === input.customerAccountId && entry.hash === input.hash && !entry.withdrawnAt,
   );
   if (existing) {
+    /*
+     * The same bytes, under whatever name either record gives them.
+     *
+     * The refusal is right and was half an answer: it says a document is
+     * already filed and leaves somebody staring at a file picker. There are
+     * only two ways to be here, and they have opposite remedies — so it names
+     * both.
+     *
+     * **The wrong file was picked.** A portal that serves nine downloads from
+     * one page is very good at handing over the same PDF twice, and a browser
+     * that remembers the last directory is very good at offering it again.
+     *
+     * **The record already filed is mis-titled.** The bytes are identical, so
+     * it *is* this document; what is wrong is the title somebody typed. Filing
+     * a second record would make the library say two things about one document.
+     * Correcting the title says the true thing once, and keeps every citation
+     * already made against it.
+     */
     throw new DomainError(
       'BID_ON_EVIDENCE_EXISTS',
-      `${existing.reference} — ${existing.title} — is the same file, already filed for this customer. Two records ` +
-        'of one document is two citations a reviewer has to check separately.',
+      `${existing.reference} — ${existing.title} — is byte-for-byte the same file, already filed for this customer. ` +
+        'Two records of one document is two citations a reviewer has to check separately. Either the file picker ' +
+        `handed over the wrong file — check what you chose — or ${existing.reference} is this document under the ` +
+        'wrong title, in which case correct its title rather than filing it again: the bytes are already here, and ' +
+        'every citation made against that record stays good.',
       409,
+      [{ field: 'hash', message: `Already filed as ${existing.reference}. Correct that record's title, or pick a different file` }],
     );
   }
 
