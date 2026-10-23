@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.ts';
-import { credential } from '../identity/credentials.ts';
+import { secretFor } from '../identity/credentials.ts';
 import { DomainError } from '../core/errors.ts';
 import { BILLING_CURRENCY } from './payments.ts';
 import {
@@ -64,8 +64,8 @@ const SIGNATURE_TOLERANCE_SECONDS = 300;
  * to read the environment while the operator is looking at a console that says
  * the key was changed.
  */
-const secretKeyNow = (): string => credential('STRIPE_SECRET_KEY') ?? config.stripe.secretKey;
-const webhookSecretNow = (): string => credential('STRIPE_WEBHOOK_SECRET') ?? config.stripe.webhookSecret;
+const secretKeyNow = (): string => secretFor('STRIPE_SECRET_KEY');
+const webhookSecretNow = (): string => secretFor('STRIPE_WEBHOOK_SECRET');
 
 export function stripeConfigured(): boolean {
   return secretKeyNow() !== '' && webhookSecretNow() !== '';

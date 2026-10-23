@@ -10,11 +10,14 @@ import {
   clearCredential,
   credential,
   credentialStates,
+  environmentRetired,
   keyIdOf,
   resetCredentialCache,
+  secretFor,
   useCredentialStore,
   setCredential,
 } from '../src/identity/credentials.ts';
+import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -211,6 +214,92 @@ describe('a credential set from the console', () => {
     resetCredentialCache();
     assert.equal(credential('STRIPE_SECRET_KEY'), 'not-a-real-key-stripe-fixture-00000000');
     clearCredential('STRIPE_SECRET_KEY');
+  });
+
+  /**
+   * The copy in `.env`, after a rotation.
+   *
+   * Reported from a live deployment: a key was rotated from the console and the
+   * superseded one stayed in the file on the host. The store overrode it, so
+   * everything worked — and the platform would have fallen straight back to a
+   * revoked key the moment anybody cleared the store, with a 401 nobody could
+   * account for.
+   *
+   * Nothing here can delete that file: it is the deployment's configuration,
+   * not this application's data. What the platform can do is refuse to read it
+   * again, and that is what these assert — including that the refusal survives
+   * the store being cleared, which is the whole point of it.
+   */
+  describe('the copy in the environment', () => {
+    // A credential this test owns outright, so retiring it cannot disturb the
+    // assertions above about the OpenAI key.
+    const NAME = 'GEMINI_API_KEY' as const;
+
+    it('is read where nothing overrides it, and refused once retired', () => {
+      // Stood up as the environment would: the store holds nothing for it.
+      assert.equal(credential(NAME), undefined);
+
+      platform.setPlatformCredentialEnvironment({
+        name: NAME,
+        retired: true,
+        decidedBy: seed.users.operator!.id,
+        reason: 'Rotated on 23 October; the old key is revoked at the vendor',
+      });
+
+      assert.equal(environmentRetired(NAME), true);
+      // The resolver is what every call site uses, and it is the thing that
+      // must come back empty — `credential` only ever spoke for the store.
+      assert.equal(secretFor(NAME), '');
+    });
+
+    it('stays retired when the store is cleared, which is the point of it', () => {
+      setCredential(NAME, 'not-a-real-key-gemini-fixture-000000000', seed.users.operator!.id, 'Replacement key');
+      assert.equal(secretFor(NAME), 'not-a-real-key-gemini-fixture-000000000');
+
+      clearCredential(NAME);
+      // Without the retirement this would now be whatever is in `.env`.
+      assert.equal(secretFor(NAME), '', 'clearing the store fell back to a retired environment key');
+    });
+
+    it('says what is still outstanding, because the platform has done half of it', async () => {
+      const reply = await call('POST', `/v1/admin/platform-credentials/${NAME}/environment`, tokenFor('operator'), {
+        retired: true,
+        reason: 'Superseded; removing it from the host file today',
+      });
+      assert.equal(reply.status, 201);
+      assert.match(reply.body.effect, /delete GEMINI_API_KEY from \.env on the host/);
+      assert.match(reply.body.effect, /revoke that key at the vendor/);
+    });
+
+    it('can be put back, so a wrong decision is not a trip to the host', () => {
+      platform.setPlatformCredentialEnvironment({
+        name: NAME,
+        retired: false,
+        decidedBy: seed.users.operator!.id,
+        reason: 'Retired the wrong one; the environment copy is the live key',
+      });
+      assert.equal(environmentRetired(NAME), false);
+    });
+
+    it('is on the chain, carrying the decision and never a value', () => {
+      const events = platform.ledger
+        .events()
+        .filter((event) => event.eventType === 'PLATFORM_CREDENTIAL_ENV_RETIRED' || event.eventType === 'PLATFORM_CREDENTIAL_ENV_RESTORED');
+      assert.ok(events.length >= 2, 'retiring and restoring wrote nothing to the chain');
+      assert.equal(lookupEventType('PLATFORM_CREDENTIAL_ENV_RETIRED')?.entity, 'PlatformCredential');
+      assert.notEqual(lookupEventType('PLATFORM_CREDENTIAL_ENV_RETIRED')?.aiAllowed, true);
+
+      const chain = JSON.stringify(platform.ledger.events());
+      assert.equal(chain.includes('not-a-real-key-gemini-fixture-000000000'), false, 'a key reached the chain');
+    });
+
+    it('is refused to everybody but the platform operator', async () => {
+      const reply = await call('POST', `/v1/admin/platform-credentials/${NAME}/environment`, tokenFor('admin'), {
+        retired: true,
+        reason: 'Trying it on from a customer tenancy',
+      });
+      assert.equal(reply.status, 403);
+    });
   });
 
   it('names only credentials the platform actually reads', () => {

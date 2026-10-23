@@ -120,6 +120,17 @@ export type CredentialState = {
   stored: boolean;
   /** Set where the environment supplies one, so "configured" is answerable without reading either. */
   fromEnvironment: boolean;
+  /**
+   * Whether the environment's copy has been taken out of service.
+   *
+   * `fromEnvironment: true` with this also true is the state that matters on
+   * the screen: a superseded secret is still sitting in a file on the host,
+   * the platform will not use it, and somebody still has to delete it and
+   * revoke it at the vendor.
+   */
+  environmentRetired: boolean;
+  /** Who retired it, when and why, where one has been. */
+  retired?: { retiredAt: string; retiredBy: string; reason: string };
   /** First eight hex of the SHA-256 of what is stored. Identifies a key; is not one. */
   keyId?: string;
   setAt?: string;
@@ -137,7 +148,27 @@ type StoredCredential = {
   reason: string;
 };
 
-type StoreFile = { version: 1; credentials: Record<string, StoredCredential> };
+/**
+ * An environment value the operator has taken out of service.
+ *
+ * Carries no secret — it is a decision about one, and it is kept beside the
+ * store because it is read on exactly the same path.
+ */
+type RetiredEnvironment = { retiredAt: string; retiredBy: string; reason: string };
+
+/**
+ * `retiredEnvironment` is optional and the version stays 1 deliberately.
+ *
+ * A store written by a build that predates it simply has no such key, and a
+ * build that predates it ignores one it does not know. Bumping the version
+ * would make the file unreadable to the image a rollback puts back, and
+ * `deploy/autodeploy.sh` exists to put an image back.
+ */
+type StoreFile = {
+  version: 1;
+  credentials: Record<string, StoredCredential>;
+  retiredEnvironment?: Record<string, RetiredEnvironment>;
+};
 
 /**
  * Where the file lives.
@@ -263,6 +294,80 @@ export function credential(name: CredentialName): string | undefined {
   return value === undefined || value === '' ? undefined : value;
 }
 
+/**
+ * The value the platform should actually use, from the one place that knows
+ * the rule.
+ *
+ * The rule was written out at five call sites as `credential(X) ?? config.Y` —
+ * five copies of "the store beats the environment", which is fine until the
+ * rule gains a third clause, and it just has. Everything that needs a secret
+ * asks here.
+ *
+ * Never reached from a route.
+ */
+export function secretFor(name: CredentialName): string {
+  const stored = credential(name);
+  if (stored !== undefined) return stored;
+  // Retired: the operator has said the copy in the environment is superseded
+  // and must not be used again. Without this, clearing the store — or a
+  // deployment that lost it — silently falls back to a key somebody has already
+  // revoked at the vendor, and the symptom is a 401 nobody can explain.
+  if (environmentRetired(name)) return '';
+  return environmentValue(name);
+}
+
+/** Whether the operator has taken the environment's copy of this out of service. */
+export function environmentRetired(name: CredentialName): boolean {
+  return load().retiredEnvironment?.[name] !== undefined;
+}
+
+/**
+ * Stop reading the environment for this credential.
+ *
+ * ## Why this is a command and not a note in a runbook
+ *
+ * An operator sets a key from the console because the old one was revoked.
+ * The superseded value is still sitting in `.env` on the host, and nothing in
+ * the platform can delete it — that file is the deployment's configuration, not
+ * the application's data, and an application that edits its own configuration
+ * is one nobody can reason about after an incident.
+ *
+ * What the platform *can* do is refuse to use it, for good. After this, the
+ * stale string in the file is inert: clearing the store leaves the capability
+ * off and says so, rather than quietly falling back to a dead key and producing
+ * a 401 on a tender deadline.
+ *
+ * The two things this does not do are stated on the screen beside it, because
+ * neither is the platform's to do: the bytes still have to come out of the file,
+ * and the key still has to be revoked at the vendor.
+ */
+export function retireEnvironment(name: CredentialName, by: string, reason: string): CredentialState {
+  const current = load();
+  persist({
+    ...current,
+    version: 1,
+    retiredEnvironment: {
+      ...(current.retiredEnvironment ?? {}),
+      [name]: { retiredAt: new Date().toISOString(), retiredBy: by, reason },
+    },
+  });
+  return stateOf(name);
+}
+
+/**
+ * Read the environment for this credential again.
+ *
+ * The way back, for the operator who retired the wrong one — a decision with no
+ * way out sends people to edit a file under pressure, which is the thing this
+ * whole store exists to stop.
+ */
+export function restoreEnvironment(name: CredentialName): CredentialState {
+  const current = load();
+  const { [name]: _removed, ...rest } = current.retiredEnvironment ?? {};
+  persist({ ...current, version: 1, retiredEnvironment: rest });
+  return stateOf(name);
+}
+
 /** Store a credential. The value is encrypted here and leaves no other copy. */
 export function setCredential(name: CredentialName, value: string, by: string, reason: string): CredentialState {
   const trimmed = value.trim();
@@ -277,7 +382,7 @@ export function setCredential(name: CredentialName, value: string, by: string, r
     setBy: by,
     reason,
   };
-  persist({ version: 1, credentials: { ...current.credentials, [name]: entry } });
+  persist({ ...current, version: 1, credentials: { ...current.credentials, [name]: entry } });
   return stateOf(name);
 }
 
@@ -292,7 +397,7 @@ export function setCredential(name: CredentialName, value: string, by: string, r
 export function clearCredential(name: CredentialName): CredentialState {
   const current = load();
   const { [name]: _removed, ...rest } = current.credentials;
-  persist({ version: 1, credentials: rest });
+  persist({ ...current, version: 1, credentials: rest });
   return stateOf(name);
 }
 
@@ -324,6 +429,8 @@ export function stateOf(name: CredentialName): CredentialState {
     unlocks: definition.unlocks,
     stored: held !== undefined,
     fromEnvironment: environmentValue(name) !== '',
+    environmentRetired: environmentRetired(name),
+    ...(load().retiredEnvironment?.[name] ? { retired: load().retiredEnvironment![name]! } : {}),
     ...(held ? { keyId: held.keyId, setAt: held.setAt, setBy: held.setBy, reason: held.reason } : {}),
   };
 }

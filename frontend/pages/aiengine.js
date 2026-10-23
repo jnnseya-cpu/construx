@@ -185,6 +185,16 @@ export async function aiengine(root) {
                       permitted: can('PLATFORM_ADMINISTRATION', 'U'), reason: blockedReason('PLATFORM_ADMINISTRATION', 'U') },
                     { id: 'clear-credential', label: 'Clear one', tone: 'quiet',
                       permitted: can('PLATFORM_ADMINISTRATION', 'U'), reason: blockedReason('PLATFORM_ADMINISTRATION', 'U') },
+                    // The platform's half of retiring a superseded key. Offered
+                    // only where there is actually a file copy to retire, or
+                    // one already retired to put back — otherwise it is a
+                    // control about a situation this deployment is not in.
+                    { id: 'retire-environment', label: 'Retire the file copy', tone: 'quiet',
+                      permitted:
+                        can('PLATFORM_ADMINISTRATION', 'U') &&
+                        (credentials?.credentials ?? []).some((entry) => entry.fromEnvironment || entry.environmentRetired),
+                      reason: blockedReason('PLATFORM_ADMINISTRATION', 'U')
+                        ?? 'Nothing is supplied from the environment on this deployment, so there is no file copy to take out of service.' },
                   ]))}
                 </div>
                 ${table({
@@ -201,16 +211,29 @@ export async function aiengine(root) {
                     // who needs to be told to go and remove the other.
                     entry.stored
                       ? html`${badge('this store', 'ok')}${
-                          entry.fromEnvironment
-                            ? html`<div class="metric-sub" style="margin-top:4px">
-                                The environment also holds one and it is not being used. Remove it from
-                                <code>.env</code> so there is one key to account for.
-                              </div>`
-                            : ''
+                          entry.environmentRetired
+                            ? html`${badge('file copy retired', 'ok')}
+                                <div class="metric-sub" style="margin-top:4px">
+                                  The platform will not read <code>${entry.name}</code> from the environment again,
+                                  so what is in <code>.env</code> is inert even if this store is cleared. Two things
+                                  are still outstanding and neither is the platform's:
+                                  <code>sed -i '/^${entry.name}=/d' .env</code> on the host, and revoke that key at
+                                  the vendor.
+                                </div>`
+                            : entry.fromEnvironment
+                              ? html`${badge('and in .env', 'warn')}
+                                  <div class="metric-sub" style="margin-top:4px">
+                                    The environment also holds one and it is not being used — but clearing this store
+                                    would fall straight back to it, and it is usually the key that was just revoked.
+                                    Press <b>Retire the file copy</b> to stop the platform reading it at all.
+                                  </div>`
+                              : ''
                         }`
-                      : entry.fromEnvironment
+                      : entry.fromEnvironment && !entry.environmentRetired
                         ? badge('environment', '')
-                        : badge('not set', 'bad'),
+                        : entry.environmentRetired
+                          ? html`${badge('not set', 'bad')}${badge('file copy retired', '')}`
+                          : badge('not set', 'bad'),
                     // The id, never the key. Shown for the stored one only:
                     // the platform does not hash what the environment holds,
                     // because that would mean reading it to describe it.
@@ -377,6 +400,49 @@ export async function aiengine(root) {
       });
       if (result) {
         toast('Set', result.effect, 'ok');
+        aiengine(root);
+      }
+    });
+  }
+
+  /*
+   * Retiring the copy in `.env`, which is the platform's half of a rotation.
+   *
+   * Reported from a live deployment: a key was rotated from this screen and the
+   * superseded one stayed in the file on the host. Nothing here can delete it —
+   * that file is the deployment's configuration rather than this application's
+   * data, and an application that rewrites its own configuration is one nobody
+   * can reason about after an incident. What the platform can do is refuse to
+   * read it again, and say plainly which two things are still somebody's job.
+   */
+  for (const button of root.querySelectorAll('[data-command="retire-environment"]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Retire the copy in the environment',
+        intent:
+          'The platform stops reading this credential from the environment, for good — so a superseded key sitting ' +
+          'in .env on the host becomes inert, and clearing the store later leaves the capability off and says so ' +
+          'rather than quietly falling back to a key somebody already revoked. It does not delete the file and it ' +
+          'cannot revoke anything at the vendor; both of those are still yours, and the row says so afterwards.',
+        path: (values) => `/v1/admin/platform-credentials/${values.name}/environment`,
+        submitLabel: 'Apply',
+        fields: [
+          { name: 'name', label: 'Which', type: 'select',
+            options: (credentials?.credentials ?? [])
+              .filter((entry) => entry.fromEnvironment || entry.environmentRetired)
+              .map((entry) => ({
+                value: entry.name,
+                label: `${entry.label}${entry.environmentRetired ? ' — already retired' : entry.stored ? ' — superseded by the store' : ' — in use from the environment'}`,
+              })) },
+          { name: 'retired', label: 'Stop reading it', type: 'checkbox', value: true,
+            hint: 'Unticked, the platform reads the environment again — the way back for one retired by mistake.' },
+          { name: 'reason', label: 'Why', type: 'text',
+            hint: 'Recorded against the decision. "Rotated on 23 October; the old key is revoked at the vendor."' },
+        ],
+        transform: ({ name: _n, ...rest }) => rest,
+      });
+      if (result) {
+        toast(result.environmentRetired ? 'Retired' : 'Restored', result.effect, 'ok');
         aiengine(root);
       }
     });

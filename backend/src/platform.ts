@@ -65,7 +65,14 @@ import {
   type CustomRole,
 } from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
-import { clearCredential, setCredential, type CredentialName, type CredentialState } from './identity/credentials.ts';
+import {
+  clearCredential,
+  restoreEnvironment,
+  retireEnvironment,
+  setCredential,
+  type CredentialName,
+  type CredentialState,
+} from './identity/credentials.ts';
 import { dueAt, graceDays, isDue, pseudonym, retentionBasis } from './identity/erasure.ts';
 
 /**
@@ -3066,7 +3073,62 @@ export class Platform {
         // Stated on the record because it decides whether anything still
         // works: clearing the store falls back to the environment, and
         // "cleared" with nothing behind it is a capability that has stopped.
-        fallsBackToEnvironment: state.fromEnvironment,
+        fallsBackToEnvironment: state.fromEnvironment && !state.environmentRetired,
+      },
+    });
+
+    return state;
+  }
+
+  /**
+   * Take the environment's copy of a credential out of service, or put it back.
+   *
+   * ## The problem this is the platform's half of
+   *
+   * An operator rotates a key from the console because the old one was revoked.
+   * The superseded value is still sitting in `.env` on the host, and nothing
+   * here can delete it: that file is the deployment's configuration rather than
+   * the application's data, and an application that rewrites its own
+   * configuration is one nobody can reason about after an incident.
+   *
+   * What the platform can do is refuse to read it again. After this, clearing
+   * the store leaves the capability off and says so, instead of silently
+   * falling back to a dead key and producing a 401 nobody can account for on
+   * the afternoon of a return date.
+   *
+   * The two halves that remain are the operator's and the screen says so: the
+   * bytes still have to come out of the file, and the key still has to be
+   * revoked at the vendor.
+   */
+  setPlatformCredentialEnvironment(input: {
+    name: CredentialName;
+    retired: boolean;
+    decidedBy: string;
+    reason: string;
+  }): CredentialState {
+    const state = input.retired
+      ? retireEnvironment(input.name, input.decidedBy, input.reason)
+      : restoreEnvironment(input.name);
+
+    this.ledger.commit({
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: input.retired ? 'PLATFORM_CREDENTIAL_ENV_RETIRED' : 'PLATFORM_CREDENTIAL_ENV_RESTORED',
+      entity: { refType: 'PlatformCredential', refId: input.name },
+      nextState: {
+        id: input.name,
+        name: input.name,
+        label: state.label,
+        environmentRetired: state.environmentRetired,
+        // Whether anything still answers for this credential after the change,
+        // which is the only question somebody reading this event has.
+        stillConfigured: state.stored || (state.fromEnvironment && !state.environmentRetired),
+        decidedAt: new Date().toISOString(),
+        decidedBy: input.decidedBy,
+        reason: input.reason,
       },
     });
 

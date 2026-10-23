@@ -28320,3 +28320,44 @@ outcome reaching the calibration and the win rate, the bid visit, the tender
 return obligation, and the group report and forecast exposure dropping a lost
 bid's value. `tools/tender-walk.mjs` now walks twenty-two steps: the whole
 tender, the bid site visit, the loss, the feedback and the stop.
+
+## The key that is still in the file
+
+A key was rotated from the console and the superseded one stayed in `.env` on
+the host. Everything worked, because the store overrides the environment — and
+that is what made it dangerous: the moment anybody cleared the store the
+platform would fall straight back to a key that had been revoked at the vendor,
+and the symptom is a 401 nobody can account for on the afternoon of a return.
+
+**Nothing in the platform can delete that file.** `.env` is the deployment's
+configuration, not this application's data; an application that rewrites its own
+configuration is one nobody can reason about after an incident, and the compose
+file reads it at boot in a container that should not be able to.
+
+What the platform can do is refuse to read it again, and that is now a command:
+`retireEnvironment`, `POST /v1/admin/platform-credentials/:name/environment`,
+and **Retire the file copy** on the AI Engine screen. After it, the stale string
+is inert — clearing the store leaves the capability off and says so. The way
+back is the same control with the box unticked, because a decision with no way
+out sends somebody to edit a file under pressure, which is what the store exists
+to stop.
+
+Two things remain and the row states both, with the command to run:
+
+```
+sed -i '/^OPENAI_API_KEY=/d' .env     # on the host
+```
+
+and revoke that key at the vendor. Neither is the platform's to do and neither
+is described as though it had been done.
+
+Found and fixed with it: the precedence rule — the store, then the environment —
+was written out at **five call sites** as `credential(X) ?? config.Y`. Five
+copies of a rule that has just gained a third clause. `secretFor()` is the one
+place that knows it now, and the five read from it.
+
+Verified: `npm test` and `npm run typecheck` clean. The credential suite asserts
+that the retirement survives the store being cleared — which is the whole point
+of it — that the effect names both outstanding jobs, that it is reversible, that
+it is on the chain with no value on it, and that it is refused to everybody but
+the platform operator.

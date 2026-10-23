@@ -280,6 +280,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    */
   def('PLATFORM_CREDENTIAL_SET', 'PlatformCredential', 'UPDATE', 'GOVERNANCE', { creates: true }),
   def('PLATFORM_CREDENTIAL_CLEARED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
+  /*
+   * The copy in the environment, taken out of service — or put back.
+   *
+   * A key rotated from the console leaves the superseded one sitting in `.env`
+   * on the host, and nothing in the platform can delete it: that file is the
+   * deployment's configuration, not this application's data. What the platform
+   * can do is refuse to read it again, so clearing the store later leaves the
+   * capability off and says so rather than silently falling back to a key
+   * somebody already revoked at the vendor.
+   *
+   * On the chain because it is a decision about what the platform may use to
+   * spend money and reach a third party, and "who stopped us reading that key,
+   * and when" is an access-review question. Carries no value, as the two events
+   * above carry none.
+   */
+  // `creates`, because this is a thing an operator can decide about a
+  // credential the store has never held: the file supplies it, the file copy
+  // is dead, and nobody has set a replacement here yet. Requiring a stored key
+  // first would mean the only way to record the decision was to make one up.
+  def('PLATFORM_CREDENTIAL_ENV_RETIRED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE', { creates: true }),
+  def('PLATFORM_CREDENTIAL_ENV_RESTORED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
   // Revocation is a plain UPDATE: there is nothing to take back from a company
   // that was never given it, and a revocation record with no grant behind it
   // would have to invent a grantor.

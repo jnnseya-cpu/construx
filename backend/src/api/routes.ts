@@ -2509,9 +2509,56 @@ export const ROUTES: Route[] = [
       const state = platform.clearPlatformCredential({ name, decidedBy: actor.actorId, reason: body<{ reason: string }>(ctx).reason });
       return {
         ...state,
-        effect: state.fromEnvironment
-          ? `${state.label} is cleared from the store and falls back to the environment, which holds one.`
-          : `${state.label} is cleared and nothing else supplies it. Whatever it unlocks stops until one is set.`,
+        effect:
+          state.fromEnvironment && !state.environmentRetired
+            ? `${state.label} is cleared from the store and falls back to the environment, which holds one.`
+            : `${state.label} is cleared and nothing else supplies it. Whatever it unlocks stops until one is set.`,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/platform-credentials/:name/environment',
+    description:
+      'Stop reading the environment’s copy of a credential, or read it again — the platform’s half of retiring a superseded key that is still sitting in a file on the host',
+    schema: {
+      type: 'object',
+      required: ['retired', 'reason'],
+      properties: {
+        retired: { type: 'boolean' },
+        reason: { type: 'string', minLength: 8, maxLength: 400 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may retire a credential source', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const name = ctx.params.name as string;
+      if (!isCredentialName(name)) {
+        throw new DomainError('CREDENTIAL_UNKNOWN', `${name} is not a credential this platform reads.`, 404);
+      }
+      const input = body<{ retired: boolean; reason: string }>(ctx);
+      const state = platform.setPlatformCredentialEnvironment({
+        name,
+        retired: input.retired === true,
+        decidedBy: actor.actorId,
+        reason: input.reason,
+      });
+      /*
+       * The effect says what is left to do, because the platform has only done
+       * half of it. The value is still in the file and still live at the
+       * vendor until somebody deals with both, and a message that said
+       * "retired" and stopped would read as though it were gone.
+       */
+      return {
+        ...state,
+        effect: state.environmentRetired
+          ? `${state.label} will not be read from the environment again, so the copy in .env on the host is inert — ` +
+            `even if the store is cleared. Two things are still outstanding and neither is the platform's: delete ` +
+            `${state.name} from .env on the host, and revoke that key at the vendor.`
+          : `${state.label} is read from the environment again where the store holds none.`,
       };
     },
   },
