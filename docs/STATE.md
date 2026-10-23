@@ -28749,3 +28749,99 @@ Hashing a large file now reports progress on the button (`Reading 1,240MB ·
 **Still not built:** progress for the *upload* itself. A large file goes up in
 the background after the record is filed — queued and retried by the outbox if
 it fails — and the only signal is the toast when it lands.
+
+## Four refusals met on a real tender, and which of them were friction
+
+Reported from a live run, as a list, with the instruction "fix them all". They
+are not the same kind of thing, and the record of which is which matters more
+than the fixes:
+
+**`BID_ON_EVIDENCE_NOT_FOUND` — pure friction, removed.** A library row carries
+three values somebody might paste: the item's id, its reference (`EVD-0003`,
+printed largest) and the document's content hash. Six commands took only the
+id, and the refusal *explained* the difference — which is better than nothing
+and is still the platform asking a person to do a lookup it can do itself.
+`requireEvidence` now resolves any of the three, and `documentHashFrom` does the
+same for the two commands that take a hash. Nothing is loosened: the
+per-customer visibility check runs on whatever was resolved, by whichever route.
+
+Two things fell out of it. A hash that **two customers' items share** is refused
+by name (`BID_ON_EVIDENCE_AMBIGUOUS`) rather than resolved to whichever came
+first — a hash is the address of contents, and the same standard certificate can
+be filed for two companies. And a hash that belongs to a customer the caller is
+**not assigned to** is now refused: `documentForReading` is tenant-scoped but
+not customer-scoped, so a bare hash had been a way round the assignment rule
+that `requireEvidence` exists to enforce.
+
+The deeper fix is that six panels stopped asking for an id at all.
+`GET /v1/bid-on/evidence` lists every document this person may see, across the
+customers they are assigned to, and the console turns it into a chooser grouped
+by customer — with each option saying whether anything has been read out of the
+document, because an item with no passages can be filed and cannot be cited,
+embedded or drafted from. That is a fact worth seeing *before* pressing a button
+rather than in the refusal afterwards.
+
+**`BID_ON_NOTHING_TO_PARSE` — the panel's fault.** The questionnaire reader
+takes a filed document *or* pasted text, so both fields were optional, which
+made the form look as though neither was needed. Pressing Read with both empty
+produced a refusal from the platform about a form it had just offered as
+complete. `command()` now takes a `validate` callback for exactly this shape —
+either of two fields, but not neither — and places the refusal on the field,
+where a server field error would have gone. The platform still enforces it; what
+is gone is the round trip.
+
+**`BID_ON_GAP_OPEN` — a good rule enforced as a wall.** Drafting over an open
+gap spends money writing around the thing that is missing. True, and not the
+platform's call to make: two days before a return there is usually an answer
+worth writing from what *is* known. `draftAnswer` takes `overOpenGap`, the model
+is told what is outstanding and told not to write as though it were in hand, and
+the answer carries `draftedOverGap` so a reviewer reads the draft and the open
+question together. The refusal names the choice rather than ending the
+conversation.
+
+**`BID_ON_NOT_EXPORTABLE` — the gate was right and was stopping the wrong
+thing.** Nothing renders a *sendable* file from a pack that cannot be sent, or
+the gate would be a formality. But reviewing a pack is how it gets finished, and
+the only way to read one was to finish it first — which on a real tender is the
+last afternoon. `renderPack(..., { review: true })` renders a pack that is not
+ready: the filename is prefixed `REVIEW-`, the first page (or first sheet, or
+first block of text) carries `REVIEW COPY — NOT FOR SUBMISSION` and everything
+outstanding, and the response says `review: true`. The console shows the three
+download buttons either way, labelled for which they are. A file that escapes
+onto somebody's desktop cannot be mistaken for the submission.
+
+**`BID_ON_SELF_APPROVAL` — not friction, and it stays.** One person at both ends
+of a statement going to a buyer is no check at all, and the two-person rule is
+most of what the module is worth. What changed is that the refusal names the
+three ways on, and the second is one nobody would guess: the rule applies to an
+answer a **person** wrote, so an agent's draft that the same person reviews and
+signs is already the two-person check and was always allowed. A one-person
+company is not blocked; it was simply never told how the check works.
+
+## `AI_EMBEDDING_NOT_CONFIGURED` on a deployment where AI worked
+
+Met on the same run, pressing "Make an item searchable by meaning" with a vendor
+key that was answering every other AI call.
+
+Two defects behind it. The embedding provider table read `config.ai.openaiKey`
+directly instead of going through `secretFor`, so a key set **from the console**
+— the supported way to set one — was invisible to embeddings alone. And
+`AI_EMBEDDING_PROVIDER` had to name a vendor, with blank meaning off, so
+semantic search was off on every deployment until somebody set a second variable
+naming a vendor whose key the platform already held.
+
+The reason recorded for that default was that defaulting it would mean "every
+deployment silently started spending on embeddings the moment a key was set for
+something else". That is not how this spends: **nothing on the platform embeds
+automatically.** All four paths — `embedFile`, `embedEvidence` and the two
+semantic search routes — are commands somebody presses with the price on screen
+first. Nothing embeds on upload, on reading, or on a schedule. So the variable
+was not protecting anybody from a surprise charge; it was making a capability
+look broken, with an SSH session as the remedy.
+
+Blank now means "whichever configured vendor can embed". `off` turns it off — a
+decision somebody may genuinely want, and now distinguishable from a deployment
+that has never heard of the variable. A named vendor is still honoured exactly,
+including when it has no key: an operator who asked for one vendor is told it is
+unconfigured rather than quietly handed another vendor's vectors, which would be
+a space nothing else on the project is in.

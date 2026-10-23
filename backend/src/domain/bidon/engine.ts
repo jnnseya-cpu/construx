@@ -263,7 +263,9 @@ export async function parseQuestionnaire(
 
   // A questionnaire given as a file is read before it is sent: natively where
   // the bytes carry the words, as a scan only where they do not.
-  const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the questionnaire') : undefined;
+  const document = input.hash
+    ? await documentForReading(ctx, store, documentHashFrom(ctx, input.hash), 'the questionnaire')
+    : undefined;
 
   // A pasted portal page is text; a questionnaire PDF — including a scan — is a
   // document a vision model reads. The capability follows the input rather than
@@ -560,6 +562,60 @@ function partConstraint(part: DocumentPart): Record<string, string> {
       'renumber anything to make this part look complete, and do not note that material is missing — the other ' +
       'parts are being read separately and the answers are combined.',
   };
+}
+
+/**
+ * The document somebody meant, from whatever they pasted.
+ *
+ * The questionnaire parser and the amendments reading ask for a **document
+ * hash**, and the library row offers three copyable values — the item's id, its
+ * reference (`EVD-0003`) and the hash. Two of the three were refused, with a
+ * message explaining the difference, which is better than nothing and is still
+ * the platform asking a person to do a lookup it can do itself.
+ *
+ * Anything the library can resolve is accepted and turned into the hash the
+ * reader needs. A value that resolves to nothing is left exactly as it was, so
+ * a genuine hash for a file in the evidence store but not in the Bid-On library
+ * — which is legitimate, since the store holds the platform's own evidence too
+ * — still reads, and the refusal still comes from the store rather than from a
+ * lookup that decided for it.
+ */
+function documentHashFrom(ctx: EngineContext, asked: string): string {
+  const value = asked.trim();
+  try {
+    return requireEvidence(ctx, value).hash;
+  } catch (error) {
+    // A refusal that is about *this person* is not a failed lookup, and
+    // falling through it would turn a denial into a read.
+    if (error instanceof DomainError && error.code !== 'BID_ON_EVIDENCE_NOT_FOUND') throw error;
+  }
+
+  /*
+   * A hash that belongs to this library and not to this person.
+   *
+   * `documentForReading` is tenant-scoped but not customer-scoped: it asks the
+   * store whether the tenancy holds those bytes. So a hash alone was a way
+   * round the assignment rule that `requireEvidence` exists to enforce — a
+   * member of the provider's staff who was never assigned to a customer could
+   * read that customer's document by pasting its hash, which is precisely the
+   * case the rule is written for ("a provider's customers compete with each
+   * other, so access is per customer and is recorded").
+   *
+   * A hash that no Bid-On item names is left alone, because the evidence store
+   * holds the platform's own records too and reading one of those by hash is
+   * what these commands have always allowed.
+   */
+  const inLibrary = evidenceOf(ctx).filter((item) => item.hash === value);
+  if (inLibrary.length > 0) {
+    throw new DomainError(
+      'BID_ON_CUSTOMER_NOT_ASSIGNED',
+      'That document belongs to a customer you are not assigned to. A provider’s customers compete with each other, ' +
+        'so access is per customer and is recorded.',
+      403,
+    );
+  }
+
+  return value;
 }
 
 async function documentForReading(
@@ -907,10 +963,27 @@ export async function readEvidence(
 export async function draftAnswer(
   ctx: EngineContext,
   bidId: string,
-  input: { questionId: string; reviewerInstructions?: string },
+  input: {
+    questionId: string;
+    reviewerInstructions?: string;
+    /**
+     * Draft it anyway, with the gap still open.
+     *
+     * The refusal below is a good rule and it was a wall. A gap says the
+     * customer has been asked for something; it does not follow that there is
+     * nothing useful to write in the meantime, and on a tender that closes on
+     * Friday a draft built from what *is* known — with the gap named on it for
+     * whoever reviews it — is worth more than an empty question. It is the
+     * caller's money and the caller's submission, so this is their decision to
+     * take, explicitly, and it is recorded on the answer rather than inferred.
+     */
+    overOpenGap?: boolean;
+  },
 ): Promise<{
   bid: Bid;
   outcome: 'DRAFTED' | 'GAP_RAISED';
+  /** The gap this draft was written over, where the caller chose to. */
+  draftedOverGapId?: string;
   answerId?: string;
   gapId?: string;
   acuConsumed: number;
@@ -932,18 +1005,42 @@ export async function draftAnswer(
     throw new DomainError('BID_ON_QUESTION_NOT_FOUND', `${bid.reference} has no question ${input.questionId}`, 404);
   }
   const open = bid.gaps.find((entry) => entry.questionId === question.id && !entry.resolvedAt);
-  if (open) {
+  if (open && input.overOpenGap !== true) {
+    /*
+     * A gap is a warning, and this used to be a wall.
+     *
+     * The rule is sound — drafting over an open gap spends money writing around
+     * the thing that is missing — and it is not the platform's call to make on
+     * somebody's behalf. Two days before a return there is often something
+     * worth writing from what *is* known, and the only honest objection is that
+     * a reviewer must be able to see it was written that way.
+     *
+     * So the refusal now names both ways on, including this command with
+     * `overOpenGap`, and the answer carries the gap it was drafted over.
+     */
     throw new DomainError(
       'BID_ON_GAP_OPEN',
-      `${question.number} is waiting on the customer: "${open.promptToClient}". Drafting over an open gap spends ` +
-        'money writing around the thing that is missing.',
+      `${question.number} is waiting on the customer: "${open.promptToClient}". Drafting now spends money writing ` +
+        'around the thing that is missing — so either close the gap with what the customer sent, or say to draft ' +
+        'over it and the answer will carry the gap for whoever reviews it.',
       409,
+      [
+        {
+          field: 'overOpenGap',
+          message: 'Tick "draft it anyway" to write from what is known, with the gap named on the answer',
+        },
+      ],
     );
   }
 
   // The Retriever. It filters on the customer before it ranks — so a drafter
   // physically cannot be handed another customer's material — and it ranks by
   // meaning where this customer's library has been embedded.
+  //
+  // Where the caller chose to draft over an open gap, the model is told what is
+  // missing and told not to write as though it were not. A draft that quietly
+  // fills the hole is the one thing worse than no draft: it reads as evidenced
+  // and is not.
   const retrieved = await retrieveForDrafting(ctx, bid, question);
 
   if (retrieved.chunks.length === 0) {
@@ -1012,6 +1109,24 @@ export async function draftAnswer(
           ? { reviewerInstructions: previous.reviewNote }
           : {}),
         ...(input.reviewerInstructions ? { extraInstructions: input.reviewerInstructions } : {}),
+        /*
+         * What the customer has been asked for and has not sent.
+         *
+         * Told to the model because it is drafting over it deliberately: an
+         * answer written in ignorance of the gap reads as though the missing
+         * thing were in hand, which is the false-evidence failure this whole
+         * module is built to prevent. Named, the draft writes what is known and
+         * leaves the rest in `unsupported`, where it already belongs.
+         */
+        ...(open
+          ? {
+              stillWaitingOnTheCustomer: open.promptToClient,
+              gapInstruction:
+                'This has been asked of the customer and has not come back. Write what the passages support and ' +
+                'leave what depends on the outstanding material in `unsupported`. Do not write around it as ' +
+                'though it were in hand, and do not promise anything on the customer’s behalf.',
+            }
+          : {}),
         constraint:
           'State nothing the passages do not support. Every factual claim — a figure, a date, a named scheme, a ' +
           'certificate, a person — must come from a passage and must carry that passage’s chunkId in `citations`. ' +
@@ -1089,6 +1204,10 @@ export async function draftAnswer(
     citations,
     authorship: 'AI_DRAFTED',
     ...(result.provider ? { provider: result.provider } : {}),
+    // Written over a gap the caller chose not to wait for. On the answer, so a
+    // reviewer reads the draft and the open question together rather than
+    // finding the gap later on another screen.
+    ...(open ? { draftedOverGap: { gapId: open.id, prompt: open.promptToClient } } : {}),
   });
 
   // Anything the evidence did not cover is still raised, beside the draft. A
@@ -1117,6 +1236,9 @@ export async function draftAnswer(
     bid: next,
     outcome: 'DRAFTED',
     answerId: written.answer.id,
+    // Said back, so a caller that chose to draft over a gap is told the draft
+    // carries it rather than having to remember.
+    ...(open ? { draftedOverGapId: open.id } : {}),
     // The draft and the retrieval that fed it. One number, because one press of
     // one button is what the provider is charged for.
     acuConsumed: result.acuConsumed + retrieved.acuConsumed,
@@ -1658,7 +1780,9 @@ export async function reviewAmendments(
   // Same as the parser, and this is the one where reading the wrong thing
   // costs most: a model answering from a filename would report no amendments
   // on a four-year contract.
-  const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the schedule of amendments') : undefined;
+  const document = input.hash
+    ? await documentForReading(ctx, store, documentHashFrom(ctx, input.hash), 'the schedule of amendments')
+    : undefined;
 
   // A schedule of amendments as a file is a document a vision model reads;
   // pasted clauses are text. The capability follows the input, for the same

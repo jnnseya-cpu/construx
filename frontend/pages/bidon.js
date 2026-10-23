@@ -70,7 +70,7 @@ const TYPE_MEANING = {
 };
 
 export async function bidon(root) {
-  const [customers, engagements, offerings, bids, invoices, importable] = await Promise.all([
+  const [customers, engagements, offerings, bids, invoices, importable, documents] = await Promise.all([
     // Every read is tenant-scoped and filtered to this person inside the API,
     // not here. A screen that filtered would leak the moment anybody called
     // the route directly.
@@ -85,6 +85,19 @@ export async function bidon(root) {
     // read them. Somebody with the module and no tender access gets the
     // refusal, which is the honest answer.
     api.read('/v1/bid-on/importable-tenders', 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
+    /*
+     * Every document this person may see, for the panels that used to ask them
+     * to type an id.
+     *
+     * Six commands took an identifier as free text with a hint explaining
+     * which of the three values on a library row to copy — and the commonest
+     * refusal in the module was somebody pasting the wrong one, or pasting
+     * nothing because the panel did not make clear a document was needed. The
+     * per-customer library cannot answer for a panel, because it is loaded
+     * only after a customer has been chosen; this is one tenant-scoped read,
+     * filtered to the customers this person is assigned to by the API.
+     */
+    api.read('/v1/bid-on/evidence', 'BID_SERVICES', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const customerList = customers?.customers ?? [];
@@ -101,6 +114,44 @@ export async function bidon(root) {
    * because two fields and three hints depend on whether this is empty.
    */
   const priceable = offeringList.filter((entry) => entry.active);
+
+  /**
+   * The filed documents, as something to choose from.
+   *
+   * Grouped by customer, because a provider's customers compete with each
+   * other and a flat list of forty documents is where somebody picks the wrong
+   * company's insurance schedule. Each option says what has been read out of
+   * the document, since an item with no passages can be filed and cannot be
+   * cited, embedded or drafted from — which is a fact worth seeing *before*
+   * pressing a button rather than in the refusal afterwards.
+   *
+   * `documentOptions(filter)` takes a predicate so each panel offers only what
+   * it can act on: embedding wants a document that has been read, reading
+   * wants one that is not withdrawn.
+   */
+  const documentList = (documents?.evidence ?? []).filter((item) => !item.withdrawn);
+  const customerName = (id) => {
+    const found = customerList.find((customer) => customer.id === id);
+    return found ? `${found.reference} — ${found.legalName}` : 'Another customer';
+  };
+  const documentOptions = (filter = () => true) => {
+    const kept = documentList.filter(filter);
+    const byCustomer = new Map();
+    for (const item of kept) {
+      const key = item.customerAccountId;
+      if (!byCustomer.has(key)) byCustomer.set(key, []);
+      byCustomer.get(key).push({
+        value: item.id,
+        label:
+          `${item.reference} — ${item.title}` +
+          (item.read ? '' : ' · nothing read out of it yet') +
+          (item.embedded ? ' · searchable by meaning' : ''),
+      });
+    }
+    return [...byCustomer.entries()].map(([id, options]) => ({ label: customerName(id), options }));
+  };
+  /** Whether there is anything to choose at all. An empty chooser is worse than a field. */
+  const haveDocuments = documentList.length > 0;
 
   const customerOptions = customerList
     .filter((customer) => customer.status === 'ACTIVE')
@@ -797,16 +848,18 @@ export async function bidon(root) {
     button.disabled = true;
     try {
       const pack = await api.read(
-        `/v1/bid-on/bids/${button.dataset.renderBid}/render?format=${format}`,
+        `/v1/bid-on/bids/${button.dataset.renderBid}/render?format=${format}` +
+          (button.dataset.renderReview === '1' ? '&review=1' : ''),
         'BID_SERVICES',
         'COMMERCIAL_L3',
       );
       if (format === 'TEXT') {
         await navigator.clipboard?.writeText(pack.content);
         toast(
-          'Copied',
-          `${pack.questions} answer(s) across ${pack.sections.length} section(s), in the buyer's own numbering.`,
-          'ok',
+          pack.review ? 'Review copy copied' : 'Copied',
+          `${pack.questions} answer(s) across ${pack.sections.length} section(s), in the buyer's own numbering.` +
+            (pack.review ? ` Not for submission — ${pack.outstanding.length} item(s) outstanding.` : ''),
+          pack.review ? 'warn' : 'ok',
         );
       } else {
         // Base64 from the API rather than a blob URL the server issued: the
@@ -818,7 +871,12 @@ export async function bidon(root) {
         link.download = pack.filename;
         link.click();
         URL.revokeObjectURL(url);
-        toast('Downloaded', `${pack.filename} — ${pack.sections.length} section(s) in source order.`, 'ok');
+        toast(
+          pack.review ? 'Review copy downloaded' : 'Downloaded',
+          `${pack.filename} — ${pack.sections.length} section(s) in source order.` +
+            (pack.review ? ` Not for submission — ${pack.outstanding.length} item(s) outstanding.` : ''),
+          pack.review ? 'warn' : 'ok',
+        );
       }
     } catch (error) {
       toast('Not rendered', error.detail ?? error.message ?? 'The pack could not be taken out.', 'err');
@@ -1298,10 +1356,14 @@ export async function bidon(root) {
       path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/embedding`,
       submitLabel: 'Embed',
       fields: [
-        { name: 'evidenceId', label: 'Evidence id', type: 'text',
-          hint:
-            'From the library above — open a customer’s library and the row carries it. Only an item something has ' +
-            'been read out of can be embedded.' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The document', type: 'select',
+              // Only what can actually be embedded. An item with no passages
+              // is offered nowhere rather than offered and refused.
+              options: documentOptions((item) => item.read), placeholder: 'Choose a document that has been read',
+              hint: 'Only documents something has been read out of. Read one first and it appears here.' }
+          : { name: 'evidenceId', label: 'Evidence id', type: 'text',
+              hint: 'Nothing is filed yet.' },
       ],
       transform: () => ({}),
       ai: true,
@@ -1444,8 +1506,12 @@ export async function bidon(root) {
             })),
           hint: 'Only a bid with something outstanding. Open the pack above and the register carries the ids.' },
         { name: 'returnableId', label: 'Returnable id', type: 'text', hint: 'From the register in the opened pack.' },
-        { name: 'evidenceId', label: 'The item that is it', type: 'text', required: false,
-          hint: 'An evidence id from this customer’s own library. Strongly preferred over a bare note.' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The item that is it', type: 'select', required: false,
+              options: documentOptions(), placeholder: 'A filed document, if one is it',
+              hint: 'Strongly preferred over a bare note: a returnable backed by a filed document is one a reviewer can open.' }
+          : { name: 'evidenceId', label: 'The item that is it', type: 'text', required: false,
+              hint: 'An evidence id from this customer’s own library. Strongly preferred over a bare note.' },
         { name: 'note', label: 'Note', type: 'text', required: false,
           hint: 'Where it went, who signed it, which version.' },
       ],
@@ -1587,11 +1653,30 @@ export async function bidon(root) {
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
           options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
-        { name: 'text', label: 'Pasted from the portal', type: 'textarea', rows: 10, required: false,
-          hint: 'Paste the questions. Leave blank and give a filed document’s hash instead for a PDF, including a scan.' },
-        { name: 'hash', label: 'Or a document hash', type: 'text', required: false,
-          hint: 'File the questionnaire in the customer’s library first, then press Copy hash on its row. A scan is read by a vision model rather than refused.' },
+        haveDocuments
+          ? { name: 'hash', label: 'The questionnaire, as a filed document', type: 'select', required: false,
+              options: documentOptions(), placeholder: 'Choose the filed questionnaire',
+              hint: 'A PDF, a Word file or a spreadsheet is read directly; a scan goes to a model that can see.' }
+          : { name: 'hash', label: 'Or a document hash', type: 'text', required: false,
+              hint: 'File the questionnaire in the customer’s library first and it will be offered here by name.' },
+        { name: 'text', label: 'Or paste it out of the portal', type: 'textarea', rows: 10, required: false,
+          hint: 'For a portal that shows the questions on screen with nothing to download.' },
       ],
+      /*
+       * One of the two, named here rather than refused by the platform.
+       *
+       * Both fields are optional because either will do, which made the panel
+       * look as though neither was needed — and pressing Read with both empty
+       * produced `BID_ON_NOTHING_TO_PARSE` from the server, after a round trip,
+       * about a form that had just been offered as complete.
+       */
+      validate: ({ text, hash }) =>
+        String(text ?? '').trim() || String(hash ?? '').trim()
+          ? undefined
+          : {
+              field: 'hash',
+              message: 'Choose the filed questionnaire, or paste the questions into the box below. Either will do.',
+            },
       transform: ({ bidId: _b, ...rest }) =>
         Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
     },
@@ -1601,7 +1686,9 @@ export async function bidon(root) {
         'Retrieval runs first, against this customer’s evidence only. If nothing in their library supports the ' +
         'question it raises a gap instead of drafting and costs nothing — a model asked to answer a question its ' +
         'evidence cannot support writes exactly the uncited claim that gets a submission thrown out. An answer that ' +
-        'comes back citing nothing becomes a gap too.',
+        'comes back citing nothing becomes a gap too. A question already waiting on the customer can still be ' +
+        'drafted — tick the box and the model is told what is outstanding, and the answer carries the gap for ' +
+        'whoever reviews it.',
       path: (v) => `/v1/bid-on/bids/${v.bidId}/draft`,
       submitLabel: 'Draft',
       ai: true,
@@ -1611,12 +1698,17 @@ export async function bidon(root) {
         { name: 'questionId', label: 'Question id', type: 'text', hint: 'From the opened pack above.' },
         { name: 'reviewerInstructions', label: 'Anything the drafter should know', type: 'textarea', rows: 2, required: false,
           hint: 'A rejected answer already carries the reviewer’s instructions; this is for anything else.' },
+        { name: 'overOpenGap', label: 'Draft it even though the customer has not come back', type: 'checkbox', required: false,
+          hint: 'For a question with an open gap. The draft writes what is evidenced, leaves the rest outstanding, ' +
+            'and says on the answer that it was written over the gap. Two days before a return this is usually the ' +
+            'right call; it is yours to make, not the platform’s.' },
       ],
-      transform: ({ bidId: _b, reviewerInstructions, ...rest }) => ({
+      transform: ({ bidId: _b, reviewerInstructions, overOpenGap, ...rest }) => ({
         ...rest,
         ...(String(reviewerInstructions ?? '').trim()
           ? { reviewerInstructions: String(reviewerInstructions).trim() }
           : {}),
+        ...(overOpenGap ? { overOpenGap: true } : {}),
       }),
     },
     'rescore-answer': {
@@ -1762,7 +1854,10 @@ export async function bidon(root) {
         { name: 'bidId', label: 'Bid', type: 'select',
           options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })) },
         { name: 'gapId', label: 'Gap id', type: 'text', hint: 'From the opened pack above.' },
-        { name: 'evidenceId', label: 'Evidence filed to close it', type: 'text', required: false },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'Evidence filed to close it', type: 'select', required: false,
+              options: documentOptions(), placeholder: 'The document that closes it, if there is one' }
+          : { name: 'evidenceId', label: 'Evidence filed to close it', type: 'text', required: false },
         { name: 'note', label: 'What closed it', type: 'text' },
       ],
       transform: ({ bidId: _b, gapId: _g, evidenceId, ...rest }) => ({
@@ -1872,8 +1967,11 @@ export async function bidon(root) {
       submitLabel: 'Read it',
       ai: true,
       fields: [
-        { name: 'evidenceId', label: 'Evidence id', type: 'text',
-          hint: 'From the library above — click the id on its row and it is on the clipboard.' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The document', type: 'select',
+              options: documentOptions(), placeholder: 'Choose a filed document' }
+          : { name: 'evidenceId', label: 'Evidence id', type: 'text',
+              hint: 'Nothing is filed yet. File a document first, then it is offered here by name.' },
       ],
       transform: () => ({}),
     },
@@ -1887,8 +1985,10 @@ export async function bidon(root) {
       path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/correction`,
       submitLabel: 'Correct it',
       fields: [
-        { name: 'evidenceId', label: 'Evidence id', type: 'text',
-          hint: 'From the library above — click the id on its row and it is on the clipboard.' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The document', type: 'select',
+              options: documentOptions(), placeholder: 'Choose a filed document' }
+          : { name: 'evidenceId', label: 'Evidence id', type: 'text' },
         { name: 'title', label: 'Title', type: 'text', required: false,
           hint: 'Leave blank to keep it. As a reviewer looking for it would describe it.' },
         { name: 'type', label: 'Kind', type: 'select', required: false,
@@ -1920,8 +2020,10 @@ export async function bidon(root) {
       path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/extraction`,
       submitLabel: 'Record',
       fields: [
-        { name: 'evidenceId', label: 'Evidence id', type: 'text',
-          hint: 'From the library panel above.' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The document', type: 'select',
+              options: documentOptions(), placeholder: 'Choose a filed document' }
+          : { name: 'evidenceId', label: 'Evidence id', type: 'text' },
         { name: 'chunks', label: 'The passages', type: 'textarea', rows: 10,
           hint: 'One per line, optionally as "page 4 | the passage". Each is what a citation will open to.' },
       ],
@@ -1946,7 +2048,10 @@ export async function bidon(root) {
       path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/withdraw`,
       submitLabel: 'Withdraw',
       fields: [
-        { name: 'evidenceId', label: 'Evidence id', type: 'text' },
+        haveDocuments
+          ? { name: 'evidenceId', label: 'The document', type: 'select',
+              options: documentOptions(), placeholder: 'Choose a filed document' }
+          : { name: 'evidenceId', label: 'Evidence id', type: 'text' },
         { name: 'reason', label: 'Why', type: 'text' },
       ],
       transform: ({ evidenceId: _e, ...rest }) => rest,
@@ -2683,18 +2788,35 @@ function bidDetail(position, estimate, source) {
           : ''
       }
       ${
-        readiness.exportable
-          ? html`<div class="actions" style="padding:11px 17px 0">
-              <span style="font-size:12.5px;color:var(--text-3)">
-                Take it out in the questionnaire's own structure — nothing is renumbered or regrouped:
-              </span>
-              <button class="btn sm" data-render="DOCX" data-render-bid="${bid.id}">Word</button>
-              <button class="btn sm" data-render="XLSX" data-render-bid="${bid.id}">Spreadsheet</button>
-              <button class="btn sm quiet" data-render="TEXT" data-render-bid="${bid.id}">
-                Copy-ready text
-              </button>
-            </div>`
-          : ''
+        /*
+         * The pack comes out either way, and the buttons say which it is.
+         *
+         * Before this, a pack that was not finished could not be taken out at
+         * all — so the only way to read the thing you were working on was to
+         * finish it first, which on a real tender is the last afternoon. The
+         * gate has not moved: a review copy is named REVIEW, carries everything
+         * outstanding on its first page, and cannot be mistaken for the
+         * submission.
+         */
+        html`<div class="actions" style="padding:11px 17px 0">
+          <span style="font-size:12.5px;color:var(--text-3)">
+            ${readiness.exportable
+              ? "Take it out in the questionnaire's own structure — nothing is renumbered or regrouped:"
+              : 'Not ready to send, and readable now — a review copy marked REVIEW, with what is outstanding on its first page:'}
+          </span>
+          <button class="btn sm${raw(readiness.exportable ? '' : ' quiet')}" data-render="DOCX" data-render-bid="${bid.id}"
+            ${raw(readiness.exportable ? '' : 'data-render-review="1"')}>
+            ${readiness.exportable ? 'Word' : 'Word — review copy'}
+          </button>
+          <button class="btn sm quiet" data-render="XLSX" data-render-bid="${bid.id}"
+            ${raw(readiness.exportable ? '' : 'data-render-review="1"')}>
+            ${readiness.exportable ? 'Spreadsheet' : 'Spreadsheet — review copy'}
+          </button>
+          <button class="btn sm quiet" data-render="TEXT" data-render-bid="${bid.id}"
+            ${raw(readiness.exportable ? '' : 'data-render-review="1"')}>
+            ${readiness.exportable ? 'Copy-ready text' : 'Copy-ready text — review copy'}
+          </button>
+        </div>`
       }
       ${
         readiness.blocking.length > 0

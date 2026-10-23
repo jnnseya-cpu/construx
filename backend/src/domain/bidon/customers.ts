@@ -166,6 +166,23 @@ export function maySeeCustomer(customer: CustomerAccount, actorId: string): bool
   return customer.openedBy === actorId;
 }
 
+/**
+ * Whether this person may see that customer, without refusing if they may not.
+ *
+ * For the places that are **filtering** rather than loading: a lookup across a
+ * library has to skip what the caller cannot see, and `requireVisibleCustomer`
+ * refuses instead of answering. Both read the same rule, so there is no second
+ * definition of who may see a customer.
+ */
+export function customerVisible(ctx: EngineContext, customerId: string): boolean {
+  try {
+    requireVisibleCustomer(ctx, customerId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Load a customer this person is allowed to see, or refuse as a denial rather than a 404. */
 export function requireVisibleCustomer(ctx: EngineContext, customerId: string): CustomerAccount {
   const customer = requireCustomerRecord(ctx, customerId).state as unknown as CustomerAccount;

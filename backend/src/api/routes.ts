@@ -13760,6 +13760,14 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'GET',
+    pattern: '/v1/bid-on/evidence',
+    readOnly: true,
+    description:
+      'Every document this person may see, across the customers they are assigned to — reference, title, type, whether anything has been read out of it and whether it is embedded. The list the console turns into a chooser, so no panel has to ask somebody to type an id or to pick the right one of the three values on a library row',
+    handler: (platform, ctx) => bidOnEvidence.visibleEvidence(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
     pattern: '/v1/bid-on/customers/:customerId/evidence',
     readOnly: true,
     guest: 'OWN',
@@ -14494,13 +14502,14 @@ export const ROUTES: Route[] = [
     quoteScope: 'TENANT',
     ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING' },
     description:
-      'Draft one answer from this customer’s own evidence. Retrieval runs first and if it returns nothing the command raises a gap instead of drafting, because a model asked to answer a question its evidence cannot support writes exactly the uncited claim that gets a submission thrown out',
+      'Draft one answer from this customer’s own evidence. Retrieval runs first and if it returns nothing the command raises a gap instead of drafting, because a model asked to answer a question its evidence cannot support writes exactly the uncited claim that gets a submission thrown out. A question already waiting on the customer is refused unless `overOpenGap` says to draft from what is known anyway — the model is then told what is outstanding, and the answer carries the gap for whoever reviews it',
     schema: {
       type: 'object',
       required: ['questionId'],
       properties: {
         questionId: stringField,
         reviewerInstructions: { type: 'string', maxLength: 2000 },
+        overOpenGap: { type: 'boolean' },
       },
       additionalProperties: false,
     },
@@ -14638,13 +14647,14 @@ export const ROUTES: Route[] = [
     pattern: '/v1/bid-on/bids/:bidId/render',
     readOnly: true,
     description:
-      'The pack in the questionnaire’s own structure: DOCX, XLSX with a sheet per section, or copy-ready text per question for an online portal. Nothing is sorted or renumbered — a file a buyer has to rebuild by hand is where the numbering stops matching. Refused unless the export gate has passed, or the gate would be a formality',
+      'The pack in the questionnaire’s own structure: DOCX, XLSX with a sheet per section, or copy-ready text per question for an online portal. Nothing is sorted or renumbered — a file a buyer has to rebuild by hand is where the numbering stops matching. A pack that cannot be submitted renders as a review copy with `review=1` — named REVIEW, listing everything outstanding on its first page — because reviewing a pack is how it gets finished; without the flag it is refused, or the export gate would be a formality',
     handler: (platform, ctx) =>
       bidOnBids.renderPack(
         tenantContext(platform, ctx),
         ctx.params.bidId as string,
         ((ctx.query.get('format') ?? 'DOCX').toUpperCase() as 'DOCX' | 'XLSX' | 'TEXT'),
         platform.exports.branding(auth(ctx).tenantId),
+        { review: ctx.query.get('review') === '1' || ctx.query.get('review') === 'true' },
       ),
   },
   {

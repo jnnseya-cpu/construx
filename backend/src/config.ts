@@ -1118,6 +1118,26 @@ export const config = {
      * Only OPENAI and GEMINI are accepted. Anthropic publishes no embedding
      * endpoint, and mapping it onto another vendor's would bill the wrong one.
      */
+    /**
+     * Which vendor embeds text, where the operator wants a specific one.
+     *
+     * **Blank now means "whichever vendor is configured"**, not "off". It used
+     * to mean off, so semantic search was unavailable on every deployment until
+     * somebody set a second variable naming a vendor whose key the platform
+     * already held and was already calling for every other AI task — and the
+     * symptom was `AI_EMBEDDING_NOT_CONFIGURED` on a deployment where AI
+     * plainly worked, with an SSH session as the remedy.
+     *
+     * The old reasoning was that a default would mean "every deployment
+     * silently started spending on embeddings the moment a key was set for
+     * something else". That is not how this spends: **nothing on the platform
+     * embeds automatically.** Each of the four paths is a command somebody
+     * presses with the price on screen first.
+     *
+     * `off` turns it off. A name pins it, and is honoured even if that vendor
+     * has no key — an operator who asked for one vendor is told it is
+     * unconfigured rather than quietly given another.
+     */
     embeddingProvider: str('AI_EMBEDDING_PROVIDER', ''),
     openaiKey: str('OPENAI_API_KEY', ''),
     geminiKey: str('GEMINI_API_KEY', ''),

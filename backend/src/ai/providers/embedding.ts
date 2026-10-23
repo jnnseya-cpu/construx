@@ -1,4 +1,5 @@
 import { config } from '../../config.ts';
+import { secretFor } from '../../identity/credentials.ts';
 import { DomainError } from '../../core/errors.ts';
 import type { AIProvider } from '../../goldenthread/types.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from './types.ts';
@@ -198,8 +199,14 @@ const GEMINI_EMBEDDING: EmbeddingEndpoint = {
  * billed the wrong vendor for every pound.
  */
 const EMBEDDING_PROVIDERS: Partial<Record<AIProvider, { endpoint: EmbeddingEndpoint; key: () => string }>> = {
-  OPENAI: { endpoint: OPENAI_EMBEDDING, key: () => config.ai.openaiKey },
-  GEMINI: { endpoint: GEMINI_EMBEDDING, key: () => config.ai.geminiKey },
+  // Through `secretFor`, which is the platform's one rule for where a secret
+  // comes from: the credential store first, then the environment, and neither
+  // where the operator has retired the file copy. This read `config` directly,
+  // so a key set from the console — the supported way to set one — was
+  // invisible here, and the vendor that was answering every other AI call
+  // reported itself as unconfigured for embeddings alone.
+  OPENAI: { endpoint: OPENAI_EMBEDDING, key: () => secretFor('OPENAI_API_KEY') },
+  GEMINI: { endpoint: GEMINI_EMBEDDING, key: () => secretFor('GEMINI_API_KEY') },
 };
 
 /** Which vendors this platform can ask for an embedding at all. */
@@ -423,10 +430,53 @@ export function textsOf(request: ProviderRequest): string[] {
  * falling back to something that is not an embedding.
  */
 export function configuredEmbeddingAdapter(): EmbeddingAdapter | undefined {
-  const name = config.ai.embeddingProvider;
-  if (name === '' || !hasEmbeddingEndpoint(name)) return undefined;
   if (config.ai.mode === 'local') return undefined;
-  return new EmbeddingAdapter(name);
+
+  const asked = config.ai.embeddingProvider.trim();
+
+  /*
+   * Off, where the operator has said so.
+   *
+   * Kept as an explicit value because turning a capability off is a decision
+   * somebody may genuinely want, and the way to express it used to be leaving
+   * the variable blank — which is also what a deployment that has never heard
+   * of the variable looks like. Those are not the same thing and should not
+   * have the same effect.
+   */
+  if (/^(off|none|no)$/i.test(asked)) return undefined;
+
+  if (asked !== '') {
+    // Named, and honoured whether or not it holds a key: an operator who asked
+    // for a specific vendor is told that vendor is unconfigured rather than
+    // quietly given another one.
+    return hasEmbeddingEndpoint(asked) ? new EmbeddingAdapter(asked) : undefined;
+  }
+
+  /*
+   * Nothing named: use the vendor that is already configured.
+   *
+   * This used to return nothing, and semantic search was therefore off on
+   * every deployment until somebody set a second variable naming a vendor
+   * whose key the platform already held and was already calling for every
+   * other AI task. The reason given was that defaulting it would mean "every
+   * deployment silently started spending on embeddings the moment a key was
+   * set for something else" — and that is not how any of this spends. **There
+   * is no automatic embedding anywhere on the platform.** Every one of the
+   * four paths is a command somebody presses with the price on screen first:
+   * `embedFile`, `embedEvidence`, the semantic search routes. Nothing embeds on
+   * upload, on reading, or on a schedule.
+   *
+   * So the variable was not protecting anybody from a surprise charge. It was
+   * making a capability look broken — `AI_EMBEDDING_NOT_CONFIGURED` on a
+   * deployment whose OpenAI key works perfectly — and the remedy was an SSH
+   * session and a container restart.
+   *
+   * `AI_EMBEDDING_PROVIDER` still names a vendor where the operator wants a
+   * specific one, and `off` still turns it off.
+   */
+  return EMBEDDING_PROVIDER_NAMES.map((name) => ({ name, key: EMBEDDING_PROVIDERS[name]?.key() ?? '' }))
+    .filter((candidate) => candidate.key !== '')
+    .map((candidate) => new EmbeddingAdapter(candidate.name))[0];
 }
 
 /** The two exported so a test can check the body each vendor is actually sent. */

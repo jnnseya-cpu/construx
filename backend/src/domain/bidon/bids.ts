@@ -155,6 +155,20 @@ export type BidAnswerVersion = {
    * through this command and is checked exactly as a fresh answer is.
    */
   carriedFrom?: { bidId: string; bidReference: string; answerId: string; questionNumber: string };
+  /**
+   * The open gap this answer was deliberately written over.
+   *
+   * A gap says the customer has been asked for something. Drafting before it
+   * comes back used to be refused outright, which on a tender that closes on
+   * Friday is the platform deciding something that is not its to decide — there
+   * is often an answer worth writing from what *is* known. The only honest
+   * condition is that a reviewer can see it was written that way, so the choice
+   * is recorded here, on the answer, and the pack and the export carry it.
+   *
+   * Absent on every ordinary answer, which is the overwhelming majority: it is
+   * set only where somebody explicitly asked to draft over an open gap.
+   */
+  draftedOverGap?: { gapId: string; prompt: string };
 };
 
 export const BID_STAGE = ['PQQ', 'ITT', 'SINGLE_STAGE'] as const;
@@ -886,6 +900,8 @@ export function recordAnswer(
      * provenance, verified rather than taken on trust.
      */
     carriedFrom?: { bidId: string; answerId: string };
+    /** The open gap this answer was deliberately written over, where it was. */
+    draftedOverGap?: { gapId: string; prompt: string };
   },
 ): { bid: Bid; answer: BidAnswerVersion } {
   requireModule(ctx.grantedModules, 'BID_ON');
@@ -967,6 +983,7 @@ export function recordAnswer(
     authorship: input.authorship ?? 'HUMAN',
     ...(input.provider ? { provider: input.provider } : {}),
     ...(carriedFrom ? { carriedFrom } : {}),
+    ...(input.draftedOverGap ? { draftedOverGap: input.draftedOverGap } : {}),
     status: 'IN_REVIEW',
     writtenAt: new Date().toISOString(),
     writtenBy: ctx.auth.actorId,
@@ -1111,11 +1128,26 @@ export function approveAnswer(
   }
 
   if (answer.authorship === 'HUMAN' && answer.writtenBy === ctx.auth.actorId) {
+    /*
+     * The one control in this module that is not friction, and the refusal now
+     * says what to do instead of only what is wrong.
+     *
+     * It stays because it is the whole of the two-person check: a statement
+     * going to a buyer, written and approved by one person, has had one
+     * person's judgement applied to it. What was missing is that there are
+     * **three** ways on, and the second is one nobody would guess — this rule
+     * applies to an answer a *person* wrote, so an agent's draft that this same
+     * person reviews and signs is already the two-person check and is already
+     * allowed. A one-person company is not blocked; it is told how the check
+     * works.
+     */
     throw new DomainError(
       'BID_ON_SELF_APPROVAL',
-      'You wrote this answer, so you cannot be the one who approves it. Where an agent drafted it a reviewer signing ' +
-        'is the two-person check; where a person wrote it, the same person approving is one person at both ends of a ' +
-        'statement going to a buyer.',
+      'You wrote this answer, so you cannot also be the one who approves it — one person at both ends of a ' +
+        'statement going to a buyer is no check at all. Three ways on: have the director approve it (the control is ' +
+        'on their screen and not on yours); or let the drafter write it and approve that, because an agent drafting ' +
+        'and a person signing *is* the two-person check and this rule applies only to an answer a person wrote; or ' +
+        'have somebody else rewrite it.',
       409,
     );
   }
@@ -2603,6 +2635,23 @@ export type RenderedPack = {
   /** Sections in the buyer's own order, so a reader can check the structure. */
   sections: string[];
   questions: number;
+  /**
+   * True where this is a **review copy** of a pack that cannot be submitted.
+   *
+   * The gate refuses to render a sendable file from a pack that is not sendable,
+   * and that is right — but it also meant nobody could *read* the pack until
+   * every mandatory answer was approved and every mandatory returnable was in,
+   * which is the day before the return. Reviewing a pack is how it gets
+   * finished; the gate was stopping the work rather than the submission.
+   *
+   * So a review copy renders, and renders differently: the filename says
+   * REVIEW, the first page lists what is outstanding, and `outstanding` carries
+   * the same list for a screen. A file that escapes onto somebody's desktop
+   * cannot be mistaken for the submission.
+   */
+  review?: true;
+  /** What makes this pack unsendable, where it is. Empty on a final pack. */
+  outstanding?: string[];
 };
 
 /**
@@ -2643,6 +2692,17 @@ export function renderPack(
    * buyer's own template and portal text carries no formatting at all.
    */
   branding: ClientBranding,
+  options: {
+    /**
+     * Render a pack that cannot be submitted, as a review copy.
+     *
+     * Asked for explicitly, never inferred: the difference between the file
+     * somebody reads on Wednesday and the file that goes to the buyer on
+     * Friday has to be a decision somebody made, and it has to be visible on
+     * the file itself.
+     */
+    review?: boolean;
+  } = {},
 ): RenderedPack {
   requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'I', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -2651,23 +2711,56 @@ export function renderPack(
   const position = bidPosition(ctx, bidId);
 
   /*
-   * Refused unless the pack has been through the export gate.
+   * A pack that cannot be submitted can still be read.
    *
-   * Without this the gate would be a formality: somebody blocked from
+   * The gate stays: nothing renders a **sendable** file from a pack that is not
+   * sendable, or the gate would be a formality — somebody blocked from
    * exporting could render the same file and send it. The check is the
    * readiness position rather than the status, so a pack that became unsendable
-   * after export — a certificate that lapsed, an answer rejected — cannot be
-   * rendered either.
+   * after export cannot be rendered as final either.
+   *
+   * What was wrong was the other half. Reviewing a pack is how it gets
+   * finished, and until now the only way to read one was to finish it first:
+   * every mandatory answer approved and every mandatory returnable in, which on
+   * a real tender is the last afternoon. So a review copy renders — marked,
+   * named REVIEW, and carrying what is outstanding on its own first page.
    */
-  if (!position.readiness.exportable) {
+  const outstanding = [
+    ...position.readiness.blocking.map((entry) => {
+      const question = position.questions[entry.index]?.question;
+      return `${question?.number ?? entry.index} — ${entry.reason}`;
+    }),
+    ...position.readiness.returnablesOutstanding.map((entry) => `${entry.reference} ${entry.title} — ${entry.reason}`),
+  ];
+
+  const review = !position.readiness.exportable;
+  if (review && options.review !== true) {
     throw new DomainError(
       'BID_ON_NOT_EXPORTABLE',
-      `${bid.reference} cannot be rendered: ${position.readiness.blocking.length} mandatory answer(s) are red or ` +
-        'unapproved. Rendering a file from a pack that cannot be exported would make the gate a formality — the ' +
-        'file would be sendable.',
+      `${bid.reference} cannot be rendered for submission yet: ${outstanding.join('; ')}. Rendering a sendable file ` +
+        'from a pack that cannot be sent would make the gate a formality. Ask for a review copy and it will render ' +
+        'now — marked REVIEW, with everything outstanding on its first page — which is what reviewing it before the ' +
+        'last afternoon needs.',
       422,
+      [{ field: 'review', message: 'Render a review copy instead, and this works now' }],
     );
   }
+
+  /**
+   * What a review copy says about itself, in one place.
+   *
+   * Three formats and one sentence: a file whose status depended on which
+   * renderer produced it is a file somebody sends by accident.
+   */
+  const reviewHeading = 'REVIEW COPY — NOT FOR SUBMISSION';
+  const reviewLines = review
+    ? [
+        reviewHeading,
+        `${outstanding.length} item${outstanding.length === 1 ? '' : 's'} outstanding:`,
+        ...outstanding.map((entry) => `  · ${entry}`),
+      ]
+    : [];
+  const marked = (name: string): string => (review ? `REVIEW-${name}` : name);
 
   // The buyer's own sections, in first-appearance order. Not sorted and not
   // deduplicated by name alone: two sections genuinely called "Appendix" stay
@@ -2709,11 +2802,14 @@ export function renderPack(
     return {
       reference: bid.reference,
       format,
-      content: `${bid.buyerName} — ${bid.reference}\n\n${text}`,
+      content:
+        (review ? `${reviewLines.join('\n')}\n\n${'='.repeat(60)}\n\n` : '') +
+        `${bid.buyerName} — ${bid.reference}\n\n${text}`,
       contentType: 'text/plain; charset=utf-8',
-      filename: `${bid.reference}-${bid.scheme.toLowerCase()}.txt`,
+      filename: marked(`${bid.reference}-${bid.scheme.toLowerCase()}.txt`),
       sections,
       questions: position.questions.length,
+      ...(review ? { review: true as const, outstanding } : {}),
     };
   }
 
@@ -2721,7 +2817,17 @@ export function renderPack(
     // A sheet per section, a row per question, in source order. The columns
     // carry what a buyer's own template carries plus the evidence reference,
     // which is what lets their evaluator check a claim without asking.
-    const sheets = sections.map((section) => ({
+    const sheets = (review
+      ? [
+          {
+            name: 'REVIEW — not for submission',
+            headers: ['Outstanding'],
+            widths: [120],
+            rows: [[reviewHeading], ...outstanding.map((entry) => [entry])] as Array<Array<string | number | null>>,
+          },
+        ]
+      : []
+    ).concat(sections.map((section) => ({
       name: section,
       headers: ['Number', 'Question', 'Answer', 'Words', 'Limit', 'Evidence'],
       widths: [10, 60, 90, 8, 8, 24],
@@ -2735,22 +2841,38 @@ export function renderPack(
           entry.question.wordLimit ?? null,
           (entry.answer?.citations ?? []).map((citation) => citation.reference).join(', '),
         ] as Array<string | number | null>),
-    }));
+    })));
 
     return {
       reference: bid.reference,
       format,
       content: Buffer.from(renderXlsx(sheets)).toString('base64'),
       contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      filename: `${bid.reference}-${bid.scheme.toLowerCase()}.xlsx`,
+      filename: marked(`${bid.reference}-${bid.scheme.toLowerCase()}.xlsx`),
       sections,
       questions: position.questions.length,
+      ...(review ? { review: true as const, outstanding } : {}),
     };
   }
 
   // DOCX, through the platform's own document model — so the branding, the
   // hashing and the renderer are the ones every other issued document uses.
   const blocks: DocumentBlock[] = [
+    // A review copy says so before anything else on the page, and lists what
+    // is outstanding. A reader who opens this on Wednesday has to be unable to
+    // mistake it for Friday's file.
+    ...(review
+      ? ([
+          { kind: 'HEADING', level: 1, text: reviewHeading },
+          {
+            kind: 'PARAGRAPH',
+            text:
+              `This is a working copy of ${bid.reference} for review. It is not the submission and must not be sent ` +
+              `to the buyer. ${outstanding.length} item${outstanding.length === 1 ? '' : 's'} are outstanding:`,
+          },
+          ...outstanding.map((entry) => ({ kind: 'PARAGRAPH' as const, text: `· ${entry}` })),
+        ] as DocumentBlock[])
+      : []),
     {
       kind: 'KEY_VALUES',
       rows: [
@@ -2791,7 +2913,9 @@ export function renderPack(
   const bytes = renderDocx({
     id: bid.id,
     reference: bid.reference,
-    title: `${bid.buyerName} — ${bid.scheme} submission`,
+    title: review
+      ? `${bid.buyerName} — ${bid.scheme} submission (REVIEW COPY, not for submission)`
+      : `${bid.buyerName} — ${bid.scheme} submission`,
     subtitle: position.customer.legalName,
     branding,
     audience: 'CLIENT',
@@ -2819,8 +2943,9 @@ export function renderPack(
     format,
     content: Buffer.from(bytes).toString('base64'),
     contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    filename: `${bid.reference}-${bid.scheme.toLowerCase()}.docx`,
+    filename: marked(`${bid.reference}-${bid.scheme.toLowerCase()}.docx`),
     sections,
     questions: position.questions.length,
+    ...(review ? { review: true as const, outstanding } : {}),
   };
 }

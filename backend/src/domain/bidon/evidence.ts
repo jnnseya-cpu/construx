@@ -6,7 +6,7 @@ import { requireModule, requireModuleReadable } from '../../identity/modules.ts'
 // cosine implementation that refuses mismatched dimensions, and one similarity
 // floor, so Bid-On's retriever and the record's cannot drift apart on either.
 import { cosine, MINIMUM_SIMILARITY } from '../../datalayer/vectorindex.ts';
-import { requireVisibleCustomer } from './customers.ts';
+import { customerVisible, requireVisibleCustomer } from './customers.ts';
 
 /**
  * The per-customer evidence library.
@@ -194,37 +194,71 @@ export function evidenceOf(ctx: EngineContext): BidOnEvidence[] {
  * assigned to one customer could read another's insurance schedule by id.
  */
 export function requireEvidence(ctx: EngineContext, evidenceId: string): BidOnEvidence {
-  const record = ctx.ledger.get({ refType: 'BidOnEvidence', refId: evidenceId });
-  if (!record || record.tenantId !== ctx.tenantId) {
-    /*
-     * The commonest way to get here, and it is the screen's fault rather than
-     * the caller's.
-     *
-     * A library row carries two copyable values: the item's id, which these
-     * commands take, and the document's content hash, which the questionnaire
-     * parser and the amendments reading take. Somebody who copies the wrong one
-     * gets "no evidence sha256:309b…", reads it as the document being missing,
-     * and goes looking for an upload that worked perfectly.
-     *
-     * So the refusal recognises what it was handed. A value is a hash rather
-     * than an id when it says so, and saying which is which costs one branch.
-     */
-    if (evidenceId.startsWith('sha256:')) {
-      throw new DomainError(
-        'BID_ON_EVIDENCE_NOT_FOUND',
-        'That is a document hash, not an evidence id. The hash is what the questionnaire parser and the amendments ' +
-          'reading take; these commands take the item itself. Both are on the library row — the id is the short ' +
-          'underlined code, and Copy hash is the button beside it.',
-        404,
-        [{ field: 'evidenceId', message: 'The short underlined code on the library row, not the Copy hash button' }],
-      );
-    }
-    throw new DomainError('BID_ON_EVIDENCE_NOT_FOUND', `No evidence ${evidenceId}`, 404);
+  const asked = evidenceId.trim();
+  const record = ctx.ledger.get({ refType: 'BidOnEvidence', refId: asked });
+  if (record && record.tenantId === ctx.tenantId) {
+    const evidence = record.state as unknown as BidOnEvidence;
+    // Throws if this person is not assigned to that customer or a guest of it.
+    requireVisibleCustomer(ctx, evidence.customerAccountId);
+    return evidence;
   }
-  const evidence = record.state as unknown as BidOnEvidence;
-  // Throws if this person is not assigned to that customer or a guest of it.
-  requireVisibleCustomer(ctx, evidence.customerAccountId);
-  return evidence;
+
+  /*
+   * Whatever the person actually copied.
+   *
+   * A library row carries three values somebody might reasonably paste: the
+   * item's id, the document's content hash, and the item's own reference
+   * (`EVD-0003`) — which is the one printed largest and the one a person would
+   * read out over the phone. The commands took only the first, and anybody who
+   * copied either of the others was told "No evidence sha256:309b…", read it as
+   * the document being missing, and went looking for an upload that had worked
+   * perfectly.
+   *
+   * The refusal used to *explain* the difference, which is better than nothing
+   * and is still not the platform doing its job. It holds all three values and
+   * can resolve any of them, so it does. Nothing is loosened by this: the
+   * customer-visibility check below is what stops one bid writer reading
+   * another customer's insurance schedule, and it runs on whatever was
+   * resolved, by whichever route.
+   */
+  const visible = evidenceOf(ctx).filter((item) => customerVisible(ctx, item.customerAccountId));
+  const byHash = asked.startsWith('sha256:') ? visible.filter((item) => item.hash === asked) : [];
+  const byReference = visible.filter((item) => item.reference.toUpperCase() === asked.toUpperCase());
+  const found = byHash.length > 0 ? byHash : byReference;
+
+  if (found.length === 1) {
+    const evidence = found[0]!;
+    requireVisibleCustomer(ctx, evidence.customerAccountId);
+    return evidence;
+  }
+
+  /*
+   * The same document filed twice, for two customers.
+   *
+   * A hash is the address of *contents*, and two customers can file the same
+   * standard certificate — so a hash is not always one item. Resolving it to
+   * whichever came first would act on one customer's record while somebody was
+   * looking at another's, which is the one outcome worse than a refusal.
+   */
+  if (found.length > 1) {
+    throw new DomainError(
+      'BID_ON_EVIDENCE_AMBIGUOUS',
+      `${found.length} items hold that document: ${found.map((item) => `${item.reference} (${item.title})`).join(', ')}. ` +
+        'Give the id or the reference of the one you mean — the same file can be filed for more than one customer, ' +
+        'and the hash is the address of the contents rather than of the record.',
+      409,
+      [{ field: 'evidenceId', message: 'The reference or id of the item, not the document hash' }],
+    );
+  }
+
+  throw new DomainError(
+    'BID_ON_EVIDENCE_NOT_FOUND',
+    `Nothing in this library is ${asked}. An item's id, its reference (EVD-0001) and its document hash all work ` +
+      'here; all three are on the library row. If the document was only just filed, open the library again — a row ' +
+      'that is not there yet is a filing that has not landed.',
+    404,
+    [{ field: 'evidenceId', message: 'An id, a reference or a document hash from the library' }],
+  );
 }
 
 // --- Filing --------------------------------------------------------------
@@ -580,6 +614,69 @@ export type EvidenceLibrary = {
  * optional filter is one forgotten parameter away from returning the provider's
  * whole book, and the one place it would be forgotten is the retriever.
  */
+/**
+ * Every document this person may see, across the customers they are assigned
+ * to. `R` on `BID_SERVICES`.
+ *
+ * ## Why this exists
+ *
+ * Because six commands asked somebody to **type an id**. Reading a document,
+ * embedding it, correcting it, withdrawing it, typing its passages, parsing a
+ * questionnaire out of it and reading a schedule of amendments all took an
+ * identifier as free text, with a hint explaining which of the three values on
+ * a library row to copy. The library itself is per customer and is loaded only
+ * once a customer has been chosen, so a panel could not offer a list — and the
+ * commonest refusal in the whole module was somebody pasting the wrong one of
+ * the three, or pasting nothing at all because the panel did not make clear
+ * that a document was needed.
+ *
+ * One list makes every one of those panels a chooser. Nothing is loosened: the
+ * items are the ones `requireEvidence` would resolve for this person, under the
+ * same per-customer visibility rule, which is also why this cannot be derived
+ * in the browser from what it happens to have loaded.
+ *
+ * Deliberately small — no passages, no extracted text. It is a chooser's list,
+ * and a library of three hundred documents should not send three hundred
+ * documents' text to populate a dropdown.
+ */
+export type EvidenceChoice = {
+  id: string;
+  reference: string;
+  title: string;
+  type: EvidenceType;
+  customerAccountId: string;
+  hash: string;
+  /** Whether anything has been read out of it. An item with none cannot be embedded or cited. */
+  read: boolean;
+  /** Whether its passages are embedded, and by which model. */
+  embedded?: string;
+  /** Withdrawn items are listed and marked, because a bid that cited one still cited it. */
+  withdrawn: boolean;
+  expiresOn?: string;
+};
+
+export function visibleEvidence(ctx: EngineContext): { evidence: EvidenceChoice[] } {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  return {
+    evidence: evidenceOf(ctx)
+      .filter((item) => customerVisible(ctx, item.customerAccountId))
+      .map((item) => ({
+        id: item.id,
+        reference: item.reference,
+        title: item.title,
+        type: item.type,
+        customerAccountId: item.customerAccountId,
+        hash: item.hash,
+        read: item.chunks.length > 0,
+        ...(item.semanticModel ? { embedded: item.semanticModel.provider } : {}),
+        withdrawn: item.withdrawnAt !== undefined,
+        ...(item.expiresOn ? { expiresOn: item.expiresOn } : {}),
+      })),
+  };
+}
+
 export function evidenceLibrary(
   ctx: EngineContext,
   customerAccountId: string,

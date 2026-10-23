@@ -450,7 +450,32 @@ function article(word) {
   return /^[aeiou]/i.test(String(word ?? '')) ? 'an' : 'a';
 }
 
-export function command({ title, intent, path, fields, submitLabel = 'Submit', transform, aiCost = false, method = 'POST' }) {
+export function command({
+  title,
+  intent,
+  path,
+  fields,
+  submitLabel = 'Submit',
+  transform,
+  aiCost = false,
+  method = 'POST',
+  /**
+   * A rule the form can check for itself, before anything is sent.
+   *
+   * For the one shape a schema cannot express and a person should not discover
+   * from the server: **either of these two fields, but not neither.** The
+   * questionnaire reader takes a filed document or pasted text, so both are
+   * optional — which made the panel look as though neither was needed, and
+   * pressing the button with both empty produced a refusal from the platform
+   * about a form it had just offered as complete.
+   *
+   * Returns nothing when the form is good, or `{ field, message }` to place a
+   * refusal on that field — the same box a server field error lands in, so a
+   * person reads one kind of correction in one place. The platform still
+   * enforces the rule; this only stops the round trip.
+   */
+  validate,
+}) {
   const missing = missingPrerequisites(fields);
   if (missing.length > 0) return nothingToChoose({ title, intent, missing });
 
@@ -581,6 +606,16 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
           submit.textContent = progress;
         });
         submit.textContent = 'Working…';
+
+        // The form's own rule, where it has one. Shown exactly as a server
+        // field error is, and nothing is sent.
+        const refusal = validate?.(collected);
+        if (refusal) {
+          throw new ApiError(
+            { title: 'FIELD_REQUIRED', detail: refusal.message, errors: [{ field: refusal.field, message: refusal.message }] },
+            400,
+          );
+        }
 
         /*
          * One command per document.
