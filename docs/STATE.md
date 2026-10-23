@@ -28175,3 +28175,148 @@ Still true: a walk proves the path is *reachable*, not that every refusal on it
 is correct — the domain suite does that — and neither proves the tender path is
 finished. What is now closed is the class of defect where a correct command has
 no way in.
+
+## A tender becomes work when it is won, and not before
+
+Four instructions in one sentence, after a tender was lost and the platform
+carried on as though it had not been: *a project at tender must be a validated
+win to move to the next stage; if it is not, the process stops there; feedback
+can be entered for the AI agents to improve; and the tendered amount must become
+zero at portfolio level, everywhere.*
+
+**The award gate was stated twice and enforced nowhere.** The lifecycle table
+calls the award "a separate authorised act"; the routes say "an award reachable
+from the same dropdown as 'put it on hold' is a contract award nobody reviewed".
+The transition table nonetheless permits `AWARD_PENDING → LIVE_MOBILISING` and
+`ON_HOLD → LIVE_ACTIVE`, and `setLifecycleState` checked neither — so a project
+that had never been awarded became live delivery work by typing a sentence, and
+from that instant counted as live capacity, carried its tendered figure as
+contract value in every roll-up, and had none of the records a converted project
+has: no tender baseline, no award baseline, nothing reconciling the two, no
+inheritance register, no conversion receipt. `AWARD_REQUIRED` now refuses it and
+names the gate. The check is on `awardedAt`, which only `convertToDelivery`
+writes, so **resuming is not awarding**: a suspended or held job that was
+awarded goes back to work untouched.
+
+**A lost tender stopped being terminal in name only.** `CLOSED_LOST` was
+terminal in the table and in nothing else — every command on the platform still
+accepted writes against a bid the business had lost, onto an append-only chain
+that cannot be tidied up afterwards. `stopsWork()` derives the three states where
+the project never became work (lost, withdrawn, cancelled) from the two flags
+already on the table, and `write()` — the one function every state change passes
+through — refuses there. It is a stop and not a trap: the reopen, the outcome,
+a correction to the project's own details and an export of its record all still
+work, and `CLOSED_COMPLETE` and `TERMINATED` are untouched because a final
+account, a defect and thirty years of O&M all legitimately land on a finished
+job.
+
+**The feedback had nowhere to go.** Two roads carry a tender into this platform.
+A business that registers each pursuit on Pipeline & Bids settles it against an
+`Opportunity` and `recordBidOutcome` has existed for that all along. A business
+that opens a project at `TENDER` and bids from it — the road the compliance
+matrix, the estimate, the response pack and the award gate are all built on —
+could settle nothing. So `tenderOutcome` was a field declared on the control
+report and written by nothing, the slot on the screen said "no outcome recorded"
+on every project there has ever been, the win rate said "no bid outcome has been
+recorded" for ever, every calibration signal was empty, and the one thing a
+business learns from losing went into an email folder.
+
+New: `TENDER_OUTCOME_RECORDED` (the name the event catalogue had promised and
+never defined), `recordTenderOutcome`, `POST /v1/projects/:projectId/tender/outcome`
+and **Record how the tender ended** on Project Control. It takes the result, the
+buyer's marks, the winning price where it was disclosed and the feedback
+verbatim. Two rules keep it honest: **a win is the award** — `WON` is refused
+without `awardedAt`, which is the same instruction enforced from the other side,
+so there is nowhere on the platform to assert a win without the contract behind
+it — and **a loss is not filed against a running job**. It reaches the AI through
+one change at the source: `settledBids()` is now the single definition of a
+settled bid and reads both roads, so `calibrationSignals` and `winRatePosition`
+see project bids. What a project cannot supply it does not invent — there is no
+ten-factor qualification on one, so it contributes to the overall rate and to
+the price-position signal and is absent from the win-probability breakdown.
+
+**And the money, everywhere this time.** `holdsValue` and the estate total were
+done when a lost bid was first reported. Three more aggregations read contract
+value across projects and none read the lifecycle:
+
+- `projects.contract_value` in the group report — the figure a parent company
+  plans on — summed every undeleted project;
+- `exposedContractValueMinor` on the completion forecast reported value at stake
+  on bids that cannot be lost because they already were;
+- the Portfolio Dashboard recomputed the headline in the browser and ignored
+  `countedInTotal`, so the screen's own total disagreed with the
+  `estate.contractValueMinor` in the same payload, and the sector pie's slices
+  added to a different number than the figure above them.
+
+All four now read `holdsContractValue` or the row's own `countedInTotal`, and
+none of them silently drops a project: the excluded count and value are stated
+beside every total, and a project's row still shows what it tendered with a
+**not counted** badge against it — a row showing zero would be a lie about the
+project in order to make a column add up. The estate bar chart titled "where is
+our money" no longer has a bid somebody lost in March as its tallest bar.
+
+## The site visit that is part of a tender
+
+Reported from use on a live bid: *"I have a site visit part of the tender but
+the apps section is not ready yet."*
+
+The engine was ready. `backend/src/engines/sitevisit.ts` sits under
+`LOOKAHEAD_CONSTRAINTS` rather than `FIELD_EXECUTION` precisely so it is not
+phase-gated out of a pre-award project, and its four commands are offered,
+unlocked, on a project at tender today. What was not ready was the vocabulary:
+there was no `BID` purpose, on the stated reasoning that "a bid-stage walk
+happens before a project exists and belongs with tender intake, which is
+tenant-scoped". True of one road in and false of the other, which is the one
+every other part of the tender machinery uses. So the only options were to
+mislabel the walk `PRE_CONSTRUCTION` — on work the business had not won — or to
+keep the findings in a notebook, which is the exact failure the engine exists to
+end. Tender intake recorded *when* the buyer's visit was and had nowhere to put
+what it found.
+
+- **`BID` is now a purpose**, first in the list because it is first in time, and
+  refused once the phase is past tender: a bid walk on a job in construction is
+  a mislabelled progress walk, and the purpose cannot be corrected once it is on
+  the chain. Checked against the phase rather than the lifecycle state, because
+  a project can sit at `PRE_AWARD` with its phase well past tender.
+- **`TENDER_RETURN` is now a discharge point**, and the only one on the register
+  that cannot move. A finding that prices something has to reach the price
+  before the submission goes back; found on the walk and left to close at
+  mobilisation it is a cost the business has agreed to carry for nothing.
+  Surfaced as `tenderBlockers`, in the summary, and as its own red notice above
+  the late permissions, because it is sooner than anything else on the screen.
+- **The invitation's other two dates are read back at last.** The site visit and
+  the last date for questions were recorded at intake, raised clarifications
+  where they sat badly against the return, and were never published on the
+  position — so somebody could enter the date of the site visit that is part of
+  their tender and never see it again anywhere in the product. Both are on the
+  board now, and the site visit row carries the route to the register that takes
+  the findings. Where the pursuit names no project it says so rather than
+  offering a button that would file the walk against somebody else's job.
+- **The console stopped keeping its own copy of the vocabulary.** Five
+  hardcoded arrays in `field.js` on the argument that the console-forms test
+  catches a value the API refuses — which it does, and it cannot catch the other
+  direction, the one that actually happened: the engine would have accepted
+  `BID` and the only screen that can send one would never have offered it. The
+  position publishes them.
+
+What is **not** built, so it is not mistaken for complete: a finding owed by the
+tender return does not yet block issuing the response pack. The register states
+it, by reference, in the summary and in red; nothing refuses the submission over
+it. That gate is worth having and is named here rather than implied.
+
+Found with it, because the walk needed to open the project it had just made:
+**the shell's project picker never learned about a project created during the
+session.** `loadContext` reads the list and runs once, when there is no project
+context yet, so the picker listed what it had at sign-in — and Enterprise &
+Portfolio declares its own `draw` inside `enterprise()` which *shadows the
+import*, so creating a project repainted that screen and nothing else. Both
+halves are fixed: `refreshProjectList` runs on every draw, and the shell redraw
+is imported under a name that cannot be shadowed and used for the one command
+that changes what the estate holds.
+
+Verified: `npm test` and `npm run typecheck` clean. New tests cover the award
+refusal both ways round, the stop and its four exceptions, the project tender
+outcome reaching the calibration and the win rate, the bid visit, the tender
+return obligation, and the group report and forecast exposure dropping a lost
+bid's value. `tools/tender-walk.mjs` now walks twenty-two steps: the whole
+tender, the bid site visit, the loss, the feedback and the stop.

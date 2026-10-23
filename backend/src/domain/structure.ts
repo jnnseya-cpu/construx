@@ -559,6 +559,43 @@ export function setLifecycleState(
     ]);
   }
 
+  /*
+   * A tender becomes work when it is won, and only then.
+   *
+   * The intent was stated in two places and enforced in neither. The lifecycle
+   * table comments say the award is "a separate authorised act"; the routes say
+   * "an award reachable from the same dropdown as 'put it on hold' is a
+   * contract award nobody reviewed". But the transition table lets two moves
+   * through — `AWARD_PENDING → LIVE_MOBILISING` and `ON_HOLD → LIVE_ACTIVE` —
+   * and this command checked neither. So a project that had never been awarded
+   * could be made live delivery work by typing a sentence, and from that
+   * instant it counted as live capacity, carried its tendered figure as
+   * contract value in every roll-up, and opened none of the records a converted
+   * project opens: no tender baseline, no award baseline, no reconciliation, no
+   * inheritance register, no conversion receipt.
+   *
+   * `convertToDelivery` is the gate, and it is the gate because it demands the
+   * award: the contract sum, the form, the scope, the dates, and evidence. The
+   * check here is `awardedAt`, which only that command writes.
+   *
+   * Resuming is not awarding. A suspended or held job that *was* awarded keeps
+   * its `awardedAt`, so putting it back to work is unaffected — which is the
+   * point of testing the award rather than the state it is coming from.
+   */
+  const awardedAt = typeof project.state.awardedAt === 'string' ? project.state.awardedAt : '';
+  if (lifecycleState(input.to).live && !lifecycleState(from).live && awardedAt === '') {
+    throw new DomainError(
+      'AWARD_REQUIRED',
+      `${String(project.state.name)} has no recorded award, so it cannot become ${lifecycleLabel(input.to)}. ` +
+        'A win is validated by converting the project on the award gate — the contract sum, the form, the scope and ' +
+        'the dates — which is what opens the tender and award baselines and the reconciliation between them. ' +
+        'Moving the state instead would make it live delivery work with no contract behind it and nothing to ' +
+        'reconcile against. If the bid was not won, record the loss or the withdrawal here.',
+      409,
+      [{ field: 'to', message: 'Use the award gate to go live; this control records everything else' }],
+    );
+  }
+
   const evidence = registerEvidence(ctx, {
     type: 'LIFECYCLE_TRANSITION',
     hash: input.evidenceHash ?? hashEvidence(JSON.stringify({ project: ctx.projectId, from, to: input.to, reason: input.reason })),

@@ -367,6 +367,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    */
   def('TENDER_WON', 'Project', 'UPDATE', 'PROJECT_CONTROL', { requiresEvidence: true }),
   /*
+   * How the tender ended, and what the buyer said about it.
+   *
+   * Named in the paragraph above since the catalogue was written, and for a
+   * long time nothing emitted it: the *state* of a lost bid went onto
+   * `PROJECT_LIFECYCLE_STATE_CHANGED` and the one thing worth keeping about a
+   * loss — the buyer's own words, their marks, and what the winner priced — had
+   * nowhere to go at all unless somebody had happened to register a pipeline
+   * opportunity first. A business that opens a project at tender and bids from
+   * it therefore learned nothing from losing, because the calibration had no
+   * settled bid to read.
+   *
+   * Separate from the state change because the two happen weeks apart: the
+   * result arrives on the day, the debrief arrives when the buyer gets round to
+   * it, and a feedback field on a state transition would be a field nobody
+   * could fill in later.
+   *
+   * `aiAllowed: false`. This is a transcription of the buyer's letter by
+   * somebody holding it, and it carries a competitor's price.
+   */
+  def('TENDER_OUTCOME_RECORDED', 'Project', 'UPDATE', 'PROJECT_CONTROL'),
+  /*
    * Every lifecycle move except contract award.
    *
    * The lifecycle state is a dimension of its own — what the project *is* —

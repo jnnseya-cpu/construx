@@ -320,8 +320,17 @@ export function portfolioForecast(
     if (contractual !== undefined && result.p80 > contractual) {
       row.overrunAtP80Days = Math.round(result.p80 - contractual);
       lateAtP80 += 1;
-      exposedContractValueMinor += Number(record.state.contractValueMinor ?? 0);
-      currencies.add(String(record.state.currency ?? 'GBP'));
+      /*
+       * Exposure is value at stake, so a project whose value is not the
+       * business's to count cannot be at stake. The same rule as the estate
+       * total, through the same function: a lost tender with a leftover
+       * programme on it would otherwise report a figure the business cannot
+       * lose, in the one place a reader is looking for what it can.
+       */
+      if (holdsContractValue(currentLifecycleState(record.state))) {
+        exposedContractValueMinor += Number(record.state.contractValueMinor ?? 0);
+        currencies.add(String(record.state.currency ?? 'GBP'));
+      }
     }
 
     rows.push(row);

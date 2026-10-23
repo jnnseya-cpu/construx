@@ -11,6 +11,8 @@ import {
   type EstimateBenchmark,
 } from './costintel.ts';
 import { QUALIFICATION_CRITERIA, type OpportunityStage } from './business.ts';
+import { currentLifecycleState } from './structure.ts';
+import { lifecycleLabel, lifecycleState } from '../lifecycle/state.ts';
 
 /**
  * The loop closing on the bid — `L7.6`, §4.10.
@@ -225,6 +227,202 @@ function opportunitiesOf(ctx: EngineContext): OpportunityState[] {
     .map((record) => record.state as unknown as OpportunityState);
 }
 
+/**
+ * The tenders bid as projects, in the same shape as the pursuits bid as
+ * opportunities.
+ *
+ * Two ways into this platform with a tender, and until now only one of them
+ * ever reached the calibration. A business that registers each pursuit on
+ * Pipeline & Bids settles it against an `Opportunity`; one that opens a project
+ * at `TENDER` and bids from it — which is what the response pack, the estimate
+ * and the whole project-scoped tender path are built for — had nowhere to
+ * settle anything. So the win rate said "no bid outcome has been recorded" for
+ * ever, every signal was empty, and losing taught the business nothing.
+ *
+ * Mapped rather than duplicated: one shape, one set of signals, one definition
+ * of a settled bid. What a project cannot supply it does not pretend to — there
+ * is no ten-factor qualification on a project, so a project bid contributes to
+ * the overall rate and to the price-position signal and is simply absent from
+ * the win-probability breakdown, which is the honest answer rather than a
+ * fabricated score.
+ *
+ * The tendered figure is `tenderValueMinor` where an award has replaced the
+ * headline value, and `contractValueMinor` otherwise — so a won project's
+ * price is what it tendered, not what it was awarded.
+ */
+function projectBidsOf(ctx: EngineContext): OpportunityState[] {
+  return ctx.ledger
+    .listByTenant(ctx.tenantId, 'Project')
+    .filter((record) => record.state.status !== 'DELETED' && record.state.tenderOutcome !== undefined)
+    .map((record) => {
+      const state = record.state;
+      const outcome = state.tenderOutcome as RecordedOutcome;
+      const tendered = Number(state.tenderValueMinor ?? state.contractValueMinor ?? 0);
+      return {
+        id: record.refId,
+        title: String(state.name ?? record.refId),
+        clientName: String(state.clientName ?? ''),
+        ...(tendered > 0 ? { estimatedValueMinor: tendered } : {}),
+        stage: (outcome.outcome === 'LOST' ? 'LOST' : 'BID') as OpportunityStage,
+        outcome,
+        ...(state.sectorType ? { sectorType: String(state.sectorType) } : {}),
+      } satisfies OpportunityState;
+    });
+}
+
+/**
+ * Every settled bid the tenancy has, from either road in.
+ *
+ * One function, because "which bids count as settled" is one rule and the win
+ * rate, the calibration signals and the lessons promoted off them all have to
+ * be answering the same question.
+ */
+function settledBids(ctx: EngineContext): OpportunityState[] {
+  return [...opportunitiesOf(ctx), ...projectBidsOf(ctx)].filter((entry) => entry.outcome !== undefined);
+}
+
+/**
+ * Record how a tender bid from a project ended, and what the buyer said.
+ *
+ * ## Why a project needs this at all
+ *
+ * Asked for directly: *"if any feedback is given it can be entered for the AI
+ * agent to improve"*, about a project at tender that was not won. There was
+ * nowhere to put it. `recordBidOutcome` settles an `Opportunity`, and a project
+ * opened at `TENDER` and bid from — the path the response pack, the compliance
+ * matrix and the estimate are all built around — has no opportunity behind it
+ * unless somebody happened to register one first.
+ *
+ * So the loss was recorded as a lifecycle state with a sentence, and the one
+ * thing worth keeping about a loss — the buyer's own words, their marks, and
+ * what the winner priced — went into an email folder.
+ *
+ * ## The two rules
+ *
+ * **A win is the award, not a claim.** `WON` is refused unless the project
+ * carries an award, which only the award gate writes. This is the same rule
+ * `setLifecycleState` enforces from the other side, and it is the whole of the
+ * instruction *"all projects at tender stage must be validated win to move to
+ * the next stage"*: there is no way to assert a win anywhere on the platform
+ * without the contract behind it.
+ *
+ * **A loss is recorded against a tender, not against a running job.** `LOST`
+ * is refused on a live project. "We lost it" filed against work in progress is
+ * either a mistake or two different jobs wearing one record.
+ *
+ * Recorded once and not rewritten, exactly as the opportunity path is: an
+ * outcome that can be edited is one the calibration cannot rely on. The
+ * feedback is the exception nobody needs — it is part of the outcome and
+ * arrives with it or in the debrief, and a second outcome is a second bid.
+ */
+export function recordTenderOutcome(
+  ctx: EngineContext,
+  input: {
+    outcome: BidOutcome;
+    decidedOn: string;
+    ourPriceMinor?: number;
+    winningPriceMinor?: number;
+    winnerName?: string;
+    qualityScorePercent?: number;
+    commercialScorePercent?: number;
+    rank?: number;
+    tenderers?: number;
+    feedback?: string[];
+  },
+): RecordedOutcome {
+  authorise(ctx, 'BUSINESS_DEVELOPMENT', 'U');
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const state = project.state;
+  const name = String(state.name ?? ctx.projectId);
+
+  if (state.tenderOutcome !== undefined) {
+    const held = state.tenderOutcome as RecordedOutcome;
+    throw new DomainError(
+      'OUTCOME_ALREADY_RECORDED',
+      `${name} was recorded as ${held.outcome.toLowerCase()} on ${held.decidedOn}. An outcome that can be ` +
+        'rewritten is one the calibration cannot rely on.',
+      409,
+    );
+  }
+
+  const lifecycle = currentLifecycleState(state);
+  if (input.outcome === 'WON' && typeof state.awardedAt !== 'string') {
+    throw new DomainError(
+      'AWARD_REQUIRED',
+      `${name} carries no award, so a win cannot be recorded against it. A win is validated on the award gate — the ` +
+        'contract sum, the form, the scope and the dates — and recording one here instead would put a win on the ' +
+        'record with no contract behind it.',
+      409,
+      [{ field: 'outcome', message: 'Convert the project on the award gate first' }],
+    );
+  }
+  if (input.outcome === 'LOST' && lifecycleState(lifecycle).live) {
+    throw new DomainError(
+      'PROJECT_IS_LIVE',
+      `${name} is ${lifecycleLabel(lifecycle).toLowerCase()}, so a lost tender cannot be recorded against it. A loss ` +
+        'filed against work in progress is either a mistake or two different jobs sharing one record.',
+      409,
+    );
+  }
+
+  for (const [field, value] of [
+    ['qualityScorePercent', input.qualityScorePercent],
+    ['commercialScorePercent', input.commercialScorePercent],
+  ] as const) {
+    if (value !== undefined && (value < 0 || value > 100)) {
+      throw new DomainError('SCORE_OUT_OF_RANGE', `${field} is a percentage, between 0 and 100.`, 422, [
+        { field, message: 'Between 0 and 100' },
+      ]);
+    }
+  }
+  if (input.rank !== undefined && input.tenderers !== undefined && input.rank > input.tenderers) {
+    throw new DomainError(
+      'RANK_IMPOSSIBLE',
+      `Ranked ${input.rank} of ${input.tenderers}. One of the two figures is wrong, and which one changes what the ` +
+        'result says about the market.',
+    );
+  }
+  if (input.outcome === 'WON' && input.winningPriceMinor !== undefined) {
+    throw new DomainError(
+      'WINNING_PRICE_ON_A_WIN',
+      'A win does not carry somebody else’s winning price. Record what we tendered.',
+    );
+  }
+
+  // What we tendered, where the request does not say. The award replaces the
+  // project's headline value, so the tendered figure is kept separately from
+  // the moment of conversion and that is the one a calibration has to read.
+  const tendered = Number(state.tenderValueMinor ?? state.contractValueMinor ?? 0);
+
+  const outcome: RecordedOutcome = {
+    outcome: input.outcome,
+    decidedOn: input.decidedOn.slice(0, 10),
+    ...(input.ourPriceMinor === undefined
+      ? tendered > 0
+        ? { ourPriceMinor: tendered }
+        : {}
+      : { ourPriceMinor: input.ourPriceMinor }),
+    ...(input.winningPriceMinor === undefined ? {} : { winningPriceMinor: input.winningPriceMinor }),
+    ...(input.winnerName === undefined ? {} : { winnerName: input.winnerName }),
+    ...(input.qualityScorePercent === undefined ? {} : { qualityScorePercent: input.qualityScorePercent }),
+    ...(input.commercialScorePercent === undefined ? {} : { commercialScorePercent: input.commercialScorePercent }),
+    ...(input.rank === undefined ? {} : { rank: input.rank }),
+    ...(input.tenderers === undefined ? {} : { tenderers: input.tenderers }),
+    feedback: (input.feedback ?? []).map((line) => line.trim()).filter(Boolean),
+    recordedAt: new Date().toISOString(),
+    recordedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'TENDER_OUTCOME_RECORDED',
+    entity: { refType: 'Project', refId: ctx.projectId },
+    nextState: { ...state, tenderOutcome: outcome, commercialOutcome: input.outcome },
+  });
+
+  return outcome;
+}
+
 // --- Outcome capture — §4.10.1 ------------------------------------------------------
 
 /**
@@ -370,8 +568,10 @@ export function calibrationSignals(ctx: EngineContext, today?: string): Calibrat
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const day = today ?? new Date().toISOString().slice(0, 10);
-  const opportunities = opportunitiesOf(ctx);
-  const settled = opportunities.filter((entry) => entry.outcome !== undefined);
+  // Both roads in: a pursuit settled on the pipeline and a tender bid from a
+  // project are the same kind of evidence, and a calibration that read only one
+  // of them was blind to however the business happens to work.
+  const settled = settledBids(ctx);
   const won = settled.filter((entry) => entry.outcome!.outcome === 'WON');
   const lost = settled.filter((entry) => entry.outcome!.outcome === 'LOST');
 
@@ -1135,7 +1335,10 @@ function bandOf(entry: OpportunityState): string | undefined {
 export function winRatePosition(ctx: EngineContext, input: { baselineOn?: string } = {}): WinRatePosition {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
-  const settled = opportunitiesOf(ctx).filter((entry) => entry.outcome !== undefined);
+  // Both roads in, through the one definition of a settled bid — so a business
+  // that bids from projects rather than from pipeline pursuits has a win rate
+  // at all, instead of "no bid outcome has been recorded" for ever.
+  const settled = settledBids(ctx);
   const overall = tally(settled);
   const limits: string[] = [];
 

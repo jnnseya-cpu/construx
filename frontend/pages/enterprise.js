@@ -1,7 +1,23 @@
 import { api, session } from '../lib/api.js';
 import { badge, date, html, humanise, money, pct, raw, render, statusTone, table, toast } from '../lib/ui.js';
 import { barChart, lineChart, pieChart, gauge } from '../lib/charts.js';
-import { blockedReason, can, draw, openProject, state, tenantGrantableRoles } from '../app.js';
+/*
+ * `drawShell`, not `draw`.
+ *
+ * This screen declares its own `draw` inside `enterprise()` — a local redraw of
+ * `#view`, which is the right thing for most of what happens here and is
+ * cheaper than repainting the whole console. It also **shadows the import**,
+ * which is a trap: every `await draw()` in this file looks like a shell redraw
+ * and is not one.
+ *
+ * It cost something real. Creating a project repainted this screen, so the new
+ * project appeared in the table below and in nothing else — the shell's project
+ * picker still listed what it had at sign-in, and somebody who had just created
+ * a job could not open it until they navigated somewhere else and back. The
+ * shell redraw is kept under a name that cannot be shadowed, and used for the
+ * one command that changes what the estate holds.
+ */
+import { blockedReason, can, draw as drawShell, openProject, state, tenantGrantableRoles } from '../app.js';
 import { command, commandBar } from '../lib/command.js';
 import { editRegisteredDetails } from './documents.js';
 import { CONTINENT, COUNTRY, SECTOR_GROUPED, sectorLabel, today } from '../lib/enums.js';
@@ -529,7 +545,19 @@ export async function enterprise(root) {
             p.schedule ? badge(humanise(p.schedule.status), STATUS_TONE[p.schedule.status]) : '—',
             p.riskScore === undefined ? '—' : String(p.riskScore),
             String(p.openIssues),
-            money(p.contractValueMinor, p.currency),
+            /*
+             * The project's own value, and whether the estate counts it.
+             *
+             * Not blanked: what was tendered is a true fact about the project
+             * and a useful one in a win-rate conversation. But a reader adding
+             * this column up has to be told which rows the total above leaves
+             * out, or the two figures disagree and the screen loses the
+             * argument about which is right.
+             */
+            p.countedInTotal === false
+              ? html`${money(p.contractValueMinor, p.currency)}
+                  ${badge(`not counted · ${humanise(p.lifecycleState ?? '').toLowerCase()}`, 'warn')}`
+              : money(p.contractValueMinor, p.currency),
             /*
              * Deleting a project takes two people, so this cell has three
              * states rather than one button.
@@ -1466,6 +1494,13 @@ export async function enterprise(root) {
         );
       }
     }
+    // A new project changes what the estate holds, so the whole console has to
+    // learn about it — the picker in the bar above most of all. Everything else
+    // on this screen is a local redraw.
+    if (button.dataset.command === 'project') {
+      await drawShell();
+      return;
+    }
     await draw();
   });
   }
@@ -1490,7 +1525,13 @@ function estateCharts({ estate, financial, delivery, forecast, portfolios, proje
 
   // Contract value by project, biggest first — the estate's shape in one bar
   // chart, and the answer to "where is our money".
-  const byValue = [...live]
+  //
+  // A lost tender is not our money, so it is not in this chart. `countedInTotal`
+  // is the platform's own answer and the same one the estate total above uses;
+  // the excluded projects and their value are stated on that card rather than
+  // disappearing. A bar chart titled "where is our money" with a bid somebody
+  // lost in March as its tallest bar is the exact misreading this answers.
+  const byValue = [...live.filter((project) => project.countedInTotal !== false)]
     .sort((a, b) => (b.contractValueMinor ?? 0) - (a.contractValueMinor ?? 0))
     .slice(0, 10)
     .map((project) => ({ label: project.name ?? project.projectName ?? '—', value: project.contractValueMinor ?? 0 }));

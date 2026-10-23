@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, currentPhase, registerEvidence, write, type EngineContext } from './context.ts';
 import { raiseConstraint, type ConstraintCategory } from './planning.ts';
+import { LIFECYCLE_ORDER } from '../lifecycle/phases.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
 
 /**
@@ -69,11 +70,28 @@ import type { DocumentBlock } from '../export/exporter.ts';
 /**
  * Why the walk happened.
  *
- * There is no `BID` purpose, deliberately. A bid-stage walk happens before a
- * project exists and belongs with tender intake, which is tenant-scoped; a
- * purpose nobody can record would be a choice that fails on submission.
+ * ## The bid visit, which this used to refuse
+ *
+ * There was no `BID` purpose, and the reason given was that "a bid-stage walk
+ * happens before a project exists and belongs with tender intake, which is
+ * tenant-scoped". That is true of one of the two roads into this platform and
+ * false of the other, which is the one the rest of the tender machinery is
+ * built on: a contractor opens a project at `TENDER` and bids from it — the
+ * compliance matrix, the estimate, the response pack and the award gate all
+ * hang off that project. For them the project exists before the walk does.
+ *
+ * Tender intake records *when* the buyer's visit is, as a date on the
+ * invitation with a clarification if it sits badly against the return. It has
+ * never had anywhere to put what was found on it. So somebody walking a site as
+ * part of a live tender either mislabelled the visit `PRE_CONSTRUCTION` — on
+ * work they had not won — or kept the findings in a notebook, which is the
+ * failure this whole engine exists to end.
+ *
+ * It is first in the list because it is first in time, and it is refused once
+ * the project is live: a bid visit on a job already under construction is a
+ * mislabelled progress walk.
  */
-export const VISIT_PURPOSE = ['PRE_CONSTRUCTION', 'MOBILISATION', 'PROGRESS', 'PRE_HANDOVER'] as const;
+export const VISIT_PURPOSE = ['BID', 'PRE_CONSTRUCTION', 'MOBILISATION', 'PROGRESS', 'PRE_HANDOVER'] as const;
 export type VisitPurpose = (typeof VISIT_PURPOSE)[number];
 
 /** What the finding is about. Site conditions, not the state of the work. */
@@ -112,8 +130,16 @@ export type FindingBasis = (typeof FINDING_BASIS)[number];
  * This is what carries the walk through to handover. A temporary access that
  * has to be reinstated closes at `HANDOVER` and stays visible for two years;
  * a hoarding closes at `MOBILISATION` and is gone in a fortnight.
+ *
+ * `TENDER_RETURN` is the deadline a bid visit produces and the only one on this
+ * list that cannot be moved. A finding that prices something has to reach the
+ * price before the submission goes back; found at a bid visit and left to close
+ * at mobilisation, it is a cost the business has already agreed to carry for
+ * nothing. It is first because it is the earliest, and because a register that
+ * could not say "before the bid goes in" would quietly file the most urgent
+ * obligation on the walk behind three that are months away.
  */
-export const CLOSES_BY = ['MOBILISATION', 'CONSTRUCTION', 'COMPLETION', 'HANDOVER'] as const;
+export const CLOSES_BY = ['TENDER_RETURN', 'MOBILISATION', 'CONSTRUCTION', 'COMPLETION', 'HANDOVER'] as const;
 export type ClosesBy = (typeof CLOSES_BY)[number];
 
 /** Consequences serious enough that closing one is an approval, not an update. */
@@ -253,6 +279,39 @@ export function recordVisit(
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.visitedOn)) {
     throw new DomainError('VISIT_DATE_INVALID', 'Give the date walked as YYYY-MM-DD');
+  }
+
+  /*
+   * A bid visit happens while the job is still a bid.
+   *
+   * The purpose is the one thing on the record that says what the walk was
+   * for, and it is read back by the report, the register and the field module.
+   * A `BID` visit on a job already under construction is a mislabelled progress
+   * walk, and once it is on an append-only chain nobody can tell which it was.
+   */
+  if (input.purpose === 'BID') {
+    /*
+     * Against the phase, not the lifecycle state.
+     *
+     * The phase is where the work is, and "is this still being bid" is a
+     * question about the work — the same three phases `ESTIMATE_TENDER` is
+     * writable in. The lifecycle state is the wrong test and was the first
+     * attempt: a project can sit at `PRE_AWARD` with its phase well past
+     * tender, and a check on `live` then let a bid visit be recorded against a
+     * job in operations.
+     */
+    const phase = currentPhase(ctx);
+    const past = phase !== undefined && LIFECYCLE_ORDER.indexOf(phase) > LIFECYCLE_ORDER.indexOf('TENDER');
+    if (past) {
+      throw new DomainError(
+        'NOT_A_BID_ANY_MORE',
+        `This project is in ${String(phase).toLowerCase()}, which is past tender, so a walk on it is not a bid ` +
+          'visit. Record it as a pre-construction walk or a progress walk — the purpose is what the report and the ' +
+          'register read back, and it cannot be corrected once it is on the chain.',
+        409,
+        [{ field: 'purpose', message: 'A bid visit is recorded while the tender is still a tender' }],
+      );
+    }
   }
 
   const sequence = ctx.ledger.list(ctx.projectId, 'SiteVisit').length + 1;
@@ -782,7 +841,34 @@ export type SitePosition = {
   logistics: { version: number; warnings: LogisticsWarning[] } | null;
   /** Open findings that were never going to close before handover. */
   handoverBlockers: FindingRow[];
+  /**
+   * Open findings owed before the submission goes back.
+   *
+   * The one deadline on this register that cannot move, and the reason the bid
+   * visit is worth recording at all: a finding that prices something has to
+   * reach the price before the tender is returned, and one found on the walk
+   * and left to close at mobilisation is a cost the business has already agreed
+   * to carry for nothing. Reported as its own list rather than left in
+   * `byStage`, for the same reason `handoverBlockers` is.
+   */
+  tenderBlockers: FindingRow[];
   photographs: number;
+  /**
+   * The vocabularies this register is written in, published rather than copied.
+   *
+   * The console held its own list of purposes, categories, bases, consequences
+   * and discharge points — five hardcoded arrays in `field.js`, which is five
+   * second answers to what this engine accepts. Adding the bid visit found them
+   * immediately: the engine would have taken `BID` and the only screen that can
+   * send one would never have offered it.
+   */
+  vocabulary: {
+    purposes: readonly VisitPurpose[];
+    categories: readonly FindingCategory[];
+    bases: readonly FindingBasis[];
+    consequences: readonly FindingConsequence[];
+    closesBy: readonly ClosesBy[];
+  };
   summary: string;
 };
 
@@ -837,6 +923,7 @@ export function sitePosition(ctx: EngineContext, options: { today?: string } = {
     : null;
 
   const handoverBlockers = open.filter((f) => f.closesBy === 'HANDOVER');
+  const tenderBlockers = open.filter((f) => f.closesBy === 'TENDER_RETURN');
   const photographs = findings.filter((f) => f.hasPhotograph).length;
 
   const parts: string[] = [
@@ -850,6 +937,14 @@ export function sitePosition(ctx: EngineContext, options: { today?: string } = {
   }
   const criticalLogistics = (logistics?.warnings ?? []).filter((w) => w.severity === 'CRITICAL').length;
   if (criticalLogistics > 0) parts.push(`${criticalLogistics} critical logistics warning${criticalLogistics === 1 ? '' : 's'}`);
+  // Before handover, because it is before everything. A reader of this sentence
+  // on the week of a return is looking for exactly this number.
+  if (tenderBlockers.length > 0) {
+    parts.push(
+      `${tenderBlockers.length} to settle before the tender goes back — ` +
+        tenderBlockers.map((f) => f.reference).join(', '),
+    );
+  }
   if (handoverBlockers.length > 0) parts.push(`${handoverBlockers.length} still to discharge before handover`);
   if (parts.length === 1) parts.push('nothing outstanding');
 
@@ -876,7 +971,15 @@ export function sitePosition(ctx: EngineContext, options: { today?: string } = {
     latePermits,
     logistics,
     handoverBlockers,
+    tenderBlockers,
     photographs,
+    vocabulary: {
+      purposes: VISIT_PURPOSE,
+      categories: FINDING_CATEGORY,
+      bases: FINDING_BASIS,
+      consequences: FINDING_CONSEQUENCE,
+      closesBy: CLOSES_BY,
+    },
     summary: `${parts.join('. ')}.`,
   };
 }

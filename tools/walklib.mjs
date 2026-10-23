@@ -142,17 +142,44 @@ export async function runCommand(page, id, values, { expectRefusal = false, time
 
   await page.locator('form.modal [data-submit]').first().click();
 
+  /*
+   * Either the panel closes, or it says why not — in one of two places.
+   *
+   * A refusal about the command goes in `.cmd-error`; a refusal the platform
+   * attached to a field goes in that field's own `.field-error` and the box at
+   * the top stays hidden, which is the better UI and was invisible to this
+   * function. A walk then reported "the panel neither closed nor said why not",
+   * which reads as a hang in the product when the product had answered
+   * precisely. Both are watched, and the field's label is carried into the
+   * message so the reason names where it landed.
+   */
   const outcome = await Promise.race([
     page.waitForSelector('form.modal', { state: 'detached', timeout }).then(() => ({ ok: true })),
     page
       .waitForFunction(
         () => {
-          const box = document.querySelector('form.modal .cmd-error');
-          return box && !box.hasAttribute('hidden') && box.textContent.trim().length > 0;
+          const visible = (box) => box && !box.hasAttribute('hidden') && box.textContent.trim().length > 0;
+          if (visible(document.querySelector('form.modal .cmd-error'))) return true;
+          return [...document.querySelectorAll('form.modal .field-error')].some(visible);
         },
         { timeout },
       )
-      .then(async () => ({ ok: false, error: (await page.locator('form.modal .cmd-error').first().textContent()) ?? '' })),
+      .then(async () => ({
+        ok: false,
+        error: await page.evaluate(() => {
+          const visible = (box) => box && !box.hasAttribute('hidden') && box.textContent.trim().length > 0;
+          const top = document.querySelector('form.modal .cmd-error');
+          if (visible(top)) return top.textContent.trim();
+          return [...document.querySelectorAll('form.modal .field-error')]
+            .filter(visible)
+            .map((box) => {
+              const field = box.closest('[data-field]');
+              const label = field?.querySelector('label')?.textContent?.trim() ?? field?.dataset.field ?? 'a field';
+              return `${label}: ${box.textContent.trim()}`;
+            })
+            .join('; ');
+        }),
+      })),
   ]).catch(() => ({ ok: false, error: `the panel neither closed nor said why not within ${Math.round(timeout / 1000)} seconds` }));
 
   if (!outcome.ok) {
@@ -166,6 +193,48 @@ export async function runCommand(page, id, values, { expectRefusal = false, time
   if (expectRefusal) throw new Error(`"${id}" was accepted where a refusal was expected`);
   await page.waitForTimeout(1400);
   return {};
+}
+
+/**
+ * Change the project the console is looking at, through the shell's own picker.
+ *
+ * The same control a person uses, so the walk cannot reach a state the console
+ * will not put somebody in. The picker renders as plain text where the tenancy
+ * has one project, which is a deliberate decision in `app.js` — so this says
+ * so rather than failing on a missing select.
+ */
+export async function chooseProject(page, labelContains, { timeout = 20000 } = {}) {
+  const picker = page.locator('select.project-pick').first();
+  if ((await picker.count()) === 0) {
+    throw new Error('the shell offers no project picker — this tenancy has fewer than two projects');
+  }
+  /*
+   * Waited for rather than read once.
+   *
+   * A project created a moment ago appears in the picker when the shell next
+   * redraws, and the redraw is started by the page's own handler after the
+   * command panel has already closed — so a single read races it and the walk
+   * reports a missing project that arrives a second later. The wait is on the
+   * option, which is the thing being asked about.
+   */
+  await page
+    .waitForFunction(
+      (needle) =>
+        [...(document.querySelector('select.project-pick')?.options ?? [])].some((option) =>
+          option.textContent.includes(needle),
+        ),
+      labelContains,
+      { timeout },
+    )
+    .catch(() => {
+      throw new Error(`no project on the picker names "${labelContains}" within ${Math.round(timeout / 1000)} seconds`);
+    });
+  const value = await picker.evaluate(
+    (element, needle) => [...element.options].find((option) => option.textContent.includes(needle))?.value ?? '',
+    labelContains,
+  );
+  await picker.selectOption(value);
+  await page.waitForTimeout(1800);
 }
 
 /** Assert a command is not offered at all — stronger than its being refused. */

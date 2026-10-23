@@ -9898,6 +9898,33 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => structure.setLifecycleState(projectContext(platform, ctx), body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/outcome',
+    description: 'How the tender ended, the buyer’s marks and what they said — the signal the next bid is priced from',
+    schema: {
+      type: 'object',
+      required: ['outcome', 'decidedOn'],
+      properties: {
+        outcome: { type: 'string', enum: ['WON', 'LOST'] },
+        decidedOn: stringField,
+        ourPriceMinor: { type: 'integer', minimum: 0 },
+        winningPriceMinor: { type: 'integer', minimum: 0 },
+        winnerName: { type: 'string' },
+        qualityScorePercent: { type: 'number', minimum: 0, maximum: 100 },
+        commercialScorePercent: { type: 'number', minimum: 0, maximum: 100 },
+        rank: { type: 'integer', minimum: 1 },
+        tenderers: { type: 'integer', minimum: 1 },
+        // Verbatim, and the most useful thing in the whole record. The agents
+        // read it through the calibration signals; a summary of it would be
+        // somebody's opinion of what the buyer meant.
+        feedback: { type: 'array', items: { type: 'string', maxLength: 2000 } },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.recordTenderOutcome(projectContext(platform, ctx), body(ctx) as Parameters<typeof learning.recordTenderOutcome>[1]),
+  },
+  {
     method: 'GET',
     pattern: '/v1/lifecycle/states',
     guest: 'REFERENCE',

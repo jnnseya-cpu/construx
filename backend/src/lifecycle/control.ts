@@ -589,8 +589,27 @@ export type ControlReport = {
   commercialOutcome?: string;
   commercialStatus?: string;
   deliveryStatus?: string;
-  /** How the tender ended, on a project that was one. */
-  tenderOutcome?: string;
+  /**
+   * How the tender ended, on a project that was one.
+   *
+   * Declared since this file was written and written by nothing for as long:
+   * the slot on the control screen said "no outcome recorded" on every project
+   * there has ever been, because the only thing that could fill it did not
+   * exist. It holds the record rather than a bare word — the outcome, the day,
+   * the buyer's marks and their own words — since the word was already
+   * `commercialOutcome` and a second copy of it would be a second answer.
+   *
+   * The full shape is `RecordedOutcome` in `domain/learning.ts`, which owns bid
+   * outcomes for the pursuits bid as opportunities and the tenders bid as
+   * projects alike. What is named here is what this screen reads.
+   */
+  tenderOutcome?: {
+    outcome: string;
+    decidedOn: string;
+    winnerName?: string;
+    winningPriceMinor?: number;
+    feedback?: string[];
+  };
   /** Every outcome it has had, in order — a bid on hold in March and lost in July has a story. */
   outcomeHistory?: Array<Record<string, unknown>>;
   awardedAt?: string;

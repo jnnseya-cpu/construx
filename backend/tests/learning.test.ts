@@ -773,3 +773,272 @@ describe('the win-rate position', () => {
     assert.equal(p.ledger.size, before, 'reading the win rate appended to the ledger');
   });
 });
+
+/**
+ * The other road in, and the one that led nowhere.
+ *
+ * Two ways a tender enters this platform. A business that registers each
+ * pursuit on Pipeline & Bids settles it against an `Opportunity`, and
+ * everything above tests that road. A business that opens a project at `TENDER`
+ * and bids from it — which is what the compliance matrix, the response pack and
+ * the estimate are all built around — had nowhere to settle anything at all.
+ *
+ * So `tenderOutcome` was a field declared on the control report and written by
+ * nothing, the slot on the screen said "no outcome recorded" on every project
+ * there has ever been, the win rate said "no bid outcome has been recorded" for
+ * ever, and the one thing a business learns from losing — the buyer's own words
+ * — went into an email folder.
+ *
+ * Asked for in those words: *"if any feedback is given it can be entered for
+ * the AI agent to improve"*. What is asserted here is that it arrives, that it
+ * reaches the calibration the agents read, and the two rules that keep it
+ * honest: a win is the award, and a loss is not recorded against a running job.
+ */
+describe('a tender bid from a project', () => {
+  let platform2: Platform;
+  let seed2: SeedResult;
+  let projectId: string;
+
+  /** Governance scope, where the pipeline and the calibration are read. */
+  const gov = () => platform2.context(seed2.users.owner!.auth, `${seed2.tenantId}-governance`, { source: 'WEB' });
+  const onProject = () => platform2.context(seed2.users.owner!.auth, projectId, { source: 'WEB' });
+
+  before(async () => {
+    platform2 = new Platform();
+    seed2 = await seedDemoProject(platform2);
+    const portfolioId = String(platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio')[0]!.state.id);
+    projectId = structure.createProject(gov(), {
+      portfolioId,
+      name: 'Platform Housing EPC assessments — lot 2',
+      sectorType: 'UTILITIES',
+      assetType: 'Domestic EPC assessments',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Worcester' },
+      contractValueMinor: 1_250_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-01-01',
+      plannedCompletion: '2030-12-31',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Competitive tender against the buyer’s issued information.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+  });
+
+  it('had no win rate at all before this, which is what it fixes', () => {
+    // The state the complaint came from: a tenancy that bids from projects,
+    // with nothing settled and therefore nothing to learn from.
+    const before = learning.winRatePosition(gov());
+    assert.equal(before.overall.settled, 0);
+    assert.match(before.limits.join(' '), /No bid outcome has been recorded/);
+  });
+
+  it('records the result, the marks and the buyer’s own words', () => {
+    const outcome = learning.recordTenderOutcome(onProject(), {
+      outcome: 'LOST',
+      decidedOn: '2026-12-18',
+      winningPriceMinor: 1_060_000_00,
+      winnerName: 'Another assessor',
+      qualityScorePercent: 78,
+      commercialScorePercent: 61,
+      rank: 2,
+      tenderers: 5,
+      feedback: [
+        'Strongest submission on the assessment process and on lone working.',
+        'Marked down on the price of the EPC itself against the winner.',
+        '  ',
+      ],
+    });
+
+    assert.equal(outcome.outcome, 'LOST');
+    // What we tendered, taken from the project rather than asked for twice.
+    assert.equal(outcome.ourPriceMinor, 1_250_000_00);
+    // Verbatim, and the blank line dropped rather than stored as an empty point.
+    assert.equal(outcome.feedback.length, 2);
+    assert.match(outcome.feedback[0]!, /lone working/);
+
+    // And it is on the project, where the control screen reads it.
+    const state = platform2.ledger.get({ refType: 'Project', refId: projectId })!.state;
+    assert.equal((state.tenderOutcome as { outcome: string }).outcome, 'LOST');
+    assert.equal(state.commercialOutcome, 'LOST');
+  });
+
+  it('reaches the calibration the agents read', () => {
+    const reading = learning.calibrationSignals(gov(), '2027-01-05');
+    assert.equal(reading.settled.lost, 1, 'a tender bid from a project is not a settled bid');
+
+    // The signal that needs a disclosed winning price, computed off the project
+    // bid: 1,250,000 against 1,060,000 is 17.9% above.
+    const price = reading.signals.find((signal) => signal.kind === 'PRICE_POSITION');
+    assert.ok(price, 'no price-position signal was produced from the project bid');
+    assert.equal(price.observations, 1);
+    assert.equal(price.deltaPercent, 17.9);
+
+    // There is no ten-factor qualification on a project, so it contributes
+    // nothing to the win-probability breakdown rather than a fabricated score.
+    const byScore = reading.signals.find((signal) => signal.kind === 'WIN_RATE');
+    assert.equal(byScore, undefined);
+  });
+
+  it('counts in the win rate, which it could not before', () => {
+    const rate = learning.winRatePosition(gov());
+    assert.equal(rate.overall.settled, 1);
+    assert.equal(rate.overall.lost, 1);
+    // Under the minimum a published rate needs, which is said rather than
+    // dressed up as 0%.
+    assert.equal(rate.overall.rate, null);
+    assert.match(rate.limits.join(' '), /against the \d+ a published rate needs/);
+    // Segmented by what a project can actually supply. The sector is on the
+    // project; there is no `source` on one, so that breakdown stays empty
+    // rather than inventing a channel nobody bid through.
+    assert.ok(rate.bySector.some((entry) => entry.key === 'UTILITIES'));
+    assert.deepEqual(rate.bySource, []);
+  });
+
+  it('refuses a second outcome, because the first is what the calibration relies on', () => {
+    throwsCode(
+      () => learning.recordTenderOutcome(onProject(), { outcome: 'LOST', decidedOn: '2027-01-02' }),
+      'OUTCOME_ALREADY_RECORDED',
+    );
+  });
+
+  it('refuses a win with no award behind it', () => {
+    // The instruction, enforced from this side as well: there is nowhere on the
+    // platform to assert a win without the contract.
+    const portfolioId = String(platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio')[0]!.state.id);
+    const other = structure.createProject(gov(), {
+      portfolioId,
+      name: 'Calder Valley framework lot 3',
+      sectorType: 'UTILITIES',
+      assetType: 'Water mains renewal',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
+      contractValueMinor: 880_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-03-01',
+      plannedCompletion: '2028-03-01',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Framework mini-competition.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+
+    const ctx = platform2.context(seed2.users.owner!.auth, other, { source: 'WEB' });
+    throwsCode(() => learning.recordTenderOutcome(ctx, { outcome: 'WON', decidedOn: '2027-02-01' }), 'AWARD_REQUIRED');
+    assert.throws(() => learning.recordTenderOutcome(ctx, { outcome: 'WON', decidedOn: '2027-02-01' }), /award gate/);
+  });
+
+  it('takes a win once the award gate has validated it, and then refuses a loss', () => {
+    const portfolioId = String(platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio')[0]!.state.id);
+    const won = structure.createProject(gov(), {
+      portfolioId,
+      name: 'Wyre Forest stock condition surveys',
+      sectorType: 'UTILITIES',
+      assetType: 'Stock condition surveys',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Kidderminster' },
+      contractValueMinor: 640_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-05-01',
+      plannedCompletion: '2029-05-01',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Two-stage tender on the buyer’s stock data.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+
+    const admin = platform2.context(seed2.users.admin!.auth, won, { source: 'WEB' });
+    structure.convertToDelivery(admin, {
+      award: {
+        contractAwardDate: '2027-02-10',
+        contractSumMinor: 655_000_00,
+        contractForm: 'JCT Measured Term Contract 2024',
+        contractedScope: 'Stock condition surveys across the retained portfolio, as tendered.',
+        contractStartDate: '2027-05-01',
+        contractCompletionDate: '2029-05-01',
+      },
+      varianceOwners: { PRICE: seed2.users.qs!.id, PROGRAMME: seed2.users.planner!.id, SCOPE: seed2.users.qs!.id },
+      deliveryEntry: 'CONSTRUCTION',
+      justification: 'Awarded on 10 February and converted; surveys start in May.',
+    });
+
+    const ctx = platform2.context(seed2.users.owner!.auth, won, { source: 'WEB' });
+    // A win is now recordable, because the award is behind it — and what it
+    // carries as our price is the tendered figure, not the contract sum.
+    const outcome = learning.recordTenderOutcome(ctx, { outcome: 'WON', decidedOn: '2027-02-10' });
+    assert.equal(outcome.outcome, 'WON');
+    assert.equal(outcome.ourPriceMinor, 640_000_00, 'the win was priced at the contract sum rather than what we bid');
+
+    // And a loss cannot be filed against the same running job. "We lost it"
+    // against work in progress is either a mistake or two jobs in one record.
+    const other = platform2.context(seed2.users.owner!.auth, won, { source: 'WEB' });
+    throwsCode(() => learning.recordTenderOutcome(other, { outcome: 'LOST', decidedOn: '2027-03-01' }), 'OUTCOME_ALREADY_RECORDED');
+  });
+
+  it('refuses a loss filed against a job that is running', () => {
+    const portfolioId = String(platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio')[0]!.state.id);
+    const running = structure.createProject(gov(), {
+      portfolioId,
+      name: 'Teme Valley reactive repairs',
+      sectorType: 'UTILITIES',
+      assetType: 'Reactive repairs',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Worcester' },
+      contractValueMinor: 310_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-06-01',
+      plannedCompletion: '2028-06-01',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Negotiated extension of an existing lot.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+
+    structure.convertToDelivery(platform2.context(seed2.users.admin!.auth, running, { source: 'WEB' }), {
+      award: {
+        contractAwardDate: '2027-04-02',
+        contractSumMinor: 310_000_00,
+        contractForm: 'JCT Measured Term Contract 2024',
+        contractedScope: 'Reactive repairs across the Teme Valley stock, as tendered.',
+        contractStartDate: '2027-06-01',
+        contractCompletionDate: '2028-06-01',
+      },
+      varianceOwners: { PRICE: seed2.users.qs!.id, PROGRAMME: seed2.users.planner!.id, SCOPE: seed2.users.qs!.id },
+      deliveryEntry: 'CONSTRUCTION',
+      justification: 'Awarded and converted; the repairs start in June.',
+    });
+
+    const ctx = platform2.context(seed2.users.owner!.auth, running, { source: 'WEB' });
+    throwsCode(() => learning.recordTenderOutcome(ctx, { outcome: 'LOST', decidedOn: '2027-05-01' }), 'PROJECT_IS_LIVE');
+  });
+
+  it('is a human act on the thread, carrying a competitor’s price', () => {
+    assert.equal(lookupEventType('TENDER_OUTCOME_RECORDED')?.entity, 'Project');
+    assert.notEqual(lookupEventType('TENDER_OUTCOME_RECORDED')?.aiAllowed, true);
+  });
+
+  it('is still accepted after the bid is closed, because the debrief comes later', () => {
+    // The stop on a lost project allows exactly this. Refusing the feedback
+    // because the bid is closed would throw away the only thing the business
+    // learns from losing — and the debrief is weeks after the result.
+    const portfolioId = String(platform2.ledger.listByTenant(seed2.tenantId, 'Portfolio')[0]!.state.id);
+    const closed = structure.createProject(gov(), {
+      portfolioId,
+      name: 'Severn catchment survey framework',
+      sectorType: 'UTILITIES',
+      assetType: 'Catchment surveys',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Gloucester' },
+      contractValueMinor: 410_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-04-01',
+      plannedCompletion: '2028-04-01',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Open tender through the portal.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+
+    const ctx = platform2.context(seed2.users.admin!.auth, closed, { source: 'WEB' });
+    structure.setLifecycleState(ctx, {
+      to: 'CLOSED_LOST',
+      commercialOutcome: 'LOST',
+      reason: 'Unsuccessful; the buyer confirmed the award to another supplier by letter.',
+    });
+
+    const recorded = learning.recordTenderOutcome(
+      platform2.context(seed2.users.owner!.auth, closed, { source: 'WEB' }),
+      {
+        outcome: 'LOST',
+        decidedOn: '2027-01-20',
+        feedback: ['Debrief five weeks later: our method statement did not evidence the catchment modelling.'],
+      },
+    );
+    assert.equal(recorded.feedback.length, 1);
+  });
+});

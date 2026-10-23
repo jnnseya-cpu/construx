@@ -1355,9 +1355,8 @@ async function loadContext() {
   const [detail, wallet, listed] = await Promise.all([
     api.get(`/v1/projects/${projectId}`),
     can('BILLING_ACU', 'R') ? api.get('/v1/billing/wallet').catch(() => null) : Promise.resolve(null),
-    // What else this identity can open. Read here rather than at sign-in
-    // because a project created during the session should appear in the picker
-    // without signing out, and this already runs on every context load.
+    // What else this identity can open — see `refreshProjectList`, which is
+    // also called on every draw, because this function is not.
     api.get('/v1/projects').catch(() => null),
   ]);
   state.projects = listed?.projects ?? listed?.items ?? (Array.isArray(listed) ? listed : []);
@@ -1378,6 +1377,23 @@ async function loadContext() {
   state.project = detail.project;
   state.gate = detail.gate;
   state.wallet = wallet;
+}
+
+/**
+ * What else this identity can open, re-read.
+ *
+ * One fetch, from the two places that need it: the context load, and every
+ * draw after it. Cheap — a list of projects, no per-project detail — and the
+ * alternative is a picker that is only correct until somebody creates a
+ * project, which is the state this was in.
+ *
+ * Never fatal. A failed read leaves the list as it was rather than emptying
+ * the picker, because an empty picker reads as "the estate has gone".
+ */
+async function refreshProjectList() {
+  const listed = await api.get('/v1/projects').catch(() => null);
+  if (!listed) return;
+  state.projects = listed.projects ?? listed.items ?? (Array.isArray(listed) ? listed : state.projects);
 }
 
 /**
@@ -1523,6 +1539,13 @@ async function draw() {
 
   try {
     if (!state.project) await loadContext();
+    // `loadContext` runs once, when there is no project context yet — so the
+    // list it reads goes stale the moment anybody creates a project, and the
+    // picker could not offer the job they had just made until they signed out
+    // and back in. Turning a won tender into a project and then being unable to
+    // open it is exactly where that bites. Refreshed here instead, which is the
+    // one place that runs on every navigation.
+    else await refreshProjectList();
     // Redraw the shell now that project and wallet context exist.
     render(
       root,

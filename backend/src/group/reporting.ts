@@ -4,7 +4,8 @@ import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
 import { GROUP_ROLES, groupOf, groupOfTenant, type GroupRoleName } from './directory.ts';
 import { issuancesOf } from './issuance.ts';
-import { liveProjects } from '../domain/structure.ts';
+import { currentLifecycleState, liveProjects } from '../domain/structure.ts';
+import { holdsContractValue } from '../lifecycle/state.ts';
 
 /**
  * Reporting grants and grant-filtered group reports (enterprise
@@ -197,8 +198,22 @@ export function readMetric(platform: Platform, tenantId: string, metric: ReportM
     case 'projects.count':
       return { value: liveProjects(platform.ledger, tenantId).length, unit: 'count', source: 'construx', asOf };
     case 'projects.contract_value': {
+      /*
+       * Value the company holds, not value it has ever tendered.
+       *
+       * `liveProjects` means "not deleted", which is the right set to count
+       * *projects* from and the wrong one to add money across: a tender lost in
+       * March still carried its tendered figure into a group report in October,
+       * and a group report is the one figure a parent company plans on. The
+       * rule is the lifecycle table's `holdsValue`, read through
+       * `holdsContractValue` — the same function the estate total and the
+       * regional roll-up use, because three implementations of "which value
+       * counts" is three answers the first time a state is added.
+       */
       const projects = liveProjects(platform.ledger, tenantId).map((record) => record.state);
-      const value = projects.reduce((sum, project) => sum + (typeof project.contractValueMinor === 'number' ? project.contractValueMinor : 0), 0);
+      const value = projects
+        .filter((project) => holdsContractValue(currentLifecycleState(project)))
+        .reduce((sum, project) => sum + (typeof project.contractValueMinor === 'number' ? project.contractValueMinor : 0), 0);
       return { value, unit: 'money', currency: tenant.defaultCurrency, source: 'construx', asOf };
     }
     case 'people.active':

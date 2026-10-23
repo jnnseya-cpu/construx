@@ -157,7 +157,21 @@ export async function portfolio(root) {
   // sum of a per-project value. Nothing derived — forecast variance, unapproved
   // exposure and the risk register stay as the platform reported them for the
   // whole estate, because a subset of a derived figure is not that figure.
-  const contractValue = rows.reduce((sum, row) => sum + (row.contractValueMinor ?? 0), 0);
+  /*
+   * Only the value the business holds, and the rest counted separately.
+   *
+   * `countedInTotal` is the platform's own answer, computed from the lifecycle
+   * table and carried on every row. This recomputation ignored it, so the
+   * headline on this screen disagreed with `estate.contractValueMinor` from the
+   * same payload: the server excluded the lost tenders and the browser added
+   * them back. Filtering alone would have been worse than either — a figure
+   * that silently drops projects is the thing the coverage panel below exists
+   * to prevent — so the not-held value is kept and stated.
+   */
+  const counted = rows.filter((row) => row.countedInTotal !== false);
+  const notHeld = rows.filter((row) => row.countedInTotal === false);
+  const contractValue = counted.reduce((sum, row) => sum + (row.contractValueMinor ?? 0), 0);
+  const notHeldValue = notHeld.reduce((sum, row) => sum + (row.contractValueMinor ?? 0), 0);
   const byStatus = {
     ON_TRACK: rows.filter((row) => row.schedule?.status === 'ON_TRACK').length,
     AT_RISK: rows.filter((row) => row.schedule?.status === 'AT_RISK').length,
@@ -219,9 +233,14 @@ export async function portfolio(root) {
         ${kpiCard({
           label: 'Contract value',
           value: money(contractValue, currency),
-          sub: position.estate?.currency
-            ? 'One currency across the estate.'
-            : 'The estate holds more than one currency; this total adds minor units and is indicative only.',
+          sub:
+            (notHeld.length > 0
+              ? `${notHeld.length} project(s) worth ${money(notHeldValue, currency)} are not counted — a bid lost, ` +
+                'withdrawn or cancelled is not value the business holds. '
+              : '') +
+            (position.estate?.currency
+              ? 'One currency across the estate.'
+              : 'The estate holds more than one currency; this total adds minor units and is indicative only.'),
           tone: position.estate?.currency ? '' : 'warn',
         })}
         ${kpiCard({
@@ -305,10 +324,13 @@ export async function portfolio(root) {
         <section class="card" aria-labelledby="pf-sector-h">
           <h2 id="pf-sector-h">Contract value by sector</h2>
           ${pieChart({
+            // The same held/not-held rule as the headline. A pie of contract
+            // value whose slices add to a different number than the figure
+            // above it is a screen arguing with itself.
             title: 'By sector',
-            data: [...options(rows, (row) => row.sectorType).map((entry) => entry.value)].map((sector) => ({
+            data: [...options(counted, (row) => row.sectorType).map((entry) => entry.value)].map((sector) => ({
               label: humanise(sector),
-              value: rows.filter((row) => row.sectorType === sector).reduce((sum, row) => sum + (row.contractValueMinor ?? 0), 0),
+              value: counted.filter((row) => row.sectorType === sector).reduce((sum, row) => sum + (row.contractValueMinor ?? 0), 0),
             })),
             format: (value) => money(value, currency),
             empty: 'No project in this filter.',
@@ -371,7 +393,14 @@ export async function portfolio(root) {
               : html`<span style="color:var(--text-3)">no CVR</span>`,
             row.riskScore === undefined ? html`<span style="color:var(--text-3)">—</span>` : Math.round(row.riskScore),
             row.openIssues ?? 0,
-            money(row.contractValueMinor ?? 0, row.currency ?? currency),
+            // The project's own value, with whether the total above counts it.
+            // Not blanked — what was tendered is true about the project — but a
+            // reader adding this column up has to be told which rows the
+            // headline leaves out.
+            row.countedInTotal === false
+              ? html`${money(row.contractValueMinor ?? 0, row.currency ?? currency)}
+                  ${badge(`not counted · ${humanise(row.lifecycleState ?? '').toLowerCase()}`, 'warn')}`
+              : money(row.contractValueMinor ?? 0, row.currency ?? currency),
           ]),
           empty: 'No project matches this filter.',
         })}

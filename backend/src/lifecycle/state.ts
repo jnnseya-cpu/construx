@@ -286,6 +286,34 @@ export function lifecycleLabel(state: string): string {
 }
 
 /**
+ * Whether the project's process stops here.
+ *
+ * Asked for in those words — "if it update failed, their process can be stop
+ * there" — about a tender that was not won. The states it is true of are
+ * exactly the ones that are both **terminal** and do not **hold value**: a bid
+ * lost, a bid withdrawn, a draft cancelled. Those three never became work, so
+ * there is no work to carry on with, and anything filed against one afterwards
+ * is either a mistake or somebody quietly working a job the business did not
+ * win.
+ *
+ * Derived from the two flags rather than declared as a third, so it cannot
+ * disagree with them. `CLOSED_COMPLETE` and `TERMINATED` are terminal and *did*
+ * hold value: a final account, a defect and thirty years of O&M all legitimately
+ * land on a finished job, and stopping those would be a different and much
+ * worse bug.
+ *
+ * Reopening is the way back, and it is deliberately a separate authorised act —
+ * see `reopenTo` above.
+ */
+export function stopsWork(state: string): boolean {
+  const definition = BY_STATE.get(state as LifecycleState);
+  // An unrecognised state does not stop anything. The safe reading of "we are
+  // not sure what this project is" is to let the work continue and let somebody
+  // notice, never to freeze a live job on a value nothing recognises.
+  return definition ? definition.terminal && !definition.holdsValue : false;
+}
+
+/**
  * Check a lifecycle transition, and say whether it needs the reopen control.
  *
  * Returns rather than throws on a reopen, because reopening is permitted — it

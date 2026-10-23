@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import * as structure from '../src/domain/structure.ts';
 import { LIFECYCLE_ORDER, phasesBefore } from '../src/lifecycle/phases.ts';
-import { LIFECYCLE_STATES, LIFECYCLE_STATE_CODES, lifecycleState } from '../src/lifecycle/state.ts';
+import { LIFECYCLE_STATES, LIFECYCLE_STATE_CODES, lifecycleState, stopsWork } from '../src/lifecycle/state.ts';
 import * as stages from '../src/lifecycle/stages.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -701,6 +701,169 @@ describe('the lifecycle state is its own dimension', () => {
   it('refuses a one-word reason', () => {
     const ctx = bid('Terse');
     throwsCode(() => structure.setLifecycleState(ctx, { to: 'ON_HOLD', reason: 'paused' }), 'LIFECYCLE_REASON_REQUIRED');
+  });
+
+  /**
+   * A tender becomes work when it is won, and only then.
+   *
+   * Asked for plainly: *"all projects at tender stage must be validated win to
+   * move to the next stage"*. The intent was already written in two places —
+   * the lifecycle table calls the award "a separate authorised act", the routes
+   * say "an award reachable from the same dropdown as 'put it on hold' is a
+   * contract award nobody reviewed" — and enforced in neither. The transition
+   * table lets two moves through, `AWARD_PENDING → LIVE_MOBILISING` and
+   * `ON_HOLD → LIVE_ACTIVE`, and this command checked neither of them.
+   *
+   * The consequence was not cosmetic. A project that had never been awarded
+   * could be made live delivery work by typing a sentence, and from that
+   * instant it counted as live capacity, carried its tendered figure as
+   * contract value in every roll-up, and had none of the records a converted
+   * project has: no tender baseline, no award baseline, nothing to reconcile
+   * the two, no inheritance register and no conversion receipt.
+   */
+  describe('and a tender cannot become live work without a validated win', () => {
+    it('refuses award validation straight to mobilisation', () => {
+      const ctx = bid('Live by assertion');
+      structure.setLifecycleState(ctx, {
+        to: 'AWARD_PENDING',
+        reason: 'Letter of intent received; the executed contract is still with their solicitors.',
+        commercialOutcome: 'WON',
+      });
+
+      throwsCode(
+        () =>
+          structure.setLifecycleState(ctx, {
+            to: 'LIVE_MOBILISING',
+            reason: 'Everyone is on site on Monday, so calling it live seems reasonable.',
+          }),
+        'AWARD_REQUIRED',
+      );
+
+      // And nothing moved. A refusal that half-applied would be worse than none.
+      const state = stateOf(ctx);
+      assert.equal(state.lifecycleState, 'AWARD_PENDING');
+      assert.equal(state.deliveryStatus, 'NOT_STARTED');
+      // A WON commercial outcome is not the validation. That is the whole of
+      // BR-002 and the reason this refusal exists at all.
+      assert.equal(state.commercialOutcome, 'WON');
+    });
+
+    it('refuses it through a hold, which is the other way round the table', () => {
+      const ctx = bid('Held then live');
+      structure.setLifecycleState(ctx, { to: 'ON_HOLD', reason: 'Client paused pending a funding decision.' });
+      throwsCode(
+        () => structure.setLifecycleState(ctx, { to: 'LIVE_ACTIVE', reason: 'Funding released; treating it as live.' }),
+        'AWARD_REQUIRED',
+      );
+      assert.equal(stateOf(ctx).lifecycleState, 'ON_HOLD');
+    });
+
+    it('names the gate that does validate it, rather than only refusing', () => {
+      const ctx = bid('Pointed somewhere');
+      structure.setLifecycleState(ctx, { to: 'AWARD_PENDING', reason: 'Intent to award received from the client.' });
+      assert.throws(
+        () => structure.setLifecycleState(ctx, { to: 'LIVE_MOBILISING', reason: 'Calling it live from today.' }),
+        /award gate/,
+      );
+    });
+
+    it('lets the award gate do it, and then lets a suspended job resume', () => {
+      // Resuming is not awarding. The check is on the award rather than on the
+      // state being left, so a job that *was* awarded goes back to work.
+      const ctx = bid('Awarded properly');
+      structure.convertToDelivery(ctx, {
+        award: {
+          contractAwardDate: '2026-04-20',
+          contractSumMinor: 50_000_000,
+          contractForm: 'JCT D&B 2016',
+          contractedScope: 'As tendered, less the access road.',
+          contractStartDate: '2026-05-05',
+          contractCompletionDate: '2027-11-30',
+        },
+        varianceOwners: OWNERS,
+        deliveryEntry: 'CONSTRUCTION',
+        justification: 'Awarded and converted; works start on site in May.',
+      });
+      assert.equal(stateOf(ctx).lifecycleState, 'LIVE_MOBILISING');
+
+      structure.setLifecycleState(ctx, { to: 'SUSPENDED', reason: 'Client suspended the works pending an appeal.' });
+      structure.setLifecycleState(ctx, { to: 'LIVE_ACTIVE', reason: 'Appeal dismissed; the works are back on.' });
+      assert.equal(stateOf(ctx).lifecycleState, 'LIVE_ACTIVE', 'an awarded job could not go back to work');
+    });
+  });
+
+  /**
+   * And when it is not won, the process stops there.
+   *
+   * The other half of the same instruction: *"if it update failed, their
+   * process can be stop there"*. `CLOSED_LOST` was terminal in the table and in
+   * nothing else — every command on the platform still accepted writes against
+   * a bid the business had lost, onto an append-only chain that cannot be
+   * tidied up afterwards. So a lost tender could carry a new estimate, a new
+   * programme, new site records, and anybody reading the project a year later
+   * could not tell it from a job that was running.
+   *
+   * The stop is in `write`, the one function every state change passes through,
+   * and it is a stop rather than a trap: the reopen, the outcome, a correction
+   * to the project and an export of its record all still work.
+   */
+  describe('and a lost tender stops being worked on', () => {
+    it('refuses ordinary work on it, and says what to do instead', () => {
+      const ctx = bid('Lost and still being worked');
+      structure.setLifecycleState(ctx, {
+        to: 'CLOSED_LOST',
+        commercialOutcome: 'LOST',
+        reason: 'Awarded to the incumbent; our rates were 4% above theirs across the schedule.',
+      });
+
+      /*
+       * A command that would otherwise have been accepted, so the refusal
+       * under test is this one rather than a gate that was already refusing.
+       *
+       * `transitionPhase` is a bad probe: the tender gate stops it first, for
+       * want of a frozen estimate and an executed contract. Naming an
+       * accountable manager is not refused by anything else on a pre-award
+       * project, and it is exactly the sort of thing nobody should be able to
+       * file against a bid the business has lost.
+       */
+      const eligible = [{ userId: seed.users.pm!.id, name: 'Tom Bramall', role: 'PM' }];
+      const appoint = { projectId: ctx.projectId, userId: seed.users.pm!.id, reason: 'Running the mobilisation from here.' };
+      throwsCode(() => structure.assignAccountableManager(ctx, eligible, appoint), 'PROJECT_WORK_STOPPED');
+      assert.throws(() => structure.assignAccountableManager(ctx, eligible, appoint), /reopen it on Project Control/);
+    });
+
+    it('still takes the reopen, so the stop is not a trap', () => {
+      const ctx = bid('Lost then reopened');
+      structure.setLifecycleState(ctx, {
+        to: 'CLOSED_LOST',
+        commercialOutcome: 'LOST',
+        reason: 'Awarded elsewhere on price; the buyer disclosed the winning figure at the debrief.',
+      });
+      const reopened = structure.setLifecycleState(ctx, {
+        to: 'PRE_AWARD',
+        reopen: true,
+        reason: 'The buyer re-tendered the lot after the winner withdrew; we are pricing it again.',
+      });
+      assert.equal(reopened.reopened, true);
+      // And work is possible again, which is the point of the way back.
+      structure.setLifecycleState(ctx, { to: 'NEGOTIATION', reason: 'Clarifications issued on the re-tender.' });
+      assert.equal(stateOf(ctx).lifecycleState, 'NEGOTIATION');
+    });
+
+    it('leaves a finished job alone, which is the bug this must not be', () => {
+      // `CLOSED_COMPLETE` and `TERMINATED` are terminal and did hold value. A
+      // final account, a defect and thirty years of O&M all land on a finished
+      // job, and stopping those would be far worse than the thing being fixed.
+      assert.equal(stopsWork('CLOSED_LOST'), true);
+      assert.equal(stopsWork('WITHDRAWN'), true);
+      assert.equal(stopsWork('CANCELLED'), true);
+      assert.equal(stopsWork('CLOSED_COMPLETE'), false, 'a completed job stopped accepting records');
+      assert.equal(stopsWork('TERMINATED'), false, 'a terminated contract stopped accepting records');
+      assert.equal(stopsWork('ON_HOLD'), false);
+      // An unrecognised state never freezes a project. "We are not sure what
+      // this is" is a reason to look, never a reason to stop the work.
+      assert.equal(stopsWork('SOMETHING_ELSE'), false);
+    });
   });
 });
 

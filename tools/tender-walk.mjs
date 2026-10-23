@@ -57,7 +57,7 @@
  *   node tools/tender-walk.mjs
  */
 
-import { log, openBrowser, openScreen, runCommand, signIn, tally } from './walklib.mjs';
+import { chooseProject, log, openBrowser, openScreen, runCommand, signIn, tally } from './walklib.mjs';
 
 const BASE = process.env.WALK_BASE ?? 'http://localhost:8123';
 /** OWNER's union carries BUSINESS_DEVELOPMENT and ESTIMATE_TENDER. */
@@ -94,8 +94,25 @@ try {
     issuedAt: '2027-10-01T09:00',
     returnLocal: '2027-11-02T14:00',
     clarificationLocal: '2027-10-24T17:00',
+    // The third date on an invitation, and the one somebody has to be in a van
+    // for. It was recorded here and published nowhere, so it could be entered
+    // and then never seen again anywhere in the product.
+    siteVisitLocal: '2027-10-14T10:00',
   });
-  pass('recorded the ITT, with both of its dates');
+  pass('recorded the ITT, with all three of its dates');
+
+  await openScreen(page, 'pipeline', 'Pipeline');
+  const datesRead = await page.evaluate((reference) => {
+    const text = document.body.textContent.replace(/\s+/g, ' ');
+    return {
+      visit: text.includes('2027-10-14 10:00'),
+      questions: text.includes('2027-10-24 17:00'),
+      reference: text.includes(reference),
+    };
+  }, `RFX${stamp}`);
+  if (!datesRead.visit) throw new Error('the site visit date is recorded and not shown anywhere on the board');
+  if (!datesRead.questions) throw new Error('the clarification deadline is recorded and not shown anywhere on the board');
+  pass('the board reads back the site visit and the question deadline');
 
   /*
    * The step that had no door until today. Everything after it takes the
@@ -216,6 +233,50 @@ try {
   await runCommand(page, 'bid-plan', { analysisId: { labelContains: `RFX${stamp}` } });
   pass('planned a response pack from the matrix');
 
+  /*
+   * The site visit that is part of the tender.
+   *
+   * Reported from a live bid as "the apps section is not ready yet". The engine
+   * was: it sits under `LOOKAHEAD_CONSTRAINTS` rather than `FIELD_EXECUTION`
+   * precisely so a pre-award project can use it. The vocabulary was not — there
+   * was no `BID` purpose, so the only options were to mislabel the walk as a
+   * pre-construction one on work the business had not won, or to keep the
+   * findings in a notebook.
+   */
+  await openScreen(page, 'field', 'Field');
+  await runCommand(page, 'site-visit', {
+    purpose: 'BID',
+    visitedOn: '2026-10-14',
+    attendees: 'Nadia Hussain, Harry O’Neill — buyer’s representative',
+    weather: 'Dry, 9C',
+    notes: `Buyer-led bidder visit for RFX${stamp}; three of the five tenderers attended.`,
+  });
+  pass('recorded the walk as a bid visit, which it could not be called before');
+
+  await openScreen(page, 'field', 'Field');
+  await runCommand(page, 'finding', {
+    visitId: { index: 0 },
+    category: 'ACCESS_AND_EGRESS',
+    description:
+      'Twenty-two of the sampled properties are third-floor walk-ups with no lift; each assessment takes a full ' +
+      'extra hour that the rate schedule does not allow for',
+    location: 'Blackpole estate, blocks C to F',
+    basis: 'ADVISED',
+    source: 'Buyer’s housing officer on the visit, 14 October',
+    consequences: 'PRICES',
+    closesBy: 'TENDER_RETURN',
+    owner: 'Nadia Hussain',
+  });
+  pass('raised a finding owed before the submission goes back');
+
+  await openScreen(page, 'field', 'Field');
+  const owed = await page.evaluate(() => {
+    const text = document.body.textContent.replace(/\s+/g, ' ');
+    return text.includes('settled before the tender goes back');
+  });
+  if (!owed) throw new Error('a finding owed before the return is not stated anywhere on the register');
+  pass('the register says what is owed before the tender goes back');
+
   // An agent, refused on the local engines by name. This is where an
   // unreachable command hides: the panel has to open and the refusal has to be
   // the platform's rather than a timeout.
@@ -263,6 +324,98 @@ try {
     plannedCompletion: '2030-12-31',
   });
   pass('turned the win into a delivery project, with the thread carried forward');
+
+  /*
+   * And the last thing the calibration reads: the result, the marks and the
+   * buyer's own words, on the project that was bid.
+   *
+   * Until this existed, a project bid at tender had nowhere to put any of it:
+   * `tenderOutcome` was declared on the control report and written by nothing,
+   * the win rate said "no bid outcome has been recorded" for ever, and the one
+   * thing a business learns from losing went into an email folder.
+   */
+  // First the refusal, which is the instruction enforced from the other side:
+  // there is nowhere on the platform to assert a win without the contract. The
+  // console is still looking at the project the pack was planned on, which has
+  // no award.
+  await openScreen(page, 'control', 'Project Control');
+  const claimed = await runCommand(
+    page,
+    'tender-result',
+    { outcome: 'WON', decidedOn: '2026-11-20' },
+    { expectRefusal: true },
+  );
+  pass('a win cannot be claimed without the award', claimed.refused.slice(0, 70));
+
+  /*
+   * And the other ending, on a project bid as a project.
+   *
+   * A pursuit converted from the pipeline carries its outcome on the
+   * opportunity, which is where `recordBidOutcome` has always put it. The
+   * project-level outcome is for the other road in — a project opened at
+   * `TENDER` and bid from, with no pipeline pursuit behind it — which is what
+   * the response pack, the estimate and the award gate are all built on and
+   * which could settle nothing at all until now.
+   *
+   * So the walk opens one, loses it, enters the buyer's own words, and checks
+   * that the process stops there. That is the instruction end to end.
+   */
+  const lost = `Teme Valley reactive repairs ${stamp}`;
+  await openScreen(page, 'enterprise', 'Enterprise');
+  await runCommand(page, 'project', {
+    portfolioId: { index: 0 },
+    name: lost,
+    sectorType: 'UTILITIES',
+    assetType: 'Reactive repairs',
+    continentCode: 'EU',
+    countryCode: 'GB',
+    city: 'Worcester',
+    contractValue: '310000',
+    currency: 'GBP',
+    plannedStart: '2027-06-01',
+    plannedCompletion: '2028-06-01',
+    startingPhase: 'TENDER',
+    startingPhaseReason: 'Competitive tender against the buyer’s own schedule of rates.',
+  });
+  pass('opened a project at tender, which is the other road in');
+
+  await chooseProject(page, lost);
+  await openScreen(page, 'control', 'Project Control');
+  await runCommand(page, 'tender-result', {
+    outcome: 'LOST',
+    decidedOn: '2026-11-20',
+    winningPriceMinor: '268000',
+    winnerName: 'The incumbent',
+    qualityScorePercent: '71',
+    commercialScorePercent: '58',
+    rank: '3',
+    tenderers: '5',
+    feedback:
+      'Priced 14% above the winner on the hourly rate.\n' +
+      'The panel asked why the lone-working procedure was not evidenced in the method statement.',
+  });
+  pass('recorded the loss and the buyer’s own words, where the agents read them');
+
+  // Then the state, which is the act that stops the work.
+  await openScreen(page, 'control', 'Project Control');
+  await runCommand(page, 'tenderOutcome', {
+    to: { labelContains: 'Closed lost' },
+    commercialOutcome: 'LOST',
+    reason: 'Unsuccessful; the buyer confirmed the award to the incumbent by letter on 20 November.',
+    wonBy: 'The incumbent',
+  });
+  pass('closed it lost, which is where the process stops');
+
+  // And it is stopped. A command that would have been accepted an hour ago is
+  // refused by name, with the way back named in the refusal.
+  await openScreen(page, 'control', 'Project Control');
+  const stopped = await runCommand(
+    page,
+    'workstream',
+    { type: { index: 0 }, status: 'ACTIVE', reason: 'Opening the mobilisation workstream anyway.' },
+    { expectRefusal: true },
+  );
+  pass('and nothing further is filed against it', stopped.refused.slice(0, 80));
 } catch (error) {
   fail('complete the walk', error.message);
 }

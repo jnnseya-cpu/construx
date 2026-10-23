@@ -812,8 +812,18 @@ export async function field(root) {
               // FIELD_EXECUTION: a pre-construction walk happens before the
               // phase that gates field work opens, and gating it there would
               // lock the one screen somebody needs before they mobilise.
-              { id: 'site-visit', label: 'Record a site visit', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
-              { id: 'finding', label: 'Raise a site finding', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
+              // Both panels are built from the vocabularies the register
+              // publishes, so without the register they would open with empty
+              // required dropdowns — the dead end these affordances exist to
+              // prevent. Locked with the reason instead.
+              { id: 'site-visit', label: 'Record a site visit',
+                permitted: can('LOOKAHEAD_CONSTRAINTS', 'C') && site !== null,
+                reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C')
+                  ?? 'The site visit register could not be read, so this panel has nothing to offer. Reload the screen.' },
+              { id: 'finding', label: 'Raise a site finding',
+                permitted: can('LOOKAHEAD_CONSTRAINTS', 'C') && site !== null,
+                reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C')
+                  ?? 'The site visit register could not be read, so this panel has nothing to offer. Reload the screen.' },
               { id: 'discharge', label: 'Discharge a finding', permitted: can('LOOKAHEAD_CONSTRAINTS', 'U'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'U') },
               { id: 'logistics', label: 'Set the logistics plan', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
             ]),
@@ -1156,6 +1166,33 @@ export async function field(root) {
               </p>
 
               ${
+                /*
+                 * The one deadline on this register that cannot move.
+                 *
+                 * A finding from a bid visit that prices something has to reach
+                 * the price before the submission goes back. Left in the
+                 * discharge table among three obligations that are months away,
+                 * it reads as the least urgent thing on the walk when it is the
+                 * most — and once the tender is in, a cost found on site and
+                 * not priced is one the business has agreed to carry for
+                 * nothing. Above the permissions, because it is sooner.
+                 */
+                (site.tenderBlockers ?? []).length > 0
+                  ? html`<div class="notice bad" style="margin:12px 17px">
+                      <div>
+                        <b>${site.tenderBlockers.length} finding(s) have to be settled before the tender goes back</b>
+                        ${site.tenderBlockers.map(
+                          (f) => html`<div style="margin-top:6px">
+                            ${f.reference} — ${f.description}
+                            <span style="color:var(--text-3)">· obliges ${f.consequences.map((c) => humanise(c)).join(', ')} · ${f.owner}</span>
+                          </div>`,
+                        )}
+                      </div>
+                    </div>`
+                  : ''
+              }
+
+              ${
                 site.latePermits.length > 0
                   ? html`<div class="notice bad" style="margin:12px 17px">
                       <div>
@@ -1176,7 +1213,10 @@ export async function field(root) {
                   String(f.description).slice(0, 60) + (String(f.description).length > 60 ? '…' : ''),
                   f.location,
                   f.consequences.map((c) => humanise(c)).join(', '),
-                  badge(humanise(f.closesBy), f.closesBy === 'HANDOVER' ? 'warn' : ''),
+                  badge(
+                    humanise(f.closesBy),
+                    f.closesBy === 'TENDER_RETURN' ? 'bad' : f.closesBy === 'HANDOVER' ? 'warn' : '',
+                  ),
                   f.owner,
                   f.hasPhotograph ? '📷' : badge(humanise(f.basis), ''),
                   f.status === 'CLOSED' ? badge(`discharged ${f.daysOpen ?? 0}d`, 'ok') : badge('open', 'warn'),
@@ -1311,19 +1351,28 @@ export async function field(root) {
 
   // --- commands -------------------------------------------------------------
 
-  // The site visit vocabularies. Held here rather than fetched because the route
-  // schemas validate against the same closed lists on the server — a value the
-  // browser offers that the API refuses is caught by the console-forms test.
-  const opts = (values) => values.map((v) => ({ value: v, label: humanise(v) }));
-  const VISIT_PURPOSE = ['PRE_CONSTRUCTION', 'MOBILISATION', 'PROGRESS', 'PRE_HANDOVER'];
-  const FINDING_CATEGORY = [
-    'ACCESS_AND_EGRESS', 'TRAFFIC_AND_HIGHWAYS', 'GROUND_CONDITIONS', 'EXISTING_SERVICES',
-    'OVERHEAD_SERVICES', 'BOUNDARIES_AND_NEIGHBOURS', 'ENVIRONMENT_AND_ECOLOGY', 'EXISTING_STRUCTURES',
-    'SITE_ESTABLISHMENT', 'SECURITY', 'UTILITIES_AND_CONNECTIONS', 'WORKING_HOURS_AND_NOISE',
-  ];
-  const FINDING_CONSEQUENCE = ['PRICES', 'SEQUENCES', 'PERMITS', 'HAZARDS', 'DESIGNS'];
-  const FINDING_BASIS = ['OBSERVED', 'DOCUMENT', 'ADVISED'];
-  const CLOSES_BY = ['MOBILISATION', 'CONSTRUCTION', 'COMPLETION', 'HANDOVER'];
+  /*
+   * The site visit vocabularies, from the register that validates them.
+   *
+   * These were five hardcoded arrays here, on the argument that the console-
+   * forms test would catch a value the API refuses. It would — and it cannot
+   * catch the other direction, which is the one that actually happened: adding
+   * the bid visit to the engine left the only screen that can send one offering
+   * four purposes that no longer were the four. The engine publishes them on
+   * the position, so there is one list.
+   *
+   * The fallbacks are the shape, not a second copy of the contents: an empty
+   * list would render a required dropdown with nothing in it, which is the dead
+   * end these panels exist to avoid, so a failed read shows the panel refusing
+   * rather than a chooser with no choices.
+   */
+  const opts = (values) => (values ?? []).map((v) => ({ value: v, label: humanise(v) }));
+  const vocabulary = site?.vocabulary ?? {};
+  const VISIT_PURPOSE = vocabulary.purposes ?? [];
+  const FINDING_CATEGORY = vocabulary.categories ?? [];
+  const FINDING_CONSEQUENCE = vocabulary.consequences ?? [];
+  const FINDING_BASIS = vocabulary.bases ?? [];
+  const CLOSES_BY = vocabulary.closesBy ?? [];
 
   const openFindings = (site?.findings ?? []).filter((f) => f.status === 'OPEN');
 

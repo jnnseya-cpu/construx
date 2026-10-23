@@ -12,6 +12,7 @@ import { command, commandBar } from '../lib/command.js';
 import { barChart, gauge, heatmap } from '../lib/charts.js';
 import { badge, date, days, drillable, html, humanise, metric, money, pct, positionReport, raw, render, resolveHtml, table, toast } from '../lib/ui.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
+import { today } from '../lib/enums.js';
 import { blockedReason, can, draw, state } from '../app.js';
 import { insightPanel } from '../lib/insight.js';
 
@@ -186,7 +187,10 @@ function lifecyclePosition(project, reconciliation) {
           label: 'Commercial status',
           value: humanise(project.commercialStatus ?? 'PRE_AWARD'),
           tone: project.commercialStatus === 'AWARDED' ? 'good' : project.commercialStatus === 'CLOSED' ? 'bad' : '',
-          sub: project.tenderOutcome ? humanise(project.tenderOutcome) : 'no outcome recorded',
+          sub: project.tenderOutcome
+            ? `${humanise(project.tenderOutcome.outcome)} on ${date(project.tenderOutcome.decidedOn)}` +
+              (project.tenderOutcome.winnerName ? ` · ${project.tenderOutcome.winnerName}` : '')
+            : 'no outcome recorded',
         }),
       )}
       ${raw(
@@ -628,7 +632,7 @@ export async function control(root) {
                     permitted: can('PROJECT_SETUP', 'A') && project.commercialStatus !== 'CLOSED',
                     reason:
                       project.commercialStatus === 'CLOSED'
-                        ? `This bid was closed as ${String(project.tenderOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
+                        ? `This bid was closed as ${String(project.tenderOutcome?.outcome ?? project.commercialOutcome ?? '').toLowerCase().replace(/_/g, ' ')}.`
                         : blockedReason('PROJECT_SETUP', 'A'),
                   },
                 ]
@@ -657,6 +661,26 @@ export async function control(root) {
               reason: !can('PROJECT_SETUP', 'A')
                 ? blockedReason('PROJECT_SETUP', 'A')
                 : `${here?.label ?? 'This state'} has nowhere ordinary to go. Reopening a closed project is a separate authorised act, deliberately not offered beside the control that advances a live one.`,
+            },
+            /*
+             * How it ended, and what the buyer said — beside the state change
+             * and not inside it, because the two happen weeks apart.
+             *
+             * The result arrives on the day; the debrief arrives when the buyer
+             * gets round to it. Until this existed, a project bid at tender had
+             * nowhere to put the buyer's words at all, so the only thing a
+             * business learns from losing went into an email folder and the
+             * calibration had no settled bid to read.
+             */
+            {
+              id: 'tender-result',
+              label: 'Record how the tender ended',
+              permitted: can('BUSINESS_DEVELOPMENT', 'U') && !project.tenderOutcome,
+              reason: !can('BUSINESS_DEVELOPMENT', 'U')
+                ? blockedReason('BUSINESS_DEVELOPMENT', 'U')
+                : `Recorded as ${String(project.tenderOutcome?.outcome ?? '').toLowerCase()} on ` +
+                  `${project.tenderOutcome?.decidedOn ?? ''}. An outcome that can be rewritten is one the ` +
+                  'calibration cannot rely on.',
             },
             {
               id: 'workstream',
@@ -1617,6 +1641,67 @@ export async function control(root) {
         },
       ],
     },
+    /*
+     * How the tender ended, and what the buyer said about it.
+     *
+     * Separate from the lifecycle move below, because the two happen weeks
+     * apart: the result arrives on the day and the debrief arrives when the
+     * buyer gets round to it. Recorded once, like every other outcome on the
+     * platform — an outcome that can be rewritten is one the calibration cannot
+     * rely on — and the feedback is kept verbatim because a summary of it is
+     * somebody's opinion of what the buyer meant.
+     */
+    'tender-result': {
+      title: 'Record how the tender ended',
+      intent:
+        'The result, the buyer’s marks where they gave any, the winning price where they disclosed it, and what the ' +
+        'evaluator actually said. This is what the agents read: the calibration computes where our price sits against ' +
+        'the market, what a win-probability score has been worth and where the estimate runs low, all from settled ' +
+        'bids. Without it the business loses the same money twice, because the next tender is priced by somebody who ' +
+        'never saw what happened to the last one.',
+      path: `/v1/projects/${projectId}/tender/outcome`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'outcome', label: 'How it ended', type: 'select',
+          options: [{ value: 'LOST', label: 'Lost' }, { value: 'WON', label: 'Won' }],
+          hint: 'A win is validated on the award gate — the contract sum, the form and the dates — so recording one ' +
+            'here is refused until the project has been converted.' },
+        { name: 'decidedOn', label: 'Decided on', type: 'date', max: today() },
+        { name: 'ourPriceMinor', label: 'What we tendered (£)', type: 'number', money: true, required: false,
+          hint: 'Left blank, the project’s tendered value is used.' },
+        { name: 'winningPriceMinor', label: 'The winning price (£)', type: 'number', money: true, required: false,
+          hint: 'Only on a loss, and only where the buyer disclosed it. Blank is better than guessed.' },
+        { name: 'winnerName', label: 'Who won', type: 'text', required: false },
+        { name: 'qualityScorePercent', label: 'Quality mark (%)', type: 'number', required: false, min: 0, max: 100 },
+        { name: 'commercialScorePercent', label: 'Commercial mark (%)', type: 'number', required: false, min: 0, max: 100 },
+        { name: 'rank', label: 'Ranked', type: 'number', required: false, min: 1 },
+        { name: 'tenderers', label: 'Out of', type: 'number', required: false, min: 1 },
+        { name: 'feedback', label: 'What the buyer said', type: 'textarea', rows: 5, required: false,
+          hint: 'One point per line, in their words rather than yours. This is the most useful thing on the record ' +
+            'and the part an agent can act on.' },
+      ],
+      transform: (v) => ({
+        outcome: v.outcome,
+        decidedOn: v.decidedOn,
+        ...(v.ourPriceMinor === undefined || v.ourPriceMinor === '' ? {} : { ourPriceMinor: Number(v.ourPriceMinor) }),
+        ...(v.winningPriceMinor === undefined || v.winningPriceMinor === ''
+          ? {}
+          : { winningPriceMinor: Number(v.winningPriceMinor) }),
+        ...(String(v.winnerName ?? '').trim() ? { winnerName: String(v.winnerName).trim() } : {}),
+        ...(v.qualityScorePercent === undefined || v.qualityScorePercent === ''
+          ? {}
+          : { qualityScorePercent: Number(v.qualityScorePercent) }),
+        ...(v.commercialScorePercent === undefined || v.commercialScorePercent === ''
+          ? {}
+          : { commercialScorePercent: Number(v.commercialScorePercent) }),
+        ...(v.rank === undefined || v.rank === '' ? {} : { rank: Number(v.rank) }),
+        ...(v.tenderers === undefined || v.tenderers === '' ? {} : { tenderers: Number(v.tenderers) }),
+        ...(String(v.feedback ?? '').trim()
+          ? { feedback: String(v.feedback).split('\n').map((line) => line.trim()).filter(Boolean) }
+          : {}),
+      }),
+    },
+
     tenderOutcome: {
       title: 'Move this project through the lifecycle',
       intent:

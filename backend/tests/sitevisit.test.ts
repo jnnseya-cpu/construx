@@ -3,6 +3,7 @@ import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import * as sitevisit from '../src/engines/sitevisit.ts';
 import * as planning from '../src/engines/planning.ts';
+import * as structure from '../src/domain/structure.ts';
 import { renderPdf } from '../src/export/pdf.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import { Platform } from '../src/platform.ts';
@@ -804,5 +805,125 @@ describe('site visit · the event catalogue', () => {
   it('leaves the site observation register exactly where it was', () => {
     assert.ok(lookupEventType('SITE_OBSERVATION_CAPTURED'));
     assert.ok(lookupEventType('SITE_OBSERVATION_CLOSED'));
+  });
+});
+
+/**
+ * The bid visit — the walk that is part of a tender.
+ *
+ * Reported from use: *"I have a site visit part of the tender but the apps
+ * section is not ready yet"*. The engine was ready; the vocabulary was not.
+ * There was no `BID` purpose, on the stated reasoning that "a bid-stage walk
+ * happens before a project exists and belongs with tender intake". That is true
+ * of one of the two roads into this platform and false of the other — a
+ * contractor who opens a project at `TENDER` and bids from it has the project
+ * before the walk, and the compliance matrix, the estimate, the response pack
+ * and the award gate all hang off it.
+ *
+ * So the only options were to mislabel the visit `PRE_CONSTRUCTION`, on work
+ * the business had not won, or to keep the findings in a notebook — which is
+ * precisely the failure this engine exists to end. Tender intake recorded *when*
+ * the buyer's visit was and had nowhere to put what it found.
+ *
+ * Two things are asserted: that the walk can be recorded as what it was, and
+ * that a finding from it can be owed **before the tender goes back**, which is
+ * the only deadline on this register that cannot move.
+ */
+describe('site visit · the walk that is part of a tender', () => {
+  let bidProjectId: string;
+  const onBid = () => platform.context(seed.users.planner!.auth, bidProjectId, { source: 'WEB' });
+
+  before(() => {
+    const gov = platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
+    const portfolioId = String(platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.state.id);
+    bidProjectId = structure.createProject(gov, {
+      portfolioId,
+      name: 'Platform Housing EPC assessments — lot 2',
+      sectorType: 'UTILITIES',
+      assetType: 'Domestic EPC assessments',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Worcester' },
+      contractValueMinor: 1_250_000_00,
+      currency: 'GBP',
+      plannedStart: '2027-01-01',
+      plannedCompletion: '2030-12-31',
+      startingPhase: 'TENDER',
+      startingPhaseReason: 'Competitive tender on the buyer’s issued information.',
+    } as Parameters<typeof structure.createProject>[1]).projectId;
+  });
+
+  it('records the walk as a bid visit, which it could not be called before', () => {
+    const { visitId, reference } = sitevisit.recordVisit(onBid(), {
+      purpose: 'BID',
+      visitedOn: '2026-11-27',
+      attendees: ['Nadia Hussain', 'Harry O’Neill — buyer’s representative'],
+      weather: 'Dry, 9°C',
+      notes: 'Buyer-led bidder visit; three of the five tenderers attended.',
+    });
+    assert.ok(visitId);
+    assert.match(reference, /^SV-\d{3}$/);
+
+    const position = sitevisit.sitePosition(onBid(), { today: '2026-11-30' });
+    assert.equal(position.visits[0]!.purpose, 'BID');
+  });
+
+  it('carries a finding owed before the submission goes back', () => {
+    const visitId = sitevisit.recordVisit(onBid(), {
+      purpose: 'BID',
+      visitedOn: '2026-11-27',
+      attendees: ['Nadia Hussain'],
+    }).visitId;
+
+    sitevisit.raiseFinding(
+      onBid(),
+      visitId,
+      observed({
+        category: 'ACCESS_AND_EGRESS',
+        description:
+          'Twenty-two of the sampled properties are third-floor walk-ups with no lift; each assessment will take a ' +
+          'full extra hour that the buyer’s rate schedule does not allow for',
+        location: 'Blackpole estate, blocks C to F',
+        consequences: ['PRICES'],
+        closesBy: 'TENDER_RETURN',
+        owner: 'QS',
+      }),
+    );
+
+    const position = sitevisit.sitePosition(onBid(), { today: '2026-11-30' });
+    assert.equal(position.tenderBlockers.length, 1, 'the obligation owed before the return is not surfaced');
+    assert.match(position.tenderBlockers[0]!.description, /walk-ups/);
+    // And it is in the summary, where somebody reads it on the week of a return.
+    assert.match(position.summary, /to settle before the tender goes back/);
+    assert.ok(position.byStage.some((s) => s.closesBy === 'TENDER_RETURN' && s.open === 1));
+    // Not confused with the handover obligations, which are months away.
+    assert.equal(position.handoverBlockers.length, 0);
+  });
+
+  it('refuses a bid visit on a job that is already running', () => {
+    // The purpose is what the report and the register read back, and it cannot
+    // be corrected once it is on an append-only chain. A `BID` walk on a live
+    // job is a mislabelled progress walk.
+    throwsCode(
+      () =>
+        sitevisit.recordVisit(asPlanner(), {
+          purpose: 'BID',
+          visitedOn: '2027-04-12',
+          attendees: ['Site Manager'],
+        }),
+      'NOT_A_BID_ANY_MORE',
+    );
+  });
+
+  it('publishes the vocabularies the console offers, rather than leaving it to guess', () => {
+    // The console held five hardcoded lists. Adding the bid visit found them
+    // at once: the engine would have accepted `BID` and the only screen that
+    // can send one would never have offered it.
+    const { vocabulary } = sitevisit.sitePosition(onBid(), { today: '2026-11-30' });
+    assert.deepEqual([...vocabulary.purposes], [...sitevisit.VISIT_PURPOSE]);
+    assert.deepEqual([...vocabulary.closesBy], [...sitevisit.CLOSES_BY]);
+    assert.deepEqual([...vocabulary.categories], [...sitevisit.FINDING_CATEGORY]);
+    assert.deepEqual([...vocabulary.bases], [...sitevisit.FINDING_BASIS]);
+    assert.deepEqual([...vocabulary.consequences], [...sitevisit.FINDING_CONSEQUENCE]);
+    assert.ok(vocabulary.purposes.includes('BID'));
+    assert.ok(vocabulary.closesBy.includes('TENDER_RETURN'));
   });
 });

@@ -21,6 +21,7 @@ import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent } from '../gol
 import { hashEvidence } from '../core/canonical.ts';
 import { ulid } from '../core/ids.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
+import { lifecycleLabel, stopsWork } from '../lifecycle/state.ts';
 import type { TenancyStanding } from '../billing/entitlement.ts';
 import type { AcuResolution } from '../billing/sponsorship.ts';
 import { publish } from '../developer/webhooks.ts';
@@ -199,6 +200,70 @@ function assertMayWrite(ctx: EngineContext): void {
   );
 }
 
+/**
+ * The acts a project that never became work still accepts.
+ *
+ * Three states stop the work: a bid lost, a bid withdrawn, a draft cancelled
+ * (`stopsWork` derives them from the lifecycle table). Everything filed against
+ * one of those afterwards is either a mistake or somebody quietly running a job
+ * the business did not win — and either way it lands on an append-only chain
+ * that cannot be tidied up later.
+ *
+ * These four are what a closed pursuit legitimately still does, and leaving any
+ * of them out would have made the stop a trap rather than a stop:
+ *
+ *   - **reopen it.** `PROJECT_LIFECYCLE_STATE_CHANGED` is the way back, and it
+ *     already demands `reopen: true` and its own reason. A stop with no way out
+ *     sends people to create a duplicate project, which is the one thing the
+ *     whole identity model exists to prevent.
+ *   - **record how it ended, and what the buyer said.** The debrief arrives
+ *     weeks after the loss. Refusing the feedback because the bid is closed
+ *     would throw away the only thing the business learns from losing.
+ *   - **correct what the project says about itself.** A typo in a name or a
+ *     wrong portfolio on a lost bid is still worth fixing, and
+ *     `PROJECT_DETAILS_AMENDED` records what changed and why.
+ *   - **produce the record.** `EXPORT_GENERATED` on a lost bid is exactly what
+ *     a win-rate review and an audit ask for.
+ */
+const ALLOWED_AFTER_WORK_STOPS = new Set([
+  'PROJECT_LIFECYCLE_STATE_CHANGED',
+  'TENDER_OUTCOME_RECORDED',
+  'PROJECT_DETAILS_AMENDED',
+  'EXPORT_GENERATED',
+]);
+
+/**
+ * Refuse ordinary work on a project whose process has stopped.
+ *
+ * Here, in the one function every state change passes through, for the same
+ * reason `assertMayWrite` is here: "every command remembers to check whether
+ * the job still exists" is not a property a codebase can hold, and there are
+ * several hundred commands.
+ *
+ * Scoped to the context's own project. A governance act on the tenancy, and a
+ * write this command directs at a different project, are not what this is
+ * about — and reading the wrong project's lifecycle would stop work that is
+ * running.
+ */
+function assertProjectStillRunning(ctx: EngineContext, eventType: string, targetProjectId?: string): void {
+  if (targetProjectId !== undefined && targetProjectId !== ctx.projectId) return;
+  if (ALLOWED_AFTER_WORK_STOPS.has(eventType)) return;
+
+  const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId });
+  if (!project) return;
+  const state = typeof project.state.lifecycleState === 'string' ? project.state.lifecycleState : '';
+  if (!stopsWork(state)) return;
+
+  throw new DomainError(
+    'PROJECT_WORK_STOPPED',
+    `${String(project.state.name)} is ${lifecycleLabel(state).toLowerCase()}, so its process stopped there and ` +
+      'nothing further is filed against it. Record how the tender ended and what the buyer said — that is what the ' +
+      'next bid is priced from. If this pursuit is genuinely live again, reopen it on Project Control, which is a ' +
+      'separate authorised act with its own reason.',
+    409,
+  );
+}
+
 /** The switches every access decision is evaluated under, wherever it is made. */
 export const AUTHZ_OPTIONS = {
   rbacEnabled: config.authz.rbac,
@@ -362,6 +427,7 @@ export function write(
     Partial<Pick<CommitInput, 'actor' | 'projectId'>>,
 ): { event: GoldenThreadEvent; state: Record<string, unknown> } {
   assertMayWrite(ctx);
+  assertProjectStillRunning(ctx, input.eventType, input.projectId);
   assertVersion(ctx, input.entity);
 
   // The spread comes first and the defaults after. The other way round, a

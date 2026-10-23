@@ -270,7 +270,7 @@ export function projectControl(ctx: EngineContext): ControlReport {
     commercialOutcome: project.state.commercialOutcome as string | undefined,
     commercialStatus: (project.state.commercialStatus as string | undefined) ?? 'PRE_AWARD',
     deliveryStatus: project.state.deliveryStatus as string | undefined,
-    tenderOutcome: project.state.tenderOutcome as string | undefined,
+    tenderOutcome: project.state.tenderOutcome as ControlReport['tenderOutcome'],
     outcomeHistory: (project.state.outcomeHistory as Array<Record<string, unknown>> | undefined) ?? [],
     awardedAt: project.state.awardedAt as string | undefined,
     /** What was tendered, kept beside the contract sum rather than replaced by it. */

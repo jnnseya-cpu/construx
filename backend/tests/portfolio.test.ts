@@ -3,6 +3,7 @@ import { before, describe, it } from 'node:test';
 import { scopesForRoles } from '../src/identity/scopes.ts';
 import { ownersFor } from '../src/identity/ownership.ts';
 import { changeWindow, enterpriseCommand, portfolioForecast } from '../src/domain/portfolio.ts';
+import { readMetric } from '../src/group/reporting.ts';
 import * as structure from '../src/domain/structure.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -626,5 +627,74 @@ describe('a lost bid', () => {
     const regionAfter = after.byRegion.find((entry) => entry.continentCode === 'EU')!;
     assert.equal(regionAfter.contractValueMinor, regionBefore.contractValueMinor - VALUE);
     assert.equal(regionAfter.projects, regionBefore.projects, 'the region stopped counting the project, not just its value');
+  });
+
+  /**
+   * And out of every other place the figure is added up.
+   *
+   * "Updated everywhere" was the instruction, and the estate total was only the
+   * place it was noticed. Two more aggregations read contract value across
+   * projects and neither read the lifecycle: the group report a parent company
+   * plans on, and the exposure figure on the completion forecast. Each is
+   * asserted here rather than in its own file, beside the rule they share, so a
+   * fourth aggregation added later fails next to the three that already obey
+   * it.
+   */
+  it('leaves the group report and the forecast exposure as well', () => {
+    const portfolioId = String(platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.state.id);
+    const VALUE = 880_000_00;
+    const window = { from: '2020-01-01T00:00:00.000Z', to: '2099-01-01T00:00:00.000Z' };
+
+    const { projectId } = structure.createProject(governance(), {
+      portfolioId,
+      name: 'Calder Valley framework lot 3 — bid',
+      sectorType: 'UTILITIES',
+      assetType: 'Water mains renewal',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
+      contractValueMinor: VALUE,
+      currency: 'GBP',
+      // Dated so the forecast has a contractual duration to call it late
+      // against — exposure is only counted on a project that is overrunning.
+      plannedStart: '2027-01-01',
+      plannedCompletion: '2027-06-30',
+    });
+
+    const groupBefore = readMetric(platform, seed.tenantId, 'projects.contract_value', window.from, window.to);
+    const exposedBefore = portfolioForecast(governance(), () => ({ p50: 9000, p80: 10_000 })).exposedContractValueMinor;
+    // Both figures have to contain it before the loss, or the assertions below
+    // would pass on a project neither of them was counting in the first place.
+    assert.ok(Number(groupBefore.value) >= VALUE, 'the group metric never counted the new pursuit');
+    assert.ok(exposedBefore >= VALUE, 'the forecast never counted the new pursuit as exposed');
+
+    structure.setLifecycleState(
+      platform.context(seed.users.admin!.auth, projectId, { source: 'WEB' }),
+      {
+        to: 'CLOSED_LOST',
+        commercialOutcome: 'LOST',
+        reason: 'Framework lot awarded to the incumbent; our rates were 4% above theirs across the schedule',
+        wonBy: 'The incumbent',
+      },
+    );
+
+    const groupAfter = readMetric(platform, seed.tenantId, 'projects.contract_value', window.from, window.to);
+    assert.equal(
+      groupAfter.value,
+      Number(groupBefore.value) - VALUE,
+      'a group report still carried the value of a bid the company lost',
+    );
+
+    const exposedAfter = portfolioForecast(governance(), () => ({ p50: 9000, p80: 10_000 })).exposedContractValueMinor;
+    assert.equal(
+      exposedAfter,
+      exposedBefore - VALUE,
+      'the forecast reported exposure on a bid that cannot be lost because it already was',
+    );
+
+    // The project is still counted as a project in both. It exists; a count
+    // that skipped it would hide the record somebody has to go and read.
+    assert.equal(
+      Number(readMetric(platform, seed.tenantId, 'projects.count', window.from, window.to).value),
+      platform.ledger.listByTenant(seed.tenantId, 'Project').filter((r) => r.state.status !== 'DELETED').length,
+    );
   });
 });

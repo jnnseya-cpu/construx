@@ -1232,6 +1232,28 @@ export type TenderPosition = {
   opportunityId: string;
   stage: string;
   deadline: ZonedInstant;
+  /**
+   * The last date for questions, and the buyer's site visit, as the invitation
+   * states them.
+   *
+   * Both were recorded at intake, both raised clarifications where they sat
+   * badly against the return, and neither was ever read back: the position
+   * published only the return deadline. So a bid manager could enter the date
+   * of the site visit that is part of their tender and never see it again
+   * anywhere in the product — and a site visit is the one date on an invitation
+   * that somebody has to be in a van for.
+   */
+  clarificationDeadline?: ZonedInstant;
+  siteVisit?: ZonedInstant;
+  /**
+   * The delivery project this pursuit is for, where it names one.
+   *
+   * Carried so the board can take somebody from the site visit date to the
+   * register that records what the walk found. The pipeline is tenant-scoped
+   * and a site visit is written to a project, so without this there is a date
+   * on one screen and nothing joining it to the place the findings go.
+   */
+  projectId?: string;
   /** Business days from today to the last business day before the deadline. */
   businessDaysRemaining: number;
   submissionDay: string;
@@ -1284,6 +1306,17 @@ function readPosition(
   const opportunity = ctx.ledger.get({ refType: 'Opportunity', refId: opportunityId });
   const position = bidApprovalPosition(ctx, opportunityId);
   const deliverables = (record.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+  const issue = (record.state.issue as { clarificationDeadline?: ZonedInstant; siteVisit?: ZonedInstant } | undefined) ?? {};
+  /*
+   * The project the findings of a site visit would be written to.
+   *
+   * A pursuit linked to a project at registration carries `projectId`; one
+   * converted after a win carries `convertedProjectId`. Neither is the ledger
+   * scope this invitation was written in — that is the tenancy's governance
+   * project for a pipeline pursuit, which no site visit belongs on.
+   */
+  const deliveryProjectId =
+    (opportunity?.state.projectId as string | undefined) ?? (opportunity?.state.convertedProjectId as string | undefined);
 
   const programme = ctx.ledger
     .list(record.projectId, 'BidProgramme')
@@ -1297,6 +1330,13 @@ function readPosition(
     opportunityId,
     stage: String(opportunity?.state.stage ?? 'UNKNOWN'),
     deadline,
+    // From the issue, which is immutable — an addendum appends and never
+    // rewrites it. The return deadline above comes through `deadlineInForce`
+    // because an addendum can move it; neither of these two is ever moved by
+    // one, so they are read where they were written.
+    ...(issue.clarificationDeadline ? { clarificationDeadline: issue.clarificationDeadline } : {}),
+    ...(issue.siteVisit ? { siteVisit: issue.siteVisit } : {}),
+    ...(deliveryProjectId ? { projectId: deliveryProjectId } : {}),
     businessDaysRemaining: businessDaysBetween(today, submissionDay, calendar),
     submissionDay,
     addenda: ((record.state.addenda as Addendum[] | undefined) ?? []).length,

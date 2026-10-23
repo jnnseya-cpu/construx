@@ -6,7 +6,7 @@ import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
 import { CONTINENT, COUNTRY, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
-import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
+import { blockedReason, can, draw, goTo, openProject, phaseGates, state } from '../app.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -1058,6 +1058,56 @@ export async function pipeline(root) {
                       <span class="val" style="font-size:12px;color:var(--text-3)">${c.question}</span>
                     </div>`,
                   ),
+                ])}
+              </div>`
+            : ''
+        }
+        ${
+          /*
+           * The two other dates on an invitation, and the one somebody has to
+           * be in a van for.
+           *
+           * Both were recorded at intake and neither was ever read back: the
+           * position published the return deadline and nothing else, so a bid
+           * manager could enter the date of the site visit that is part of
+           * their tender and never see it again anywhere in the product.
+           *
+           * And a date on its own is not enough. The walk produces findings
+           * that price, sequence and need permissions, and those are written to
+           * a project while the pipeline is tenant-scoped — so the row carries
+           * the route to the register that takes them. Where the pursuit names
+           * no project there is nowhere for them to go, and it says so rather
+           * than offering a button that would land on somebody else's job.
+           */
+          board.some((t) => t.siteVisit || t.clarificationDeadline)
+            ? html`<div class="split-list" style="padding:0 17px 15px">
+                ${board.flatMap((t) => [
+                  ...(t.clarificationDeadline
+                    ? [
+                        html`<div class="row">
+                          <span class="lbl">${t.reference} · questions close</span>
+                          <span class="val">${t.clarificationDeadline.local.replace('T', ' ')} ${t.clarificationDeadline.timeZone}</span>
+                        </div>`,
+                      ]
+                    : []),
+                  ...(t.siteVisit
+                    ? [
+                        html`<div class="row">
+                          <span class="lbl">${t.reference} · site visit</span>
+                          <span class="val">
+                            ${t.siteVisit.local.replace('T', ' ')} ${t.siteVisit.timeZone}
+                            ${t.projectId
+                              ? html`<button class="btn quiet sm" data-site-visit="${t.projectId}" style="margin-left:8px">
+                                  Record what the walk found
+                                </button>`
+                              : html`<span style="font-size:11.5px;color:var(--text-3)">
+                                  — this pursuit names no project, so there is nowhere to file the findings yet. Link
+                                  one when you register the opportunity, or convert the win.
+                                </span>`}
+                          </span>
+                        </div>`,
+                      ]
+                    : []),
                 ])}
               </div>`
             : ''
@@ -3112,6 +3162,20 @@ export async function pipeline(root) {
     const openProjectButton = event.target.closest('[data-open-project]');
     if (openProjectButton) {
       await openProject(openProjectButton.dataset.openProject);
+      return;
+    }
+
+    /*
+     * From the site visit date to the register that records what it found.
+     *
+     * Through the shell's own `goTo`, which switches project and navigates in
+     * one act — the pipeline is tenant-scoped and a site visit is written to a
+     * project, so arriving on the right screen looking at the wrong job would
+     * be worse than not offering the button.
+     */
+    const visitButton = event.target.closest('[data-site-visit]');
+    if (visitButton) {
+      await goTo('field', visitButton.dataset.siteVisit);
       return;
     }
   });
