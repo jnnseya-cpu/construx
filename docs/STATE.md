@@ -28358,51 +28358,6 @@ of it — that the effect names both outstanding jobs, that it is reversible, th
 it is on the chain with no value on it, and that it is refused to everybody but
 the platform operator.
 
-## The vendor's terms, declared from the console
-
-Two facts decide whether the platform may hand a customer's record to a third
-party, and neither is knowable from the software: **what the vendor is cleared
-to receive** and **what it does with it afterwards**. Both lived in `.env`, as
-`AI_PROVIDER_CLEARANCE` and `AI_PROVIDER_RETENTION`.
-
-That meant the refusal a bid manager meets on the afternoon of a return —
-*"AI_CLEARANCE_REQUIRED until AI_PROVIDER_CLEARANCE names your vendor at
-COMMERCIAL_L3"* — could only be cleared by somebody with SSH and a container
-restart, and could not be cleared by the person who actually holds the contract.
-It also meant the record of the decision was a string in a file: no name, no
-date, and no reference to the agreement it was read out of. A statement about a
-legal agreement is exactly the kind of thing this platform puts on a chain, and
-this one was the single most consequential one it did not.
-
-`backend/src/ai/vendorterms.ts` is the overlay the sensitivity rules read
-first — declaration, then environment, then default, which is the credential
-store's precedence and the same argument. `PLATFORM_VENDOR_TERMS_DECLARED`
-carries the clearance, the retention route, the days, the region, whether the
-contract excludes it from training, **the agreement it is read from**, who
-decided and why. `POST /v1/admin/vendor-terms/:provider`, and *What the
-agreement with each vendor says* on the AI Engine screen.
-
-**It will not clear a vendor on an unanswered question.** Above `INTERNAL` the
-platform is being told it may hand over safety, commercial and legally
-privileged material, so it asks the three things such a clearance rests on: which
-agreement, where it is processed, and whether it is excluded from model
-training. Every missing answer is named at once. Below internal it asks none of
-them, because nothing sensitive is at stake. A reassurance on a screen with no
-contract behind it is worse than the refusal it replaces, and that is the whole
-reason this is a declaration rather than a dropdown.
-
-The register lists **every** provider the platform can call, declared or not,
-with the default marked as a default — silence on "is OPENAI cleared?" reads as
-yes, and it is not an answer.
-
-Never an agent's: an agent clearing a vendor to receive privileged material is
-the one act the whole mechanism exists to make impossible.
-
-What this does **not** do, and the screen says so: it does not obtain the
-agreement. A zero-retention, no-training term in a UK or EU region is something
-a customer gets in writing from the vendor; the platform records that they have
-it and refuses to pretend otherwise until they do.
-
 ## The trade register answers one of the ten
 
 `POST /v1/pipeline/supply-chain-evidence` was recorded here as deliberately
@@ -28480,59 +28435,22 @@ until the container is recreated. Somebody deleting the line and watching the
 row not change is looking at a correct screen and a stale fact, which is the
 most confusing failure a configuration screen has.
 
-## The letter nobody needed
 
-Recorded because the mistake was mine and it cost a customer time. The vendor
-declaration asks for the agreement a clearance is read from, and this file
-described that as needing something *"in writing from the vendor"* — which read
-as a bespoke, negotiated letter, and left a customer believing the agents were
-blocked until they could obtain one.
+## The vendor clearance stays where it was
 
-They are not. **The published terms a customer already accepted are an
-agreement**, and naming them is a valid answer. For the OpenAI API the published
-position is that API data is not used for model training by default, with
-abuse-monitoring logs kept up to thirty days; zero retention and EU data
-residency are separate arrangements that have to be applied for. A customer on
-the standard terms can therefore declare truthfully today, and a customer with
-ZDR can declare that instead.
+Built this session and taken out again at the customer's instruction, recorded
+so nobody rebuilds it without asking first.
 
-What the platform asks for has not changed and should not: an agreement it can
-name, a region, and an answer on training. What changed is the wording around
-it, in `docs/BID-ON-WALKTHROUGH.md` and here — because a gate that is
-satisfiable and reads as impossible is a gate that stops the wrong people.
+`AI_PROVIDER_CLEARANCE` and `AI_PROVIDER_RETENTION` are the only place a vendor
+is cleared. A console declaration was added on top of them — a screen, a route,
+an event and an overlay the sensitivity rules read first — on the argument that
+a bid manager meeting `AI_CLEARANCE_REQUIRED` on a return date should not need
+an SSH session to clear it.
 
-## A rule that was mine, and should not have been
+Whatever the merits, it was not asked for, it arrived with a validation rule
+that refused a clearance the environment variable had always granted without
+question, and it cost the customer two days. It is gone: `clearanceFor` and
+`retentionFor` read `config` and nothing else, exactly as before.
 
-Recorded because it cost a customer two days and the fault was in this
-repository, not in their configuration.
-
-Moving the AI vendor clearance out of `AI_PROVIDER_CLEARANCE` and onto a screen
-existed to take an SSH session *out* of a bid manager's path. The same change
-then added three fields that had to be answered before a vendor could be cleared
-above `INTERNAL` — the agreement, the processing region and the training term —
-and refused without them.
-
-That was wrong twice over.
-
-**It was a new rule.** The environment variable took a level and nothing else.
-So the console, built to remove friction, arrived stricter than the shell it
-replaced, and a customer who could have typed one line in `.env` instead met a
-form with three questions they believed needed a negotiated letter to answer.
-
-**It protected nothing.** `AI_PROVIDER_CLEARANCE` still works. Anybody with the
-host walked straight past the requirement; the only person it stopped was the
-one using the screen properly. A gate the shell can step around is not a
-control, it is an obstacle for honest users — and the argument written beside it
-("a promise on a screen with no contract behind it") was a good sentence
-attached to a check that could not deliver it.
-
-What refuses now is a declaration nobody could act on: a sensitivity level that
-is not one, a retention route that is not one. Everything else is recorded as
-given, blank included, and an undeclared retention reads `NOT_DECLARED` on every
-screen and in the sentence shown before the button. That is information, which
-is this module's job. Refusing the work was not.
-
-The same correction applies to the credential row: after a retirement it states
-the fact once and calls the rest housekeeping, rather than printing two
-instructions on every visit for jobs the platform cannot see and is not waiting
-on.
+The friction it was meant to remove is real and is unaddressed. It stays
+unaddressed until somebody asks for it.

@@ -1,8 +1,5 @@
 import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, COUNTRY, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
 import { ask } from '../ai/conversation.ts';
-import { PROVIDER_NAMES } from '../ai/providers/remote.ts';
-import { SENSITIVITY_ORDER, clearanceFor, retentionFor, retentionStatement } from '../ai/sensitivity.ts';
-import type { DataSensitivity } from '../identity/abac.ts';
 import * as storage from '../billing/storage.ts';
 import * as stripe from '../billing/stripe.ts';
 import * as koda from '../billing/koda.ts';
@@ -2601,127 +2598,8 @@ export const ROUTES: Route[] = [
             ? `${state.label} is retired, out of the file and revoked. Nothing is outstanding, and the record says who ` +
               'confirmed it — the platform could not see either, so your name is what stands behind it.'
             : `Recorded. Still outstanding: ${state.outstanding
-                .map((item) => (item === 'FILE' ? `the ${state.name} line in .env on the host` : 'revoking the key at the vendor'))
+                .map((item: string) => (item === 'FILE' ? `the ${state.name} line in .env on the host` : 'revoking the key at the vendor'))
                 .join(' and ')}.`,
-      };
-    },
-  },
-  {
-    method: 'GET',
-    pattern: '/v1/admin/vendor-terms',
-    readOnly: true,
-    description: 'What the contract with each AI vendor says — what it may be handed, what it does with it, and which agreement that is read from',
-    handler: (platform, ctx) => {
-      if (!auth(ctx).roles.includes('PLATFORM_ADMIN')) {
-        throw new ForbiddenError('Only the platform operator may read the vendor register', 'PLATFORM_ADMIN_REQUIRED');
-      }
-      /*
-       * Every provider the platform can call, with what is in force for it —
-       * declared, from the environment, or the default. A register that listed
-       * only the declared ones would answer "is OPENAI cleared?" with silence,
-       * and silence on this question reads as yes.
-       */
-      const declared = new Map(platform.vendorTerms().map((entry) => [entry.provider, entry]));
-      return {
-        vendors: PROVIDER_NAMES.map((provider) => {
-          const terms = declared.get(provider);
-          return {
-            provider,
-            clearance: clearanceFor(provider),
-            retention: retentionFor(provider),
-            statement: retentionStatement(provider, true),
-            declared: terms !== undefined,
-            ...(terms
-              ? {
-                  agreementReference: terms.agreementReference,
-                  declaredAt: terms.declaredAt,
-                  declaredBy: terms.declaredBy,
-                  reason: terms.reason,
-                }
-              : {}),
-          };
-        }),
-        levels: [...SENSITIVITY_ORDER],
-        routes: ['ZERO', 'TRANSIENT', 'RETAINED', 'NOT_DECLARED'],
-        note:
-          'Both facts are about the agreement with the vendor rather than about the software, so the platform is ' +
-          'told them. Nothing above internal is cleared without the agreement named, the processing region stated ' +
-          'and the training question answered.',
-      };
-    },
-  },
-  {
-    method: 'POST',
-    pattern: '/v1/admin/vendor-terms/:provider',
-    description: 'Record what the agreement with an AI vendor says. Replaces the environment variables for the same two facts',
-    schema: {
-      type: 'object',
-      /*
-       * `agreementReference` is not required here on purpose.
-       *
-       * Whether it is needed depends on the clearance being claimed, which is
-       * a rule about contracts rather than about the shape of a request — and
-       * `vendorterms.ts` owns it. Requiring it in the schema made the schema
-       * answer first, so somebody clearing a vendor for commercial material
-       * with three things missing got "agreementReference is required"
-       * instead of the sentence that names all three.
-       */
-      required: ['clearance', 'retentionRoute', 'reason'],
-      properties: {
-        clearance: { type: 'string', enum: [...SENSITIVITY_ORDER] },
-        retentionRoute: { type: 'string', enum: ['ZERO', 'TRANSIENT', 'RETAINED', 'NOT_DECLARED'] },
-        days: { type: 'integer', minimum: 0, maximum: 3650 },
-        region: { type: 'string', maxLength: 60 },
-        trainingExcluded: { type: 'boolean' },
-        agreementReference: { type: 'string', maxLength: 200 },
-        reason: { type: 'string', minLength: 8, maxLength: 400 },
-      },
-      additionalProperties: false,
-    },
-    handler: (platform, ctx) => {
-      const actor = auth(ctx);
-      if (!actor.roles.includes('PLATFORM_ADMIN')) {
-        throw new ForbiddenError('Only the platform operator may declare a vendor’s terms', 'PLATFORM_ADMIN_REQUIRED');
-      }
-      const provider = String(ctx.params.provider ?? '').toUpperCase();
-      if (!PROVIDER_NAMES.includes(provider as (typeof PROVIDER_NAMES)[number])) {
-        throw new DomainError(
-          'PROVIDER_UNKNOWN',
-          `${provider} is not a provider this platform can call, so declaring terms for it would change nothing.`,
-          404,
-        );
-      }
-      const input = body<{
-        clearance: DataSensitivity;
-        retentionRoute: string;
-        days?: number;
-        region?: string;
-        trainingExcluded?: boolean;
-        agreementReference?: string;
-        reason: string;
-      }>(ctx);
-
-      const terms = platform.declareVendorTerms({
-        provider,
-        clearance: input.clearance,
-        retention: {
-          route: input.retentionRoute,
-          ...(input.days === undefined ? {} : { days: input.days }),
-          ...(input.region === undefined ? {} : { region: input.region }),
-          ...(input.trainingExcluded === undefined ? {} : { trainingExcluded: input.trainingExcluded }),
-        },
-        agreementReference: input.agreementReference ?? '',
-        decidedBy: actor.actorId,
-        reason: input.reason,
-      });
-
-      return {
-        ...terms,
-        statement: retentionStatement(provider, true),
-        effect:
-          `${provider} may now be handed ${terms.clearance.replace(/_/g, ' ').toLowerCase()} material and below. ` +
-          'It takes effect on the next call; nothing already in flight changes, and the environment variables for ' +
-          'these two facts are no longer read for this vendor.',
       };
     },
   },

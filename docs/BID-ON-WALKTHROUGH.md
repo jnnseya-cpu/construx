@@ -104,38 +104,22 @@ asking. The platform can see neither your host's file nor the vendor's console,
 so that confirmation is your word — and the chain records whose, which is a
 better answer at an access review than a warning everybody learned to ignore.
 
-### 0.4 Declare what the vendor's agreement says
+### 0.4 Clear the vendor for commercial material
 
-**This is the step that decides whether the agents will touch your tender at
-all.** A tender, a price and a bid response are Commercial-L3; a vendor nobody
-has cleared for that is refused, and you will see
-`AI_CLEARANCE_REQUIRED`.
+A tender, a price and a bid response are Commercial-L3. A vendor that is not
+cleared for that is refused with `AI_CLEARANCE_REQUIRED`.
 
-**AI Engine → What the agreement with each vendor says → Record a vendor's terms**
+One line in `.env` on the host, then recreate the container:
 
-- **Vendor** → `OPENAI`
-- **May be handed, at most** → `Commercial l3`
-- **What it does with it** → whichever your agreement says
-- **For how many days** → their figure, where it keeps it for a period
-- **Processed in** → e.g. `eu-west`
-- **Excluded from model training** → tick it if your vendor's terms say so
-- **Which agreement** → what somebody would have to go and read
-- **Why now** → recorded against the decision
+```
+AI_PROVIDER_CLEARANCE=OPENAI:COMMERCIAL_L3
+```
 
-Only the first two are compulsory. What you leave blank is recorded as *not
-stated* and reads that way wherever the vendor is named — which is the honest
-answer and does not stop the work.
-
-> **You do not need a letter from the vendor.** The terms you accepted when you
-> opened the account are an agreement, and naming them is a valid answer. For
-> the OpenAI **API** their published position is that API data is **not used to
-> train their models by default**, and that abuse-monitoring logs are kept **up
-> to 30 days** — so `Keeps it for a stated period, then deletes it` / `30` /
-> training excluded, against *"OpenAI Services Agreement and published API data
-> usage policies"*, is a declaration with something real behind it. Zero
-> retention and EU data residency are **separate arrangements you have to apply
-> for**, so do not claim either unless your account has it. The platform records
-> what you say; your name is what stands behind it.
+Add `,ANTHROPIC:COMMERCIAL_L3` for a second vendor. `AI_PROVIDER_RETENTION` is
+optional and is disclosure only — it is the sentence shown before the button
+saying what the vendor does with what it is sent, e.g.
+`OPENAI:TRANSIENT:30:eu-west:no-training`. Left unset it reads *"nobody has
+declared what OPENAI does with it"*, which blocks nothing.
 
 **You do not have to do this to run the tender.** Without it, every AI command
 refuses by name and everything in this walkthrough still works by hand.

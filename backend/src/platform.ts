@@ -65,8 +65,6 @@ import {
   type CustomRole,
 } from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
-import { useDeclaredVendorTerms, validateVendorTerms, type VendorTerms } from './ai/vendorterms.ts';
-import type { DataSensitivity } from './identity/abac.ts';
 import {
   clearCredential,
   confirmEnvironmentGone,
@@ -397,11 +395,6 @@ export class Platform {
     // in-process store, so an unbound build would appear to work and would
     // forget every revocation on restart.
     bindCredentialStores(this.ledger);
-    // What the sensitivity rules read before they read `.env`. Bound here for
-    // the same reason as the line above: the fallback is silent, so an unbound
-    // build would quietly ignore every declaration an operator had made and
-    // refuse AI on commercial material with the console saying it was cleared.
-    useDeclaredVendorTerms(() => this.vendorTerms());
 
     // The platform's own tenancy exists from the start, not from the first
     // operator being created.
@@ -3144,63 +3137,6 @@ export class Platform {
   }
 
   /**
-   * What the contract with an AI vendor says, as the operator has read it.
-   *
-   * On the chain rather than in `.env`, because it is a statement about a legal
-   * agreement: who decided that this vendor may be handed commercial material,
-   * when, and which agreement they were reading. An environment variable
-   * answers none of those, and the only way to change one was an SSH session
-   * and a restart — so a refusal a bid manager hit on a return date could not be
-   * cleared by the person who actually holds the contract.
-   *
-   * Validation is `vendorterms.ts`'s, because the rule is about what a contract
-   * has to say before the platform will act on it rather than about the shape
-   * of a request.
-   */
-  declareVendorTerms(input: {
-    provider: string;
-    clearance: DataSensitivity;
-    retention: { route: string; days?: number; region?: string; trainingExcluded?: boolean };
-    agreementReference: string;
-    decidedBy: string;
-    reason: string;
-  }): VendorTerms {
-    const provider = input.provider.toUpperCase();
-    const retention = validateVendorTerms({ ...input, provider });
-
-    const terms: VendorTerms = {
-      provider,
-      clearance: input.clearance,
-      retention,
-      agreementReference: input.agreementReference.trim(),
-      declaredAt: new Date().toISOString(),
-      declaredBy: input.decidedBy,
-      reason: input.reason,
-    };
-
-    this.ledger.commit({
-      tenantId: PLATFORM_TENANT_ID,
-      projectId: `${PLATFORM_TENANT_ID}-governance`,
-      actor: { refType: 'User', refId: input.decidedBy },
-      source: 'WEB',
-      correlationId: ulid(),
-      eventType: 'PLATFORM_VENDOR_TERMS_DECLARED',
-      entity: { refType: 'VendorTerms', refId: provider },
-      nextState: { id: provider, ...terms },
-    });
-
-    return terms;
-  }
-
-  /** Every vendor declaration, latest per vendor. What the overlay reads. */
-  vendorTerms(): VendorTerms[] {
-    return this.ledger
-      .entitiesOfType('VendorTerms')
-      .filter((record) => record.tenantId === PLATFORM_TENANT_ID)
-      .map((record) => record.state as unknown as VendorTerms);
-  }
-
-  /**
    * Record that a superseded key is actually gone — out of the file, and
    * revoked at the vendor.
    *
@@ -3208,10 +3144,6 @@ export class Platform {
    * exists because the row stated both jobs for ever, so an operator who had
    * done them was told to do them again every time they opened the screen, and
    * a warning nobody can clear is one everybody stops reading.
-   *
-   * On the chain because "who confirmed the revoked key was actually revoked"
-   * is an access-review question, and an attestation with a name on it is a
-   * better answer than silence.
    */
   confirmPlatformCredentialGone(input: {
     name: CredentialName;
