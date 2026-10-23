@@ -5,6 +5,7 @@ import { ulid } from '../core/ids.ts';
 import { config } from '../config.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import { findByHash } from '../evidence/registry.ts';
+import { extractText } from '../evidence/ingest.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import { submitProgress } from '../domain/progressverification.ts';
@@ -943,7 +944,35 @@ export async function extract(
       // is traceable to the exact bytes that produced it.
       payload: { evidenceHash: input.hash, contentType: file.contentType },
       responseSchema: definition.responseSchema,
-      media: { contentType: file.contentType, base64: file.bytes.toString('base64'), hash: input.hash },
+      media: {
+        contentType: file.contentType,
+        base64: file.bytes.toString('base64'),
+        hash: input.hash,
+        /*
+         * Pages, where the file has them.
+         *
+         * A vendor handed a PDF renders every page and charges for a picture of
+         * each one, so what decides whether this call fits in a model's context
+         * window is the page count — not the byte count the ceiling above
+         * checks. A 200-page scan that compresses to 3MB passes a 20MB ceiling
+         * and does not fit in any window, and before this was carried the only
+         * thing that said so was the vendor:
+         *
+         *     400 … Your input exceeds the context window of this model
+         *
+         * Counted by the same reader the ingestion pipeline uses rather than by
+         * a second rule of its own. A scan's content streams are a few bytes of
+         * image placement, so reading one costs almost nothing; a text-bearing
+         * PDF is parsed twice on this path, which is the price of one honest
+         * figure.
+         */
+        ...(file.contentType === 'application/pdf'
+          ? (() => {
+              const pages = extractText(file.bytes, file.contentType).pages;
+              return pages ? { pages } : {};
+            })()
+          : {}),
+      },
     },
     // The AI write is the draft and only the draft.
     toWrites: (output, confidence) => [

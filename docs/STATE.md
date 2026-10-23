@@ -28454,3 +28454,76 @@ question, and it cost the customer two days. It is gone: `clearanceFor` and
 
 The friction it was meant to remove is real and is unaddressed. It stays
 unaddressed until somebody asks for it.
+
+## The context window: measured, routed around, and read in parts
+
+Reported from a live run against a real tender:
+
+    AI_PROVIDER_ERROR — OPENAI returned 400: Your input exceeds the context
+    window of this model. Please adjust your input and try again.
+
+Nothing in the platform knew where any model's window was. An engine assembled
+whatever the records held, the adapter sent it, and the limit was discovered as
+the vendor's own refusal — reaching the person who pressed the button as a
+provider error on a command that had worked the day before with a smaller file.
+
+Two separate defects were behind it.
+
+**The document was being sent twice.** `documentForReading` concatenated the
+extracted text and then every table row recovered from the same document. For
+the two formats a tender actually arrives in that is the same content twice
+over: a workbook's `text` is built from its sheets by `office.ts` and
+`pageTables` carries those rows again, and a PDF's reconstructed tables come out
+of the text layer its `text` came from. Every spreadsheet the module has ever
+read went to the vendor as itself followed by itself — twice the input tokens,
+twice the cost, and on a priced bill of quantities it is what crossed the
+window. `documentTextOf` now sends the text and only those rows the text does
+not already carry, compared on a normalised form so a workbook row is
+recognised and dropped while a PDF row the text layer interleaved differently
+survives.
+
+**Nothing measured the input.** Now:
+
+- `requestInputTokens` measures one request — task, payload, schema and media —
+  as a deliberate over-estimate, and is the single figure behind both the ACU
+  hold and the fit check. The hold was previously sized from `payload` alone.
+- A scan is sized by its **pages**, not its bytes. A vendor handed a PDF
+  renders every page and charges for a picture of each, so a 200-page scan that
+  compresses to 3MB passes a 20MB byte ceiling and fits in no window at all.
+  `ProviderMedia.pages` carries the count the PDF reader already produced.
+- Each adapter publishes `inputBudgetTokens` — its vendor's window less the
+  room its answer needs, from the `WINDOWS` table in `providers/remote.ts`,
+  which is configuration on the same terms as `PRICING`. **Absent means there
+  is no window to exceed**, which is true of the deterministic local engines.
+- `adapterFor` takes the measured size as a third consideration after clearance
+  and health. This is a *route* before it is a refusal: a document the primary
+  cannot hold goes to a cleared vendor with a larger window where there is one.
+  Where none holds it, `AI_INPUT_TOO_LARGE` (413) names the size, the largest
+  window available and what to do — before the request is filed, before the
+  hold, before the call. The adapter repeats the check at the socket for a
+  caller that did not come through the orchestrator.
+- `textBudgetChars` publishes the same budget in characters, so an engine whose
+  input *is* a whole document can split it without knowing anything about
+  tokens or vendors. It answers from the **smallest** cleared window, not the
+  largest: parts sized to the largest could be served by one vendor only, and a
+  document read over several calls would then fail half way through — with the
+  earlier parts already charged — the moment that vendor went unhealthy.
+
+**A document bigger than any window is read in parts.** The platform does not
+get to choose how long a buyer's document is, so the three Bid-On commands that
+take one — the Reader, the questionnaire parser and the amendments review —
+split it on paragraph boundaries with `partsOf`, send one request per part, and
+combine the answers. Each part is its own execution, its own hold and its own
+charge, which is the honest accounting: `readEvidence` returns `parts`, the
+three console panels say so before the button is pressed, and `acuConsumed` is
+the sum rather than the last part's. Every part is told which part it is and
+told not to infer, renumber or report anything about the rest.
+
+A scan is one part whatever its size. Splitting a PDF into page ranges is not
+something this platform does to a file it was given; the byte ceiling and the
+window guard both refuse one too large, by name and before spending.
+
+What is **not** built: nothing splits a payload an engine assembled from
+records rather than from a document. Those are bounded by what the engine
+retrieves, and a refusal naming the size is the whole answer there until one of
+them is measured crossing a window in practice.

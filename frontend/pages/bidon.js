@@ -1478,7 +1478,8 @@ export async function bidon(root) {
         'contract, and the commonest way a term contract goes wrong is that nobody read them until the first ' +
         'dispute. This produces questions to ask the buyer and observations to put in front of whoever advises the ' +
         'customer. It accepts nothing, qualifies nothing and says nothing about whether a clause is enforceable — ' +
-        'that decision binds a company, and no agent here reaches one.',
+        'that decision binds a company, and no agent here reaches one. ' +
+        'A document longer than one model request is read in parts and each part is a charge of its own, so a two-hundred-page bundle costs what two hundred pages cost rather than being refused.',
       path: (v) => `/v1/bid-on/bids/${v.bidId}/amendments`,
       submitLabel: 'Read it',
       fields: [
@@ -1578,7 +1579,8 @@ export async function bidon(root) {
         'Reads a questionnaire into an ordered question list, keeping the buyer’s own numbering exactly as printed. ' +
         'It produces a proposal and nothing more: a person confirms the list against the source, because a parser ' +
         'that drops one question produces a pack where every answer is good and the submission is still rejected. ' +
-        'The cost of the run is quoted before it starts.',
+        'The cost of the run is quoted before it starts. ' +
+        'A document longer than one model request is read in parts and each part is a charge of its own, so a two-hundred-page bundle costs what two hundred pages cost rather than being refused.',
       path: (v) => `/v1/bid-on/bids/${v.bidId}/parse`,
       submitLabel: 'Read',
       ai: true,
@@ -1864,7 +1866,8 @@ export async function bidon(root) {
         'its page or clause where it shows one. A scan is read rather than refused. The passages are what every ' +
         'answer is drafted from and cited against, so a sentence the document does not contain would be a false ' +
         'statement made in the customer’s name: the local stand-in is refused before anything is charged, and the ' +
-        'cost of the run is quoted before it starts. Reading it again replaces what is there.',
+        'cost of the run is quoted before it starts. Reading it again replaces what is there. ' +
+        'A document longer than one model request is read in parts and each part is a charge of its own, so a two-hundred-page bundle costs what two hundred pages cost rather than being refused.',
       path: (v) => `/v1/bid-on/evidence/${v.evidenceId}/read`,
       submitLabel: 'Read it',
       ai: true,

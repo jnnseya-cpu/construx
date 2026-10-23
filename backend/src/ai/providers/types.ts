@@ -52,6 +52,16 @@ export type ProviderMedia = {
   base64: string;
   /** The content hash, so the request the provider saw is traceable to a record. */
   hash: string;
+  /**
+   * Pages, where the file has them and the reader counted them.
+   *
+   * Carried because a document's **pages**, not its bytes, decide what it costs
+   * in input tokens and whether it fits at all: a vendor handed a PDF renders
+   * each page and charges for a picture of it, so a 3MB scan of 200 pages is
+   * worth an order of magnitude more input than 3MB of photograph. Sizing that
+   * from the byte count is how an input that cannot fit gets sent anyway.
+   */
+  pages?: number;
 };
 
 export type ProviderResponse = {
@@ -137,6 +147,26 @@ export interface AIProviderAdapter {
    * contract with that vendor permits.
    */
   readonly transmits: boolean;
+  /**
+   * The most input one call to this adapter may carry, in tokens.
+   *
+   * Declared because a model's context window is a hard boundary and the
+   * platform had no idea where it was: an engine assembled whatever the records
+   * held, sent it, and the first thing anybody learned about the window was the
+   * vendor's own refusal —
+   *
+   *     OPENAI returned 400: Your input exceeds the context window of this model
+   *
+   * — which reaches the person who pressed the button as a provider error on a
+   * command that had worked the day before with a smaller document. Published
+   * here instead, so the orchestrator can route the call to a vendor whose
+   * window holds it, and refuse by name and size when none does, before
+   * anything is reserved or sent.
+   *
+   * **Absent means there is no window to exceed**, which is true of the
+   * deterministic local engines: they compute over their inputs in process.
+   */
+  readonly inputBudgetTokens?: number;
   /** Estimated cost before execution, used to size the ACU hold. */
   estimateCostMinor(request: ProviderRequest): number;
   execute(request: ProviderRequest): Promise<ProviderResponse>;

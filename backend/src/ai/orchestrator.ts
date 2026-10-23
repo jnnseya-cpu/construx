@@ -9,7 +9,7 @@ import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
 import { outputStandardSchema } from './outputstandard.ts';
 import { configuredEmbeddingAdapter } from './providers/embedding.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
-import { remotePerception, remoteReasoning, spareAdapters } from './providers/remote.ts';
+import { CHARS_PER_TOKEN, remotePerception, remoteReasoning, requestInputTokens, spareAdapters } from './providers/remote.ts';
 import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderResponse } from './providers/types.ts';
 
 /**
@@ -593,7 +593,24 @@ export class AIOrchestrator {
    * and to whom, because "no provider is cleared for LEGAL_L4" is actionable and
    * "AI unavailable" is not.
    */
-  adapterFor(capability: ProviderCapability, sensitivity: DataSensitivity = 'INTERNAL'): AIProviderAdapter {
+  adapterFor(
+    capability: ProviderCapability,
+    sensitivity: DataSensitivity = 'INTERNAL',
+    /**
+     * How much input the call carries, where the caller has measured it.
+     *
+     * The third thing that decides a vendor, after clearance and health, and
+     * the one that was missing: a model's context window is a hard boundary,
+     * and a request past it was sent anyway and came back as
+     * `400 … exceeds the context window of this model`. A vendor whose window
+     * will not hold this call is not a candidate for it — which is also a
+     * route, not only a refusal: a 600-page document the primary cannot take
+     * goes to a cleared vendor with a larger window where there is one.
+     *
+     * Zero means "not measured", and every vendor qualifies.
+     */
+    inputTokens = 0,
+  ): AIProviderAdapter {
     // The order the chain is tried in, unchanged. What changes is that an
     // uncleared vendor is not in it at all.
     const chain = this.#chainFor(capability);
@@ -628,10 +645,67 @@ export class AIOrchestrator {
       );
     }
 
-    const healthy = cleared.find((adapter) => adapter.healthy());
+    // Clearance first, then the window: a vendor that may not see this material
+    // is not made a candidate by having room for it.
+    const fits = cleared.filter(
+      (adapter) => adapter.inputBudgetTokens === undefined || inputTokens <= adapter.inputBudgetTokens,
+    );
+
+    if (fits.length === 0) {
+      const largest = Math.max(...cleared.map((adapter) => adapter.inputBudgetTokens ?? 0));
+      throw new DomainError(
+        'AI_INPUT_TOO_LARGE',
+        `This would send about ${Math.ceil(inputTokens / 1_000)}k tokens to a model, and the largest input any ` +
+          `cleared provider accepts in one request is ${Math.floor(largest / 1_000)}k. Nothing was sent and nothing ` +
+          'was charged. Read the document in parts, send a shorter extract, or clear a provider with a larger ' +
+          'context window for this material.',
+        // 413, not 503. Nothing is down and retrying changes nothing: the input
+        // is bigger than any model available can be handed at once.
+        413,
+      );
+    }
+
+    const healthy = fits.find((adapter) => adapter.healthy());
     if (healthy) return healthy;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
+  }
+
+  /**
+   * How much document text one call can carry, in characters.
+   *
+   * Published so an engine whose input *is* a whole document — the Bid-On
+   * reader, the questionnaire parser — can read it in parts instead of
+   * discovering the window as a refusal. An engine has no business knowing
+   * about tokens, vendors or windows; it knows how long the document it holds
+   * is, and this answers in the same unit.
+   *
+   * Measured against the **smallest** window among the vendors that may see
+   * this material, not the largest. Sizing to the largest would produce parts
+   * only one vendor could take, and a document read over several calls would
+   * then fail half way through — after the earlier parts had been charged — the
+   * moment that vendor went unhealthy. Parts that fit the smallest cleared
+   * window can be served by any of them, which is what makes failover
+   * harmless mid-document. The cost is a few more requests carrying the same
+   * total tokens.
+   *
+   * `FIXED_COST_TOKENS` is what travels with every part regardless of its size:
+   * the task, the constraint, the response schema and the system prompt.
+   */
+  textBudgetChars(input: { capability: ProviderCapability; inputRefs?: readonly EntityRef[] }): number {
+    const FIXED_COST_TOKENS = 4_000;
+    const sensitivity = sensitivityOf(input.inputRefs ?? []);
+    const cleared = this.#chainFor(input.capability).filter((adapter) => mayReceive(adapter, sensitivity));
+    const windows = cleared
+      .map((adapter) => adapter.inputBudgetTokens)
+      .filter((budget): budget is number => budget !== undefined);
+    // No window to exceed: the deterministic local engines, which read their
+    // inputs in process. Nothing is gained by splitting a document for them,
+    // and nothing is cleared to receive it anywhere else.
+    if (windows.length === 0) return Number.MAX_SAFE_INTEGER;
+    // A floor, so a vendor configured with an implausibly small window cannot
+    // produce a budget that splits a document into useless fragments.
+    return Math.max(CHARS_PER_TOKEN * 1_000, (Math.min(...windows) - FIXED_COST_TOKENS) * CHARS_PER_TOKEN);
   }
 
   /**
@@ -753,7 +827,10 @@ export class AIOrchestrator {
     // Resolved *before* the request is filed, so a refusal on clearance grounds
     // leaves no queued request behind claiming a routing that never happened.
     const sensitivity = sensitivityOf(input.inputRefs);
-    const adapter = this.adapterFor(input.capability, sensitivity);
+    // Measured before the vendor is chosen, because the size is one of the
+    // things that chooses it. A request no cleared window will hold is refused
+    // here — before the request is filed, before the hold, before the call.
+    const adapter = this.adapterFor(input.capability, sensitivity, requestInputTokens(input.request));
     aiRequest.routing = {
       sensitivity,
       provider: adapter.name,

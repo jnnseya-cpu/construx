@@ -43,6 +43,59 @@ function estimateTokens(payload: unknown): number {
   return Math.ceil(canonicalize(payload).length / 4);
 }
 
+/** Characters per token, at the 4:1 heuristic above. Used to size a text budget. */
+export const CHARS_PER_TOKEN = 4;
+
+/**
+ * What a reply, a system prompt and the API's own scaffolding cost on top of
+ * the payload. A flat allowance: the point is that the measurement is never
+ * *under* the real figure, not that it is exact.
+ */
+const PROMPT_OVERHEAD_TOKENS = 400;
+
+/**
+ * What one page of a document is worth in input tokens.
+ *
+ * A vendor handed a PDF does not read it as text. It renders each page and
+ * charges for the picture as well as for whatever words it recovers, so the
+ * cost scales with **pages**, not with bytes — and a 200-page scan that
+ * compresses to 3MB is worth far more input than 3MB of photograph. 2,000 is
+ * deliberately above what a plain page of A4 costs at any of the three vendors:
+ * an under-estimate here is an input sent that cannot fit, which is the failure
+ * this number exists to prevent.
+ */
+const TOKENS_PER_PAGE = 2_000;
+
+/**
+ * What each vendor's models will hold, and how much of it is kept back for the
+ * answer.
+ *
+ * Configuration, like `PRICING` above, and on the same terms: these are vendor
+ * facts that move, and the platform stays correct when they do because every
+ * budget is read through `inputBudgetTokens` rather than assumed anywhere.
+ *
+ * The reserve is not optional arithmetic. A vendor's window is shared between
+ * what goes in and what comes back: an input sized to the whole window leaves
+ * no room for the answer, and the result is not a refusal but a reply cut off
+ * mid-JSON — which `parseModelOutput` then refuses as truncated, after the call
+ * has been billed in full.
+ */
+const WINDOWS: Record<AIProvider, { windowTokens: number; outputReserveTokens: number }> = {
+  // gpt-5 and gpt-5-mini: a 400,000-token window, of which the documented
+  // maximum output is 128,000.
+  OPENAI: { windowTokens: 400_000, outputReserveTokens: 128_000 },
+  // gemini-2.5-pro: 1,048,576 input tokens, 65,536 output.
+  GEMINI: { windowTokens: 1_048_576, outputReserveTokens: 65_536 },
+  // The Claude models this adapter names take 200,000, and `max_tokens` below
+  // caps the answer at 8,192 — so the reserve is that cap, not a guess.
+  ANTHROPIC: { windowTokens: 200_000, outputReserveTokens: 8_192 },
+};
+
+function inputBudgetOf(provider: AIProvider): number {
+  const window = WINDOWS[provider];
+  return window.windowTokens - window.outputReserveTokens;
+}
+
 /**
  * What the attached file is worth in input tokens.
  *
@@ -54,9 +107,39 @@ function estimateTokens(payload: unknown): number {
  * either way.
  */
 function mediaTokens(request: ProviderRequest): number {
-  if (!request.media) return 0;
-  const bytes = Math.ceil((request.media.base64.length * 3) / 4);
-  return Math.ceil(bytes / 750);
+  const media = request.media;
+  if (!media) return 0;
+  const bytes = Math.ceil((media.base64.length * 3) / 4);
+  // Whichever reads larger. Bytes alone understate a scan — the whole point of
+  // `TOKENS_PER_PAGE` — and pages alone understate a single enormous image.
+  return Math.max(Math.ceil(bytes / 750), (media.pages ?? 0) * TOKENS_PER_PAGE);
+}
+
+/**
+ * What this request will cost in input tokens, near enough to decide whether it
+ * fits.
+ *
+ * One function for the two questions that were being answered differently: how
+ * big a hold to place, and whether the vendor will accept the call at all. The
+ * hold was sized from `payload` alone, which left out the task, the schema and
+ * — before `mediaTokens` existed — the file; and nothing at all answered the
+ * second question, so an input past the window was discovered as a vendor 400.
+ *
+ * Deliberately an over-estimate. The settled charge comes from the provider's
+ * own usage accounting either way, so the cost of reading high is a hold that
+ * is slightly too large, and the cost of reading low is a call that fails after
+ * the customer has committed to it.
+ */
+export function requestInputTokens(request: ProviderRequest): number {
+  return (
+    estimateTokens({
+      task: request.task,
+      payload: request.payload,
+      schema: request.responseSchema ?? null,
+    }) +
+    mediaTokens(request) +
+    PROMPT_OVERHEAD_TOKENS
+  );
 }
 
 /**
@@ -83,6 +166,8 @@ type Endpoint = {
   headers: (key: string) => Record<string, string>;
   body: (request: ProviderRequest, modelClass: string) => unknown;
   extract: (response: unknown) => ModelReply;
+  /** The most input one call here may carry, after the answer's reserve. */
+  inputBudgetTokens: number;
 };
 
 /**
@@ -175,6 +260,7 @@ function isDocument(contentType: string): boolean {
 
 const OPENAI_ENDPOINT: Endpoint = {
   url: 'https://api.openai.com/v1/responses',
+  inputBudgetTokens: inputBudgetOf('OPENAI'),
   headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }),
   body: (request, modelClass) => ({
     model: modelClass === 'reasoning-deep' ? 'gpt-5' : 'gpt-5-mini',
@@ -257,6 +343,7 @@ const OPENAI_ENDPOINT: Endpoint = {
 
 const GEMINI_ENDPOINT: Endpoint = {
   url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
+  inputBudgetTokens: inputBudgetOf('GEMINI'),
   headers: (key) => ({ 'x-goog-api-key': key, 'Content-Type': 'application/json' }),
   body: (request) => ({
     contents: [
@@ -311,6 +398,7 @@ const GEMINI_ENDPOINT: Endpoint = {
  */
 const ANTHROPIC_ENDPOINT: Endpoint = {
   url: 'https://api.anthropic.com/v1/messages',
+  inputBudgetTokens: inputBudgetOf('ANTHROPIC'),
   headers: (key) => ({
     'x-api-key': key,
     // Pinned for the same reason Stripe's is: a version rolled out on their
@@ -573,6 +661,8 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
   readonly multimodal = true;
   /** Over the network, to a third party. Clearance applies. */
   readonly transmits = true;
+  /** This vendor's window, less the room its answer needs. */
+  readonly inputBudgetTokens: number;
   readonly #endpoint: Endpoint;
   readonly #apiKey: string;
   #consecutiveFailures = 0;
@@ -588,6 +678,7 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     const provider = PROVIDERS[name];
     this.#endpoint = provider.endpoint;
     this.#apiKey = provider.key();
+    this.inputBudgetTokens = provider.endpoint.inputBudgetTokens;
   }
 
   /** Three consecutive failures takes the adapter out of rotation for failover. */
@@ -601,7 +692,7 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     // than the JSON describing it, and an estimate that ignored it would size
     // the ACU hold from the wrong number entirely — the customer would be
     // quoted pennies and charged pounds.
-    const inputTokens = estimateTokens(request.payload) + mediaTokens(request) + 400;
+    const inputTokens = requestInputTokens(request);
     // Assume output is a quarter of input until the call reports otherwise.
     return priceFor(modelClass, inputTokens, Math.ceil(inputTokens / 4));
   }
@@ -609,6 +700,28 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
   async execute(request: ProviderRequest): Promise<ProviderResponse> {
     if (this.#apiKey === '') {
       throw new DomainError('AI_PROVIDER_UNCONFIGURED', `${this.name} API key is not configured`, 503);
+    }
+
+    /*
+     * The window, checked here rather than learned from a 400.
+     *
+     * The orchestrator routes around this: it measures the request and picks a
+     * vendor whose window holds it, so a call reaching this line past the
+     * budget means somebody built a request and executed an adapter directly.
+     * It is still refused, and refused *before* the socket opens — the vendor
+     * would reject it anyway, and a provider error costs the caller a failed
+     * command and an operator a line in the log that reads like an outage.
+     *
+     * Not counted against health. Nothing is wrong with the vendor.
+     */
+    const inputTokens = requestInputTokens(request);
+    if (inputTokens > this.inputBudgetTokens) {
+      throw new DomainError(
+        'AI_INPUT_TOO_LARGE',
+        `This call carries about ${Math.ceil(inputTokens / 1_000)}k tokens of input and ${this.name} accepts ` +
+          `${Math.floor(this.inputBudgetTokens / 1_000)}k in one request. Nothing was sent and nothing was charged.`,
+        413,
+      );
     }
 
     const modelClass = request.modelClass ?? this.#defaultModelClass();

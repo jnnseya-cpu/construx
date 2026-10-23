@@ -2,7 +2,8 @@ import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
 import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
-import { extractText, inspect } from '../../evidence/ingest.ts';
+import { extractText, inspect, type Extraction } from '../../evidence/ingest.ts';
+import type { ProviderMedia } from '../../ai/providers/types.ts';
 import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
 import type { Clarification } from '../tenderintake.ts';
@@ -264,60 +265,84 @@ export async function parseQuestionnaire(
   // the bytes carry the words, as a scan only where they do not.
   const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the questionnaire') : undefined;
 
-  const result = await runAI(ctx, {
-    engine: 'TENDER',
-    taskType: 'bid_on_parse',
-    // A pasted portal page is text; a questionnaire PDF — including a scan — is
-    // a document a vision model reads. The capability follows the input rather
-    // than being fixed, because offering a reasoning model a scan produces a
-    // confident reading of nothing.
-    capability: document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
-    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
-    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
-    request: {
-      ...(document?.kind === 'MEDIA' ? { media: document.media } : {}),
-      task:
-        'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
-        'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
-        'passFail }.',
-      payload: {
-        scheme: bid.scheme,
-        buyer: bid.buyerName,
-        ...(input.text ? { questionnaire: input.text } : {}),
-        ...(input.hash ? { documentHash: input.hash } : {}),
-        ...(document?.kind === 'TEXT' ? { questionnaire: document.text } : {}),
-        constraint:
-          'Keep the buyer’s own section headings and their own numbering exactly as printed, including suffixes ' +
-          'like 4.1a — an export has to map onto their questionnaire, and a renumbered list is one a buyer cannot ' +
-          'follow. Preserve the order. `answerType` is one of ' +
-          `${ANSWER_TYPE.join(', ')}. ` +
-          'Report a word limit, a weighting and a mandatory or pass/fail flag only where the document states them; ' +
-          'omit them otherwise rather than assuming a convention. Do not answer anything, do not summarise, and do ' +
-          'not merge two questions into one — a question nobody answers is a rejected submission.',
-      },
-    },
-    // Nothing is committed from the model's output here beyond the proposal
-    // written below under its own event, so the model writes no state.
-    toWrites: () => [],
-    requireModel: NO_PROVIDER,
-  });
+  // A pasted portal page is text; a questionnaire PDF — including a scan — is a
+  // document a vision model reads. The capability follows the input rather than
+  // being fixed, because offering a reasoning model a scan produces a confident
+  // reading of nothing.
+  const capability = document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING';
+  const inputRefs = [{ refType: 'BidOnBid', refId: bid.id }];
 
-  const output = result.output as { questions?: unknown };
-  const proposed: ParsedQuestion[] = (Array.isArray(output.questions) ? output.questions : [])
-    .map((row) => row as Record<string, unknown>)
-    .map((row) => ({
-      section: String(row.section ?? 'General').trim() || 'General',
-      number: String(row.number ?? '').trim(),
-      text: String(row.text ?? '').trim(),
-      answerType: (ANSWER_TYPE.includes(String(row.answerType ?? '').toUpperCase() as never)
-        ? String(row.answerType).toUpperCase()
-        : 'TEXT') as BidQuestion['answerType'],
-      ...(row.wordLimit == null ? {} : { wordLimit: Math.round(Number(row.wordLimit)) }),
-      ...(row.weighting == null ? {} : { weighting: Number(row.weighting) }),
-      mandatory: row.mandatory === true,
-      passFail: row.passFail === true,
-    }))
-    .filter((question) => question.number && question.text);
+  // Pasted text is a document for this purpose: a questionnaire copied out of a
+  // portal can be longer than one request just as a file can.
+  const source: DocumentForReading | undefined =
+    document ?? (input.text?.trim() ? { kind: 'TEXT', text: input.text } : undefined);
+
+  // A questionnaire past the window is read in parts and the question lists are
+  // joined in order, rather than the whole thing being sent and refused by the
+  // vendor. Each part is its own execution and its own charge.
+  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+
+  const proposed: ParsedQuestion[] = [];
+  let acuConsumed = 0;
+  let parsedBy: string | undefined;
+
+  for (const part of parts) {
+    const result = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'bid_on_parse',
+      capability,
+      inputRefs,
+      attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+      request: {
+        ...(part.media ? { media: part.media } : {}),
+        task:
+          'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
+          'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
+          'passFail }.',
+        payload: {
+          scheme: bid.scheme,
+          buyer: bid.buyerName,
+          ...(part.text === undefined ? {} : { questionnaire: part.text }),
+          ...(input.hash ? { documentHash: input.hash } : {}),
+          ...partConstraint(part),
+          constraint:
+            'Keep the buyer’s own section headings and their own numbering exactly as printed, including suffixes ' +
+            'like 4.1a — an export has to map onto their questionnaire, and a renumbered list is one a buyer cannot ' +
+            'follow. Preserve the order. `answerType` is one of ' +
+            `${ANSWER_TYPE.join(', ')}. ` +
+            'Report a word limit, a weighting and a mandatory or pass/fail flag only where the document states them; ' +
+            'omit them otherwise rather than assuming a convention. Do not answer anything, do not summarise, and do ' +
+            'not merge two questions into one — a question nobody answers is a rejected submission.',
+        },
+      },
+      // Nothing is committed from the model's output here beyond the proposal
+      // written below under its own event, so the model writes no state.
+      toWrites: () => [],
+      requireModel: NO_PROVIDER,
+    });
+
+    acuConsumed += result.acuConsumed;
+    parsedBy ??= result.provider;
+
+    const output = result.output as { questions?: unknown };
+    proposed.push(
+      ...(Array.isArray(output.questions) ? output.questions : [])
+        .map((row) => row as Record<string, unknown>)
+        .map((row) => ({
+          section: String(row.section ?? 'General').trim() || 'General',
+          number: String(row.number ?? '').trim(),
+          text: String(row.text ?? '').trim(),
+          answerType: (ANSWER_TYPE.includes(String(row.answerType ?? '').toUpperCase() as never)
+            ? String(row.answerType).toUpperCase()
+            : 'TEXT') as BidQuestion['answerType'],
+          ...(row.wordLimit == null ? {} : { wordLimit: Math.round(Number(row.wordLimit)) }),
+          ...(row.weighting == null ? {} : { weighting: Number(row.weighting) }),
+          mandatory: row.mandatory === true,
+          passFail: row.passFail === true,
+        }))
+        .filter((question) => question.number && question.text),
+    );
+  }
 
   if (proposed.length === 0) {
     throw new DomainError(
@@ -334,7 +359,7 @@ export async function parseQuestionnaire(
     status: 'PARSING',
     proposedQuestions: proposed,
     parsedAt: new Date().toISOString(),
-    ...(result.provider ? { parsedBy: result.provider } : {}),
+    ...(parsedBy ? { parsedBy } : {}),
   };
 
   write(ctx, {
@@ -343,7 +368,7 @@ export async function parseQuestionnaire(
     nextState: { ...next },
   });
 
-  return { bid: next, proposed, acuConsumed: result.acuConsumed };
+  return { bid: next, proposed, acuConsumed };
 }
 
 /**
@@ -384,7 +409,158 @@ export async function parseQuestionnaire(
  */
 type DocumentForReading =
   | { kind: 'TEXT'; text: string; note?: string }
-  | { kind: 'MEDIA'; media: { contentType: string; base64: string; hash: string }; note?: string };
+  | { kind: 'MEDIA'; media: ProviderMedia; note?: string };
+
+/**
+ * One document, as the words a model is given — each of them once.
+ *
+ * ## The document was being sent twice
+ *
+ * This was `[extraction.text, ...every table row]`, and for the two formats a
+ * tender actually arrives in that is the same content twice over. A workbook's
+ * `text` is *built from* its sheets — `office.ts` joins every row of every
+ * sheet into it — and `pageTables` then carries those same rows again; a PDF's
+ * reconstructed tables come out of the same text layer its `text` came from.
+ * So a priced bill of quantities went to the vendor as the whole bill, followed
+ * by the whole bill again in a second notation.
+ *
+ * It cost twice the input tokens on every spreadsheet the module has ever read,
+ * and on a large one it is what pushed the call past the context window:
+ *
+ *     OPENAI returned 400: Your input exceeds the context window of this model
+ *
+ * It is also worse reading. A model shown the same table in two notations has
+ * to decide whether it is looking at one bill or two, and the honest answer
+ * from the prompt's point of view is that nothing told it.
+ *
+ * ## What it does now
+ *
+ * The text, then only those table rows the text does not already carry.
+ * Compared on a normalised form — cells joined by single spaces, whitespace
+ * collapsed — so a row the text holds as `a\tb\tc` is recognised in
+ * `['a','b','c']` and dropped, while a PDF row whose columns the text layer
+ * interleaved differently survives and is worth having.
+ */
+export function documentTextOf(extraction: Extraction): string {
+  const normalise = (line: string): string => line.replace(/\s+/g, ' ').trim();
+  const text = extraction.text ?? '';
+  const held = new Set(text.split(/\r?\n/).map(normalise).filter(Boolean));
+
+  const pageRows = (extraction.pageTables ?? []).flatMap((table) => table.rows ?? []);
+  const rows = pageRows.length > 0 ? pageRows : (extraction.tables ?? []);
+
+  const added: string[] = [];
+  for (const row of rows) {
+    const key = normalise(row.join(' '));
+    if (key === '' || held.has(key)) continue;
+    held.add(key);
+    added.push(row.join(' | '));
+  }
+
+  return [text, ...added].filter(Boolean).join('\n');
+}
+
+/**
+ * One document, in pieces small enough that a model can be handed each of them.
+ *
+ * A tender document is not a payload the platform chose the size of — it is
+ * whatever the buyer published, and an invitation bundle runs to hundreds of
+ * pages. Past the context window there are only two honest options: refuse the
+ * document, or read it in parts. It reads it in parts.
+ *
+ * Split on blank lines first and single lines after, so a part never begins or
+ * ends mid-sentence — a passage quoted across a boundary would be a sentence
+ * the document does not contain, which is the one thing the reader must never
+ * produce. A single line longer than the budget is cut at the budget, because
+ * the alternative is a part that cannot be sent at all.
+ */
+export function partsOf(text: string, budgetChars: number): string[] {
+  if (budgetChars <= 0 || text.length <= budgetChars) return [text];
+
+  const parts: string[] = [];
+  let current = '';
+
+  const flush = (): void => {
+    if (current.trim() !== '') parts.push(current);
+    current = '';
+  };
+
+  const place = (piece: string, separator: string): void => {
+    const joined = current === '' ? piece : `${current}${separator}${piece}`;
+    if (joined.length <= budgetChars) {
+      current = joined;
+      return;
+    }
+    flush();
+    if (piece.length <= budgetChars) {
+      current = piece;
+      return;
+    }
+    // Longer than a whole part on its own: a minified table, or a document
+    // written without line breaks. Cut it where it has to be cut.
+    for (let at = 0; at < piece.length; at += budgetChars) {
+      const slice = piece.slice(at, at + budgetChars);
+      if (slice.length === budgetChars) parts.push(slice);
+      else current = slice;
+    }
+  };
+
+  for (const block of text.split(/\n\s*\n/)) {
+    if (block.trim() === '') continue;
+    if (block.length <= budgetChars) {
+      place(block, '\n\n');
+      continue;
+    }
+    for (const line of block.split(/\r?\n/)) place(line, '\n');
+  }
+  flush();
+
+  return parts.length > 0 ? parts : [text.slice(0, budgetChars)];
+}
+
+/**
+ * The parts of a document, in the form a reading command sends one.
+ *
+ * `undefined` where the command was given pasted text and no file, so a caller
+ * can map over the same list either way. A scan is one part whatever its size:
+ * splitting a PDF into page ranges is not something this platform does to a
+ * file it was given, and the byte ceiling and the window guard both refuse one
+ * too large by name.
+ */
+type DocumentPart = {
+  /** The text of this part, where the document carries its own words. */
+  text?: string;
+  /** The whole file, where it is a scan. */
+  media?: ProviderMedia;
+  /** 1-based, and `of` is how many there are: both go to the model. */
+  index: number;
+  of: number;
+};
+
+function partsFor(document: DocumentForReading | undefined, budgetChars: number): DocumentPart[] {
+  if (!document) return [{ index: 1, of: 1 }];
+  if (document.kind === 'MEDIA') return [{ media: document.media, index: 1, of: 1 }];
+  const parts = partsOf(document.text, budgetChars);
+  return parts.map((text, index) => ({ text, index: index + 1, of: parts.length }));
+}
+
+/**
+ * What a part says about itself, where there is more than one.
+ *
+ * Without it a model handed part 3 of 7 reports a questionnaire that starts at
+ * question 48 as a questionnaire that starts at question 48 — and, worse,
+ * invents the earlier ones to make the list look whole. Naming the part is what
+ * makes reading in sequence safe.
+ */
+function partConstraint(part: DocumentPart): Record<string, string> {
+  if (part.of === 1) return {};
+  return {
+    part: `This is part ${part.index} of ${part.of} of one document, split only because the whole document does not ` +
+      'fit in one request. Read this part and nothing else: do not infer what the other parts contain, do not ' +
+      'renumber anything to make this part look complete, and do not note that material is missing — the other ' +
+      'parts are being read separately and the answers are combined.',
+  };
+}
 
 async function documentForReading(
   ctx: EngineContext,
@@ -419,11 +595,7 @@ async function documentForReading(
   const extraction = extractText(file.bytes, inspection.actualType ?? file.contentType);
 
   if (extraction.method === 'NATIVE') {
-    // The words, as the document itself carries them. A spreadsheet comes back
-    // as rows; prose comes back as prose.
-    const tables = (extraction.pageTables ?? []).flatMap((table) => table.rows ?? []);
-    const rows = tables.length > 0 ? tables : (extraction.tables ?? []);
-    const text = [extraction.text ?? '', ...rows.map((row) => row.join(' | '))].filter(Boolean).join('\n');
+    const text = documentTextOf(extraction);
     if (text.trim() !== '') {
       return { kind: 'TEXT', text, ...(extraction.note ? { note: extraction.note } : {}) };
     }
@@ -466,7 +638,14 @@ async function documentForReading(
 
   return {
     kind: 'MEDIA',
-    media: { contentType: file.contentType, base64: file.bytes.toString('base64'), hash },
+    media: {
+      contentType: file.contentType,
+      base64: file.bytes.toString('base64'),
+      hash,
+      // Carried where the reader counted them. A scan's pages, not its bytes,
+      // decide whether a vendor's window will hold it.
+      ...(extraction.pages ? { pages: extraction.pages } : {}),
+    },
     note: 'The document carries no text of its own, so it was read as a scan.',
   };
 }
@@ -515,7 +694,21 @@ export async function readEvidence(
   ctx: EngineContext,
   store: EvidenceStore,
   evidenceId: string,
-): Promise<{ item: BidOnEvidence; chunks: number; reread: boolean; acuConsumed: number }> {
+): Promise<{
+  item: BidOnEvidence;
+  chunks: number;
+  reread: boolean;
+  acuConsumed: number;
+  /**
+   * How many requests the document took.
+   *
+   * Reported because it is the honest half of the charge: a bundle that does
+   * not fit in one request is read in sequence and billed per part, and a
+   * caller shown four parts' spend with no mention of four parts would read it
+   * as a price that had moved.
+   */
+  parts: number;
+}> {
   requireModule(ctx.grantedModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
 
@@ -536,70 +729,100 @@ export async function readEvidence(
   // to send to a provider that cannot see, is refused without spending.
   const document = await documentForReading(ctx, store, evidence.hash, `${evidence.reference} — ${evidence.title}`);
 
-  const result = await runAI(ctx, {
-    engine: 'TENDER',
-    taskType: 'bid_on_read',
-    // The capability follows the document rather than the command. A Word
-    // order form and a priced spreadsheet are text by the time they get here
-    // and want a model that reasons; a scanned code of conduct wants one that
-    // sees. Fixing this at PERCEPTION would have sent an extracted cost model
-    // to a vision model as prose.
-    capability: document.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
-    inputRefs: [{ refType: 'BidOnEvidence', refId: evidence.id }],
-    attribution: { customerAccountId: evidence.customerAccountId },
-    request: {
-      task:
-        'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
-        'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
-      ...(document.kind === 'MEDIA' ? { media: document.media } : {}),
-      payload: {
-        // The hash travels in the payload as well as on the media, so the
-        // answer names the document it read.
-        documentHash: evidence.hash,
-        ...(document.kind === 'TEXT' ? { document: document.text } : {}),
-        ...(document.note ? { howItWasRead: document.note } : {}),
-        title: evidence.title,
-        kind: evidence.type,
-        constraint:
-          'Quote the document. Every passage must be the document’s own words — not a summary, not a paraphrase ' +
-          'and not a conclusion drawn from it: these passages are cited in a submission to a buyer as the ' +
-          'company’s own statement, and a sentence the document does not contain is a false statement made in its ' +
-          'name. Keep each passage whole enough to stand on its own in front of an evaluator — a figure, a ' +
-          'commitment, a scope line, an accreditation, a date — and give its page or clause in `pageRef` where the ' +
-          `document shows one. Drop anything shorter than ${CHUNK_MIN_CHARS} characters: it ranks against a ` +
-          'question as well as a paragraph does and tells a drafter nothing. Read the whole document in its own ' +
-          'order. Do not answer anything and do not add commentary.',
+  // The capability follows the document rather than the command. A Word order
+  // form and a priced spreadsheet are text by the time they get here and want a
+  // model that reasons; a scanned code of conduct wants one that sees. Fixing
+  // this at PERCEPTION would have sent an extracted cost model to a vision
+  // model as prose.
+  const capability = document.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING';
+  const inputRefs = [{ refType: 'BidOnEvidence', refId: evidence.id }];
+
+  /*
+   * A document longer than one request is read in parts, not refused.
+   *
+   * An invitation bundle runs to hundreds of pages and the platform does not
+   * get to choose how long the buyer's document is. Before this, a document
+   * past the context window was sent whole and came back as
+   * `400 … exceeds the context window of this model`: a provider error, on a
+   * command that had worked the day before with a smaller file, naming nothing
+   * the person could act on.
+   *
+   * Each part is a separate execution with its own hold and its own charge,
+   * which is the honest accounting — reading twice as much document costs twice
+   * as much — and the passages are combined into one reading at the end.
+   */
+  const parts = partsFor(document, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+
+  const passages: Array<{ text: string; pageRef?: string }> = [];
+  const lines: string[] = [];
+  let acuConsumed = 0;
+
+  for (const part of parts) {
+    const result = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'bid_on_read',
+      capability,
+      inputRefs,
+      attribution: { customerAccountId: evidence.customerAccountId },
+      request: {
+        task:
+          'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
+          'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
+        ...(part.media ? { media: part.media } : {}),
+        payload: {
+          // The hash travels in the payload as well as on the media, so the
+          // answer names the document it read.
+          documentHash: evidence.hash,
+          ...(part.text === undefined ? {} : { document: part.text }),
+          ...(document.note ? { howItWasRead: document.note } : {}),
+          title: evidence.title,
+          kind: evidence.type,
+          ...partConstraint(part),
+          constraint:
+            'Quote the document. Every passage must be the document’s own words — not a summary, not a paraphrase ' +
+            'and not a conclusion drawn from it: these passages are cited in a submission to a buyer as the ' +
+            'company’s own statement, and a sentence the document does not contain is a false statement made in its ' +
+            'name. Keep each passage whole enough to stand on its own in front of an evaluator — a figure, a ' +
+            'commitment, a scope line, an accreditation, a date — and give its page or clause in `pageRef` where the ' +
+            `document shows one. Drop anything shorter than ${CHUNK_MIN_CHARS} characters: it ranks against a ` +
+            'question as well as a paragraph does and tells a drafter nothing. Read the whole document in its own ' +
+            'order. Do not answer anything and do not add commentary.',
+        },
       },
-    },
-    // Nothing is committed from the output here. The write happens below,
-    // through the command a person uses, so there is one definition of a
-    // passage rather than two.
-    toWrites: () => [],
-    requireModel: {
-      // Named for the act rather than the capability, because the capability
-      // now follows the document: an extracted Word order form is read by a
-      // reasoning model and a scanned one by a vision model, and the stand-in
-      // is refused for both.
-      code: 'NO_READING_PROVIDER',
-      message:
-        'This deployment is running the local stand-in, which reads nothing — it derives its answer from a hash of ' +
-        'its inputs. Passages invented that way would be filed as this customer’s evidence, cited by the drafter ' +
-        'and read by a buyer as the company’s own words. Configure a provider and set AI_MODE to staging or live.',
-    },
-  });
+      // Nothing is committed from the output here. The write happens below,
+      // through the command a person uses, so there is one definition of a
+      // passage rather than two.
+      toWrites: () => [],
+      requireModel: {
+        // Named for the act rather than the capability, because the capability
+        // now follows the document: an extracted Word order form is read by a
+        // reasoning model and a scanned one by a vision model, and the stand-in
+        // is refused for both.
+        code: 'NO_READING_PROVIDER',
+        message:
+          'This deployment is running the local stand-in, which reads nothing — it derives its answer from a hash of ' +
+          'its inputs. Passages invented that way would be filed as this customer’s evidence, cited by the drafter ' +
+          'and read by a buyer as the company’s own words. Configure a provider and set AI_MODE to staging or live.',
+      },
+    });
 
-  const output = result.output as { passages?: unknown; lines?: unknown };
-  const passages = (Array.isArray(output.passages) ? output.passages : [])
-    .map((row) => row as Record<string, unknown>)
-    .map((row) => ({
-      text: String(row.text ?? '').trim(),
-      ...(row.pageRef == null || String(row.pageRef).trim() === '' ? {} : { pageRef: String(row.pageRef).trim() }),
-    }))
-    .filter((passage) => passage.text.length > 0);
+    acuConsumed += result.acuConsumed;
 
-  const lines = (Array.isArray(output.lines) ? output.lines : [])
-    .map((line) => String(line ?? '').trim())
-    .filter(Boolean);
+    const output = result.output as { passages?: unknown; lines?: unknown };
+    passages.push(
+      ...(Array.isArray(output.passages) ? output.passages : [])
+        .map((row) => row as Record<string, unknown>)
+        .map((row) => ({
+          text: String(row.text ?? '').trim(),
+          ...(row.pageRef == null || String(row.pageRef).trim() === '' ? {} : { pageRef: String(row.pageRef).trim() }),
+        }))
+        .filter((passage) => passage.text.length > 0),
+    );
+
+    lines.push(
+      ...(Array.isArray(output.lines) ? output.lines : []).map((line) => String(line ?? '').trim()).filter(Boolean),
+    );
+  }
 
   if (passages.length === 0) {
     // Refused rather than written as an empty reading. `recordExtraction` would
@@ -623,7 +846,10 @@ export async function readEvidence(
     chunks: passages,
   });
 
-  return { item, chunks: item.chunks.length, reread, acuConsumed: result.acuConsumed };
+  // Every part's charge, not the last one's. A document read in four calls
+  // costs four calls, and reporting one of them would understate the spend the
+  // customer is about to see on their wallet.
+  return { item, chunks: item.chunks.length, reread, acuConsumed, parts: parts.length };
 }
 
 // --- The Drafter -------------------------------------------------------------
@@ -1397,64 +1623,90 @@ export async function reviewAmendments(
   // on a four-year contract.
   const document = input.hash ? await documentForReading(ctx, store, input.hash, 'the schedule of amendments') : undefined;
 
-  const result = await runAI(ctx, {
-    engine: 'TENDER',
-    taskType: 'bid_on_amendments',
-    // A schedule of amendments as a file is a document a vision model reads;
-    // pasted clauses are text. The capability follows the input, for the same
-    // reason the parser's does.
-    capability: document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING',
-    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
-    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
-    request: {
-      ...(document?.kind === 'MEDIA' ? { media: document.media } : {}),
-      task:
-        'Read this schedule of amendments to a standard form construction contract. Return JSON with ' +
-        '`clarifications`: an array of { severity, subject, question } where severity is CRITICAL, MAJOR or MINOR, ' +
-        'and `observations`: an array of plain-English strings describing what each significant amendment changes ' +
-        'compared with the unamended form.',
-      payload: {
-        contractForm: input.contractForm ?? 'the standard form named in the invitation',
-        buyer: bid.buyerName,
-        ...(input.text ? { amendments: input.text } : {}),
-        ...(input.hash ? { documentHash: input.hash } : {}),
-        // Extracted where the file carries its own words. A schedule of
-        // amendments is a Word document far more often than it is a scan.
-        ...(document?.kind === 'TEXT' ? { amendments: document.text } : {}),
-        constraint:
-          'Report what the amendments change and what you would ask the buyer about them. Do not advise whether to ' +
-          'accept, reject or qualify anything, do not state whether a clause is enforceable, and do not describe ' +
-          'anything as legal advice — a contractor reading this is deciding whether to put it in front of their own ' +
-          'adviser, which is the decision this is for. Mark CRITICAL only where an amendment moves a risk a ' +
-          'subcontractor cannot price or insure: unlimited liability, a cap removed, fitness for purpose, pay-when-' +
-          'paid, a right of set-off without notice, a retention or payment period materially extended, or ' +
-          'termination at will. Say nothing about clauses the schedule does not amend. Where the schedule is short ' +
-          'or routine, return few findings or none rather than padding — a list of twenty points nobody reads is ' +
-          'worse than three that get asked.',
-      },
-    },
-    toWrites: () => [],
-    requireModel: NO_PROVIDER,
-  });
+  // A schedule of amendments as a file is a document a vision model reads;
+  // pasted clauses are text. The capability follows the input, for the same
+  // reason the parser's does.
+  const capability = document?.kind === 'MEDIA' ? 'PERCEPTION' : 'REASONING';
+  const inputRefs = [{ refType: 'BidOnBid', refId: bid.id }];
 
-  const output = result.output as { clarifications?: unknown; observations?: unknown };
+  // Pasted clauses are a document for this purpose. A schedule of amendments to
+  // a standard form runs to a hundred pages often enough that the whole of it
+  // past the window is an ordinary case, not an edge one.
+  const source: DocumentForReading | undefined =
+    document ?? (input.text?.trim() ? { kind: 'TEXT', text: input.text } : undefined);
+  const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+
   const severities = new Set(['CRITICAL', 'MAJOR', 'MINOR']);
-  const clarifications: Clarification[] = (Array.isArray(output.clarifications) ? output.clarifications : [])
-    .map((entry) => entry as { severity?: unknown; subject?: unknown; question?: unknown })
-    .filter((entry) => String(entry.subject ?? '').trim() && String(entry.question ?? '').trim())
-    .map((entry) => ({
-      // An unrecognised severity becomes MAJOR rather than being dropped. A
-      // point the model thought worth raising is worth asking even where it
-      // mislabelled how urgent it is, and silently discarding it would make the
-      // reading look cleaner than it was.
-      severity: (severities.has(String(entry.severity)) ? String(entry.severity) : 'MAJOR') as Clarification['severity'],
-      subject: String(entry.subject).trim(),
-      question: String(entry.question).trim(),
-    }));
+  const clarifications: Clarification[] = [];
+  const observations: string[] = [];
+  let acuConsumed = 0;
+  // The vendor that read the first part. Every part goes to the same chain, and
+  // naming one of them is what the record needs: a reading is attributed, not
+  // enumerated. `''` is never recorded — a reading with no part read at all is
+  // refused below before this is written.
+  let provider = '';
 
-  const observations = (Array.isArray(output.observations) ? output.observations : [])
-    .map((line) => String(line).trim())
-    .filter(Boolean);
+  for (const part of parts) {
+    const result = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'bid_on_amendments',
+      capability,
+      inputRefs,
+      attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+      request: {
+        ...(part.media ? { media: part.media } : {}),
+        task:
+          'Read this schedule of amendments to a standard form construction contract. Return JSON with ' +
+          '`clarifications`: an array of { severity, subject, question } where severity is CRITICAL, MAJOR or MINOR, ' +
+          'and `observations`: an array of plain-English strings describing what each significant amendment changes ' +
+          'compared with the unamended form.',
+        payload: {
+          contractForm: input.contractForm ?? 'the standard form named in the invitation',
+          buyer: bid.buyerName,
+          // Extracted where the file carries its own words. A schedule of
+          // amendments is a Word document far more often than it is a scan.
+          ...(part.text === undefined ? {} : { amendments: part.text }),
+          ...(input.hash ? { documentHash: input.hash } : {}),
+          ...partConstraint(part),
+          constraint:
+            'Report what the amendments change and what you would ask the buyer about them. Do not advise whether to ' +
+            'accept, reject or qualify anything, do not state whether a clause is enforceable, and do not describe ' +
+            'anything as legal advice — a contractor reading this is deciding whether to put it in front of their own ' +
+            'adviser, which is the decision this is for. Mark CRITICAL only where an amendment moves a risk a ' +
+            'subcontractor cannot price or insure: unlimited liability, a cap removed, fitness for purpose, pay-when-' +
+            'paid, a right of set-off without notice, a retention or payment period materially extended, or ' +
+            'termination at will. Say nothing about clauses the schedule does not amend. Where the schedule is short ' +
+            'or routine, return few findings or none rather than padding — a list of twenty points nobody reads is ' +
+            'worse than three that get asked.',
+        },
+      },
+      toWrites: () => [],
+      requireModel: NO_PROVIDER,
+    });
+
+    acuConsumed += result.acuConsumed;
+    if (provider === '') provider = result.provider;
+
+    const output = result.output as { clarifications?: unknown; observations?: unknown };
+    clarifications.push(
+      ...(Array.isArray(output.clarifications) ? output.clarifications : [])
+        .map((entry) => entry as { severity?: unknown; subject?: unknown; question?: unknown })
+        .filter((entry) => String(entry.subject ?? '').trim() && String(entry.question ?? '').trim())
+        .map((entry) => ({
+          // An unrecognised severity becomes MAJOR rather than being dropped. A
+          // point the model thought worth raising is worth asking even where it
+          // mislabelled how urgent it is, and silently discarding it would make
+          // the reading look cleaner than it was.
+          severity: (severities.has(String(entry.severity)) ? String(entry.severity) : 'MAJOR') as Clarification['severity'],
+          subject: String(entry.subject).trim(),
+          question: String(entry.question).trim(),
+        })),
+    );
+
+    observations.push(
+      ...(Array.isArray(output.observations) ? output.observations : []).map((line) => String(line).trim()).filter(Boolean),
+    );
+  }
 
   if (clarifications.length === 0 && observations.length === 0) {
     throw new DomainError(
@@ -1496,7 +1748,7 @@ export async function reviewAmendments(
       clarifications,
       observations,
       recorded: false,
-      acuConsumed: result.acuConsumed,
+      acuConsumed,
     };
   }
 
@@ -1508,7 +1760,7 @@ export async function reviewAmendments(
       contractForm: input.contractForm ?? '',
       reviewedAt: new Date().toISOString(),
       reviewedBy: ctx.auth.actorId,
-      provider: result.provider,
+      provider,
     },
   };
 
@@ -1518,5 +1770,5 @@ export async function reviewAmendments(
     nextState: { ...next },
   });
 
-  return { bid: next, clarifications, observations, recorded: true, acuConsumed: result.acuConsumed };
+  return { bid: next, clarifications, observations, recorded: true, acuConsumed };
 }
