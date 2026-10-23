@@ -621,6 +621,22 @@ export type EvidenceSummary = Omit<BidOnEvidence, 'extractedText' | 'chunks'> & 
   currentNow: boolean;
   /** Days until it lapses, where it does. Negative means it already has. */
   daysLeft: number | null;
+  /**
+   * How the document begins, in its own words.
+   *
+   * A title is what somebody typed, and on a real tender they type it nine
+   * times in a row: a library turned up holding two different files both called
+   * "Appendix 1", one of which was the Invitation to Tender. Nothing on the
+   * screen could tell them apart, because every column showed what had been
+   * said *about* the documents rather than anything from inside them.
+   *
+   * The first words of the first passage settle it at a glance, and cost
+   * nothing: the document has already been read. Absent where nothing has been
+   * read out of it, which the Passages column already says.
+   */
+  opens?: string;
+  /** Whether it asks the reader anything — the questionnaire-hunting signal. */
+  asks?: 'QUESTIONS' | 'SOMETHING' | 'NOTHING' | 'UNREAD';
 };
 
 export type EvidenceLibrary = {
@@ -747,10 +763,13 @@ export function evidenceLibrary(
   const mine = evidenceOf(ctx).filter((entry) => entry.customerAccountId === customerAccountId);
   const summarise = (entry: BidOnEvidence): EvidenceSummary => {
     const { extractedText: _text, chunks, ...rest } = entry;
+    const opens = (chunks[0]?.text ?? entry.extractedText?.[0] ?? '').replace(/\s+/g, ' ').trim();
     return {
       ...rest,
       chunkCount: chunks.length,
       extracted: chunks.length > 0,
+      ...(opens === '' ? {} : { opens: opens.length > 180 ? `${opens.slice(0, 180)}…` : opens }),
+      ...verdictOf(entry),
       currentNow: evidenceCurrentOn(entry, day),
       daysLeft: entry.expiresOn
         ? Math.ceil((Date.parse(entry.expiresOn.slice(0, 10)) - Date.parse(day)) / 86_400_000)

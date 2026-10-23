@@ -2900,7 +2900,22 @@ function evidencePanel(library) {
         rows: library.evidence.map((item) => [
           item.reference,
           humanise(item.type),
-          item.title,
+          /*
+           * The title, and how the document actually begins.
+           *
+           * A title is what somebody typed while filing nine documents in a
+           * row, and a real library turned up holding two different files both
+           * called "Appendix 1" — one of which was the Invitation to Tender.
+           * Every column on this screen showed what had been said *about* the
+           * documents; none showed anything from inside them. The first words
+           * of the first passage settle it at a glance and cost nothing.
+           */
+          html`<div>${item.title}</div>
+            ${item.opens
+              ? html`<div class="metric-sub" style="margin-top:3px;max-width:52ch">
+                  ${item.asks === 'QUESTIONS' ? html`${badge('asks questions', 'ok')} ` : ''}${item.opens}
+                </div>`
+              : ''}`,
           item.validFrom ? date(item.validFrom) : '—',
           item.expiresOn ? date(item.expiresOn) : html`<span style="font-size:12px;color:var(--text-3)">does not lapse</span>`,
           item.daysLeft === null ? '—' : item.daysLeft < 0 ? badge(`${Math.abs(item.daysLeft)} ago`, 'bad') : String(item.daysLeft),
