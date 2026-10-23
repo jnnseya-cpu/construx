@@ -130,7 +130,22 @@ export type CredentialState = {
    */
   environmentRetired: boolean;
   /** Who retired it, when and why, where one has been. */
-  retired?: { retiredAt: string; retiredBy: string; reason: string };
+  retired?: RetiredEnvironment;
+  /**
+   * What is still outstanding on a retired credential, in the words the screen
+   * shows.
+   *
+   * Two jobs the platform cannot do and cannot see: the line has to come out of
+   * `.env` on the host, and the key has to be revoked at the vendor. It used to
+   * state both for ever, so an operator who had done them was told to do them
+   * again every time they opened the screen — and a message nobody can clear is
+   * one everybody stops reading.
+   *
+   * Empty once both are confirmed. The platform still cannot verify either;
+   * what it can do is record who said so and when, which is a better answer for
+   * an access review than silence.
+   */
+  outstanding: Array<'FILE' | 'VENDOR'>;
   /** First eight hex of the SHA-256 of what is stored. Identifies a key; is not one. */
   keyId?: string;
   setAt?: string;
@@ -154,7 +169,17 @@ type StoredCredential = {
  * Carries no secret — it is a decision about one, and it is kept beside the
  * store because it is read on exactly the same path.
  */
-type RetiredEnvironment = { retiredAt: string; retiredBy: string; reason: string };
+type RetiredEnvironment = {
+  retiredAt: string;
+  retiredBy: string;
+  reason: string;
+  /** The line removed from `.env` on the host, as somebody confirmed it. */
+  fileRemovedAt?: string;
+  fileRemovedBy?: string;
+  /** The key revoked at the vendor, as somebody confirmed it. */
+  revokedAt?: string;
+  revokedBy?: string;
+};
 
 /**
  * `retiredEnvironment` is optional and the version stays 1 deliberately.
@@ -355,6 +380,46 @@ export function retireEnvironment(name: CredentialName, by: string, reason: stri
 }
 
 /**
+ * Record that the superseded key is actually gone.
+ *
+ * The platform cannot see either fact — the file is the deployment's
+ * configuration and the vendor's console is somebody else's — so this is an
+ * attestation rather than a check, and it says so. What it buys is that the
+ * screen stops telling an operator to do something they have already done,
+ * which is the difference between a warning and wallpaper.
+ */
+export function confirmEnvironmentGone(
+  name: CredentialName,
+  by: string,
+  what: { fileRemoved?: boolean; revokedAtVendor?: boolean },
+): CredentialState {
+  const current = load();
+  const held = current.retiredEnvironment?.[name];
+  if (!held) {
+    throw new DomainError(
+      'ENVIRONMENT_NOT_RETIRED',
+      `${name} has not been retired from the environment, so there is nothing outstanding to confirm. Retire it ` +
+        'first — that is the part the platform can actually enforce.',
+      409,
+    );
+  }
+  const now = new Date().toISOString();
+  persist({
+    ...current,
+    version: 1,
+    retiredEnvironment: {
+      ...current.retiredEnvironment,
+      [name]: {
+        ...held,
+        ...(what.fileRemoved ? { fileRemovedAt: now, fileRemovedBy: by } : {}),
+        ...(what.revokedAtVendor ? { revokedAt: now, revokedBy: by } : {}),
+      },
+    },
+  });
+  return stateOf(name);
+}
+
+/**
  * Read the environment for this credential again.
  *
  * The way back, for the operator who retired the wrong one — a decision with no
@@ -422,6 +487,7 @@ function environmentValue(name: CredentialName): string {
 export function stateOf(name: CredentialName): CredentialState {
   const definition = BY_NAME.get(name)!;
   const held = load().credentials[name];
+  const held2 = load().retiredEnvironment?.[name];
   return {
     name,
     label: definition.label,
@@ -430,7 +496,10 @@ export function stateOf(name: CredentialName): CredentialState {
     stored: held !== undefined,
     fromEnvironment: environmentValue(name) !== '',
     environmentRetired: environmentRetired(name),
-    ...(load().retiredEnvironment?.[name] ? { retired: load().retiredEnvironment![name]! } : {}),
+    ...(held2 ? { retired: held2 } : {}),
+    outstanding: held2
+      ? [...(held2.fileRemovedAt ? [] : ['FILE' as const]), ...(held2.revokedAt ? [] : ['VENDOR' as const])]
+      : [],
     ...(held ? { keyId: held.keyId, setAt: held.setAt, setBy: held.setBy, reason: held.reason } : {}),
   };
 }

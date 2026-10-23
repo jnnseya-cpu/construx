@@ -194,6 +194,12 @@ export async function aiengine(root) {
                     // only where there is actually a file copy to retire, or
                     // one already retired to put back — otherwise it is a
                     // control about a situation this deployment is not in.
+                    { id: 'confirm-gone', label: 'Confirm the old key is gone', tone: 'quiet',
+                      permitted:
+                        can('PLATFORM_ADMINISTRATION', 'U') &&
+                        (credentials?.credentials ?? []).some((entry) => (entry.outstanding ?? []).length > 0),
+                      reason: blockedReason('PLATFORM_ADMINISTRATION', 'U')
+                        ?? 'Nothing is outstanding. This clears the two jobs the platform cannot see, once a retired key is actually gone.' },
                     { id: 'retire-environment', label: 'Retire the file copy', tone: 'quiet',
                       permitted:
                         can('PLATFORM_ADMINISTRATION', 'U') &&
@@ -218,13 +224,42 @@ export async function aiengine(root) {
                       ? html`${badge('this store', 'ok')}${
                           entry.environmentRetired
                             ? html`${badge('file copy retired', 'ok')}
-                                <div class="metric-sub" style="margin-top:4px">
-                                  The platform will not read <code>${entry.name}</code> from the environment again,
-                                  so what is in <code>.env</code> is inert even if this store is cleared. Two things
-                                  are still outstanding and neither is the platform's:
-                                  <code>sed -i '/^${entry.name}=/d' .env</code> on the host, and revoke that key at
-                                  the vendor.
-                                </div>`
+                                ${
+                                  /*
+                                   * The two jobs the platform cannot do, and
+                                   * cannot see — until somebody says they are
+                                   * done. This stated both for ever, so an
+                                   * operator who had already run the command
+                                   * and revoked the key was told to do it
+                                   * again on every visit, and a warning
+                                   * nobody can clear is one everybody stops
+                                   * reading. It clears on an attestation,
+                                   * with the name against it on the chain.
+                                   */
+                                  (entry.outstanding ?? []).length === 0
+                                    ? html`<div class="metric-sub" style="margin-top:4px">
+                                        Out of <code>.env</code> and revoked at the vendor, confirmed
+                                        ${entry.retired?.revokedAt ? date(entry.retired.revokedAt) : ''}. The platform
+                                        could not see either, so that confirmation is somebody's word and the chain
+                                        carries whose.
+                                      </div>`
+                                    : html`<div class="metric-sub" style="margin-top:4px">
+                                        The platform will not read <code>${entry.name}</code> from the environment
+                                        again, so what is in <code>.env</code> is inert even if this store is cleared.
+                                        Still outstanding, and neither is the platform's to do:
+                                        ${(entry.outstanding ?? []).includes('FILE')
+                                          ? html`<div style="margin-top:4px"><code>sed -i '/^${entry.name}=/d' .env</code>
+                                              on the host, then recreate the container — the environment is read once,
+                                              when the process starts, so a deleted line still shows here until it
+                                              restarts.</div>`
+                                          : ''}
+                                        ${(entry.outstanding ?? []).includes('VENDOR')
+                                          ? html`<div style="margin-top:4px">Revoke that key at the vendor.</div>`
+                                          : ''}
+                                        <div style="margin-top:4px">Press <b>Confirm the old key is gone</b> once both
+                                          are done.</div>
+                                      </div>`
+                                }`
                             : entry.fromEnvironment
                               ? html`${badge('and in .env', 'warn')}
                                   <div class="metric-sub" style="margin-top:4px">
@@ -528,6 +563,45 @@ export async function aiengine(root) {
       });
       if (result) {
         toast('Recorded', result.effect, 'ok');
+        aiengine(root);
+      }
+    });
+  }
+
+  /*
+   * Saying the superseded key is actually gone.
+   *
+   * The platform can see neither the file on the host nor the vendor's own
+   * console, so this is an attestation and the panel says so. What it buys is
+   * that the row stops telling somebody to do what they have already done.
+   */
+  for (const button of root.querySelectorAll('[data-command="confirm-gone"]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Confirm the old key is gone',
+        intent:
+          'The platform cannot see your host\u2019s .env and cannot see the vendor\u2019s console, so it cannot check ' +
+          'either of these. It records that you did them, with your name and the date, and stops asking. That is a ' +
+          'better answer for an access review than a warning everybody learned to ignore.',
+        path: (values) => `/v1/admin/platform-credentials/${values.name}/confirm-gone`,
+        submitLabel: 'Confirm',
+        fields: [
+          { name: 'name', label: 'Which', type: 'select',
+            options: (credentials?.credentials ?? [])
+              .filter((entry) => (entry.outstanding ?? []).length > 0)
+              .map((entry) => ({
+                value: entry.name,
+                label: `${entry.label} — outstanding: ${(entry.outstanding ?? [])
+                  .map((item) => (item === 'FILE' ? 'the .env line' : 'revoking at the vendor'))
+                  .join(' and ')}`,
+              })) },
+          { name: 'fileRemoved', label: 'The line is out of .env on the host', type: 'checkbox', value: true },
+          { name: 'revokedAtVendor', label: 'The key is revoked at the vendor', type: 'checkbox', value: true },
+        ],
+        transform: ({ name: _n, ...rest }) => rest,
+      });
+      if (result) {
+        toast('Recorded', result.effect, result.outstanding?.length === 0 ? 'ok' : 'warn');
         aiengine(root);
       }
     });

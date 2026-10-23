@@ -18,6 +18,7 @@ import {
   setCredential,
 } from '../src/identity/credentials.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
+import { throwsCode } from './helpers.ts';
 import { issueTokens } from '../src/identity/auth.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -269,6 +270,37 @@ describe('a credential set from the console', () => {
       assert.equal(reply.status, 201);
       assert.match(reply.body.effect, /delete GEMINI_API_KEY from \.env on the host/);
       assert.match(reply.body.effect, /revoke that key at the vendor/);
+    });
+
+    it('stops asking once somebody says the old key is actually gone', () => {
+      // The row stated both jobs for ever, so an operator who had run the
+      // command and revoked the key was told to do it again on every visit —
+      // and a warning nobody can clear is one everybody stops reading.
+      const before = credentialStates().find((entry) => entry.name === NAME)!;
+      assert.deepEqual(before.outstanding.slice().sort(), ['FILE', 'VENDOR']);
+
+      platform.confirmPlatformCredentialGone({ name: NAME, fileRemoved: true, decidedBy: seed.users.operator!.id });
+      const half = credentialStates().find((entry) => entry.name === NAME)!;
+      assert.deepEqual(half.outstanding, ['VENDOR'], 'confirming one job cleared the other');
+
+      platform.confirmPlatformCredentialGone({ name: NAME, revokedAtVendor: true, decidedBy: seed.users.operator!.id });
+      const done = credentialStates().find((entry) => entry.name === NAME)!;
+      assert.deepEqual(done.outstanding, []);
+      // An attestation, so the record carries whose. The platform can see
+      // neither the host's file nor the vendor's console.
+      assert.equal(done.retired?.fileRemovedBy, seed.users.operator!.id);
+      assert.equal(done.retired?.revokedBy, seed.users.operator!.id);
+      assert.ok(
+        platform.ledger.events().some((event) => event.eventType === 'PLATFORM_CREDENTIAL_ENV_CONFIRMED_GONE'),
+        'the confirmation wrote nothing to the chain',
+      );
+    });
+
+    it('refuses a confirmation about a credential nobody retired', () => {
+      throwsCode(
+        () => platform.confirmPlatformCredentialGone({ name: 'STRIPE_WEBHOOK_SECRET', fileRemoved: true, decidedBy: seed.users.operator!.id }),
+        'ENVIRONMENT_NOT_RETIRED',
+      );
     });
 
     it('can be put back, so a wrong decision is not a trip to the host', () => {

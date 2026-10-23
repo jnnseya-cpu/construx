@@ -69,6 +69,7 @@ import { useDeclaredVendorTerms, validateVendorTerms, type VendorTerms } from '.
 import type { DataSensitivity } from './identity/abac.ts';
 import {
   clearCredential,
+  confirmEnvironmentGone,
   restoreEnvironment,
   retireEnvironment,
   setCredential,
@@ -3197,6 +3198,53 @@ export class Platform {
       .entitiesOfType('VendorTerms')
       .filter((record) => record.tenantId === PLATFORM_TENANT_ID)
       .map((record) => record.state as unknown as VendorTerms);
+  }
+
+  /**
+   * Record that a superseded key is actually gone — out of the file, and
+   * revoked at the vendor.
+   *
+   * An attestation, not a check: the platform can see neither, and says so. It
+   * exists because the row stated both jobs for ever, so an operator who had
+   * done them was told to do them again every time they opened the screen, and
+   * a warning nobody can clear is one everybody stops reading.
+   *
+   * On the chain because "who confirmed the revoked key was actually revoked"
+   * is an access-review question, and an attestation with a name on it is a
+   * better answer than silence.
+   */
+  confirmPlatformCredentialGone(input: {
+    name: CredentialName;
+    fileRemoved?: boolean;
+    revokedAtVendor?: boolean;
+    decidedBy: string;
+  }): CredentialState {
+    const state = confirmEnvironmentGone(input.name, input.decidedBy, {
+      ...(input.fileRemoved === undefined ? {} : { fileRemoved: input.fileRemoved }),
+      ...(input.revokedAtVendor === undefined ? {} : { revokedAtVendor: input.revokedAtVendor }),
+    });
+
+    this.ledger.commit({
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: 'PLATFORM_CREDENTIAL_ENV_CONFIRMED_GONE',
+      entity: { refType: 'PlatformCredential', refId: input.name },
+      nextState: {
+        id: input.name,
+        name: input.name,
+        label: state.label,
+        fileRemoved: state.retired?.fileRemovedAt !== undefined,
+        revokedAtVendor: state.retired?.revokedAt !== undefined,
+        outstanding: state.outstanding,
+        confirmedAt: new Date().toISOString(),
+        confirmedBy: input.decidedBy,
+      },
+    });
+
+    return state;
   }
 
   /** Every grant ever made, live and revoked. The operator's register. */

@@ -2566,6 +2566,47 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'POST',
+    pattern: '/v1/admin/platform-credentials/:name/confirm-gone',
+    description:
+      'Record that a retired key is actually gone — the line out of .env on the host, and the key revoked at the vendor. An attestation, because the platform can see neither',
+    schema: {
+      type: 'object',
+      properties: {
+        fileRemoved: { type: 'boolean' },
+        revokedAtVendor: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may confirm a credential is gone', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const name = ctx.params.name as string;
+      if (!isCredentialName(name)) {
+        throw new DomainError('CREDENTIAL_UNKNOWN', `${name} is not a credential this platform reads.`, 404);
+      }
+      const input = body<{ fileRemoved?: boolean; revokedAtVendor?: boolean }>(ctx);
+      const state = platform.confirmPlatformCredentialGone({
+        name,
+        ...(input.fileRemoved === undefined ? {} : { fileRemoved: input.fileRemoved }),
+        ...(input.revokedAtVendor === undefined ? {} : { revokedAtVendor: input.revokedAtVendor }),
+        decidedBy: actor.actorId,
+      });
+      return {
+        ...state,
+        effect:
+          state.outstanding.length === 0
+            ? `${state.label} is retired, out of the file and revoked. Nothing is outstanding, and the record says who ` +
+              'confirmed it — the platform could not see either, so your name is what stands behind it.'
+            : `Recorded. Still outstanding: ${state.outstanding
+                .map((item) => (item === 'FILE' ? `the ${state.name} line in .env on the host` : 'revoking the key at the vendor'))
+                .join(' and ')}.`,
+      };
+    },
+  },
+  {
     method: 'GET',
     pattern: '/v1/admin/vendor-terms',
     readOnly: true,

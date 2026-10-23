@@ -87,9 +87,22 @@ SHA-256, which tells one key from another and is not a key.
 **If the row also says *and in .env*** — a superseded key is still in the file on
 the host. Press **Retire the file copy**: the platform will not read it again,
 so clearing the store later leaves the capability off and says so instead of
-falling back to a revoked key. Two things are still yours afterwards, and the
-row gives you the command: delete the line from `.env` on the host, and revoke
-that key at the vendor.
+falling back to a revoked key.
+
+Two jobs are then still yours, and the row gives you the command:
+
+```
+sed -i '/^OPENAI_API_KEY=/d' .env     # on the host
+```
+
+then **recreate the container** — the environment is read once, when the process
+starts, so a deleted line still shows on this screen until it restarts. And
+revoke that key at the vendor.
+
+When both are done press **Confirm the old key is gone**, and the row stops
+asking. The platform can see neither your host's file nor the vendor's console,
+so that confirmation is your word — and the chain records whose, which is a
+better answer at an access review than a warning everybody learned to ignore.
 
 ### 0.4 Declare what the vendor's agreement says
 
@@ -105,10 +118,8 @@ has cleared for that is refused, and you will see
 - **What it does with it** → whichever your agreement says
 - **For how many days** → their figure, where it keeps it for a period
 - **Processed in** → e.g. `eu-west`
-- **Excluded from model training** → tick **only** if the agreement says so in
-  writing
-- **Which agreement** → what somebody would have to go and read, e.g.
-  *"Enterprise agreement, zero-retention addendum, 14 Oct 2026"*
+- **Excluded from model training** → tick it if your vendor's terms say so
+- **Which agreement** → what somebody would have to go and read
 - **Why now** → recorded against the decision
 
 It will refuse you if the agreement, the region or the training answer is
@@ -116,6 +127,18 @@ missing, and it names all of them at once. That refusal is the point: above
 *internal* the platform is being told it may send a third party your commercial
 material, and a reassurance on a screen with no contract behind it is worse than
 the refusal it replaces.
+
+> **You do not need a bespoke letter from the vendor.** The terms you already
+> accepted are an agreement, and naming them is a valid answer. For the OpenAI
+> **API** their published position is that API data is not used to train their
+> models by default, and that abuse-monitoring logs are kept for up to 30 days —
+> so `Keeps it for a stated period, then deletes it` / `30` / training excluded,
+> against an agreement reference naming their published API data-usage policy,
+> is a declaration with something real behind it. Zero retention and EU data
+> residency are **separate arrangements you have to apply for**, so do not claim
+> either unless your account actually has it. Check your own account's terms
+> before you declare: the platform records what you say, and your name is what
+> stands behind it.
 
 **You do not have to do this to run the tender.** Without it, every AI command
 refuses by name and everything in this walkthrough still works by hand.

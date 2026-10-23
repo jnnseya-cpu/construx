@@ -28451,3 +28451,52 @@ walkthrough and the check that proves the path is reachable cannot drift: if the
 walk stops passing, the document is wrong, and the walk runs on `AI_MODE=local`
 where every agent refuses by name — so the manual route it documents is the one
 that is continuously tested.
+
+## A warning nobody can clear is one everybody stops reading
+
+Reported in those words — *"DONE BUT STILL HERE"*. An operator retired the
+superseded key, ran the `sed`, revoked the key at the vendor, and the row went
+on telling them to do all three on every visit.
+
+It was telling the truth about what the platform knew and lying about what it
+meant. Two of the three jobs are outside the application — the line in `.env` on
+the host, and the revocation in the vendor's own console — and the platform can
+see neither, so it stated them for ever because it had no way to learn
+otherwise.
+
+`PLATFORM_CREDENTIAL_ENV_CONFIRMED_GONE` and **Confirm the old key is gone** are
+the way it learns. It is an **attestation, not a check**, and the panel says so
+in the first sentence: the platform cannot see your host's file or the vendor's
+console, it records that you did them with your name and the date, and it stops
+asking. For an access review that is a better answer than a warning everybody
+had learned to ignore, and strictly better than the silence the alternative
+would have been.
+
+Each job clears separately, so a half-done rotation reads as half done.
+
+Found with it, and now said on the row: **the environment is read once, when
+the process starts.** A line deleted from `.env` still shows on this screen
+until the container is recreated. Somebody deleting the line and watching the
+row not change is looking at a correct screen and a stale fact, which is the
+most confusing failure a configuration screen has.
+
+## The letter nobody needed
+
+Recorded because the mistake was mine and it cost a customer time. The vendor
+declaration asks for the agreement a clearance is read from, and this file
+described that as needing something *"in writing from the vendor"* — which read
+as a bespoke, negotiated letter, and left a customer believing the agents were
+blocked until they could obtain one.
+
+They are not. **The published terms a customer already accepted are an
+agreement**, and naming them is a valid answer. For the OpenAI API the published
+position is that API data is not used for model training by default, with
+abuse-monitoring logs kept up to thirty days; zero retention and EU data
+residency are separate arrangements that have to be applied for. A customer on
+the standard terms can therefore declare truthfully today, and a customer with
+ZDR can declare that instead.
+
+What the platform asks for has not changed and should not: an agreement it can
+name, a region, and an answer on training. What changed is the wording around
+it, in `docs/BID-ON-WALKTHROUGH.md` and here — because a gate that is
+satisfiable and reads as impossible is a gate that stops the wrong people.

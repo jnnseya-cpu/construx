@@ -302,6 +302,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('PLATFORM_CREDENTIAL_ENV_RETIRED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE', { creates: true }),
   def('PLATFORM_CREDENTIAL_ENV_RESTORED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
   /*
+   * Somebody confirming the superseded key is actually gone — out of the file
+   * on the host, and revoked at the vendor.
+   *
+   * An attestation rather than a check: the platform can see neither of those
+   * places. It is on the chain for the same reason the retirement is — "who
+   * confirmed the revoked key was revoked" is an access-review question, and a
+   * name against it is a better answer than silence.
+   */
+  def('PLATFORM_CREDENTIAL_ENV_CONFIRMED_GONE', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
+  /*
    * What the contract with an AI vendor says — §16.1, declared rather than
    * discovered.
    *
