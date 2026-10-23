@@ -881,6 +881,84 @@ export async function bidon(root) {
     }
   });
 
+  /*
+   * Confirming the parse, in one press.
+   *
+   * The command takes an empty list to mean "the parse was right", which is a
+   * decision somebody makes after reading the proposal above — so this is a
+   * button under the proposal rather than a step in a panel asking for the
+   * list to be typed again.
+   */
+  root.addEventListener('click', async (event) => {
+    const confirm = event.target.closest('[data-confirm-proposal]');
+    if (!confirm) return;
+    confirm.disabled = true;
+    try {
+      const result = await api.post(`/v1/bid-on/bids/${confirm.dataset.confirmProposal}/questions`, { questions: [] });
+      toast(
+        'Question list confirmed',
+        `${result.questions?.length ?? 0} question(s), in the buyer's own numbering. Drafting is open.`,
+        'ok',
+      );
+      await draw();
+    } catch (error) {
+      toast('Not confirmed', error.detail ?? error.message ?? 'The list could not be confirmed.', 'err');
+      confirm.disabled = false;
+    }
+  });
+
+  /** The same list, in the editor, for anybody who wants to change a line first. */
+  root.addEventListener('click', async (event) => {
+    const edit = event.target.closest('[data-edit-proposal]');
+    if (!edit) return;
+    const bidId = edit.dataset.editProposal;
+    const spec = COMMANDS['confirm-questions'];
+    if (!spec) return;
+    edit.disabled = true;
+    // Read back rather than carried in a variable: the pack on screen may be
+    // minutes old, and the list somebody edits has to be the list the platform
+    // currently holds.
+    let position;
+    try {
+      position = await api.read(`/v1/bid-on/bids/${bidId}`, 'BID_SERVICES', 'COMMERCIAL_L3');
+    } catch (error) {
+      toast('Not opened', error.detail ?? error.message ?? 'The proposal could not be read.', 'err');
+      edit.disabled = false;
+      return;
+    }
+    edit.disabled = false;
+    // Pre-filled with what was parsed, in the format the field takes, so
+    // "edit" means editing rather than transcribing.
+    const proposal = (position.bid?.proposedQuestions ?? [])
+      .map((entry) =>
+        [
+          entry.section,
+          entry.number,
+          entry.text,
+          String(entry.answerType ?? 'TEXT').toLowerCase(),
+          entry.wordLimit ?? '',
+          entry.weighting ?? '',
+          entry.mandatory ? 'M' : 'O',
+          entry.passFail ? 'PF' : '',
+        ].join(' | '),
+      )
+      .join('\n');
+    if (
+      await command({
+        ...spec,
+        fields: spec.fields.map((field) =>
+          field.name === 'questions'
+            ? { ...field, value: proposal }
+            : field.name === 'bidId'
+              ? { ...field, value: bidId }
+              : field,
+        ),
+      })
+    ) {
+      await draw();
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-render]');
     if (!button) return;
@@ -2619,6 +2697,56 @@ function bidDetail(position, estimate, source) {
                 <code style="font-size:11.5px;color:var(--text-3)">${file.hash}</code>
               </div>`)}
             </div></div>`
+          : ''
+      }
+      ${
+        /*
+         * The parse's proposal, which nothing showed.
+         *
+         * The module reads a questionnaire into a proposed list and then asks
+         * a person to confirm it against the source — and the screen never
+         * displayed the proposal, so "confirm it" meant retyping, by hand, in
+         * a pipe-delimited format, the list a model had just extracted. The
+         * command has always accepted an empty list to mean "the parse was
+         * right"; there was simply no way to see what one would be agreeing
+         * to.
+         *
+         * So: the proposal, in full, with one button that confirms it and one
+         * that opens the editor pre-filled. The confirmation is still a
+         * person's act against the source document — that rule is the reason
+         * the proposal is not applied automatically — but it is now a reading
+         * rather than a transcription.
+         */
+        (bid.proposedQuestions ?? []).length > 0 && questions.length === 0
+          ? html`<div class="card pad0" style="margin:11px 17px 0">
+              <h2 style="padding:15px 17px 0">Proposed question list — not confirmed yet</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                ${bid.proposedQuestions.length} question(s) read out of the questionnaire${bid.parsedBy ? ` by ${bid.parsedBy}` : ''}.
+                <b>Check them against the source document before confirming.</b> A parser that missed one question
+                produces a pack where every answer is good, readiness reads 100%, and the submission is rejected for
+                a missing mandatory response — and nothing downstream can detect that, because what is wrong is the
+                list itself.
+              </p>
+              <div style="padding:11px 17px 0">
+                ${table({
+                  headers: ['Section', '#', 'Question', 'Type', 'Limit', 'Weight', 'Must'],
+                  align: ['', '', '', '', 'num', 'num', ''],
+                  rows: bid.proposedQuestions.map((entry) => [
+                    entry.section,
+                    entry.number,
+                    entry.text,
+                    humanise(entry.answerType ?? 'TEXT'),
+                    entry.wordLimit ?? '—',
+                    entry.weighting ?? '—',
+                    entry.mandatory ? badge('mandatory', 'warn') : badge('optional', ''),
+                  ]),
+                })}
+              </div>
+              <div class="actions" style="padding:11px 17px 15px">
+                <button class="btn" data-confirm-proposal="${bid.id}">Confirm these ${bid.proposedQuestions.length} questions</button>
+                <button class="btn quiet" data-edit-proposal="${bid.id}">Edit before confirming</button>
+              </div>
+            </div>`
           : ''
       }
       <div class="grid g4" style="padding:11px 17px 0">

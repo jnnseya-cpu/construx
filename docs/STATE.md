@@ -28998,3 +28998,33 @@ two thousand addresses is full of house numbers.
 The verdict is computed once, server-side — `QUESTIONS`, `SOMETHING`,
 `NOTHING`, `UNREAD` — and the chooser, the refusal and the pre-flight check all
 read it. The browser restating the rule is how the two would have drifted.
+
+## The proposal nothing showed
+
+The questionnaire parser reads a document into a **proposed** question list and
+`confirmQuestions` then asks a person to confirm it against the source. The
+command has always accepted an empty list to mean "the parse was right" — and
+the console never displayed the proposal. So "confirm it" meant retyping, by
+hand, in a pipe-delimited format, the list a model had just extracted and been
+paid for.
+
+Nobody reported it as a defect because it does not look like one: every command
+works, nothing refuses, and the only symptom is a person asking why the platform
+is making them type what it just read. That is the worst kind of hole — a
+vertical that is complete except for the one screen that makes it usable.
+
+The opened pack now carries the proposal in full, with the parse's own
+numbering, word limits, weightings and mandatory flags, under a heading that
+says it is not confirmed. Two buttons: **Confirm these N questions**, which
+sends the empty list the command already understood, and **Edit before
+confirming**, which opens the ordinary command panel pre-filled with the
+proposal in the format that field takes — so editing is editing rather than
+transcription. The list is read back from the API at the moment the editor
+opens, because the pack on screen may be minutes old.
+
+The rule that the proposal is *not* applied automatically does not move. A
+parser that misses one question produces a pack where every answer is good,
+readiness reads 100%, and the submission is rejected for a missing mandatory
+response — and nothing downstream can detect it, because what is wrong is the
+list. What changed is that confirming is now a reading rather than a typing
+exercise.
