@@ -28430,3 +28430,24 @@ Verified: `npm test` and `npm run typecheck` clean. The vendor-terms suite
 asserts that a declaration takes effect in the function the gate reads, that
 every missing answer above internal is named at once, that it is on the chain
 with the agreement on it, and that it is the operator's and nobody else's.
+
+
+## Running a real tender: `docs/BID-ON-WALKTHROUGH.md`
+
+Asked for after a day lost to a module that worked and could not be followed.
+Every screen, button and field named as it appears, worked end to end against a
+real invitation — RFX1000209, Platform Housing Group, EPC assessments, returning
+2 November 2026 — because an instruction written against a made-up tender is one
+nobody can follow on the day.
+
+It carries the two things a reference page usually leaves out: **what the
+platform will refuse and why**, as a table of every refusal on the path with the
+remedy beside it, and **where every id comes from**, because nothing in this
+module asks anybody to invent one and the commonest failure was somebody pasting
+a document hash where an evidence id was asked for.
+
+It is written against the sequence `tools/bidon-walk.mjs` drives, so the
+walkthrough and the check that proves the path is reachable cannot drift: if the
+walk stops passing, the document is wrong, and the walk runs on `AI_MODE=local`
+where every agent refuses by name — so the manual route it documents is the one
+that is continuously tested.
