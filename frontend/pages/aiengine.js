@@ -239,25 +239,13 @@ export async function aiengine(root) {
                                   (entry.outstanding ?? []).length === 0
                                     ? html`<div class="metric-sub" style="margin-top:4px">
                                         Out of <code>.env</code> and revoked at the vendor, confirmed
-                                        ${entry.retired?.revokedAt ? date(entry.retired.revokedAt) : ''}. The platform
-                                        could not see either, so that confirmation is somebody's word and the chain
-                                        carries whose.
+                                        ${entry.retired?.revokedAt ? date(entry.retired.revokedAt) : ''}.
                                       </div>`
                                     : html`<div class="metric-sub" style="margin-top:4px">
-                                        The platform will not read <code>${entry.name}</code> from the environment
-                                        again, so what is in <code>.env</code> is inert even if this store is cleared.
-                                        Still outstanding, and neither is the platform's to do:
-                                        ${(entry.outstanding ?? []).includes('FILE')
-                                          ? html`<div style="margin-top:4px"><code>sed -i '/^${entry.name}=/d' .env</code>
-                                              on the host, then recreate the container — the environment is read once,
-                                              when the process starts, so a deleted line still shows here until it
-                                              restarts.</div>`
-                                          : ''}
-                                        ${(entry.outstanding ?? []).includes('VENDOR')
-                                          ? html`<div style="margin-top:4px">Revoke that key at the vendor.</div>`
-                                          : ''}
-                                        <div style="margin-top:4px">Press <b>Confirm the old key is gone</b> once both
-                                          are done.</div>
+                                        What is in <code>.env</code> is inert — the platform will not read it again.
+                                        Housekeeping, whenever you get to it: take the line out of the file and revoke
+                                        the key at the vendor, then press <b>Confirm the old key is gone</b> if you
+                                        want that on the record. Nothing here is waiting on it.
                                       </div>`
                                 }`
                             : entry.fromEnvironment
@@ -522,10 +510,9 @@ export async function aiengine(root) {
         title: 'Record what this vendor’s agreement says',
         intent:
           'Two facts, both of them about your contract rather than about the software: the highest sensitivity this ' +
-          'vendor may be handed, and what it does with it afterwards. Above internal the platform asks which ' +
-          'agreement you are reading, where the processing happens and whether the material is excluded from model ' +
-          'training — it will not clear a vendor for commercial or legal material on an unanswered question. Goes on ' +
-          'the chain with your name on it.',
+          'vendor may be handed, and what it does with it afterwards. The rest is worth filling in and none of it is ' +
+          'compulsory — what you leave blank is recorded as not stated and reads that way wherever the vendor is ' +
+          'named, which is the honest answer and does not stop the work. Goes on the chain with your name on it.',
         path: (values) => `/v1/admin/vendor-terms/${values.provider}`,
         submitLabel: 'Record it',
         fields: [
@@ -545,14 +532,14 @@ export async function aiengine(root) {
               { value: 'NOT_DECLARED', label: 'Not declared — nobody has read the terms yet' },
             ] },
           { name: 'days', label: 'For how many days', type: 'number', required: false, min: 0,
-            hint: 'Required where it keeps it for a period. Their figure, out of the agreement.' },
+            hint: 'Their figure, out of the agreement, where it keeps it for a period.' },
           { name: 'region', label: 'Processed in', type: 'text', required: false, placeholder: 'eu-west',
-            hint: 'Where the vendor says the processing happens. Required above internal.' },
+            hint: 'Where the vendor says the processing happens. Leave it blank if they do not say — blank is a truer answer than a guess.' },
           { name: 'trainingExcluded', label: 'Excluded from model training', type: 'checkbox',
-            hint: 'Tick only if the agreement says so in writing. Required above internal, either way.' },
+            hint: 'Tick if the vendor’s terms say so. For most API products it is the published default rather than something you negotiate.' },
           { name: 'agreementReference', label: 'Which agreement', type: 'text', required: false,
-            placeholder: 'Enterprise agreement, zero-retention addendum, 14 Oct 2026',
-            hint: 'What somebody would have to go and read. Required above internal.' },
+            placeholder: 'OpenAI Services Agreement and published API data usage policies',
+            hint: 'What somebody would have to go and read. The terms you accepted when you opened the account are an agreement; it does not have to be a negotiated letter.' },
           { name: 'reason', label: 'Why now', type: 'text',
             hint: 'Recorded against the decision. "Zero-retention addendum signed; EU processing confirmed."' },
         ],

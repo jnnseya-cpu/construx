@@ -28,14 +28,26 @@ import type { DataSensitivity } from '../identity/abac.ts';
  * the fallback for a deployment configured entirely that way. The precedence is
  * the same shape as the credential store's and for the same reason.
  *
- * ## What it is not
+ * ## What it does not do, and why it used to
  *
- * It is not a way to assert a contract that does not exist. `declareVendorTerms`
- * refuses a clearance above `INTERNAL` without the agreement named, the
- * processing region stated and the training question answered — because the
- * three categories that gate on it are safety, commercial and legal material,
- * and a promise on a screen with no contract behind it is worse than the
- * refusal it replaces.
+ * It does not refuse a clearance for want of an agreement reference, a region
+ * or an answer on training. It asked for all three and refused without them for
+ * exactly one revision, and that was wrong on two counts.
+ *
+ * It was a **new** rule. The environment variable this replaced took a level
+ * and nothing else, so moving the decision to the console — which was meant to
+ * remove an SSH session from a bid manager's path — made the console *stricter*
+ * than the shell it replaced. And it protected nothing: `AI_PROVIDER_CLEARANCE`
+ * still works, so anybody with the host walked straight past it. A gate the
+ * shell can step around is not a control; it is an obstacle for the person
+ * doing it properly.
+ *
+ * What is left is what was always true: these are facts about a contract that
+ * the platform cannot discover, so it records what it is told, records who told
+ * it, and reports plainly where it has been told nothing. An undeclared
+ * retention still reads `NOT_DECLARED` on every screen and in the sentence
+ * shown before the button. That is information, which is this module's job;
+ * refusing the work was not.
  */
 
 export type VendorTerms = {
@@ -108,54 +120,21 @@ export function validateVendorTerms(input: {
     ]);
   }
 
-  const clearance = input.clearance as DataSensitivity;
   const route = input.retention.route as RetentionRoute;
-  const above = ORDER.indexOf(clearance) > ORDER.indexOf('INTERNAL');
 
   /*
-   * The three things a commercial clearance has to come with.
+   * Two levels and two routes, and nothing else refused.
    *
-   * Above `INTERNAL` the platform starts handing a vendor safety, commercial
-   * and legally privileged material. Each of these is a question somebody has
-   * to have answered out of the agreement in front of them, and a declaration
-   * that skipped any one of them would put a reassurance on the screen that
-   * nothing stands behind — which is worse than the refusal it replaced.
+   * What remains is the pair of checks that stop a declaration nobody could
+   * act on — a sensitivity level that is not one, and a retention route that
+   * is not one. Both would otherwise be stored and silently ignored, which is
+   * the only kind of refusal this function has any business making.
+   *
+   * Everything else is recorded as given, including blank. A vendor with no
+   * agreement named and no region stated reads exactly that way on the
+   * register and in the sentence shown before the button, which is the honest
+   * answer and is the module doing its job. Stopping the work was not.
    */
-  if (above) {
-    const missing: Array<{ field: string; message: string }> = [];
-    if (input.agreementReference.trim().length < 4) {
-      missing.push({ field: 'agreementReference', message: 'Name the agreement this is read from' });
-    }
-    if (route === 'NOT_DECLARED') {
-      missing.push({ field: 'retentionRoute', message: 'Say what the vendor does with it' });
-    }
-    if (!(input.retention.region ?? '').trim()) {
-      missing.push({ field: 'region', message: 'Say where it is processed — "eu-west", "uk-south"' });
-    }
-    if (typeof input.retention.trainingExcluded !== 'boolean') {
-      missing.push({ field: 'trainingExcluded', message: 'Say whether the contract excludes it from model training' });
-    }
-    if (missing.length > 0) {
-      throw new DomainError(
-        'AGREEMENT_REQUIRED',
-        `Clearing ${input.provider} for ${clearance.replace(/_/g, ' ').toLowerCase()} material is a statement about a ` +
-          'contract, so the platform asks what the contract says: which agreement, where it is processed, and ' +
-          'whether it is excluded from training. Nothing above internal is cleared on an unanswered question.',
-        422,
-        missing,
-      );
-    }
-  }
-
-  if ((route === 'TRANSIENT' || route === 'RETAINED') && !Number.isFinite(input.retention.days)) {
-    throw new DomainError(
-      'RETENTION_DAYS_REQUIRED',
-      `A ${route.toLowerCase()} route keeps it for a period, so the period has to be stated. "They keep it for a ` +
-        'while" is not a retention term anybody can rely on.',
-      422,
-      [{ field: 'days', message: 'How many days the vendor keeps it' }],
-    );
-  }
 
   return {
     route,

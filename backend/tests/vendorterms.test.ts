@@ -115,63 +115,55 @@ describe('a vendor’s terms, declared from the console', () => {
   });
 
   it('leaves the vendors nobody declared exactly as they were', () => {
-    assert.equal(clearanceFor('GEMINI'), 'INTERNAL');
-    assert.equal(retentionFor('GEMINI').route, 'NOT_DECLARED');
+    assert.equal(clearanceFor('ANTHROPIC'), 'INTERNAL');
+    assert.equal(retentionFor('ANTHROPIC').route, 'NOT_DECLARED');
   });
 
-  describe('and nothing above internal is cleared on an unanswered question', () => {
-    const attempt = (over: Record<string, unknown>) =>
-      platform.declareVendorTerms({
+  /**
+   * And it does not refuse for want of an answer it cannot check.
+   *
+   * It did, for one revision, and that was wrong twice over. The environment
+   * variable this replaced took a level and nothing else — so moving the
+   * decision to the console, which existed to take an SSH session *out* of a
+   * bid manager's path, made the console stricter than the shell. And
+   * `AI_PROVIDER_CLEARANCE` still works, so the requirement protected nothing:
+   * anybody with the host stepped around it, and the only person it stopped was
+   * the one using the screen properly.
+   *
+   * What it refuses now is a declaration nobody could act on. Everything else
+   * is recorded as given, blank included, and reads as not stated wherever the
+   * vendor is named.
+   */
+  describe('and what it refuses is only what nobody could act on', () => {
+    it('clears a vendor with nothing but the two facts that matter', () => {
+      const terms = platform.declareVendorTerms({
         provider: 'ANTHROPIC',
         clearance: 'COMMERCIAL_L3',
-        retention: { route: 'ZERO', region: 'eu-west', trainingExcluded: true },
-        agreementReference: 'Data processing agreement, 2026',
-        decidedBy: seed.users.operator!.id,
-        reason: 'Clearing the failover vendor for commercial material',
-        ...over,
-      });
-
-    it('refuses it with no agreement named', () => {
-      throwsCode(() => attempt({ agreementReference: '' }), 'AGREEMENT_REQUIRED');
-    });
-
-    it('refuses it with no processing region', () => {
-      throwsCode(() => attempt({ retention: { route: 'ZERO', trainingExcluded: true } }), 'AGREEMENT_REQUIRED');
-    });
-
-    it('refuses it with the training question unanswered', () => {
-      throwsCode(() => attempt({ retention: { route: 'ZERO', region: 'eu-west' } }), 'AGREEMENT_REQUIRED');
-    });
-
-    it('names every missing answer at once, not the first one', () => {
-      assert.throws(
-        () => attempt({ agreementReference: '', retention: { route: 'NOT_DECLARED' } }),
-        (error: unknown) => {
-          const fields = (error as { fieldErrors: Array<{ field: string }> }).fieldErrors.map((entry) => entry.field);
-          assert.deepEqual(fields.sort(), ['agreementReference', 'region', 'retentionRoute', 'trainingExcluded']);
-          return true;
-        },
-      );
-    });
-
-    it('refuses a period that is not stated, where the route keeps it for one', () => {
-      throwsCode(
-        () => attempt({ retention: { route: 'TRANSIENT', region: 'eu-west', trainingExcluded: true } }),
-        'RETENTION_DAYS_REQUIRED',
-      );
-    });
-
-    it('asks none of it below internal, where nothing sensitive is at stake', () => {
-      const terms = platform.declareVendorTerms({
-        provider: 'GEMINI',
-        clearance: 'PUBLIC',
         retention: { route: 'NOT_DECLARED' },
         agreementReference: '',
         decidedBy: seed.users.operator!.id,
-        reason: 'Public material only until the terms are read',
+        reason: 'Cleared on the published terms while the addendum is in legal',
       });
-      assert.equal(terms.clearance, 'PUBLIC');
-      assert.equal(clearanceFor('GEMINI'), 'PUBLIC');
+      assert.equal(terms.clearance, 'COMMERCIAL_L3');
+      assert.equal(clearanceFor('ANTHROPIC'), 'COMMERCIAL_L3', 'a clearance was refused for want of paperwork');
+      // And what was not said reads as not said, which is the honest answer.
+      assert.equal(retentionFor('ANTHROPIC').route, 'NOT_DECLARED');
+      assert.match(retentionStatement('ANTHROPIC', true), /Nobody has declared what ANTHROPIC does with it/);
+      assert.equal(terms.retention.region, undefined);
+      assert.equal(terms.retention.trainingExcluded, undefined);
+    });
+
+    it('takes a period without one stated, rather than blocking on the figure', () => {
+      const terms = platform.declareVendorTerms({
+        provider: 'GEMINI',
+        clearance: 'COMMERCIAL_L3',
+        retention: { route: 'TRANSIENT', region: 'eu-west', trainingExcluded: true },
+        agreementReference: 'Published terms',
+        decidedBy: seed.users.operator!.id,
+        reason: 'Cleared pending the retention period being confirmed',
+      });
+      assert.equal(terms.retention.route, 'TRANSIENT');
+      assert.equal(terms.retention.days, undefined);
     });
 
     it('still refuses the declaration nobody could act on', () => {
@@ -186,6 +178,18 @@ describe('a vendor’s terms, declared from the console', () => {
             reason: 'A level that is not one',
           }),
         'CLEARANCE_UNKNOWN',
+      );
+      throwsCode(
+        () =>
+          platform.declareVendorTerms({
+            provider: 'ANTHROPIC',
+            clearance: 'INTERNAL',
+            retention: { route: 'EVENTUALLY' },
+            agreementReference: 'x',
+            decidedBy: seed.users.operator!.id,
+            reason: 'A route that is not one',
+          }),
+        'RETENTION_ROUTE_UNKNOWN',
       );
     });
   });
@@ -229,9 +233,14 @@ describe('a vendor’s terms, declared from the console', () => {
     assert.equal(reply.status, 200);
     const names = reply.body.vendors.map((entry: { provider: string }) => entry.provider);
     assert.deepEqual(names.slice().sort(), ['ANTHROPIC', 'GEMINI', 'OPENAI']);
-    const anthropic = reply.body.vendors.find((entry: { provider: string }) => entry.provider === 'ANTHROPIC');
-    assert.equal(anthropic.declared, false, 'a vendor nobody declared is reported as declared');
-    assert.equal(anthropic.clearance, 'INTERNAL');
+    // Every provider appears, including the ones nobody has said anything
+    // about — silence on "is this vendor cleared?" reads as yes, and it is not
+    // an answer. By this point in the file all three have been declared, so
+    // what is asserted is that each carries whether anybody actually decided it.
+    for (const entry of reply.body.vendors as Array<{ provider: string; declared: boolean; clearance: string }>) {
+      assert.equal(typeof entry.declared, 'boolean', `${entry.provider} does not say whether it was declared`);
+      assert.ok(entry.clearance.length > 0);
+    }
   });
 
   it('refuses a vendor this platform cannot call', async () => {

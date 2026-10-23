@@ -122,23 +122,20 @@ has cleared for that is refused, and you will see
 - **Which agreement** → what somebody would have to go and read
 - **Why now** → recorded against the decision
 
-It will refuse you if the agreement, the region or the training answer is
-missing, and it names all of them at once. That refusal is the point: above
-*internal* the platform is being told it may send a third party your commercial
-material, and a reassurance on a screen with no contract behind it is worse than
-the refusal it replaces.
+Only the first two are compulsory. What you leave blank is recorded as *not
+stated* and reads that way wherever the vendor is named — which is the honest
+answer and does not stop the work.
 
-> **You do not need a bespoke letter from the vendor.** The terms you already
-> accepted are an agreement, and naming them is a valid answer. For the OpenAI
-> **API** their published position is that API data is not used to train their
-> models by default, and that abuse-monitoring logs are kept for up to 30 days —
-> so `Keeps it for a stated period, then deletes it` / `30` / training excluded,
-> against an agreement reference naming their published API data-usage policy,
-> is a declaration with something real behind it. Zero retention and EU data
-> residency are **separate arrangements you have to apply for**, so do not claim
-> either unless your account actually has it. Check your own account's terms
-> before you declare: the platform records what you say, and your name is what
-> stands behind it.
+> **You do not need a letter from the vendor.** The terms you accepted when you
+> opened the account are an agreement, and naming them is a valid answer. For
+> the OpenAI **API** their published position is that API data is **not used to
+> train their models by default**, and that abuse-monitoring logs are kept **up
+> to 30 days** — so `Keeps it for a stated period, then deletes it` / `30` /
+> training excluded, against *"OpenAI Services Agreement and published API data
+> usage policies"*, is a declaration with something real behind it. Zero
+> retention and EU data residency are **separate arrangements you have to apply
+> for**, so do not claim either unless your account has it. The platform records
+> what you say; your name is what stands behind it.
 
 **You do not have to do this to run the tender.** Without it, every AI command
 refuses by name and everything in this walkthrough still works by hand.

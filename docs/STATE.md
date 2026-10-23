@@ -28500,3 +28500,39 @@ What the platform asks for has not changed and should not: an agreement it can
 name, a region, and an answer on training. What changed is the wording around
 it, in `docs/BID-ON-WALKTHROUGH.md` and here — because a gate that is
 satisfiable and reads as impossible is a gate that stops the wrong people.
+
+## A rule that was mine, and should not have been
+
+Recorded because it cost a customer two days and the fault was in this
+repository, not in their configuration.
+
+Moving the AI vendor clearance out of `AI_PROVIDER_CLEARANCE` and onto a screen
+existed to take an SSH session *out* of a bid manager's path. The same change
+then added three fields that had to be answered before a vendor could be cleared
+above `INTERNAL` — the agreement, the processing region and the training term —
+and refused without them.
+
+That was wrong twice over.
+
+**It was a new rule.** The environment variable took a level and nothing else.
+So the console, built to remove friction, arrived stricter than the shell it
+replaced, and a customer who could have typed one line in `.env` instead met a
+form with three questions they believed needed a negotiated letter to answer.
+
+**It protected nothing.** `AI_PROVIDER_CLEARANCE` still works. Anybody with the
+host walked straight past the requirement; the only person it stopped was the
+one using the screen properly. A gate the shell can step around is not a
+control, it is an obstacle for honest users — and the argument written beside it
+("a promise on a screen with no contract behind it") was a good sentence
+attached to a check that could not deliver it.
+
+What refuses now is a declaration nobody could act on: a sensitivity level that
+is not one, a retention route that is not one. Everything else is recorded as
+given, blank included, and an undeclared retention reads `NOT_DECLARED` on every
+screen and in the sentence shown before the button. That is information, which
+is this module's job. Refusing the work was not.
+
+The same correction applies to the credential row: after a retirement it states
+the fact once and calls the rest housekeeping, rather than printing two
+instructions on every visit for jobs the platform cannot see and is not waiting
+on.
