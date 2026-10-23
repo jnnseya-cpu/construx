@@ -85,10 +85,35 @@ async function sourceFiles(dir: string): Promise<string[]> {
  */
 function emittedIn(corpus: string): Set<string> {
   const emitted = new Set<string>();
-  // Up to the end of the line, so a ternary is covered and the next property is
-  // not: an event name three lines further down belongs to a different write.
-  for (const match of corpus.matchAll(/eventType:([^\n]*)/g)) {
-    for (const literal of match[1]!.matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)) emitted.add(literal[1]!);
+  /*
+   * The value of the `eventType` property, and nothing after it.
+   *
+   * To the end of the line was too far. An agent declares its triggers as
+   * `[{ kind: 'EVENT', eventType: 'X' }, { kind: 'ON_DEMAND' }]`, so the rest
+   * of the line carries literals belonging to other properties entirely — and
+   * `ON_DEMAND` read as an emitted event. Stopping at the comma or the closing
+   * brace keeps a ternary, which has neither, and drops the next property,
+   * which begins with one.
+   */
+  for (const match of corpus.matchAll(/eventType:([^,\n}]*)/g)) {
+    /*
+     * The literals that decide *which* event, not the ones being tested.
+     *
+     * `eventType: kind === 'COVER' ? 'BRANDING_COVER_SET' : 'BRANDING_LOGO_SET'`
+     * names two events and compares against a third string that is not an event
+     * at all. Taking every literal on the line read `COVER` as an emitted
+     * event — harmless while the question was "is anything emitting this
+     * catalogue entry", and wrong the moment the question became "is every
+     * emitted name in the catalogue", which it now also is.
+     *
+     * So comparisons and call arguments are removed before the literals are
+     * read. What is left is what the expression can evaluate to.
+     */
+    const expression = match[1]!
+      .replace(/[=!]==?\s*'[^']*'/g, '')
+      .replace(/'[^']*'\s*[=!]==?/g, '')
+      .replace(/\.(?:includes|startsWith|endsWith|has|indexOf)\(\s*'[^']*'/g, '');
+    for (const literal of expression.matchAll(/'([A-Z][A-Z0-9_]{3,})'/g)) emitted.add(literal[1]!);
   }
   return emitted;
 }
@@ -123,6 +148,42 @@ describe('the closed event catalogue', () => {
 
     const stale = Object.keys(NOT_EMITTED).filter((type) => emitted.has(type));
     assert.deepEqual(stale, [], `these are listed as not emitted but something emits them: ${stale.join(', ')}`);
+  });
+
+  it('has a catalogue entry behind every event the source emits', async () => {
+    /*
+     * The converse, and the one that was missing.
+     *
+     * This file checked that every *defined* event has something able to emit
+     * it. Nothing checked that every *emitted* event is defined — and the
+     * ledger refuses an event it does not know, so a `write` naming an
+     * unregistered type is a command that cannot complete.
+     *
+     * It happened: `parseQuestionnaire` ended in
+     * `write(… 'BID_ON_QUESTIONS_PARSED')` and the catalogue had no such entry.
+     * The document was read, the model answered, the questions were extracted,
+     * the customer was charged, and the run died on `EVENT_TYPE_UNKNOWN`. It
+     * survived every test because the command refuses for want of a provider
+     * long before the write, so its success path had never once been executed
+     * — which is precisely the kind of hole a static invariant closes and a
+     * test run cannot.
+     *
+     * The type system does not catch this either: `eventType` is a string on
+     * the way into `write`, resolved against the catalogue at run time.
+     */
+    const files = await sourceFiles(SRC_ROOT);
+    const sources = await Promise.all(files.map((file) => readFile(file, 'utf8')));
+    const emitted = emittedIn(sources.join('\n'));
+
+    const known = new Set(EVENT_TYPES.map((event) => event.code));
+    const unregistered = [...emitted].filter((type) => !known.has(type)).sort();
+
+    assert.deepEqual(
+      unregistered,
+      [],
+      `these event types are emitted by the source and are not in the catalogue, so every command that writes one ` +
+        `fails with EVENT_TYPE_UNKNOWN at the moment it would have succeeded:\n  ${unregistered.join('\n  ')}`,
+    );
   });
 
   it('names only real event types', async () => {

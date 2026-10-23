@@ -2530,6 +2530,27 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // invalidates an answer somebody approved. Neither is clerical.
   def('BID_ON_BID_IMPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_BID_RESYNCED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  /*
+   * The parser's proposal, which was written by the code and was not in this
+   * catalogue at all.
+   *
+   * `parseQuestionnaire` has always ended in `write(… 'BID_ON_QUESTIONS_PARSED')`
+   * and the ledger refuses an event it does not know, so the command could
+   * never complete: the document was read, the model answered, the questions
+   * were extracted, the customer was charged, and the run was thrown away with
+   * `EVENT_TYPE_UNKNOWN`. It survived because every test runs with no provider
+   * configured, so the command refuses at `requireModel` long before the write
+   * — the success path had never once been executed.
+   *
+   * `catalogue.test.ts` now asserts the converse of what it asserted before: it
+   * checked that every defined event has an emitter, and it now also checks
+   * that every event the source emits is defined.
+   *
+   * `aiAllowed` because a model genuinely authors a proposal here. It decides
+   * nothing: `BID_ON_QUESTIONS_CONFIRMED` is the human act, and nothing in the
+   * pack reads a proposal until somebody has confirmed it.
+   */
+  def('BID_ON_QUESTIONS_PARSED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_QUESTIONS_CONFIRMED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_ANSWER_DRAFTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_ANSWER_SCORED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),

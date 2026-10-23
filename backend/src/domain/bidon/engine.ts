@@ -284,9 +284,36 @@ export async function parseQuestionnaire(
   // vendor. Each part is its own execution and its own charge.
   const parts = partsFor(source, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
 
+  /** What it read, in the words a person would use for it. */
+  const documentLabel = ((): string => {
+    if (!input.hash) return 'the text you pasted';
+    try {
+      const item = requireEvidence(ctx, input.hash);
+      return `${item.reference} — ${item.title}`;
+    } catch {
+      return 'the document behind that hash';
+    }
+  })();
+  const sentChars = parts.reduce((sum, part) => sum + (part.text?.length ?? 0), 0);
+
   const proposed: ParsedQuestion[] = [];
   let acuConsumed = 0;
   let parsedBy: string | undefined;
+
+  /*
+   * What the reading actually saw, kept so a refusal can say something.
+   *
+   * `BID_ON_NOTHING_PARSED` told nobody anything: not which document was read,
+   * not how much of it was sent, not whether the model answered with rows that
+   * were then dropped or with nothing at all. Those are entirely different
+   * problems — the wrong file chosen, a specification where a questionnaire was
+   * expected, a model that answered in a shape nothing could read — and they
+   * have different remedies.
+   */
+  let rowsSeen = 0;
+  let withoutNumber = 0;
+  let withoutText = 0;
+  const answered: string[] = [];
 
   for (const part of parts) {
     const result = await runAI(ctx, {
@@ -326,32 +353,84 @@ export async function parseQuestionnaire(
     acuConsumed += result.acuConsumed;
     parsedBy ??= result.provider;
 
-    const output = result.output as { questions?: unknown };
-    proposed.push(
-      ...(Array.isArray(output.questions) ? output.questions : [])
-        .map((row) => row as Record<string, unknown>)
-        .map((row) => ({
-          section: String(row.section ?? 'General').trim() || 'General',
-          number: String(row.number ?? '').trim(),
-          text: String(row.text ?? '').trim(),
-          answerType: (ANSWER_TYPE.includes(String(row.answerType ?? '').toUpperCase() as never)
-            ? String(row.answerType).toUpperCase()
-            : 'TEXT') as BidQuestion['answerType'],
-          ...(row.wordLimit == null ? {} : { wordLimit: Math.round(Number(row.wordLimit)) }),
-          ...(row.weighting == null ? {} : { weighting: Number(row.weighting) }),
-          mandatory: row.mandatory === true,
-          passFail: row.passFail === true,
-        }))
-        .filter((question) => question.number && question.text),
+    /*
+     * The rows, under whichever name the model used.
+     *
+     * `questions` is what the prompt asks for and what every answer has used.
+     * The alternatives are here because the cost of a model answering
+     * `{"items": [...]}` was the whole reading thrown away and charged for, and
+     * because a bare array is what a model returns when it decides the schema
+     * was advisory. Each is still a list of question-shaped objects; nothing is
+     * inferred about their contents.
+     */
+    const output = result.output as Record<string, unknown>;
+    const listed = [output.questions, output.items, output.rows, output.list, output.data].find((candidate) =>
+      Array.isArray(candidate),
     );
+    const rows = (Array.isArray(listed) ? listed : []) as Array<Record<string, unknown>>;
+    rowsSeen += rows.length;
+    if (rows.length === 0) answered.push(excerpt(JSON.stringify(output)));
+
+    /** The first of these the row actually carries, trimmed. */
+    const field = (row: Record<string, unknown>, names: string[]): string => {
+      for (const name of names) {
+        const value = row[name];
+        if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+      }
+      return '';
+    };
+
+    for (const row of rows) {
+      // The buyer's own numbering, under any of the names a model gives it. It
+      // is load-bearing — the export has to map onto their questionnaire — so a
+      // row without one is still dropped, and now counted so the refusal can
+      // say that is what happened.
+      const number = field(row, ['number', 'ref', 'reference', 'questionNumber', 'no', 'id']);
+      const text = field(row, ['text', 'question', 'questionText', 'prompt', 'body']);
+      if (number === '') withoutNumber += 1;
+      if (text === '') withoutText += 1;
+      if (number === '' || text === '') continue;
+
+      const answerType = field(row, ['answerType', 'type', 'responseType']).toUpperCase();
+      proposed.push({
+        section: field(row, ['section', 'heading', 'category']) || 'General',
+        number,
+        text,
+        answerType: (ANSWER_TYPE.includes(answerType as never) ? answerType : 'TEXT') as BidQuestion['answerType'],
+        ...(row.wordLimit == null ? {} : { wordLimit: Math.round(Number(row.wordLimit)) }),
+        ...(row.weighting == null ? {} : { weighting: Number(row.weighting) }),
+        mandatory: row.mandatory === true,
+        passFail: row.passFail === true,
+      });
+    }
   }
 
   if (proposed.length === 0) {
+    /*
+     * The same refusal, now saying which of three things happened.
+     *
+     * The bid is still unchanged and nothing is still proposed — accepting an
+     * empty list would leave somebody confirming it — but "nothing usable came
+     * back" sent people to look at the wrong thing. What they need to know is
+     * whether the model answered with rows that were then dropped (a
+     * numbering problem), answered with nothing (very often the wrong document
+     * — a specification or a cost model where a questionnaire was expected),
+     * or was given almost no text at all (a scan the platform could not read,
+     * or an empty paste).
+     */
+    const read = source?.kind === 'MEDIA' ? 'as a scan' : `${sentChars.toLocaleString()} characters`;
+    const what = rowsSeen === 0
+      ? `It answered with no questions at all. What came back: ${answered.join(' | ')}. That is usually the wrong ` +
+        'document — a specification, a cost model or a pricing schedule rather than the questionnaire.'
+      : `It returned ${rowsSeen} row(s) and none could be used: ` +
+        `${withoutNumber} carried no question number${withoutText > 0 ? ` and ${withoutText} no question text` : ''}. ` +
+        'The buyer’s own numbering is what the export has to map onto, so a row without one cannot be proposed.';
+
     throw new DomainError(
       'BID_ON_NOTHING_PARSED',
-      `Nothing usable came back for ${bid.reference}. The bid is unchanged and nothing has been proposed — a ` +
-        'questionnaire with no questions has not been read, and accepting an empty list would leave somebody ' +
-        'confirming it.',
+      `Nothing usable came back for ${bid.reference}. It read ${documentLabel} (${read}${parts.length > 1 ? `, in ${parts.length} parts` : ''}). ` +
+        `${what} The bid is unchanged and nothing has been proposed. Either point it at the questionnaire itself, ` +
+        'paste the questions out of the portal, or confirm the list by hand.',
       502,
     );
   }
@@ -580,6 +659,12 @@ function partConstraint(part: DocumentPart): Record<string, string> {
  * — still reads, and the refusal still comes from the store rather than from a
  * lookup that decided for it.
  */
+/** Enough of a model's answer to diagnose it, never enough to fill a log with a tender. */
+function excerpt(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length > 200 ? `${oneLine.slice(0, 200)}…` : oneLine;
+}
+
 function documentHashFrom(ctx: EngineContext, asked: string): string {
   const value = asked.trim();
   try {

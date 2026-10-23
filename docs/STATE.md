@@ -28845,3 +28845,66 @@ that has never heard of the variable. A named vendor is still honoured exactly,
 including when it has no key: an operator who asked for one vendor is told it is
 unconfigured rather than quietly handed another vendor's vectors, which would be
 a space nothing else on the project is in.
+
+## A command that could never succeed: `EVENT_TYPE_UNKNOWN`
+
+Reported from the live run, twice:
+
+    EVENT_TYPE_UNKNOWN — Event type "BID_ON_QUESTIONS_PARSED" is not in the catalogue
+
+`parseQuestionnaire` has always ended in `write(… 'BID_ON_QUESTIONS_PARSED')`,
+and that event type was **not in the catalogue at all**. The ledger refuses an
+event it does not know, so the command could not complete: the document was
+read, the model answered, the questions were extracted, the customer was
+charged, and the run died at the last line. Every other path in the module —
+confirming, drafting, scoring, approving, exporting — was fine; this one event
+was never registered.
+
+It survived because **the success path had never once been executed.** Every
+test runs with no provider configured, so the parser refuses at `requireModel`
+long before the write, and the type system does not help either: `eventType` is
+a string on the way into `write`, resolved against the catalogue at run time.
+
+Two fixes, and the second matters more than the first.
+
+`def('BID_ON_QUESTIONS_PARSED', 'BidOnBid', 'UPDATE', 'PROCUREMENT',
+{ aiAllowed: true })` — `aiAllowed` because a model genuinely authors a
+*proposal*. It decides nothing: `BID_ON_QUESTIONS_CONFIRMED` is the human act,
+and nothing in the pack reads a proposal until somebody has confirmed it.
+
+And `catalogue.test.ts` now asserts the converse of what it asserted before. It
+checked that every **defined** event has something able to emit it; it now also
+checks that every event the source **emits** is defined. The detector had to get
+more precise to do it — it read every literal to the end of the `eventType:`
+line, which caught comparison operands (`kind === 'COVER' ? …`) and the next
+property of an agent's trigger list (`{ kind: 'EVENT', eventType: 'X' },
+{ kind: 'ON_DEMAND' }`) — so it now stops at the comma or brace that ends the
+property and strips comparisons and call arguments before reading literals. All
+three assertions share the tightened detector, which also removes a way the
+first one could have been fooled.
+
+This is the second defect this week whose only symptom was a command that
+spends money and then fails at its last line, and both were invisible to the
+suite for the same reason: an AI command's success path does not run without a
+provider. The static invariants are what cover that gap — `doors.test.ts` for
+reachability, `consoleforms.test.ts` for the screens, and now the catalogue in
+both directions.
+
+## The questionnaire parser says what it read
+
+`BID_ON_NOTHING_PARSED` said "nothing usable came back" and nothing else: not
+which document was read, not how much of it was sent, not whether the model
+answered with rows that were then dropped or with nothing at all. Those are
+three different problems — the wrong file chosen, a specification where a
+questionnaire was expected, a model answering in a shape nothing could read —
+and they have three different remedies.
+
+The refusal now names the document, how much text went to the model, how many
+parts it took, and either how many rows came back and why none could be used (a
+row without the buyer's own numbering cannot be proposed, because the export has
+to map onto their questionnaire) or an excerpt of what the model actually
+returned when it returned no rows at all. And the output reader accepts the
+obvious synonyms — `items`, `rows`, `list` for the array; `ref`, `question`,
+`prompt` for the fields — because a whole reading thrown away and charged for
+because a model said `items` instead of `questions` is a cost nobody should
+carry for a naming preference.
