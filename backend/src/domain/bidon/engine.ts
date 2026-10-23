@@ -6,6 +6,7 @@ import { extractText, inspect, type Extraction } from '../../evidence/ingest.ts'
 import type { ProviderMedia } from '../../ai/providers/types.ts';
 import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
+import { questionShape } from './questionshape.ts';
 import type { Clarification } from '../tenderintake.ts';
 import { requireVisibleCustomer } from './customers.ts';
 import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
@@ -239,7 +240,20 @@ export async function parseQuestionnaire(
   ctx: EngineContext,
   store: EvidenceStore,
   bidId: string,
-  input: { text?: string; hash?: string },
+  input: {
+    text?: string;
+    hash?: string;
+    /**
+     * Send it to a model even though it does not look like a question set.
+     *
+     * The pre-flight check below is a floor, and a floor can be wrong: a
+     * questionnaire written entirely as bare statements with no numbering would
+     * trip it. So the refusal names this flag and the console offers it as a
+     * checkbox. One paid call is the cost of disagreeing, which is the right
+     * price for somebody who knows their own document.
+     */
+    anyway?: boolean;
+  },
 ): Promise<{ bid: Bid; proposed: ParsedQuestion[]; acuConsumed: number }> {
   const bid = gate(ctx, bidId);
   authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -295,6 +309,34 @@ export async function parseQuestionnaire(
     }
   })();
   const sentChars = parts.reduce((sum, part) => sum + (part.text?.length ?? 0), 0);
+
+  /*
+   * Looked at before a vendor is called, and refused for nothing where there is
+   * nothing to find.
+   *
+   * Only on the text path: a scan has no text for this to read and is sent as
+   * it always was. `anyway` overrides it, because a heuristic that cannot be
+   * argued with is a rule that stops work.
+   */
+  const shape = questionShape(parts.map((part) => part.text ?? '').join('\n'));
+  if (
+    source?.kind === 'TEXT' &&
+    input.anyway !== true &&
+    shape.numbered === 0 &&
+    shape.questionMarks === 0 &&
+    shape.imperatives === 0
+  ) {
+    throw new DomainError(
+      'BID_ON_NOT_A_QUESTION_SET',
+      `${documentLabel} has nothing question-shaped in it: ${sentChars.toLocaleString()} characters, no numbered ` +
+        'lines, no question marks and none of the phrasing a questionnaire is written in ("describe", "set out", ' +
+        `"confirm"). Nothing has been sent to a model and nothing has been charged. ` +
+        `${wrongDocumentHint(ctx, bid, input.hash)} If you know this document better than the check does, read it ` +
+        'anyway and it will be sent — one call, and the check is a floor rather than a gate.',
+      422,
+      [{ field: 'anyway', message: 'Tick "read it anyway" if you know better than this check does' }],
+    );
+  }
 
   const proposed: ParsedQuestion[] = [];
   let acuConsumed = 0;
@@ -420,8 +462,7 @@ export async function parseQuestionnaire(
      */
     const read = source?.kind === 'MEDIA' ? 'as a scan' : `${sentChars.toLocaleString()} characters`;
     const what = rowsSeen === 0
-      ? `It answered with no questions at all. What came back: ${answered.join(' | ')}. That is usually the wrong ` +
-        'document — a specification, a cost model or a pricing schedule rather than the questionnaire.'
+      ? `It answered with no questions at all. What came back: ${answered.join(' | ')}.`
       : `It returned ${rowsSeen} row(s) and none could be used: ` +
         `${withoutNumber} carried no question number${withoutText > 0 ? ` and ${withoutText} no question text` : ''}. ` +
         'The buyer’s own numbering is what the export has to map onto, so a row without one cannot be proposed.';
@@ -429,8 +470,8 @@ export async function parseQuestionnaire(
     throw new DomainError(
       'BID_ON_NOTHING_PARSED',
       `Nothing usable came back for ${bid.reference}. It read ${documentLabel} (${read}${parts.length > 1 ? `, in ${parts.length} parts` : ''}). ` +
-        `${what} The bid is unchanged and nothing has been proposed. Either point it at the questionnaire itself, ` +
-        'paste the questions out of the portal, or confirm the list by hand.',
+        `${what} ${wrongDocumentHint(ctx, bid, input.hash, { rows: rowsSeen, withoutNumber })} ` +
+        'The bid is unchanged and nothing has been proposed.',
       502,
     );
   }
@@ -659,6 +700,140 @@ function partConstraint(part: DocumentPart): Record<string, string> {
  * — still reads, and the refusal still comes from the store rather than from a
  * lookup that decided for it.
  */
+/**
+ * What a document that produced no questions probably is, and what reads it.
+ *
+ * A real run filed nine documents and pointed the questionnaire parser at
+ * **Appendix 3 — Schedule of Amendment**. The model did the right thing and
+ * returned no questions, the diagnostic said which document it had read, and
+ * the person was still left to work out which of the other eight to try and
+ * which command the amendments belonged to.
+ *
+ * A tender's documents announce themselves in their titles, because the buyer
+ * numbered and named them — so the hint is read from the title the customer
+ * typed, never from the contents. It is a hint in a refusal and nothing acts on
+ * it: no command is chosen, no document is substituted, and the wording says
+ * what it is reading from.
+ *
+ * The rest of the library is listed because a chooser that offered the right
+ * document in the first place still cannot say which of nine PDFs is the
+ * questionnaire — and the person who filed them can, the moment they see the
+ * titles beside each other.
+ */
+function wrongDocumentHint(
+  ctx: EngineContext,
+  bid: Bid,
+  hash: string | undefined,
+  /**
+   * What came back, where anything did.
+   *
+   * Rows with no numbering is a different diagnosis from no rows at all: it
+   * means the model found content it could read as a list, and the document is
+   * almost always a form rather than a questionnaire. Saying "none could be
+   * used" alone sends somebody looking for a numbering problem.
+   */
+  returned: { rows: number; withoutNumber: number } = { rows: 0, withoutNumber: 0 },
+): string {
+  if (hash === undefined) {
+    return 'Pasted text with no numbered questions in it is usually a covering page rather than the question set.';
+  }
+
+  let title = '';
+  let chosenId = '';
+  try {
+    const item = requireEvidence(ctx, hash);
+    title = item.title.toLowerCase();
+    chosenId = item.id;
+  } catch {
+    // Not in this library. The refusal above has already said what it read.
+  }
+
+  /** The commands that read the documents a questionnaire parser is given by mistake. */
+  const ELSEWHERE: Array<{ matches: RegExp; is: string; command: string }> = [
+    {
+      matches: /amendment|schedule of amend|deed of variation/,
+      is: 'a schedule of amendments to a standard form contract',
+      command: 'Bids → Read the schedule of amendments',
+    },
+    {
+      matches: /pricing|price schedule|cost model|rates|bill of quantit|boq/,
+      is: 'a pricing document',
+      command: 'nothing here — a priced schedule is a returnable, recorded under Record what has to be returned',
+    },
+    {
+      matches: /specification|spec\b|scope of works|employer.s requirement/,
+      is: 'a specification',
+      command: 'nothing here — a specification is evidence to cite, not a question set',
+    },
+    {
+      matches: /terms|conditions of contract|framework agreement/,
+      is: 'contract terms',
+      command: 'Bids → Read the schedule of amendments, which is what reads terms against a standard form',
+    },
+    {
+      /*
+       * An order form, which is the case that produced rows and no numbers.
+       *
+       * A real run pointed the parser at `Appendix 2 — JCT MTC 2024 Order
+       * Form`: the model returned 23 rows, every one of them a field to
+       * complete rather than a question to answer, and none of them numbered.
+       * Both facts are correct about an order form, and dropping all 23 is also
+       * correct — but "none could be used" sent somebody to look for a
+       * numbering problem in a document that has no questions in it.
+       */
+      matches: /order form|form of tender|form of agreement|contract particulars|appendix 2\b/,
+      is: 'an order form — a document to complete and sign rather than a set of questions',
+      command: 'nothing here as a question set — an order form is a returnable, recorded under Record what has to be returned',
+    },
+  ];
+
+  const recognised = ELSEWHERE.find((entry) => entry.matches.test(title));
+
+  /*
+   * The rest of the library, with the ones that ask something first.
+   *
+   * Listing it alphabetically was still leaving somebody to guess, and a guess
+   * here costs a model call: the live run went through the amendments, the
+   * insurance certificates, the order form, a 382,691-character stock list and
+   * the cost model before this was written. Every one of those documents had
+   * already been read by the platform, which could therefore see — for nothing
+   * — that none of them asks anything.
+   */
+  const others = evidenceOf(ctx)
+    .filter((item) => item.customerAccountId === bid.customerAccountId && item.id !== chosenId && !item.withdrawnAt)
+    .map((item) => {
+      const text = [...(item.extractedText ?? []), ...item.chunks.map((chunk) => chunk.text)].join('\n');
+      const shape = questionShape(text);
+      const asks = shape.questionMarks + shape.imperatives;
+      return {
+        asks: item.chunks.length === 0 ? -1 : asks,
+        line:
+          `${item.reference} ${item.title}` +
+          (item.chunks.length === 0
+            ? ' (nothing read out of it yet)'
+            : asks > 2
+              ? ` (${shape.questionMarks} question(s), ${shape.imperatives} asked plainly — this looks like a question set)`
+              : ' (asks nothing)'),
+      };
+    })
+    .sort((a, b) => b.asks - a.asks)
+    .map((entry) => entry.line);
+
+  const unnumbered = returned.rows > 0 && returned.withoutNumber === returned.rows;
+
+  return (
+    (recognised
+      ? `Its title says this is ${recognised.is} — that one is read by ${recognised.command}. `
+      : unnumbered
+        ? 'Every row came back without a number, which is what a form looks like rather than a questionnaire: ' +
+          'fields to complete rather than questions numbered for a response to map onto. '
+        : 'That is usually the wrong document: a specification, a cost model or a pricing schedule rather than the question set. ') +
+    (others.length > 0 ? `The rest of this customer’s library: ${others.join('; ')}. ` : '') +
+    'Point it at the questionnaire, paste the questions out of the portal, or — if the source genuinely numbers ' +
+    'nothing — confirm the list by hand, where you give each question the number the response has to carry.'
+  );
+}
+
 /** Enough of a model's answer to diagnose it, never enough to fill a log with a tender. */
 function excerpt(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();

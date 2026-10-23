@@ -7,6 +7,7 @@ import { requireModule, requireModuleReadable } from '../../identity/modules.ts'
 // floor, so Bid-On's retriever and the record's cannot drift apart on either.
 import { cosine, MINIMUM_SIMILARITY } from '../../datalayer/vectorindex.ts';
 import { customerVisible, requireVisibleCustomer } from './customers.ts';
+import { questionShape } from './questionshape.ts';
 
 /**
  * The per-customer evidence library.
@@ -650,10 +651,40 @@ export type EvidenceChoice = {
   read: boolean;
   /** Whether its passages are embedded, and by which model. */
   embedded?: string;
+  /**
+   * How much of a question set this document looks like, from its own passages.
+   *
+   * Counted here, for nothing, because the alternative was somebody paying a
+   * model to find out. A real run filed nine documents and went looking for the
+   * questionnaire one call at a time — the schedule of amendments, the
+   * insurance certificates, the order form, a 382,691-character stock list —
+   * each one read, sent, charged and answered "no questions".
+   *
+   * The platform has already read every one of those documents and can see
+   * which of them asks anything. `questions` and `imperatives` are the signals
+   * that separate a question set from a list of addresses; `numbered` is a weak
+   * one on its own, because a stock list is full of house numbers.
+   *
+   * Absent where nothing has been read out of the document, which is a
+   * different fact from a document with no questions in it.
+   */
+  questionish?: { numbered: number; questions: number; imperatives: number; chars: number };
   /** Withdrawn items are listed and marked, because a bid that cited one still cited it. */
   withdrawn: boolean;
   expiresOn?: string;
 };
+
+/** What one item's own passages look like, in the counts a chooser can rank on. */
+function shapeOf(item: BidOnEvidence): { numbered: number; questions: number; imperatives: number; chars: number } {
+  const text = [...(item.extractedText ?? []), ...item.chunks.map((chunk) => chunk.text)].join('\n');
+  const shape = questionShape(text);
+  return {
+    numbered: shape.numbered,
+    questions: shape.questionMarks,
+    imperatives: shape.imperatives,
+    chars: text.length,
+  };
+}
 
 export function visibleEvidence(ctx: EngineContext): { evidence: EvidenceChoice[] } {
   requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
@@ -671,6 +702,7 @@ export function visibleEvidence(ctx: EngineContext): { evidence: EvidenceChoice[
         hash: item.hash,
         read: item.chunks.length > 0,
         ...(item.semanticModel ? { embedded: item.semanticModel.provider } : {}),
+        ...(item.chunks.length > 0 ? { questionish: shapeOf(item) } : {}),
         withdrawn: item.withdrawnAt !== undefined,
         ...(item.expiresOn ? { expiresOn: item.expiresOn } : {}),
       })),

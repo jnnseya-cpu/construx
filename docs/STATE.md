@@ -28908,3 +28908,61 @@ obvious synonyms — `items`, `rows`, `list` for the array; `ref`, `question`,
 `prompt` for the fields — because a whole reading thrown away and charged for
 because a model said `items` instead of `questions` is a cost nobody should
 carry for a naming preference.
+
+## Hunting for the questionnaire, one paid call at a time
+
+A real run filed nine documents and went looking for the one with the questions
+in it. Each attempt read a document, called a vendor, was charged, and came
+back empty:
+
+    EVD-0001 — RFX1000209 App 3 — Schedule of Amendment (8,301 characters) …
+    answered with no questions at all
+    EVD-0002 — PI and PL (972 characters) … no questions at all
+    EVD-0005 — Appendix 2 - JCT MTC 2024 Order Form (5,674) … 23 rows, none
+    carried a question number
+    EVD-0007 — Appendix 4 - EPC Stock List (382,691) … no questions at all
+    EVD-0008 — Appendix 5 - EPC Cost Model (8,030) … 21 rows, no numbers
+
+Five charges to learn five documents are not questionnaires — and **the platform
+had already read all five.** Everything needed to answer the question for
+nothing was on the record.
+
+Three things now use it.
+
+**A pre-flight check.** `questionshape.ts` counts the three things a question
+set announces itself with: numbered lines (`4.1`, `SQ 6.2`, `3)`), question
+marks, and the imperatives a questionnaire is actually written in ("describe",
+"set out", "confirm", "provide details of") — half the questions in a real PQQ
+carry no question mark at all. A document with **none** of the three is refused
+before a vendor is called and costs nothing. One of the three is enough to pass,
+so this is a floor rather than a judgement, and `anyway` sends it regardless:
+the refusal names the flag and the console offers it as a checkbox, because a
+heuristic that cannot be argued with is the kind of invented rule that stops
+work. It is not applied to a scan, which has no text for it to read.
+
+**A ranked chooser.** `GET /v1/bid-on/evidence` now carries each document's own
+`questionish` counts, computed from the passages already read out of it, and the
+questionnaire panel sorts by them: the documents that ask something first,
+labelled *"looks like a question set (31 questions, 12 asked plainly)"*, and the
+rest labelled *"asks nothing — probably not the questionnaire"*. Numbered lines
+are only a tie-breaker, because a stock list of two thousand addresses is full
+of house numbers.
+
+**A refusal that ranks the rest.** When a parse does come back empty, the hint
+lists the remaining library in the same order with the same counts, so the next
+attempt is a choice rather than a guess.
+
+The hint also reads the title the customer typed, and only the title: a document
+called *Schedule of Amendment* is named as what it is, with the command that
+reads it (`Read the schedule of amendments`); an order form, a pricing schedule
+and a specification are each named with what they are for. Nothing acts on that
+reading — no command is chosen and no document is substituted — and the wording
+says it is reading the title.
+
+One rule did not move. A row with no question number is still dropped, because
+the buyer's own numbering is what the export has to map onto and a renumbered
+pack is one a buyer cannot follow. What changed is that the refusal says *that
+is what happened* — "21 rows, none carried a question number" — which on an
+order form or a cost model is the diagnosis rather than a numbering problem, and
+the way through is the manual route, where somebody assigns the numbers
+deliberately.

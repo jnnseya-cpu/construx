@@ -134,21 +134,53 @@ export async function bidon(root) {
     const found = customerList.find((customer) => customer.id === id);
     return found ? `${found.reference} — ${found.legalName}` : 'Another customer';
   };
-  const documentOptions = (filter = () => true) => {
+  /**
+   * How much of a question set a document looks like, from what has been read
+   * out of it.
+   *
+   * Zero for a stock list, a cost model, an order form or an insurance
+   * certificate; high for a questionnaire. Question marks and the imperatives a
+   * questionnaire is written in — "describe", "set out", "confirm" — are the
+   * signals that separate the two. Numbered lines are deliberately only a
+   * tie-breaker: a list of two thousand addresses is full of house numbers.
+   */
+  const askScore = (item) =>
+    item.questionish ? item.questionish.questions + item.questionish.imperatives : -1;
+
+  const documentOptions = (filter = () => true, { rankByQuestions = false } = {}) => {
     const kept = documentList.filter(filter);
     const byCustomer = new Map();
     for (const item of kept) {
       const key = item.customerAccountId;
       if (!byCustomer.has(key)) byCustomer.set(key, []);
-      byCustomer.get(key).push({
+      byCustomer.get(key).push(item);
+    }
+    return [...byCustomer.entries()].map(([id, items]) => ({
+      label: customerName(id),
+      options: (rankByQuestions
+        ? /*
+           * The ones that ask something first.
+           *
+           * Somebody looking for the questionnaire among nine filed documents
+           * was paying for a model call per guess — the amendments, the
+           * certificates, the order form, a 382,691-character stock list, the
+           * cost model. The platform has already read all of them and can say
+           * which asks anything, for nothing. So it does, and says why.
+           */
+          [...items].sort((a, b) => askScore(b) - askScore(a) || a.reference.localeCompare(b.reference))
+        : items
+      ).map((item) => ({
         value: item.id,
         label:
           `${item.reference} — ${item.title}` +
           (item.read ? '' : ' · nothing read out of it yet') +
-          (item.embedded ? ' · searchable by meaning' : ''),
-      });
-    }
-    return [...byCustomer.entries()].map(([id, options]) => ({ label: customerName(id), options }));
+          (rankByQuestions && askScore(item) > 2
+            ? ` · looks like a question set (${item.questionish.questions} question${item.questionish.questions === 1 ? '' : 's'}, ${item.questionish.imperatives} asked plainly)`
+            : '') +
+          (rankByQuestions && item.read && askScore(item) <= 2 ? ' · asks nothing — probably not the questionnaire' : '') +
+          (!rankByQuestions && item.embedded ? ' · searchable by meaning' : ''),
+      })),
+    }));
   };
   /** Whether there is anything to choose at all. An empty chooser is worse than a field. */
   const haveDocuments = documentList.length > 0;
@@ -1558,8 +1590,10 @@ export async function bidon(root) {
         { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false,
           hint: 'File the document in the library first, then press Copy hash on its row.' },
       ],
-      transform: ({ bidId: _b, ...rest }) =>
-        Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+      transform: ({ bidId: _b, anyway, ...rest }) => ({
+        ...Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
+        ...(anyway ? { anyway: true } : {}),
+      }),
       ai: true,
     },
     'confirm-questions': {
@@ -1655,12 +1689,23 @@ export async function bidon(root) {
           options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
         haveDocuments
           ? { name: 'hash', label: 'The questionnaire, as a filed document', type: 'select', required: false,
-              options: documentOptions(), placeholder: 'Choose the filed questionnaire',
-              hint: 'A PDF, a Word file or a spreadsheet is read directly; a scan goes to a model that can see.' }
+              // Ranked, because the whole difficulty is knowing which of nine
+              // documents holds the questions.
+              options: documentOptions(() => true, { rankByQuestions: true }),
+              placeholder: 'Choose the filed questionnaire',
+              hint:
+                'The document with the questions in it — the questionnaire, the selection questionnaire, or the ' +
+                'section of the ITT that carries them. Not the specification, the schedule of amendments or the ' +
+                'pricing schedule: those have no questions to find, and the amendments have a reader of their own. ' +
+                'A PDF, a Word file or a spreadsheet is read directly; a scan goes to a model that can see.' }
           : { name: 'hash', label: 'Or a document hash', type: 'text', required: false,
               hint: 'File the questionnaire in the customer’s library first and it will be offered here by name.' },
         { name: 'text', label: 'Or paste it out of the portal', type: 'textarea', rows: 10, required: false,
           hint: 'For a portal that shows the questions on screen with nothing to download.' },
+        { name: 'anyway', label: 'Read it anyway', type: 'checkbox', required: false,
+          hint: 'A document with no numbered lines, no question marks and none of a questionnaire’s phrasing is ' +
+            'refused before a model is called, so hunting through a library costs nothing. Tick this if you know ' +
+            'better than that check does — it costs one call.' },
       ],
       /*
        * One of the two, named here rather than refused by the platform.

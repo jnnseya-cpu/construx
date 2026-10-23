@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { before, describe, it } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import { config } from '../src/config.ts';
 import * as bids from '../src/domain/bidon/bids.ts';
@@ -7,8 +10,10 @@ import * as customers from '../src/domain/bidon/customers.ts';
 import * as engagements from '../src/domain/bidon/engagements.ts';
 import * as evidence from '../src/domain/bidon/evidence.ts';
 import * as bidEngine from '../src/domain/bidon/engine.ts';
+import { questionShape } from '../src/domain/bidon/questionshape.ts';
 import { configuredEmbeddingAdapter } from '../src/ai/providers/embedding.ts';
 import type { EngineContext } from '../src/engines/context.ts';
+import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
@@ -48,6 +53,8 @@ const asWriter = (): EngineContext =>
 
 const HASH = (n: string) => `sha256:${n.repeat(64).slice(0, 64)}`;
 
+let directory: string;
+let engagement: engagements.Engagement;
 let thornhill: customers.CustomerAccount;
 let calder: customers.CustomerAccount;
 let policy: evidence.BidOnEvidence;
@@ -55,7 +62,10 @@ let theirs: evidence.BidOnEvidence;
 let bid: bids.Bid;
 
 before(async () => {
-  platform = new Platform();
+  directory = mkdtempSync(join(tmpdir(), 'construx-bidon-friction-'));
+  // A real store, because the question-shape check reads the document's own
+  // text and a hash with nothing behind it refuses earlier.
+  platform = new Platform(undefined, new EvidenceStore(join(directory, 'store')));
   seed = await seedDemoProject(platform);
   platform.setModuleGrant({
     moduleId: 'BID_ON',
@@ -70,7 +80,7 @@ before(async () => {
   calder = customers.openCustomer(asDirector(), { legalName: 'Calder Civils Ltd' });
   customers.assignStaff(asDirector(), thornhill.id, { add: [asWriter().auth.actorId] });
 
-  const engagement = engagements.openEngagement(asDirector(), {
+  engagement = engagements.openEngagement(asDirector(), {
     customerAccountId: thornhill.id,
     name: 'UVDB prequalification',
     type: 'ONE_OFF',
@@ -394,4 +404,157 @@ describe('semantic search is on where a vendor is configured', () => {
     );
     assert.equal(adapter, undefined);
   });
+});
+
+describe('a document with nothing question-shaped in it', () => {
+  /*
+   * What this closes, from a live run: somebody with nine filed documents
+   * hunting for the questionnaire, one paid model call at a time —
+   *
+   *   It read EVD-0001 — RFX1000209 App 3 — Schedule of Amendment (8,301
+   *   characters). It answered with no questions at all.
+   *
+   *   It read EVD-0002 — PI and PL (972 characters). It answered with no
+   *   questions at all.
+   *
+   *   It read EVD-0005 — Appendix 2 - JCT MTC 2024 Order Form (5,674
+   *   characters). It returned 23 row(s) and none could be used: 23 carried no
+   *   question number.
+   *
+   * Three charges to learn three documents are not questionnaires, which the
+   * platform could have seen for nothing in the first two cases.
+   */
+  it('recognises what a question set looks like', () => {
+    const questionnaire =
+      'Section 4 — Quality\n4.1 Describe your EPC assessment process from instruction to lodgement\n' +
+      '4.2 Set out your lone-working arrangements for domestic visits\n' +
+      '4.3 Confirm your rates hold for the full term?';
+    const shape = questionShape(questionnaire);
+    assert.ok(shape.numbered >= 3, `numbered lines: ${shape.numbered}`);
+    assert.ok(shape.imperatives >= 3, `the phrasing a questionnaire is written in: ${shape.imperatives}`);
+  });
+
+  it('finds nothing in an insurance certificate', () => {
+    // 'PI and PL' in the live run: 972 characters of policy numbers and dates.
+    const certificate =
+      'Professional indemnity insurance\nInsurer: Example Mutual\nPolicy number PI/2026/44190\n' +
+      'Limit of indemnity GBP 5,000,000 any one claim\nPeriod of insurance 1 April 2026 to 31 March 2027\n';
+    const shape = questionShape(certificate);
+    assert.equal(shape.questionMarks, 0);
+    assert.equal(shape.imperatives, 0);
+    // A policy number is not a numbered question, and a date is not a clause.
+    assert.equal(shape.numbered, 0, 'a certificate has no numbered question lines');
+  });
+
+  it('still recognises a questionnaire that numbers nothing but asks plainly', () => {
+    // The case the check must not refuse: no numbering, no question marks, and
+    // unmistakably a question set. One of the three signals is enough.
+    const shape = questionShape(
+      'Describe your approach to lone working.\nSet out how certificates are lodged.\nConfirm your insurance limits.',
+    );
+    assert.equal(shape.numbered, 0);
+    assert.equal(shape.questionMarks, 0);
+    assert.ok(shape.imperatives >= 3, 'the imperatives a questionnaire is written in');
+  });
+
+  /**
+   * A filed document with its bytes actually in the store.
+   *
+   * The check reads the document's own text, so a hash with nothing behind it
+   * refuses earlier and for a different reason. Real bytes, hashed the way the
+   * platform hashes them, is the only way to exercise the path a person walks.
+   */
+  const fileWithText = (title: string, text: string, type: evidence.EvidenceType = 'INSURANCE') => {
+    const bytes = Buffer.from(text, 'utf8');
+    const hash = hashBytes(bytes);
+    const item = evidence.fileEvidence(asDirector(), {
+      customerAccountId: thornhill.id,
+      type,
+      title,
+      hash,
+      ...(type === 'INSURANCE' || type === 'CERTIFICATE' ? { expiresOn: '2027-03-31' } : {}),
+    });
+    platform.evidence.put(seed.tenantId, hash, bytes, 'text/plain');
+    return item;
+  };
+
+  it('refuses before calling a vendor, and names the way past itself', async () => {
+    // 'PI and PL' in the live run: 972 characters of policy numbers and dates,
+    // charged as a model call to discover it is not a questionnaire.
+    const nothing = fileWithText(
+      'PI and PL',
+      'Professional indemnity insurance\nInsurer: Example Mutual\nPolicy number PI/2026/44190\n' +
+        'Limit of indemnity GBP 5,000,000 any one claim\nPeriod of insurance 1 April 2026 to 31 March 2027\n',
+    );
+
+    // A second bid, because the first has a confirmed question list and the
+    // parser refuses one of those for a different and correct reason.
+    const second = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'CUSTOM',
+      deadline: '2027-09-01',
+    });
+
+    const refusal = await rejectsCode(
+      () => bidEngine.parseQuestionnaire(asDirector(), platform.evidence, second.id, { hash: nothing.reference }),
+      'BID_ON_NOT_A_QUESTION_SET',
+    );
+
+    assert.match(refusal.message ?? '', /nothing question-shaped/);
+    assert.match(refusal.message ?? '', /nothing has been charged/);
+    // The rest of the library, so the next attempt is a choice rather than a
+    // guess — and the override, so the check can be argued with.
+    assert.match(refusal.message ?? '', new RegExp(policy.reference));
+    assert.match(refusal.message ?? '', /anyway/i);
+  });
+
+  it('sends it when the person says to, and spends the one call', async () => {
+    const nothing = fileWithText(
+      'PI and PL, second copy',
+      'Insurer: Example Mutual. Policy number PI/2026/44191. Limit of indemnity GBP 5,000,000.\n',
+    );
+    const third = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'CUSTOM',
+      deadline: '2027-10-01',
+    });
+
+    // Past the check, into the ordinary refusal for a deployment with no
+    // provider — which is the proof that the override reaches the model rather
+    // than the check being skipped.
+    await rejectsCode(
+      () =>
+        bidEngine.parseQuestionnaire(asDirector(), platform.evidence, third.id, { hash: nothing.id, anyway: true }),
+      'NO_REASONING_PROVIDER',
+    );
+  });
+
+  it('lets a real question set through without the override', async () => {
+    const questionnaire = fileWithText(
+      'RFX1000209 Selection Questionnaire',
+      'Section 4 — Quality\n4.1 Describe your EPC assessment process from instruction to lodgement\n' +
+        '4.2 Set out your lone-working arrangements for domestic visits\n' +
+        '4.3 Confirm your rates hold for the full term\n',
+      'OTHER',
+    );
+    const fourth = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'CUSTOM',
+      deadline: '2027-11-01',
+    });
+
+    // The check is a floor, not a gate: a document with questions in it goes
+    // straight to the model, which is refused here only for want of one.
+    await rejectsCode(
+      () => bidEngine.parseQuestionnaire(asDirector(), platform.evidence, fourth.id, { hash: questionnaire.id }),
+      'NO_REASONING_PROVIDER',
+    );
+  });
+});
+
+after(() => {
+  rmSync(directory, { recursive: true, force: true });
 });

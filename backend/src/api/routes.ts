@@ -14484,12 +14484,13 @@ export const ROUTES: Route[] = [
     quoteScope: 'TENANT',
     ai: { engine: 'TENDER', taskType: 'bid_on_parse', capability: 'REASONING' },
     description:
-      'Read a questionnaire into an ordered question list, keeping the buyer’s own numbering exactly as printed. It produces a proposal, never the list — a parser that drops one question produces a pack where every answer is good and the submission is still rejected',
+      'Read a questionnaire into an ordered question list, keeping the buyer’s own numbering exactly as printed. It produces a proposal, never the list — a parser that drops one question produces a pack where every answer is good and the submission is still rejected. A document with nothing question-shaped in it — no numbered lines, no question marks, none of the phrasing a questionnaire is written in — is refused before a vendor is called and costs nothing, unless `anyway` says to send it regardless. `hash` takes an evidence id, a reference or a content hash',
     schema: {
       type: 'object',
       properties: {
         text: { type: 'string', minLength: 1, maxLength: 200000 },
         hash: { type: 'string', minLength: 10, maxLength: 200 },
+        anyway: { type: 'boolean' },
       },
       additionalProperties: false,
     },
