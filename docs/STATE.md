@@ -28705,3 +28705,47 @@ every vendor the answer ceiling is a fraction of the input window.
 `textBudgetChars({ echoesInput: true })` sizes a part by `min(input, answer)`,
 so a part is never accepted, run at length and returned cut off at the output
 ceiling.
+
+### The browser was the last thing that could not start a large upload
+
+`hashFile` was `crypto.subtle.digest('SHA-256', await file.arrayBuffer())` — the
+whole file in the tab's memory before a byte is hashed. With the server
+streaming files of any size, the console became the only part of the chain that
+could not *begin* one: the address of a document is computed in the browser, and
+an `arrayBuffer()` of a two-gigabyte video does not come back.
+
+Web Crypto has no streaming digest and SHA-256 is not composable, so
+`frontend/lib/hash.js` carries the algorithm, fed from `blob.stream()` and
+holding sixty-four bytes at a time. Under 32MB the native digest still does the
+work, because it is faster and a photograph needs none of this.
+
+A hand-written hash is only worth having if it agrees with every other
+implementation, because the digest is the name a document is filed under for the
+life of the record — so `backend/tests/browserhash.test.ts` checks it against
+`node:crypto` at the sizes where implementations go wrong (empty, one byte,
+either side of the 64-byte block, either side of the 56-byte padding boundary,
+and sizes that are multiples of nothing), in every division of pieces a stream
+might yield, and against `crypto.subtle` itself. The 64-bit length field is
+checked separately: a file over half a gigabyte overflows the low 32 bits, which
+is the one place an implementation is right for every test file anybody writes
+and wrong for every file this platform exists to hold.
+
+Two more consequences of a 5 GiB ceiling, both fixed here:
+
+- **Part size now scales with the file.** `MAX_CHUNKS` is 512, so a
+  five-gigabyte file at two megabytes a part asks for two and a half thousand
+  parts and is refused on the first one. `chunkFor` keeps two megabytes for
+  anything that fits in 480 parts — the right size for a site connection — and
+  grows the part rather than the count above that.
+- **The console uploads a large file in resumable parts too**, not only the
+  offline outbox. One request for three gigabytes means one dropped connection
+  costs the whole of it, and these uploads happen on site connections. Above
+  64MB the console uses the same checksummed, resumable path, which asks the
+  platform what it already holds and sends only what is missing.
+
+Hashing a large file now reports progress on the button (`Reading 1,240MB ·
+38%`), because fifteen silent seconds is a console somebody reloads.
+
+**Still not built:** progress for the *upload* itself. A large file goes up in
+the background after the record is filed — queued and retried by the outbox if
+it fails — and the only signal is the toast when it lands.

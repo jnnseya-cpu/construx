@@ -1,7 +1,7 @@
 import { api, ApiError, hashFile, isRoleDenial } from './api.js';
 import { recordVoice, voiceSupport } from './voice.js';
 import { forEvidence } from './capture.js';
-import { queueFile } from './outbox.js';
+import { queueFile, uploadInParts } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
 
 /**
@@ -41,11 +41,34 @@ const FIELD_TYPES = new Set(['text', 'number', 'date', 'datetime-local', 'month'
  * and telling somebody their record failed because an upload retried would be
  * false. What is worth saying is when a file is being carried on the device.
  */
+/**
+ * Above this, a console upload is sent in resumable parts rather than in one
+ * request. Sixty-four megabytes: below it a single request is quicker and a
+ * failed one is cheap to repeat; above it the cost of starting again is the
+ * thing worth avoiding.
+ */
+const PARTS_ABOVE_BYTES = 64 * 1_048_576;
+
 async function storeEvidence(files) {
   const carried = [];
   for (const { hash, file } of files) {
     try {
-      await api.upload(`/v1/evidence/${encodeURIComponent(hash)}`, file);
+      const path = `/v1/evidence/${encodeURIComponent(hash)}`;
+      /*
+       * A large file goes up in resumable parts, here as well as from the
+       * outbox.
+       *
+       * One request for three gigabytes means one dropped connection costs the
+       * whole of it — and construction uploads happen on site connections. The
+       * parts are checksummed and the platform is asked what it already holds,
+       * so a retry sends what is missing rather than starting again. Under the
+       * threshold a file is sent in one request, which is what it always was.
+       */
+      if (file.size > PARTS_ABOVE_BYTES) {
+        await uploadInParts((target, blob) => api.upload(target, blob), (target) => api.get(target), path, file);
+      } else {
+        await api.upload(path, file);
+      }
     } catch {
       try {
         await queueFile(file);
@@ -207,7 +230,28 @@ function control(field) {
  * ledger say a thing that is not true: that one document arrived with ten
  * different contents.
  */
-async function collect(host, fields, files = []) {
+/**
+ * Say how far through a large file's hash the browser is.
+ *
+ * A gigabyte takes seconds to read, and a console that sits on "Working…" for
+ * fifteen of them is one somebody reloads — losing nothing, because no record
+ * has been written yet, but losing the upload they were in the middle of. Only
+ * for files large enough to notice; a site photograph is hashed before the
+ * button finishes repainting.
+ */
+function readingProgress(say, file) {
+  if (!say || file.size < 32 * 1_048_576) return undefined;
+  const mb = Math.round(file.size / 1_048_576);
+  let last = -1;
+  return (read, total) => {
+    const percent = Math.floor((read / Math.max(1, total)) * 100);
+    if (percent === last) return;
+    last = percent;
+    say(`Reading ${mb}MB · ${percent}%`);
+  };
+}
+
+async function collect(host, fields, files = [], say) {
   const body = {};
   const repeats = [];
   for (const field of fields) {
@@ -248,7 +292,7 @@ async function collect(host, fields, files = []) {
       // has to be taken over the bytes that are actually kept. A large
       // photograph comes back smaller; everything else comes back untouched.
       const prepared = await forEvidence(file);
-      const hash = await hashFile(prepared);
+      const hash = await hashFile(prepared, readingProgress(say, prepared));
       body[field.name] = hash;
       // The prepared name, not the captured one: a resized HEIC is stored as
       // JPEG bytes, and a record naming it `.HEIC` would hand somebody a file
@@ -262,7 +306,7 @@ async function collect(host, fields, files = []) {
       if (field.multiple && chosen.length > 1) {
         for (const extra of chosen.slice(1)) {
           const preparedExtra = await forEvidence(extra);
-          const extraHash = await hashFile(preparedExtra);
+          const extraHash = await hashFile(preparedExtra, readingProgress(say, preparedExtra));
           files.push({ hash: extraHash, file: preparedExtra });
           repeats.push({
             [field.name]: extraHash,
@@ -533,7 +577,10 @@ export function command({ title, intent, path, fields, submitLabel = 'Submit', t
 
       const files = [];
       try {
-        const { body: collected, repeats } = await collect(host, fields, files);
+        const { body: collected, repeats } = await collect(host, fields, files, (progress) => {
+          submit.textContent = progress;
+        });
+        submit.textContent = 'Working…';
 
         /*
          * One command per document.

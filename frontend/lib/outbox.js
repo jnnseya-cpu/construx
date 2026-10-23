@@ -263,6 +263,33 @@ export async function discardFile(hash) {
 export const CHUNK_BYTES = 2 * 1_048_576;
 
 /**
+ * The most parts the platform will hold for one unfinished upload.
+ *
+ * Stated here because it decides the part size for a large file, and getting
+ * it wrong is an upload refused on its first part: `MAX_CHUNKS` in
+ * `evidence/store.ts` is 512, so a five-gigabyte file at two megabytes a part
+ * would ask for two and a half thousand of them and be refused. The headroom
+ * below 512 is deliberate — a device that resumes keeps the part count the
+ * upload was begun with, so the figure must not sit on the boundary.
+ */
+const MAX_PARTS = 480;
+
+/**
+ * How big a part should be for a file of this size.
+ *
+ * Two megabytes for anything that fits in 480 of them, because that is the
+ * right size for a site connection — a part small enough that losing one is
+ * cheap to re-send. Above that the part grows rather than the count, since the
+ * alternative is a refusal.
+ */
+export function chunkFor(size) {
+  const needed = Math.ceil(size / MAX_PARTS);
+  if (needed <= CHUNK_BYTES) return CHUNK_BYTES;
+  // Rounded up to a whole mebibyte, so the boundaries are readable in a log.
+  return Math.ceil(needed / 1_048_576) * 1_048_576;
+}
+
+/**
  * The refusals that mean "send that part again", not "this file is wrong".
  *
  * Both are 422, and telling them apart is the difference between resuming an
@@ -292,6 +319,10 @@ function partOf(blob, index, total) {
  * megabytes, loses it to one bad chunk, and sends it again to lose it the same
  * way. With one, the bad part is refused at the part and re-sent alone.
  */
+export async function uploadInParts(upload, state, path, blob) {
+  return sendInParts(upload, state, path, blob, chunkFor(blob.size));
+}
+
 async function sendInParts(upload, state, path, blob, chunkBytes) {
   let total = Math.ceil(blob.size / chunkBytes);
   let outstanding = [...Array(total).keys()];
@@ -340,8 +371,9 @@ export async function flushFiles(upload, options = {}) {
   for (const file of files) {
     const path = `/v1/evidence/${encodeURIComponent(file.hash)}`;
     try {
-      if (file.blob.size > (options.chunkBytes ?? CHUNK_BYTES)) {
-        await sendInParts(upload, options.state, path, file.blob, options.chunkBytes ?? CHUNK_BYTES);
+      const chunkBytes = options.chunkBytes ?? chunkFor(file.blob.size);
+      if (file.blob.size > chunkBytes) {
+        await sendInParts(upload, options.state, path, file.blob, chunkBytes);
       } else {
         await upload(path, file.blob);
       }

@@ -7,6 +7,8 @@
  * UI surfaces the reason rather than hiding the control.
  */
 
+import { hashBlob } from './hash.js';
+
 const TOKEN_KEY = 'construx.session';
 
 export const session = {
@@ -324,10 +326,24 @@ async function upload(path, file, options = {}) {
   return payload;
 }
 
-/** SHA-256 of a file, in the form the ledger records. */
-export async function hashFile(file) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
-  return `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+/**
+ * SHA-256 of a file, in the form the ledger records.
+ *
+ * Streamed for anything large. This was one line —
+ * `crypto.subtle.digest('SHA-256', await file.arrayBuffer())` — which reads the
+ * whole file into the tab before hashing it, so a drawing set or an hour of
+ * site video could not be *started*: the platform holds files of any size, and
+ * the console could not compute the address of one. `crypto.subtle` has no
+ * streaming digest and SHA-256 is not composable, so `lib/hash.js` carries the
+ * algorithm and is checked against `node:crypto` for every size where an
+ * implementation goes wrong.
+ *
+ * `onProgress(read, total)` is optional and worth passing for a big file:
+ * hashing a gigabyte takes seconds, and a console that looks frozen is one
+ * somebody reloads half way through.
+ */
+export async function hashFile(file, onProgress) {
+  return `sha256:${await hashBlob(file, onProgress)}`;
 }
 
 /**
