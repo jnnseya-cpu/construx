@@ -136,12 +136,30 @@ describe('every command has a door', () => {
      *
      * Lower it when you give one a door. It is meant to fall.
      */
-    // 298 → 297. The guest workspace screen gave
-    // `POST /v1/bid-on/customers/:customerId/declarations` the door it always
-    // belonged on, which freed the slot that entry had spent; Bid-On's
-    // embedding command then took one and was given a panel in the same change,
-    // so the number is back where that left it rather than one higher.
-    const CEILING = 297;
+    // 297 → 293. Four doors, all on Pipeline & Bids, all found by walking the
+    // normal tender path in a browser rather than by reading the list.
+    //
+    // `qualify` and `decide` are the two halves of the bid/no-bid decision the
+    // screen is named after: it published a ten-factor algorithm and gave
+    // nobody any way to run it, so a pursuit could only sit at `IDENTIFIED`
+    // and "Record how a bid ended" was padlocked for ever. The third,
+    // `deliverables/assign`, is new — reading an invitation files what the
+    // buyer asked for and cannot file an owner or an internal date, and adding
+    // one refused the reference as a duplicate, so every mandatory return a
+    // reading filed blocked the decision to bid with nothing able to clear it.
+    //
+    // The fourth is `opportunities/:id/convert`. A pursuit registered before
+    // any project existed — the normal case, and why the pipeline is
+    // tenant-scoped — had nowhere to become one, so a business that won created
+    // the delivery project by hand elsewhere and it pointed at nothing: the
+    // score, the decision and the invitation behind the job were all on the
+    // thread and unreachable from it. `originOpportunityId` is what joins them
+    // and converting is the only thing that sets it.
+    //
+    // The catalogue was the door for three of these. That is the point of the
+    // ratchet rather than zero — and also the point of the walks: the catalogue
+    // is reachable, and nobody bidding a tender on a deadline finds it.
+    const CEILING = 293;
     assert.ok(
       unreachable.length <= CEILING,
       `${unreachable.length} write routes have no hand-built door, up from ${CEILING}. ` +

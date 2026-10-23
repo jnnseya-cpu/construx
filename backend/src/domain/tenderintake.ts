@@ -637,6 +637,101 @@ export function addDeliverable(
 }
 
 /**
+ * Give a deliverable already on the invitation its owner, our date and its
+ * source.
+ *
+ * ## Why this had to exist
+ *
+ * `addDeliverable` refuses a reference that is already on the invitation, and
+ * it is right to: two rows for `APP5` is how one of them goes unanswered. But
+ * that left the normal tender path with no way out of its own gate. Reading an
+ * invitation — the route the platform recommends, and the only practical one on
+ * a tender with forty returns — files every deliverable the buyer asks for and
+ * cannot file an owner or an internal date, because neither is in the buyer's
+ * document. Those are resourcing decisions this business takes. So every
+ * mandatory deliverable came back from the reading missing two of the three
+ * things `deliverableBlockers` demands, and `decideBidNoBid` refused the
+ * decision to bid with blockers that **nothing in the platform could clear**.
+ *
+ * A gate with no door is worse than no gate. The bid manager sees a correct
+ * refusal naming a remedy that does not exist, and the return date arrives.
+ *
+ * ## What it is, and what it is not
+ *
+ * It assigns the three things the gate asks for and nothing else. It does not
+ * rename a deliverable, change whether it is mandatory, or move a limit the
+ * buyer set — those come from the invitation, and a screen that let somebody
+ * quietly mark a pass/fail return optional would turn the gate into a
+ * formality. Correcting what the buyer actually asked for is a re-reading or an
+ * addendum, both of which already exist.
+ *
+ * Human-authored by construction: who owns a return and by when is a
+ * commitment of this company's people, so `TENDER_DELIVERABLE_ASSIGNED` carries
+ * no AI mandate.
+ */
+export function assignDeliverable(
+  ctx: EngineContext,
+  invitationId: string,
+  input: { reference: string; owner?: Role; internalDueBy?: string; source?: SourceAnchor },
+): { reference: string; blockers: string[]; assigned: TenderDeliverable } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireInvitation(ctx, invitationId);
+  const existing = (record.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+  const target = existing.find((d) => d.reference === input.reference);
+  if (!target) {
+    throw new DomainError(
+      'DELIVERABLE_NOT_FOUND',
+      `Invitation ${String(record.state.reference)} has no deliverable ${input.reference}. ` +
+        (existing.length === 0
+          ? 'Nothing is recorded about what the submission has to contain yet — add the return items, or read the invitation.'
+          : `It holds ${existing.map((d) => d.reference).join(', ')}.`),
+      404,
+      [{ field: 'reference', message: 'The reference as the return register prints it' }],
+    );
+  }
+
+  if (!input.owner && !input.internalDueBy && !input.source) {
+    throw new DomainError(
+      'DELIVERABLE_ASSIGNMENT_EMPTY',
+      'Name an owner, our own date, or where in the invitation it comes from. An assignment that changes nothing ' +
+        'would read on the thread as a decision somebody took.',
+    );
+  }
+
+  const assigned: TenderDeliverable = {
+    ...target,
+    ...(input.owner ? { owner: input.owner } : {}),
+    ...(input.internalDueBy ? { internalDueBy: input.internalDueBy } : {}),
+    ...(input.source ? { source: input.source } : {}),
+  };
+
+  // The same check `addDeliverable` runs, for the same reason and against the
+  // deadline in force rather than the one the invitation arrived with: an
+  // internal date behind the return is not a plan, and an addendum may have
+  // moved the return since the register was filed.
+  const returnDeadline = deadlineInForce(record.state);
+  const clarifications = [...((record.state.clarifications as Clarification[] | undefined) ?? [])];
+  if (assigned.internalDueBy && `${assigned.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
+    clarifications.push({
+      severity: 'CRITICAL',
+      subject: `${assigned.reference} is due after the return`,
+      question: `${assigned.title} carries an internal date of ${assigned.internalDueBy}, which is after the return deadline of ${readable(returnDeadline.local)}. The internal date has to move.`,
+    });
+  }
+
+  const deliverables = existing.map((d) => (d.reference === assigned.reference ? assigned : d));
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'TENDER_DELIVERABLE_ASSIGNED',
+    entity: { refType: 'TenderInvitation', refId: invitationId },
+    nextState: { ...record.state, deliverables, clarifications },
+  });
+
+  return { reference: assigned.reference, blockers: deliverableBlockers(deliverables), assigned };
+}
+
+/**
  * `AC-T-WF-01-01`, stated as the list of reasons a bid cannot yet be approved.
  *
  * Source, owner and internal date, on every **mandatory** deliverable. Not on
@@ -1142,6 +1237,18 @@ export type TenderPosition = {
   submissionDay: string;
   addenda: number;
   deliverables: { total: number; mandatory: number };
+  /**
+   * The return register itself, not a count of it.
+   *
+   * The count was all the console could see, which made the one list a bid
+   * manager actually works from — what has to go back, who owns each of it and
+   * by when — unreadable from the product. Worse, the gate in front of the bid
+   * decision names a deliverable by its reference, and with no register on
+   * screen there was nothing to assign the owner *to*: the refusal said
+   * "APP5 is missing an owner and an internal date" to somebody with no list
+   * of deliverables anywhere.
+   */
+  returns: TenderDeliverable[];
   requirementsExtracted: boolean;
   /**
    * The compliance matrix this invitation was read against, where one is
@@ -1194,6 +1301,7 @@ function readPosition(
     submissionDay,
     addenda: ((record.state.addenda as Addendum[] | undefined) ?? []).length,
     deliverables: { total: deliverables.length, mandatory: deliverables.filter((d) => d.mandatory).length },
+    returns: deliverables,
     requirementsExtracted: Boolean(record.state.requirementsExtracted),
     ...(record.state.analysisId ? { analysisId: String(record.state.analysisId) } : {}),
     blockers: position.blockers,

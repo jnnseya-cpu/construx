@@ -4522,6 +4522,33 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/deliverables/assign',
+    description: 'Give a return already on the invitation its owner, our internal date and its source',
+    schema: {
+      type: 'object',
+      required: ['reference'],
+      properties: {
+        reference: stringField,
+        owner: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        internalDueBy: stringField,
+        source: {
+          type: 'object',
+          required: ['document'],
+          properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.assignDeliverable(
+        tenantContext(platform, ctx),
+        ctx.params.invitationId as string,
+        body(ctx) as Parameters<typeof tenderintake.assignDeliverable>[2],
+      ),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/pipeline/tenders/:invitationId/addenda',
     description: 'Record an addendum. It appends to the invitation and never rewrites it',
     schema: {

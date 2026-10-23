@@ -777,6 +777,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // the requirements and deadlines with source anchors. It extracts; it does
   // not decide, and the bid decision below refuses an AI actor outright.
   def('TENDER_REQUIREMENTS_EXTRACTED', 'TenderInvitation', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // Who in this business owns a return, and by when. Deliberately a second
+  // event and deliberately not an agent's: the reading above files what the
+  // buyer asked for, and neither an owner nor an internal date is in the
+  // buyer's document. They are this company committing its own people, which is
+  // why the bid decision refuses without them — and why, until this existed,
+  // a read invitation produced a gate nothing could clear.
+  def('TENDER_DELIVERABLE_ASSIGNED', 'TenderInvitation', 'UPDATE', 'PROCUREMENT'),
   // An addendum appends. It never rewrites the issue, because "what was the
   // deadline when we planned the bid" is what a late submission turns into a
   // dispute about.

@@ -1,10 +1,10 @@
-import { api } from '../lib/api.js';
+import { api, isRoleDenial } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, date, html, humanise, money, notice, pct, positionReport, raw, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { donutChart } from '../lib/charts.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
-import { REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
+import { CONTINENT, COUNTRY, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { blockedReason, can, draw, openProject, phaseGates, state } from '../app.js';
 
@@ -725,7 +725,7 @@ function matrixDetail(analysis, waivers, addenda) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList] = await Promise.all([
+  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -754,6 +754,10 @@ export async function pipeline(root) {
     // rather than asking somebody to type a project they already have into a
     // second record nothing connects to the first.
     api.get('/v1/projects').catch(() => ({ projects: [] })),
+    // Where a won pursuit becomes a project. A portfolio is required by project
+    // creation, so without this the conversion below could only offer somebody
+    // a box to type an id into.
+    api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
   ]);
 
   // The reader is project-scoped: a reading is filed against the project the
@@ -848,9 +852,84 @@ export async function pipeline(root) {
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
+  /** Where a converted win lands. A project sits in a portfolio, always. */
+  const portfolios = (portfolioList?.portfolios ?? []).map((p) => ({ value: p.portfolioId ?? p.id, label: p.name }));
+
+  /*
+   * Every return on every invitation, as one choice.
+   *
+   * Two dependent pickers — the invitation, then its returns — is the obvious
+   * shape and it does not work in a panel that is built once when it opens: the
+   * second would have to be rebuilt when the first changed. One list, with the
+   * invitation in the value, is both simpler and better to read, because what
+   * somebody is looking for is the line the gate named, not the invitation it
+   * belongs to.
+   *
+   * Incomplete mandatory returns first, and each labelled with what it is
+   * missing, so the list is ordered by what is actually blocking the bid.
+   */
+  const whatIsMissing = (d) => {
+    const missing = [];
+    if (!d.owner) missing.push('no owner');
+    if (!d.internalDueBy) missing.push('no internal date');
+    if (!d.source?.document) missing.push('no source');
+    return missing;
+  };
+  /** The invitation and the reference back out of one chooser's value. */
+  const splitReturnTarget = (target) => {
+    const [invitationId, ...rest] = String(target ?? '').split('::');
+    return { invitationId: invitationId ?? '', reference: rest.join('::') };
+  };
+  const returnOptions = board
+    .flatMap((t) => (t.returns ?? []).map((d) => ({ tender: t, deliverable: d, missing: whatIsMissing(d) })))
+    .sort((a, b) => {
+      const weight = (entry) => (entry.deliverable.mandatory && entry.missing.length > 0 ? 0 : entry.missing.length > 0 ? 1 : 2);
+      return weight(a) - weight(b);
+    })
+    .map(({ tender, deliverable, missing }) => ({
+      value: `${tender.invitationId}::${deliverable.reference}`,
+      label:
+        `${tender.reference} · ${deliverable.reference} — ${deliverable.title}` +
+        `${deliverable.mandatory ? ' · mandatory' : ''}` +
+        `${missing.length > 0 ? ` · ${missing.join(', ')}` : ' · complete'}`,
+    }));
 
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
+
+  /*
+   * The two halves of the decision this screen is named after, and which of
+   * this tenancy's pursuits each one can act on.
+   *
+   * Both had routes, tests and a published algorithm and **no door anywhere in
+   * the console**. The consequence was not that scoring was awkward: an
+   * opportunity could only ever sit at `IDENTIFIED`, so "Record how a bid
+   * ended" was permanently padlocked with "Nothing has reached a decision to
+   * bid", and a business that had registered a real tender could not record
+   * that it had decided to bid for it. The screen described a ten-factor
+   * algorithm it gave nobody any way to run.
+   *
+   * The engine's own gates, so the pickers cannot offer a refusal: a converted
+   * or declined pursuit cannot be re-scored, and a decision needs a score.
+   */
+  const scorable = opportunities.filter((o) => o.stage !== 'CONVERTED' && o.stage !== 'NO_BID');
+  const decidable = opportunities.filter((o) => o.qualification);
+  /*
+   * And what a win turns into, which had no door either.
+   *
+   * A pursuit that was registered before any project existed — which is the
+   * normal case, and the reason the pipeline is tenant-scoped — had nowhere to
+   * become one. The business won the work and then created a project by hand on
+   * Enterprise & Portfolio, so nothing on the delivery project pointed back at
+   * the opportunity, the score, the decision or the invitation that produced it.
+   * `originOpportunityId` is how the thread carries forward, and it can only be
+   * set by converting.
+   *
+   * A pursuit already linked to a project is not offered: it has one.
+   */
+  const convertible = opportunities.filter(
+    (o) => o.stage === 'BID' && !o.projectId && o.outcome?.outcome !== 'LOST',
+  );
 
   render(
     root,
@@ -879,8 +958,38 @@ export async function pipeline(root) {
                 reason: invitationOptions.length === 0
                   ? 'No invitation is recorded, so there is nothing to record a return against.'
                   : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
+              /*
+               * The step everything after it needs, and the one that had no
+               * door at all.
+               *
+               * `Plan a response pack`, the submission rules, the waivers and
+               * the addenda review all take an `analysisId`, and the only two
+               * routes that mint one — this and the project-scoped
+               * `/tender/itt` — were reachable from nowhere in the console. So
+               * an opportunity and an invitation could be recorded and the
+               * entire response-pack half of the tender was unreachable: every
+               * picker downstream permanently empty, with nothing on any screen
+               * saying what to do about it.
+               */
+              { id: 'requirements', label: 'Read the invitation into a matrix', tone: '',
+                permitted: can('ESTIMATE_TENDER', 'C', TENANT) && invitationOptions.length > 0,
+                reason: invitationOptions.length === 0
+                  ? 'Record the ITT first — a compliance matrix is bound to the invitation it was read from.'
+                  : blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'deliverable', label: 'Add a deliverable',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
+              /*
+               * The door the reading above made necessary and nothing
+               * provided. A reading files what the buyer asked for; it cannot
+               * file who here owns it or by when, because neither is in the
+               * buyer's document. Without this, every mandatory return the
+               * reading filed blocked the decision to bid for ever.
+               */
+              { id: 'assign-deliverable', label: 'Assign a return',
+                permitted: can('ESTIMATE_TENDER', 'U', TENANT) && returnOptions.length > 0,
+                reason: returnOptions.length === 0
+                  ? 'No invitation has a return register yet. Read one, or add the return items one at a time.'
+                  : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'addendum', label: 'Record an addendum',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'programme', label: 'Build tender programme',
@@ -953,6 +1062,43 @@ export async function pipeline(root) {
               </div>`
             : ''
         }
+        ${
+          /*
+           * What actually has to go back, and who here owns each of it.
+           *
+           * The board above counted the register — "3/3" — and the count is
+           * the one thing about it nobody needs. This is the list a bid
+           * manager works from for the fortnight before a return, and it was
+           * not readable anywhere in the product: the gate would name `APP5`
+           * as missing an owner while no screen said what `APP5` was.
+           */
+          board.some((t) => (t.returns ?? []).length > 0)
+            ? html`<div style="padding:0 17px 15px">
+                <h3 style="font-size:13px;margin:4px 0 7px">What has to go back</h3>
+                ${table({
+                  headers: ['Invitation', 'Ref', 'What it is', 'Pass/fail', 'Owner', 'Our date', 'Source', 'Format'],
+                  rows: board.flatMap((t) =>
+                    (t.returns ?? []).map((d) => [
+                      t.reference,
+                      d.reference,
+                      d.title,
+                      d.mandatory ? badge('mandatory', 'bad') : badge('optional', ''),
+                      d.owner ? humanise(d.owner) : badge('none', d.mandatory ? 'warn' : ''),
+                      d.internalDueBy ? date(d.internalDueBy) : badge('none', d.mandatory ? 'warn' : ''),
+                      d.source?.document
+                        ? html`<span style="font-size:11.5px;color:var(--text-3)">${d.source.document}${
+                            d.source.clause ? `, ${d.source.clause}` : ''
+                          }</span>`
+                        : badge('none', d.mandatory ? 'warn' : ''),
+                      html`<span style="font-size:11.5px;color:var(--text-3)">${d.format ?? '—'}${
+                        d.signatureRequired ? ' · signed' : ''
+                      }${d.pageLimit ? ` · ${d.pageLimit}pp` : ''}</span>`,
+                    ]),
+                  ),
+                })}
+              </div>`
+            : ''
+        }
       </div>
 
       ${ittReadingPanel({
@@ -980,6 +1126,54 @@ export async function pipeline(root) {
           : bidPacks?.error
             ? notice(bidPacks.error.detail ?? 'The bid response register could not be read.', 'bad')
             : html`
+                ${
+                  /*
+                   * The dead end the reader above already escapes, one section
+                   * further down — and the one that mattered more.
+                   *
+                   * A compliance matrix is written to the tenancy; a response
+                   * pack is written to a project, and the platform refuses one
+                   * on a project past tender. That refusal is right: a
+                   * submission for work already under construction is not a
+                   * submission. What was wrong is what the screen did with it.
+                   * The bar showed three padlocks naming the phase of whatever
+                   * project the shell happened to have open, with nothing to
+                   * press and no hint that another project on the same tenancy
+                   * would take the pack. Somebody holding an invitation, a
+                   * matrix and a return date reads that as the feature being
+                   * broken — which is precisely how a day was lost on the
+                   * module that does the same job.
+                   *
+                   * A role refusal is left to the bar, which collapses it into
+                   * one line to the Permissions screen. This is for the
+                   * refusal that has a remedy, and it reuses the reader's own
+                   * `tenderProjects` rather than forming a second opinion
+                   * about which phases qualify.
+                   */
+                  readBlocked && !isRoleDenial(readBlocked)
+                    ? html`<div class="notice warn" style="margin:10px 0">
+                        <div>
+                          <b>Not on this project.</b> ${readBlocked}
+                          ${tenderProjects.length > 0
+                            ? html`<div style="margin-top:6px">
+                                The matrix belongs to the company, so it stays on file whichever project is open. Open
+                                one the platform will write a pack against:
+                                ${tenderProjects.map(
+                                  (p) =>
+                                    html`<button class="btn quiet sm" data-open-project="${p.id}" style="margin:3px 4px 0 0">
+                                      ${p.name} · ${humanise(p.phase)}
+                                    </button>`,
+                                )}
+                              </div>`
+                            : html`<div style="margin-top:6px">
+                                No project in this tenancy is at a phase a response pack may be written in
+                                (${tenderPhases.map((phase) => humanise(phase)).join(', ')}). Set one up on Enterprise
+                                &amp; Portfolio, or move this one back on Project Control.
+                              </div>`}
+                        </div>
+                      </div>`
+                    : ''
+                }
                 <div class="actions cmd-bar" style="margin:10px 0">
                   ${raw(
                     commandBar([
@@ -1595,15 +1789,34 @@ export async function pipeline(root) {
       <div class="card pad0">
         <h2 style="padding:15px 17px 0">Opportunities</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          How a bid ended is the signal the calibration reads from. A loss had nowhere to go before this: it sat at
-          <b>bid</b> for ever, so the pipeline could not tell a live tender from a dead one and the record learned
-          nothing from it.
+          Score it against the ten factors, decide bid or no bid against what they come to, and record how it ended.
+          Each is the gate in front of the next: a decision needs a score, and an outcome needs a decision. How a bid
+          ended is the signal the calibration reads from. A loss had nowhere to go before this: it sat at <b>bid</b>
+          for ever, so the pipeline could not tell a live tender from a dead one and the record learned nothing from
+          it.
         </p>
         <div style="padding:11px 17px 0">
           ${raw(commandBar([
+            // Score it, decide it, then record how it ended — in that order,
+            // because each is the gate in front of the next and the first two
+            // had no door on the screen that publishes the algorithm.
+            { id: 'qualify', label: 'Score an opportunity', tone: '',
+              permitted: can('BUSINESS_DEVELOPMENT', 'U') && scorable.length > 0,
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'U')
+                ?? 'Nothing is open to score. Register an opportunity above first.' },
+            { id: 'decide', label: 'Decide bid or no bid', tone: '',
+              permitted: can('BUSINESS_DEVELOPMENT', 'A') && decidable.length > 0,
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
+                ?? 'Nothing is scored yet. A decision without a score is the habit this screen replaces.' },
             { id: 'bid-outcome', label: 'Record how a bid ended',
               permitted: can('BUSINESS_DEVELOPMENT', 'U') && opportunities.some((o) => o.stage === 'BID' || o.stage === 'CONVERTED'),
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'U') ?? 'Nothing has reached a decision to bid' },
+            { id: 'convert', label: 'Turn a win into a project',
+              permitted: can('BUSINESS_DEVELOPMENT', 'A') && convertible.length > 0 && portfolios.length > 0,
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
+                ?? (portfolios.length === 0
+                  ? 'This tenancy holds no portfolio, and a project sits in one. Create one on Enterprise & Portfolio first.'
+                  : 'Nothing is at a decision to bid and waiting for a project. A pursuit already linked to one is not converted twice.') },
           ]))}
         </div>
         ${table({
@@ -1902,6 +2115,164 @@ export async function pipeline(root) {
           : {}),
       }),
     },
+    /*
+     * Score it, then decide it. Two doors the console never had.
+     *
+     * The factors are not listed here. They come from `/v1/pipeline/criteria`,
+     * which is the same list the weighted total is computed from and the same
+     * one the algorithm table above renders — so a factor added to the engine
+     * appears in this panel without anybody remembering to add it, and a panel
+     * that scored nine of ten factors is not a state this can reach. The scale
+     * and its meaning come from the same place: the engine refuses anything
+     * outside 1–5, and each field says what 5 and what 1 mean on that factor
+     * rather than leaving somebody to guess which end is good.
+     */
+    qualify: {
+      title: 'Score an opportunity',
+      intent:
+        'The ten weighted factors, scored 1 to 5, where 5 is always the good end — including on the two named as ' +
+        'risks, where reading the heading the other way round inverts the answer. The total, the band and the ' +
+        'recommendation are computed from the published weights; nothing here is a judgement the platform makes. A ' +
+        'single factor at 1 holds the job at a director’s desk however well the rest of it scored.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/qualify`,
+      submitLabel: 'Score',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          options: scorable.map((o) => ({
+            value: o.id,
+            label: `${o.title} · ${o.clientName}${o.qualification ? ` · scored ${o.qualification.score}` : ''}`,
+          })),
+          hint: 'A converted or declined pursuit cannot be re-scored and is not offered. Re-scoring a live one is ' +
+            'recorded as a new qualification rather than an edit of the old.' },
+        ...(criteria.criteria ?? []).map((c) => ({
+          name: c.key,
+          label: `${c.label} (weight ${c.weight})`,
+          type: 'number',
+          min: 1,
+          max: 5,
+          step: 1,
+          hint: `${c.prompt} 5 — ${c.good}. 1 — ${c.bad}.`,
+        })),
+      ],
+      // Whole numbers, because the engine takes integers and a browser that
+      // accepted 3.5 would refuse the whole form on the tenth factor rather
+      // than at the field that caused it.
+      transform: (collected) => {
+        const scores = {};
+        for (const c of criteria.criteria ?? []) scores[c.key] = Math.round(Number(collected[c.key]));
+        return scores;
+      },
+    },
+    decide: {
+      title: 'Decide bid or no bid',
+      intent:
+        'The decision, its rationale, and the authority it is taken under where it goes against the algorithm. ' +
+        'Declining is always available and is never gated. Deciding to bid is refused while a mandatory deliverable ' +
+        'on the invitation has no source, no owner or no internal date — a bid disqualified for a missing certificate ' +
+        'was priced correctly and lost anyway.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/decide`,
+      submitLabel: 'Record the decision',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          options: decidable.map((o) => ({
+            value: o.id,
+            label: `${o.title} · ${o.qualification.score} · ${BAND_LABEL[o.qualification.recommendation] ?? o.qualification.recommendation}`,
+          })),
+          hint: 'The score and what the algorithm recommends on it are on each line, so the override is visible ' +
+            'before it is taken rather than after.' },
+        { name: 'bid', label: 'We are bidding', type: 'checkbox',
+          hint: 'Unticked records a no-bid. A no-bid is a decision with a rationale, not an absence of one.' },
+        { name: 'rationale', label: 'Why', type: 'textarea', rows: 3,
+          hint: 'Required whichever way it goes. This is what the calibration is read against when the outcome comes ' +
+            'back, so "the numbers said so" is not an answer.' },
+        { name: 'conditions', label: 'Conditions', type: 'textarea', rows: 2, required: false,
+          hint: 'One per line — "provided the liquidated damages are capped". Recorded with the decision and reported ' +
+            'against it.' },
+        { name: 'delegatedTo', label: 'Authority delegated to', type: 'text', required: false,
+          hint: 'Only needed where the decision goes against the recommendation, and then it is refused without it. ' +
+            'The person or the office, not the system.' },
+        { name: 'authorityReference', label: 'Under what authority', type: 'text', required: false,
+          hint: 'The scheme of delegation, board minute or policy it comes from.' },
+        { name: 'limitMinor', label: 'The limit that authority carries', type: 'number', money: true, required: false },
+      ],
+      transform: ({ bid, rationale, conditions, delegatedTo, authorityReference, limitMinor }) => ({
+        bid: bid === true,
+        rationale: String(rationale ?? '').trim(),
+        ...(String(conditions ?? '').trim()
+          ? { conditions: String(conditions).split('\n').map((line) => line.trim()).filter(Boolean) }
+          : {}),
+        ...(String(delegatedTo ?? '').trim()
+          ? {
+              authority: {
+                delegatedTo: String(delegatedTo).trim(),
+                ...(String(authorityReference ?? '').trim() ? { reference: String(authorityReference).trim() } : {}),
+                ...(limitMinor === undefined || limitMinor === '' ? {} : { limitMinor: Number(limitMinor) }),
+              },
+            }
+          : {}),
+      }),
+    },
+    /*
+     * The win, carried forward rather than re-keyed.
+     *
+     * This had no door, so a business that won a tender it had registered as a
+     * pursuit created the delivery project by hand somewhere else — and the
+     * project then pointed at nothing. The opportunity, its score, the decision
+     * taken on it and the invitation behind it were all on the thread and all
+     * unreachable from the job they produced. `originOpportunityId` is what
+     * joins them, and converting is the only thing that sets it.
+     *
+     * The sector is not asked for: it is the pursuit's own, and asking again is
+     * how one record says UTILITIES and the next says WATER.
+     */
+    convert: {
+      title: 'Turn a win into a project',
+      intent:
+        'The pursuit becomes a delivery project carrying its own thread — the score, the decision, the invitation and ' +
+        'the return register all stay reachable from the job. The estimate carries forward as the contract value ' +
+        'unless a negotiated figure replaces it. Refused on anything not at a decision to bid.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/convert`,
+      submitLabel: 'Create the project',
+      fields: [
+        { name: 'opportunityId', label: 'Which pursuit', type: 'select',
+          options: convertible.map((o) => ({
+            value: o.id,
+            label: `${o.title} · ${o.clientName}${o.outcome?.outcome === 'WON' ? ' · recorded as won' : ' · no outcome recorded yet'}`,
+          })),
+          hint: 'A pursuit already linked to a project, and one recorded as lost, are not offered. Recording the ' +
+            'outcome first is the better order — the calibration reads from it — but it is not required here.' },
+        { name: 'projectName', label: 'Project name', type: 'text',
+          hint: 'What it will be called in delivery. Often the pursuit’s title, and not always.' },
+        { name: 'portfolioId', label: 'Portfolio', type: 'select', options: portfolios },
+        { name: 'assetType', label: 'Asset type', type: 'text',
+          hint: 'What is being built or serviced — "Reservoir spillway", "Domestic EPC assessments".' },
+        { name: 'continentCode', label: 'Region', type: 'select', options: CONTINENT },
+        { name: 'countryCode', label: 'Country', type: 'select', options: COUNTRY,
+          hint: 'Where the works are. Stored as its ISO 3166-1 alpha-2 code.' },
+        { name: 'city', label: 'City', type: 'text' },
+        { name: 'currency', label: 'Currency', type: 'select',
+          options: [
+            { value: 'GBP', label: 'GBP — pound sterling' },
+            { value: 'EUR', label: 'EUR — euro' },
+            { value: 'USD', label: 'USD — US dollar' },
+            { value: 'AED', label: 'AED — UAE dirham' },
+          ] },
+        { name: 'contractValue', label: 'Contract value (£)', type: 'number', money: true, required: false,
+          hint: 'As it is written on the award. Left blank, the pursuit’s own estimate carries forward.' },
+        { name: 'plannedStart', label: 'Planned start', type: 'date', value: today() },
+        { name: 'plannedCompletion', label: 'Planned completion', type: 'date' },
+      ],
+      transform: (v) => ({
+        projectName: v.projectName,
+        portfolioId: v.portfolioId,
+        assetType: v.assetType,
+        location: { continentCode: v.continentCode, countryCode: v.countryCode, city: v.city },
+        currency: v.currency,
+        ...(v.contractValue === undefined || v.contractValue === '' ? {} : { contractValueMinor: Number(v.contractValue) }),
+        plannedStart: v.plannedStart,
+        plannedCompletion: v.plannedCompletion,
+      }),
+    },
     'bid-outcome': {
       title: 'Record how a bid ended',
       intent:
@@ -2172,6 +2543,94 @@ export async function pipeline(root) {
         source: { document: v.sourceDocument },
       }),
     },
+    /*
+     * Reading an invitation into a compliance matrix.
+     *
+     * The grammar is the one this console already uses for structured input —
+     * a line per row, fields separated by pipes — rather than a form with a
+     * nested array in it. A matrix has a dozen requirements and a dozen
+     * returns, and nobody fills twenty-four modals.
+     *
+     * Bound to the invitation rather than to a project, because that is what
+     * `Plan a response pack` reads and because the matrix is about the buyer's
+     * document, not about a job that may not exist yet.
+     */
+    requirements: {
+      title: 'Read the invitation into a compliance matrix',
+      intent:
+        'The buyer’s requirements and the returns they ask for, set against this company’s own facts. Everything ' +
+        'after this point takes the matrix it produces: planning a response pack, recording the submission rules, ' +
+        'waiving a requirement, assessing an addendum. Every line carries where in the invitation it came from, so a ' +
+        'requirement nobody can source is one somebody invented.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/requirements`,
+      submitLabel: 'Read it',
+      fields: [
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'reference', label: 'Their reference', type: 'text', hint: 'As the invitation prints it.' },
+        { name: 'clientName', label: 'Client', type: 'text' },
+        { name: 'returnBy', label: 'Return by', type: 'date', iso: true },
+        { name: 'estimatedValue', label: 'Estimated value', type: 'number', money: true,
+          hint: 'In whole currency units. What the work is worth, not what we will price it at.' },
+        { name: 'durationWeeks', label: 'Duration (weeks)', type: 'number', min: 1 },
+        { name: 'contractForm', label: 'Contract form', type: 'text', placeholder: 'JCT Measured Term Contract 2024' },
+        { name: 'requirements', label: 'What they require', type: 'textarea', rows: 10,
+          hint:
+            'One per line as "ref | category | what they require | M or O | evidence needed | weight % | word limit". ' +
+            'Only the first five matter. The category is theirs — Quality, Health and safety, Commercial.' },
+        { name: 'deliverables', label: 'What has to be returned', type: 'textarea', rows: 8,
+          hint:
+            'One per line as "ref | what it is | M or O | format | page limit | SIG". A submission missing a required ' +
+            'return is rejected exactly as completely as one missing an answer.' },
+        { name: 'sourceDocument', label: 'Read from', type: 'text',
+          hint: 'The document every line above was read out of — "Invitation to Tender, section 4".' },
+        { name: 'paymentDays', label: 'Payment period (days)', type: 'number', required: false },
+        { name: 'retentionPercent', label: 'Retention (%)', type: 'number', required: false },
+        { name: 'targetMarginPercent', label: 'Target margin (%)', type: 'number', required: false },
+      ],
+      transform: (v) => {
+        const lines = (value) =>
+          String(value ?? '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts.length >= 3 && parts[0] && parts[1]);
+        const source = { document: String(v.sourceDocument ?? '').trim() || 'Invitation to tender' };
+        return {
+          analysis: {
+            reference: v.reference,
+            clientName: v.clientName,
+            returnBy: v.returnBy,
+            estimatedValueMinor: Math.round(Number(v.estimatedValue)),
+            durationWeeks: Number(v.durationWeeks),
+            requirements: lines(v.requirements).map((parts) => ({
+              reference: parts[0],
+              category: parts[1] || 'General',
+              requirement: parts[2] ?? '',
+              mandatory: String(parts[3] ?? 'M').toUpperCase().startsWith('M'),
+              evidenceRequired: parts[4] || 'Stated in the submission',
+              ...(parts[5] ? { weightingPercent: Number(parts[5]) } : {}),
+              ...(parts[6]
+                ? { responseLimit: { words: Number(parts[6]), statedAs: `${parts[6]} words, as the invitation states` } }
+                : {}),
+            })),
+            terms: {
+              contractForm: v.contractForm,
+              ...(String(v.paymentDays ?? '').trim() === '' ? {} : { paymentDays: Number(v.paymentDays) }),
+              ...(String(v.retentionPercent ?? '').trim() === '' ? {} : { retentionPercent: Number(v.retentionPercent) }),
+            },
+            ...(String(v.targetMarginPercent ?? '').trim() === '' ? {} : { targetMarginPercent: Number(v.targetMarginPercent) }),
+          },
+          deliverables: lines(v.deliverables).map((parts) => ({
+            reference: parts[0],
+            title: parts[1],
+            mandatory: String(parts[2] ?? 'M').toUpperCase().startsWith('M'),
+            ...(parts[3] ? { format: parts[3] } : {}),
+            ...(parts[4] ? { pageLimit: Number(parts[4]) } : {}),
+            ...(String(parts[5] ?? '').toUpperCase().includes('SIG') ? { signatureRequired: true } : {}),
+            source,
+          })),
+        };
+      },
+    },
     deliverable: {
       title: 'Add a return deliverable',
       intent:
@@ -2206,6 +2665,56 @@ export async function pipeline(root) {
         ...(v.internalDueBy ? { internalDueBy: v.internalDueBy } : {}),
         ...(v.pageLimit ? { pageLimit: Number(v.pageLimit) } : {}),
         ...(v.signatureRequired ? { signatureRequired: v.signatureRequired === 'true' } : {}),
+        ...(v.sourceDocument
+          ? {
+              source: {
+                document: v.sourceDocument,
+                ...(v.sourceClause ? { clause: v.sourceClause } : {}),
+                ...(v.sourcePage ? { page: Number(v.sourcePage) } : {}),
+              },
+            }
+          : {}),
+      }),
+    },
+
+    /*
+     * Who here owns a return, and by when.
+     *
+     * Separate from "Add a deliverable" because the two acts are different and
+     * the platform treats them differently: adding records what the buyer asked
+     * for and refuses a reference already on the invitation; this commits this
+     * company's own people against one that is already there. It cannot rename
+     * a return, make a mandatory one optional, or move a limit the buyer set —
+     * those come out of the invitation, and correcting them is a re-reading or
+     * an addendum.
+     */
+    'assign-deliverable': {
+      title: 'Assign a return',
+      intent:
+        'A mandatory return needs an owner, our own internal date and a source in the invitation before the decision ' +
+        'to bid can be recorded. Reading an invitation files what the buyer asked for and cannot file the first two, ' +
+        'because neither is in the buyer’s document — they are this business committing its people. This is where ' +
+        'they are committed.',
+      path: (v) => `/v1/pipeline/tenders/${splitReturnTarget(v.target).invitationId}/deliverables/assign`,
+      submitLabel: 'Assign',
+      fields: [
+        { name: 'target', label: 'Which return', type: 'select', options: returnOptions,
+          hint: 'The ones blocking a bid are at the top, each with what it is missing.' },
+        { name: 'owner', label: 'Owner', type: 'select', options: roleOptions, required: false,
+          hint: 'The role that owns producing it. Required on anything mandatory.' },
+        { name: 'internalDueBy', label: 'Our date', type: 'date', required: false,
+          hint: 'Earlier than the buyer’s, and the one that actually binds. A date after the return raises a critical ' +
+            'clarification rather than being silently accepted.' },
+        { name: 'sourceDocument', label: 'Source document', type: 'text', required: false,
+          placeholder: 'Instructions to Tenderers',
+          hint: 'Only where the return has none. A return nobody can source is one somebody invented.' },
+        { name: 'sourceClause', label: 'Clause', type: 'text', required: false },
+        { name: 'sourcePage', label: 'Page', type: 'number', required: false, min: 1 },
+      ],
+      transform: (v) => ({
+        reference: splitReturnTarget(v.target).reference,
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.internalDueBy ? { internalDueBy: v.internalDueBy } : {}),
         ...(v.sourceDocument
           ? {
               source: {

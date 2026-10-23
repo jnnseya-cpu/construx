@@ -28069,3 +28069,109 @@ a command anybody can run.
 Still true and not changed by this: the walk proves the path is *reachable*, not
 that every refusal in the module is correct. The domain suite does that. Neither
 proves the module is finished.
+
+## The walk: the normal tender, and five more unreachable doors
+
+The module walk above was written because a user lost a day to commands that
+were correct and unreachable. The obvious next question was whether the path
+*every* tenancy uses — Pipeline & Bids, this business bidding its own work —
+was any better. It was worse, and it was worse in the same shape: a correct rule
+in front of a remedy with no door.
+
+`tools/tender-walk.mjs` drives it in a real browser, thirteen steps, no provider
+needed: register an opportunity, record the ITT with both of its dates, read the
+invitation into a compliance matrix, score it against the ten factors, give
+every mandatory return an owner and our own internal date, record the decision
+to bid, switch to a project that will take a response pack, plan the pack, then
+assert that the section writer *opens and refuses by name* and that issuing
+refuses while the pack is incomplete, record how the bid ended, and turn the win
+into a delivery project carrying the thread.
+
+**Writing it found five defects, all P1, none of them subtle.**
+
+1. **The compliance matrix had no console door at all.** `Plan a response pack`,
+   the submission rules, the waivers and the addenda review every take an
+   `analysisId`, and the only two routes that mint one were reachable from
+   nowhere in the product. So an opportunity and an invitation could be recorded
+   and everything after them was permanently empty, with no screen saying why.
+   `Read the invitation into a matrix` on Pipeline & Bids is that door.
+
+2. **Neither half of the bid/no-bid decision had one either.** The screen
+   publishes a ten-factor weighted algorithm, its bands and its override
+   discipline — and gave nobody any way to run it. A pursuit could only ever sit
+   at `IDENTIFIED`, so `Record how a bid ended` was padlocked for ever with
+   "Nothing has reached a decision to bid". `Score an opportunity` and
+   `Decide bid or no bid` are now on the same card, in that order, each the gate
+   in front of the next. The factors, the scale and what each end of it means
+   come from `/v1/pipeline/criteria` rather than a second list in the browser.
+
+3. **A read invitation could never be cleared to bid.** Every mandatory return
+   must carry an owner, an internal date and a source before the decision to bid
+   is accepted. A reading files what the buyer asked for and *cannot* file the
+   first two — neither is in the buyer's document; they are this business
+   committing its own people — and `addDeliverable` refuses a reference already
+   on the invitation, correctly. The gate therefore named blockers **nothing in
+   the platform could clear**, to somebody with a return date coming. New:
+   `TENDER_DELIVERABLE_ASSIGNED`, `assignDeliverable`,
+   `POST /v1/pipeline/tenders/:invitationId/deliverables/assign` and an
+   `Assign a return` panel. It assigns the three things the gate asks for and
+   nothing else: it cannot rename a return, make a mandatory one optional, or
+   move a limit the buyer set, because those come out of the invitation and
+   correcting them is a re-reading or an addendum. Human-authored by
+   construction — no AI mandate on the event.
+
+   Found with it: `TenderPosition` published a *count* of the return register
+   and not the register. The one list a bid manager works from for the fortnight
+   before a return was unreadable anywhere in the product, and the gate would
+   name `APP5` as missing an owner while no screen said what `APP5` was. The
+   position now carries `returns`, and "What has to go back" renders it with the
+   owner, our date and the source on every line.
+
+4. **The response-pack bar was a dead end on the wrong project.** A matrix
+   belongs to the tenancy; a pack is written to a project, and the platform
+   refuses one on a project past tender — rightly, since a submission for work
+   already under construction is not a submission. But the bar showed three
+   padlocks naming the phase of whatever project the shell happened to have open
+   and offered nowhere to go. It now names the projects that *would* take the
+   pack and switches to one, reusing the ITT reader's own mechanism rather than
+   forming a second opinion about which phases qualify.
+
+5. **A win could not become a project.** A pursuit registered before any
+   project existed — which is the normal case, and the reason the pipeline is
+   tenant-scoped — had nowhere to become one. The business won the work and then
+   created a delivery project by hand on Enterprise & Portfolio, so nothing on
+   that project pointed back at the opportunity, the score, the decision or the
+   invitation that produced it. `originOpportunityId` is how the thread carries
+   forward and converting is the only thing that sets it.
+   `Turn a win into a project` is that door. It does not ask for the sector —
+   that is the pursuit's own, and asking twice is how one record says
+   `UTILITIES` and the next says `WATER` — and the estimate carries forward as
+   the contract value unless a negotiated figure replaces it.
+
+`doors.test.ts`'s ceiling falls 297 → 293 for the four new doors. The catalogue
+was a real door for three of them, which is why that assertion is a ceiling
+rather than zero — and also exactly why the walks exist: the generated catalogue
+is reachable, and nobody bidding a tender on a deadline finds it.
+
+One write on this screen is still doorless and is left so deliberately:
+`POST /v1/pipeline/supply-chain-evidence` answers "what does the register say
+about these trades", which would suggest the supply-chain score. It takes a list
+of trades the console does not hold per pursuit, so a panel for it would be a
+box asking somebody to type trade names. Recorded here rather than given a door
+that does nothing.
+
+The mechanics of both walks are now one module, `tools/walklib.mjs`, rather than
+two copies. Two definitions of "the command was accepted" is two opinions about
+what a passing run means, and they drift on the first timeout anybody tunes —
+the checkbox a panel needs ticked was taught to one copy and not the other
+inside a day.
+
+Verified: `npm test` (7,631 passing, 0 failing) and `npm run typecheck` clean;
+`tools/tender-walk.mjs` passes all thirteen steps three runs in a row, and
+`tools/bidon-walk.mjs` all twenty-five, against a local server on
+`AI_MODE=local`.
+
+Still true: a walk proves the path is *reachable*, not that every refusal on it
+is correct — the domain suite does that — and neither proves the tender path is
+finished. What is now closed is the class of defect where a correct command has
+no way in.

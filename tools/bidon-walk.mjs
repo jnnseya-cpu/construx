@@ -45,21 +45,18 @@
  * else names the step that stopped.
  */
 
-let chromium;
-try {
-  ({ chromium } = await import('playwright-core'));
-} catch {
-  process.stderr.write(
-    'This tool needs a browser driver, which is not a project dependency.\n' +
-      '  npm install --no-save playwright-core\n' +
-      'Chromium itself is already present at /opt/pw-browsers.\n',
-  );
-  process.exit(1);
-}
-
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+/*
+ * The mechanics are shared with `tender-walk.mjs` rather than copied.
+ *
+ * They were copied, for exactly one walk's worth of time. Two definitions of
+ * "the command was accepted" is two opinions about what a passing run means,
+ * and they drift on the first timeout anybody tunes — the checkbox a panel
+ * needs ticked was taught to one copy and not the other within a day.
+ */
+import { apiCall, apiToken, log, openBrowser, openScreen, runCommand as pressCommand, signIn as signInAs, tally } from './walklib.mjs';
 
 const BASE = process.env.WALK_BASE ?? 'http://localhost:8123';
 const OPERATOR = 'operator@construx.example';
@@ -75,19 +72,7 @@ const OPERATOR = 'operator@construx.example';
 const DIRECTOR = 'owner@meridian.example';
 const WRITER = 'qs@meridian.example';
 
-const log = (...a) => process.stdout.write(a.join(' ') + '\n');
-const failures = [];
-let step = 0;
-
-function pass(what, detail = '') {
-  step += 1;
-  log(`  ${String(step).padStart(2)}. ok      ${what}${detail ? ` — ${detail}` : ''}`);
-}
-function fail(what, why) {
-  step += 1;
-  failures.push({ what, why });
-  log(`  ${String(step).padStart(2)}. FAILED  ${what}\n        ${String(why).replace(/\s+/g, ' ').slice(0, 300)}`);
-}
+const { failures, pass, fail, finish } = tally();
 
 // --------------------------------------------------------------- the API half
 
@@ -97,32 +82,8 @@ function fail(what, why) {
  * driving them through the browser would be testing the operator's screens
  * rather than this one.
  */
-async function tokenFor(email) {
-  const login = await fetch(`${BASE}/v1/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email }),
-  }).then((r) => r.json());
-  const code = login.devCode ?? login.demoCode;
-  if (!code) throw new Error(`no development code returned for ${email}; is this running outside production?`);
-  const verified = await fetch(`${BASE}/v1/auth/mfa/verify`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ actorId: login.actorId, challengeId: login.challengeId, code }),
-  }).then((r) => r.json());
-  if (!verified.accessToken) throw new Error(`sign-in failed for ${email}: ${JSON.stringify(verified).slice(0, 200)}`);
-  return verified.accessToken;
-}
-
-async function asOperator(method, path, token, payload) {
-  const response = await fetch(`${BASE}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${token}`, ...(payload ? { 'content-type': 'application/json' } : {}) },
-    body: payload ? JSON.stringify(payload) : undefined,
-  });
-  const text = await response.text();
-  return { status: response.status, body: text ? JSON.parse(text) : undefined, text };
-}
+const tokenFor = (email) => apiToken(BASE, email);
+const asOperator = (method, path, token, payload) => apiCall(BASE, method, path, token, payload);
 
 log('\nBid-On walk\n');
 log('Preparing the tenancy');
@@ -172,139 +133,11 @@ try {
 
 // ----------------------------------------------------------- the browser half
 
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-  args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-});
-const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
-const consoleErrors = [];
-page.on('pageerror', (e) => consoleErrors.push(`PAGEERROR ${e.message}`));
-page.on('console', (m) => {
-  if (m.type() === 'error' && !m.text().includes('favicon')) consoleErrors.push(`CONSOLE ${m.text()}`);
-});
+const { browser, page, notices: consoleErrors } = await openBrowser();
 
-async function signIn(email) {
-  await page.goto(`${BASE}/app`, { waitUntil: 'domcontentloaded' });
-  // Sign the previous identity out first. The session token lives in storage
-  // rather than a cookie, so clearing it is the sign-out — and without this the
-  // second visit lands on the app rather than the picker, which reads as the
-  // picker having disappeared.
-  const picker = await page.locator('.identity').count();
-  if (picker === 0) {
-    await page.evaluate(() => {
-      try {
-        localStorage.clear();
-        sessionStorage.clear();
-      } catch {
-        /* a browser with storage blocked is not a case this tool runs in */
-      }
-    });
-    await page.goto(`${BASE}/app`, { waitUntil: 'domcontentloaded' });
-  }
-  await page.waitForSelector('.identity', { timeout: 40000 });
-  await page.locator('.identity', { hasText: email }).first().click();
-  await page.waitForSelector('.sidebar', { timeout: 25000 });
-  await page.waitForTimeout(1200);
-}
-
-async function openBidOn() {
-  const clicked = await page.evaluate(() => {
-    const button = document.querySelector('[data-nav="bidon"]');
-    if (!button) return false;
-    button.click();
-    return true;
-  });
-  if (!clicked) throw new Error('the Bid-On navigation entry is absent — the module is not reachable for this identity');
-  // The Bid-On page renders a bare <h1> rather than the estate screens'
-  // `.view-head`, so the wait is on the heading's text rather than on a class
-  // this page does not use.
-  await page.waitForFunction(
-    () => [...document.querySelectorAll('h1')].some((h) => h.textContent.trim() === 'Bid-On'),
-    { timeout: 25000 },
-  );
-  await page.waitForTimeout(900);
-}
-
-/**
- * Run one console command, as a person does: press the button, fill the panel,
- * submit, and wait for the panel to close or for it to say why it will not.
- *
- * Returns the error text where the platform refused, so a step can assert a
- * refusal as well as a success — a walk that only proved the happy path would
- * miss a gate that stopped gating.
- */
-async function runCommand(id, values, { expectRefusal = false } = {}) {
-  const button = page.locator(`[data-command="${id}"]`).first();
-  if ((await button.count()) === 0) throw new Error(`no console control for "${id}" — the command is unreachable`);
-  if (await button.isDisabled().catch(() => false)) {
-    const why = await button.getAttribute('title');
-    throw new Error(`the control for "${id}" is locked: ${why ?? 'no reason given'}`);
-  }
-  await button.click();
-  await page.waitForSelector('form.modal', { timeout: 15000 });
-
-  for (const [name, value] of Object.entries(values)) {
-    const field = page.locator(`form.modal [name="${name}"]`).first();
-    if ((await field.count()) === 0) throw new Error(`the panel for "${id}" has no field "${name}"`);
-    const tag = await field.evaluate((element) => element.tagName.toLowerCase());
-    const type = await field.getAttribute('type');
-    if (tag === 'select') {
-      // `{ index: n }` picks the nth option where the walk cannot know the
-      // value — a service id, a customer id, an engagement id are all ULIDs
-      // minted during the run. Index 0 on these pickers is the "leave it"
-      // option, so index 1 is the first real choice.
-      if (value && typeof value === 'object' && 'labelContains' in value) {
-        // Pick the record this run created, not whatever the picker defaulted
-        // to. Every panel's first option is the oldest row, so a second run
-        // filed its document against the first run's customer and was refused
-        // for a duplicate — which read as a defect in the dedupe rather than
-        // as the walk choosing the wrong customer.
-        const option = await field.evaluate(
-          (element, needle) => [...element.options].find((o) => o.textContent.includes(needle))?.value ?? '',
-          value.labelContains,
-        );
-        if (!option) throw new Error(`the picker "${name}" on "${id}" has no option naming "${value.labelContains}"`);
-        await field.selectOption(option);
-      } else if (value && typeof value === 'object' && 'index' in value) {
-        const option = await field.evaluate((element, index) => element.options[index]?.value ?? '', value.index);
-        if (!option) throw new Error(`the picker "${name}" on "${id}" has no option ${value.index} — nothing to choose`);
-        await field.selectOption(option);
-      } else {
-        await field.selectOption(String(value));
-      }
-    }
-    else if (type === 'file') await field.setInputFiles(value);
-    else await field.fill(String(value));
-  }
-
-  await page.locator('form.modal [data-submit]').first().click();
-
-  // Either the panel closes, or it shows why not. Both are answers; a panel
-  // that does neither is the failure this tool exists to catch.
-  const outcome = await Promise.race([
-    page
-      .waitForSelector('form.modal', { state: 'detached', timeout: 25000 })
-      .then(() => ({ ok: true })),
-    page
-      .waitForFunction(() => {
-        const box = document.querySelector('form.modal .cmd-error');
-        return box && !box.hasAttribute('hidden') && box.textContent.trim().length > 0;
-      }, { timeout: 25000 })
-      .then(async () => ({ ok: false, error: (await page.locator('form.modal .cmd-error').first().textContent()) ?? '' })),
-  ]).catch(() => ({ ok: false, error: 'the panel neither closed nor said why not within 25 seconds' }));
-
-  if (!outcome.ok) {
-    if (expectRefusal) {
-      await page.locator('form.modal [data-close]').first().click().catch(() => {});
-      await page.waitForTimeout(400);
-      return { refused: outcome.error.trim() };
-    }
-    throw new Error(outcome.error.trim());
-  }
-  if (expectRefusal) throw new Error(`"${id}" was accepted where a refusal was expected`);
-  await page.waitForTimeout(1400);
-  return {};
-}
+const signIn = (email) => signInAs(page, BASE, email);
+const openBidOn = () => openScreen(page, 'bidon', 'Bid-On');
+const runCommand = (id, values, options) => pressCommand(page, id, values, options);
 
 /** Pull a value out of the opened pack or the library, the way a person copies it. */
 async function readText(selector) {
@@ -572,11 +405,4 @@ if (consoleErrors.length > 0) {
   log('');
 }
 
-if (failures.length === 0) {
-  log('A provider can get from nothing to an exported pack.\n');
-  process.exit(0);
-}
-log(`${failures.length} step(s) a provider could not complete:\n`);
-for (const entry of failures) log(`  - ${entry.what}: ${String(entry.why).replace(/\s+/g, ' ').slice(0, 220)}`);
-log('');
-process.exit(1);
+process.exit(finish('A provider can get from nothing to an exported pack.'));

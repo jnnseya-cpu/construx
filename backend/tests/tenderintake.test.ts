@@ -307,6 +307,138 @@ describe('tender intake · the deliverable register', () => {
   });
 });
 
+// ── Assigning a return already on the invitation ────────────────────────────
+
+/**
+ * The gate that had no door, which is worse than no gate.
+ *
+ * Reading an invitation is the route the platform recommends and the only
+ * practical one on a tender with forty returns. It files what the buyer asked
+ * for, and it cannot file an owner or an internal date, because neither is in
+ * the buyer's document — they are this business committing its own people. And
+ * `addDeliverable` refuses a reference that is already there, correctly: two
+ * rows for `D-01` is how one of them goes unanswered.
+ *
+ * So the decision to bid refused with blockers nothing in the platform could
+ * clear, and it refused them to somebody with a return date coming. These tests
+ * are the whole round trip: read, blocked, assign, decided.
+ */
+describe('tender intake · giving a read return its owner and our date', () => {
+  it('clears the bid gate a reading could not clear itself', () => {
+    const ctx = pipelineCtx('qs');
+    const opportunityId = opportunity(ctx);
+    const { invitationId } = record(ctx, opportunityId);
+
+    // A reading, as the analyser files one: the buyer's own facts and a source,
+    // and nothing about who here owns it.
+    const read = extract(ctx, invitationId, [
+      { reference: 'APP5', title: 'EPC cost model, fully priced', mandatory: true, format: 'XLSX', source: { document: 'ITT', clause: '4.1' } },
+      { reference: 'APP2', title: 'Order form, signed', mandatory: true, signatureRequired: true, source: { document: 'ITT', clause: '4.2' } },
+    ]);
+    assert.equal(read.blockers.length, 2, 'a reading filed returns that were somehow already complete');
+    throwsCode(
+      () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'We want it' }),
+      'TENDER_DELIVERABLES_INCOMPLETE',
+    );
+
+    // The door. One assignment per return, and the blockers fall as they go.
+    const first = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP5', owner: 'QS', internalDueBy: '2027-03-09' });
+    assert.equal(first.blockers.length, 1, 'assigning one return cleared the wrong number of blockers');
+    assert.equal(first.assigned.owner, 'QS');
+    // What the buyer asked for is untouched. An assignment is not a correction.
+    assert.equal(first.assigned.format, 'XLSX');
+    assert.equal(first.assigned.mandatory, true);
+    assert.equal(first.assigned.source?.clause, '4.1');
+
+    const second = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP2', owner: 'PM', internalDueBy: '2027-03-05' });
+    assert.deepEqual(second.blockers, [], 'the register is complete and the gate still reports a blocker');
+
+    // And now the decision the reading made impossible.
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
+      bid: true,
+      rationale: 'Four years of the same work for the same client, and the rates hold.',
+    });
+    assert.equal(decision.stage, 'BID');
+
+    // Both returns are on the register once, with everything the gate asks for.
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2027-01-11' });
+    assert.deepEqual(position.deliverables, { total: 2, mandatory: 2 });
+    assert.deepEqual(position.returns.map((d) => d.reference).sort(), ['APP2', 'APP5']);
+    assert.equal(position.returns.find((d) => d.reference === 'APP5')!.internalDueBy, '2027-03-09');
+  });
+
+  it('publishes the register itself, not a count of it', () => {
+    // The count was all the console could see, so the one list a bid manager
+    // works from was unreadable in the product — and the gate would name a
+    // reference no screen could explain.
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Priced pricing schedule')]);
+
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2027-01-11' });
+    assert.equal(position.returns.length, 1);
+    assert.equal(position.returns[0]!.title, 'Priced pricing schedule');
+    assert.equal(position.returns[0]!.owner, 'QS');
+  });
+
+  it('refuses a reference the invitation does not hold, and says which it does', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Pricing schedule')]);
+
+    throwsCode(() => tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP9', owner: 'QS' }), 'DELIVERABLE_NOT_FOUND');
+    // The remedy is in the message, because a reference typed from a blocker
+    // sentence is exactly where this goes wrong.
+    assert.throws(
+      () => tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP9', owner: 'QS' }),
+      /It holds D-01/,
+    );
+  });
+
+  it('refuses an assignment that would change nothing', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Pricing schedule')]);
+    throwsCode(() => tenderintake.assignDeliverable(ctx, invitationId, { reference: 'D-01' }), 'DELIVERABLE_ASSIGNMENT_EMPTY');
+  });
+
+  it('raises a critical clarification for an internal date behind the return', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [{ reference: 'D-01', title: 'Bond', mandatory: true, source: { document: 'ITT' } }]);
+
+    tenderintake.assignDeliverable(ctx, invitationId, { reference: 'D-01', owner: 'QS', internalDueBy: '2027-04-01' });
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2027-01-11' });
+    assert.ok(
+      position.clarifications.some((c) => c.severity === 'CRITICAL' && /D-01 is due after the return/.test(c.subject)),
+      'an internal date past the return was accepted in silence',
+    );
+  });
+
+  /**
+   * Who owns a return and by when is this company committing its people. The
+   * reading above it is an agent's act and says so; this one is not, and the
+   * catalogue is where that is enforced rather than in a comment.
+   */
+  it('is a human act on the thread, with no AI mandate', () => {
+    const assigned = lookupEventType('TENDER_DELIVERABLE_ASSIGNED');
+    assert.equal(assigned?.entity, 'TenderInvitation');
+    assert.equal(assigned?.aiAllowed, false);
+    assert.equal(lookupEventType('TENDER_REQUIREMENTS_EXTRACTED')?.aiAllowed, true);
+  });
+
+  it('is refused to a role that does not hold estimating', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Pricing schedule')]);
+    // The safety lead reads the pipeline and writes none of it.
+    throwsCode(
+      () => tenderintake.assignDeliverable(pipelineCtx('safety'), invitationId, { reference: 'D-01', owner: 'QS' }),
+      'ACCESS_DENIED',
+    );
+  });
+});
+
 // ── The bid approval gate ───────────────────────────────────────────────────
 describe('tender intake · the gate in front of a decision to bid', () => {
   it('refuses to record a bid while a mandatory deliverable has no owner', () => {
