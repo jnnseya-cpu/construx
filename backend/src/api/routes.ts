@@ -400,6 +400,18 @@ export type Route = {
    */
   upload?: boolean;
   /**
+   * The body is a file and is **not** buffered: the handler is handed
+   * `ctx.bodyStream` and moves it to the store itself.
+   *
+   * Set on the evidence upload and nowhere else. `upload` holds the whole body
+   * in memory before the handler runs, which puts every file the platform can
+   * accept inside the heap of the one process that serves everybody — a
+   * fifty-megabyte ceiling dressed up as a configuration value. Construction
+   * produces drawing sets, federated models and hours of site video, so the
+   * route that receives those streams them and the ceiling becomes the disk.
+   */
+  streamed?: boolean;
+  /**
    * A smaller ceiling than the evidence limit, for an upload route that is not
    * receiving a file.
    *
@@ -26077,7 +26089,14 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/evidence/:hash',
     upload: true,
-    description: 'Store the file behind an evidence hash the ledger already records',
+    // Not buffered. A drawing set, a federated model or an hour of site video
+    // in the heap of the one process that serves everybody is a ceiling
+    // pretending to be a configuration value; this route moves the bytes to
+    // the volume as they arrive.
+    streamed: true,
+    description:
+      'Store the file behind an evidence hash the ledger already records. Streamed to the volume as it arrives and ' +
+      'hashed on the way past, so the size of a file is bounded by the disk rather than by memory',
     handler: async (platform, ctx) => {
       const actor = auth(ctx);
       if (actor.roles.includes('PLATFORM_ADMIN')) {
@@ -26090,8 +26109,22 @@ export const ROUTES: Route[] = [
       // allowance was published on the pricing page from the first day and
       // enforced nowhere, which made it a promise the billing engine was never
       // going to keep.
+      /*
+       * Capacity, checked before the write rather than after it.
+       *
+       * On a streamed upload the size is what the caller declared, because
+       * nothing has been read yet — and that is the only moment the check is
+       * worth anything: refusing after a gigabyte has crossed the network is
+       * not a refusal, it is a bill for the bandwidth. The declared length is
+       * a claim, so the store counts the real bytes as it writes them and the
+       * plan is checked again against what actually landed.
+       */
+      const chunked = Number(ctx.query.get('chunks') ?? 0) > 0;
       const incoming = ctx.rawBody ?? Buffer.alloc(0);
-      storage.assertCapacity(storagePositionFor(platform, actor.tenantId), incoming.length);
+      storage.assertCapacity(
+        storagePositionFor(platform, actor.tenantId),
+        ctx.bodyStream && !chunked ? (ctx.declaredBytes ?? 0) : incoming.length,
+      );
 
       // Resumable when the device asks for it, whole-file when it does not.
       //
@@ -26113,6 +26146,32 @@ export const ROUTES: Route[] = [
       // configured, which the synchronous `put` never did.
       const chunks = Number(ctx.query.get('chunks') ?? 0);
       if (chunks > 0) {
+        // A part, which is small by construction and read into memory as it
+        // always was. `ctx.rawBody` is empty on a streamed route, so the part
+        // is drained here rather than left in the socket.
+        if (ctx.bodyStream && incoming.length === 0) {
+          const pieces: Buffer[] = [];
+          let held = 0;
+          for await (const piece of ctx.bodyStream) {
+            held += piece.length;
+            if (held > config.evidence.maxBytes) {
+              throw new DomainError('EVIDENCE_TOO_LARGE', 'This part is larger than the whole-file ceiling', 413);
+            }
+            pieces.push(piece);
+          }
+          const part = Buffer.concat(pieces);
+          const partHash = ctx.query.get('partHash') ?? undefined;
+          const state = await platform.evidence.writeChunk(
+            actor.tenantId,
+            ctx.params.hash as string,
+            Number(ctx.query.get('index') ?? 0),
+            chunks,
+            part,
+            mediaType(ctx.contentType),
+            partHash === undefined ? {} : { partHash },
+          );
+          return { ...state, evidenceId: record.refId, projectId: record.projectId };
+        }
         // The part's own checksum, where the device sends one — §15.2. Optional
         // because every existing client omits it, and load-bearing when present:
         // without it a part that did not survive the connection is undetectable
@@ -26132,7 +26191,20 @@ export const ROUTES: Route[] = [
         return { ...state, evidenceId: record.refId, projectId: record.projectId };
       }
 
-      const stored = await platform.evidence.store(actor.tenantId, ctx.params.hash as string, incoming, mediaType(ctx.contentType));
+      // The whole file, streamed. `putStream` hashes the plaintext as it
+      // passes, so the guarantee is the one `store` makes — bytes verified
+      // against the hash the ledger already holds, nothing stored on a
+      // mismatch — without either the plaintext or the ciphertext ever being
+      // held whole.
+      const stored = ctx.bodyStream
+        ? await platform.evidence.putStream(
+            actor.tenantId,
+            ctx.params.hash as string,
+            ctx.bodyStream,
+            mediaType(ctx.contentType),
+            ctx.declaredBytes === undefined ? {} : { declaredBytes: ctx.declaredBytes },
+          )
+        : await platform.evidence.store(actor.tenantId, ctx.params.hash as string, incoming, mediaType(ctx.contentType));
 
       // No ledger event is written, and that is deliberate rather than an
       // omission. The hash was committed by the domain command that registered
@@ -26198,15 +26270,27 @@ export const ROUTES: Route[] = [
       const hash = ctx.params.hash as string;
       const tenantId = signedTenant(platform, ctx) ?? sessionTenant(platform, ctx, hash);
 
-      // Read off the event loop, from whichever store holds it.
-      const file = await platform.evidence.fetch(tenantId, hash);
+      /*
+       * Streamed out, and a range answered where one was asked for.
+       *
+       * `fetch` returns the whole file in a buffer, which made the largest
+       * thing anybody could download the same as the largest thing this
+       * process could hold — and a range request was not answerable at all, so
+       * a browser would not let anybody seek in an hour of site video. Both
+       * are properties of the transport rather than of the evidence, and
+       * neither belongs in a ceiling on what construction may keep.
+       */
+      const file = await platform.evidence.readStream(tenantId, hash, ctx.range);
+      const total = ctx.range ? (await platform.evidence.sizeOf(tenantId, hash)) ?? file.bytes : file.bytes;
       return {
         contentType: file.contentType,
         // Named by its hash. The original filename is not in the record — the
         // chain is over content, not over what a device happened to call it —
         // and inventing one would put a name on a file that nothing attests to.
         filename: `${hash.replace(':', '-')}${extensionFor(file.contentType)}`,
-        bytes: file.bytes,
+        stream: file.stream,
+        streamBytes: file.bytes,
+        ...(ctx.range ? { contentRange: { offset: ctx.range.offset, length: file.bytes, total } } : {}),
         // Inline only for the few types a browser renders without executing
         // anything. Everything else downloads: served inline, an uploaded HTML
         // file would be stored cross-site scripting on the platform's origin.

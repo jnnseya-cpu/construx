@@ -699,12 +699,32 @@ export class AIOrchestrator {
    * `FIXED_COST_TOKENS` is what travels with every part regardless of its size:
    * the task, the constraint, the response schema and the system prompt.
    */
-  textBudgetChars(input: { capability: ProviderCapability; inputRefs?: readonly EntityRef[] }): number {
+  textBudgetChars(input: {
+    capability: ProviderCapability;
+    inputRefs?: readonly EntityRef[];
+    /**
+     * True where the answer restates the material — reading a document into
+     * the passages somebody will cite out of it.
+     *
+     * Such a task is bounded by what the model can **write**, which on every
+     * vendor is a fraction of what it can read. Sized from the input budget
+     * alone, a part is accepted, runs for a long time and comes back truncated
+     * at the answer ceiling — a plausible partial reading, refused after the
+     * vendor has billed for the whole of it.
+     */
+    echoesInput?: boolean;
+  }): number {
     const FIXED_COST_TOKENS = 4_000;
     const sensitivity = sensitivityOf(input.inputRefs ?? []);
     const cleared = this.#chainFor(input.capability).filter((adapter) => mayReceive(adapter, sensitivity));
     const windows = cleared
-      .map((adapter) => adapter.inputBudgetTokens)
+      .map((adapter) =>
+        adapter.inputBudgetTokens === undefined
+          ? undefined
+          : input.echoesInput
+            ? Math.min(adapter.inputBudgetTokens, adapter.answerBudgetTokens ?? adapter.inputBudgetTokens)
+            : adapter.inputBudgetTokens,
+      )
       .filter((budget): budget is number => budget !== undefined);
     // No window to exceed: the deterministic local engines, which read their
     // inputs in process. Nothing is gained by splitting a document for them,

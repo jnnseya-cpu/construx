@@ -167,6 +167,22 @@ export interface AIProviderAdapter {
    * deterministic local engines: they compute over their inputs in process.
    */
   readonly inputBudgetTokens?: number;
+  /**
+   * The most this adapter will write in one answer, in tokens.
+   *
+   * Published for the same reason as the input budget and it binds sooner than
+   * people expect: a window is shared between the question and the answer, and
+   * a task whose answer restates its input — reading a document into the
+   * passages somebody will cite — is limited by what the model can *write*,
+   * not by what it can read. Sizing such a task from the input budget alone
+   * produces a call that is accepted, runs for a long time, and comes back
+   * truncated at the ceiling with a plausible partial answer, which
+   * `parseModelOutput` then has to refuse after the vendor has billed for all
+   * of it.
+   *
+   * Absent on an adapter with no ceiling to hit.
+   */
+  readonly answerBudgetTokens?: number;
   /** Estimated cost before execution, used to size the ACU hold. */
   estimateCostMinor(request: ProviderRequest): number;
   execute(request: ProviderRequest): Promise<ProviderResponse>;

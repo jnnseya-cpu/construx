@@ -28571,3 +28571,137 @@ orchestrator and the adapters both read, so the two cannot drift.
 The refusal now names the host and says what to check — outbound DNS, egress,
 any proxy, and whether the vendor is down — because that is the next action,
 and `AI_PROVIDER_UNREACHABLE` on its own sent an operator nowhere.
+
+## Large everything
+
+The requirement, in the customer's words: *"Construction will have very large
+everything — large documents, large files, large folders, large drawings, large
+video, large everything, and the system must cope with them regardless."*
+
+The platform's ceiling was fifty megabytes, and the number was not really the
+ceiling. `put` took a `Buffer`, `read` returned one, and a resumable upload
+concatenated every part before writing — so the real limit was the heap of the
+one process that serves everybody, and raising `EVIDENCE_MAX_BYTES` would have
+turned a clean 413 into an out-of-memory kill in the middle of somebody else's
+request.
+
+### What changed
+
+**A framed envelope** (`evidence/envelope.ts`, format version 2):
+
+```
+CXE1 ‖ format(2) ‖ keyVersion(1) ‖ frameBytes(4) ‖ frame*
+frame = length(4) ‖ iv(12) ‖ tag(16) ‖ ciphertext(length)
+```
+
+One mebibyte of plaintext per frame, each with its own IV and tag, and each
+frame's AAD binding the tenancy, the frame's index and whether it is the last.
+That makes the format streamable (a frame is authenticated before its plaintext
+is released), addressable (frame *n* sits at a computable offset, because every
+frame but the last is exactly `frameBytes + 32` on disk) and untruncatable (a
+file cut short never produces the frame that claims to be last, and fails
+instead of reading as a shorter whole file). The key version is its own byte,
+where the single-shot format used one byte for both — a conflation that made the
+first cut of this unreadable by its own synchronous reader.
+
+`encrypt` still writes version 1 and `decrypt` reads **both**, so a file written
+by the streaming path is the same object to the PDF renderer, the document
+reader, `rotate` and the retention sweep. There is no migration.
+
+**Streaming storage** (`evidence/store.ts`): `putStream` hashes the plaintext as
+it passes and verifies it against the address the ledger already records —
+nothing stored on a mismatch, including under a hash the store already holds,
+because the address alone is not proof. `readStream` reads a file, or one range
+of it, a frame at a time. The resumable-upload assembly feeds its parts through
+`putStream` instead of concatenating them, each part still checked against the
+checksum recorded when it arrived. `sizeOf` and every `bytes` answer report the
+**document's** length, not the ciphertext's.
+
+**The transport** (`api/gateway.ts`): the evidence upload route is `streamed`,
+so the request is moved to the volume as it arrives rather than buffered; the
+download route answers with a stream, with `Accept-Ranges`, `Content-Range` and
+206 where a range was asked for — which is what lets a browser seek in an hour
+of site walkthrough. Back-pressure is respected, so a two-gigabyte download
+costs the process a mebibyte. A read that fails after the headers have gone
+destroys the connection rather than letting a truncated file look complete.
+
+**Two ceilings, because holding a file and analysing one are different acts:**
+
+- `EVIDENCE_MAX_BYTES` — 5 GiB by default, up from 50 MB. What bounds a file now
+  is the disk, and what stops one tenancy filling the volume is its **storage
+  plan**, which refuses an upload the allowance cannot hold and names the
+  shortfall. That is a commercial limit somebody can buy more of rather than an
+  engineering limit nobody can do anything about.
+- `EVIDENCE_ANALYSE_MAX_BYTES` — 512 MB, new, enforced inside `get`, `read` and
+  `fetch`. One choke point, so a path written with a 40MB drawing in mind cannot
+  find a two-gigabyte video: inspection, text extraction, a PDF render and a
+  document handed to an engine all go through those three. The refusal
+  (`EVIDENCE_TOO_LARGE_TO_READ`) says what is true — the file is held, intact,
+  downloadable, streamable and still evidence; what cannot be done is hold all of
+  it at once.
+
+### What is still bounded, stated rather than implied
+
+- **An object-store-only deployment.** `S3Client.put` sends a body from one
+  buffer and multipart upload is not built, so a deployment with no volume
+  refuses above 256MB by name (`EVIDENCE_REMOTE_TOO_LARGE`) instead of being
+  discovered as an out-of-memory kill. A volume holds files of any size.
+- **The browser.** `hashFile` reads a file into an `ArrayBuffer` to hash it, so
+  the console cannot yet *start* an upload of a file larger than a tab can hold.
+  The server side is done; the streaming hash in the browser is not.
+- **Analysis of a very large document.** Text extraction and inspection need the
+  whole file in memory, so they stop at the analysis ceiling. A 500-page scanned
+  tender is comfortably inside it; a two-gigabyte video has no text to read.
+- **AI reading of video and audio.** No vendor takes a gigabyte of video inline,
+  and nothing here extracts frames or transcodes — that needs a media decoder
+  the platform does not have. Video is held, served, ranged and kept as
+  evidence; it is not read by a model.
+
+## The clock nobody configured
+
+Reported from a live run, after the cause chain started being read:
+
+    AI_PROVIDER_DROPPED — The connection to api.openai.com dropped after the
+    request had gone out (UND_ERR_HEADERS_TIMEOUT …)
+
+`fetch` aborts a request whose response headers have not arrived within 300
+seconds, and again if the body stalls for 300. Neither limit is reachable
+through its API. The platform states in `config.ts` and in this file that **no
+AI task is cut short by a clock**, sets `AI_PROVIDER_DEADLINE_MS` to 0 to mean
+it, and attaches no `AbortSignal` — and the transport was imposing five minutes
+anyway. A non-streaming completion sends no headers until the model has finished
+writing, so every reasoning run longer than five minutes was killed after the
+vendor had done and billed the work.
+
+`ai/providers/transport.ts` is now the one way this platform talks to a vendor:
+`node:https`, no deadline unless the operator configured one, keep-alive probes
+so a long wait stays visible to the network, and a bounded reply. It also knows
+what `fetch` left the caller to guess — whether the request was fully **sent**
+and whether a status line came back — so `transportFailure` classifies from
+fact rather than from a table of error codes, and the question worth money
+("may the vendor have billed for this?") is answered by observation.
+
+A test that needs to behave like a vendor now runs a real local server and the
+adapter is pointed at it, instead of replacing `globalThis.fetch`. A test that
+swaps the transport out is not testing the transport.
+
+## The model was being paid to type back what it had been given
+
+The Reader asked every document for `lines`: "the document as plain text, one
+paragraph per entry" — of a document whose plain text the platform had already
+extracted and had just sent in the payload. That doubled the output of every
+reading, doubled the time it took, and made the answer ceiling the limit on how
+much document could go in one call. On a long document it is also how a reading
+got truncated: the transcription filled the answer and the passages were cut off.
+
+It is now asked for only where the model can see something the platform cannot
+read — a scan, where its transcription is the only text of that document anybody
+will ever have. On every other document the platform's own extraction is used,
+which is the better record of the two and costs nothing.
+
+The same insight sizes the parts. A reading **restates** its input, so the
+binding constraint is what the model can write, not what it can read — and on
+every vendor the answer ceiling is a fraction of the input window.
+`textBudgetChars({ echoesInput: true })` sizes a part by `min(input, answer)`,
+so a part is never accepted, run at length and returned cut off at the output
+ceiling.

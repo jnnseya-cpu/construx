@@ -3,6 +3,7 @@ import { DomainError } from '../../core/errors.ts';
 import type { AIProvider } from '../../goldenthread/types.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from './types.ts';
 import { transportFailure } from './remote.ts';
+import { postJson } from './transport.ts';
 
 /**
  * The embedding capability: text in, a vector out.
@@ -326,27 +327,31 @@ export class EmbeddingAdapter implements AIProviderAdapter {
       // the same setting: none by default, because AI work is not cut short by
       // a clock. A batch of passages long enough to matter is exactly the one
       // that used to be aborted at two minutes.
+      // Through the platform's own transport rather than `fetch`, for the
+      // reason `transport.ts` sets out: `fetch` aborts a call whose headers
+      // have not arrived in five minutes, which is a clock this platform
+      // states it does not impose. A long batch is exactly the call that hits
+      // it, and the work is done and billed by then.
       const deadlineMs = config.ai.providerDeadlineMs;
-      const response = await fetch(this.#endpoint.url(modelClass, this.#apiKey), {
-        method: 'POST',
+      const response = await postJson({
+        url: this.#endpoint.url(modelClass, this.#apiKey),
         headers: this.#endpoint.headers(this.#apiKey),
         body: JSON.stringify(this.#endpoint.body(texts, modelClass)),
-        ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
+        deadlineMs,
       });
 
       if (!response.ok) {
         this.#consecutiveFailures += 1;
-        const detail = await response.text().catch(() => '');
         throw new DomainError(
           'AI_PROVIDER_ERROR',
-          `${this.name} returned ${response.status}: ${detail.slice(0, 200)}`,
+          `${this.name} returned ${response.status}: ${response.text.slice(0, 200)}`,
           502,
         );
       }
 
       let reply: EmbeddingReply;
       try {
-        reply = this.#endpoint.extract(await response.json(), texts.length);
+        reply = this.#endpoint.extract(JSON.parse(response.text), texts.length);
       } catch (error) {
         // Health is reset only once an answer has actually been read, for the
         // reason the reasoning adapter records: a vendor answering 200 with

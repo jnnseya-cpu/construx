@@ -4,6 +4,7 @@ import { canonicalize } from '../../core/canonical.ts';
 import { DomainError } from '../../core/errors.ts';
 import type { AIProvider } from '../../goldenthread/types.ts';
 import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderResponse } from './types.ts';
+import { postJson, type VendorReply } from './transport.ts';
 
 /**
  * Live provider adapters, used when AI_MODE is staging or production.
@@ -168,6 +169,8 @@ type Endpoint = {
   extract: (response: unknown) => ModelReply;
   /** The most input one call here may carry, after the answer's reserve. */
   inputBudgetTokens: number;
+  /** The most one answer may be. The other half of the window. */
+  answerBudgetTokens: number;
 };
 
 /**
@@ -261,6 +264,7 @@ function isDocument(contentType: string): boolean {
 const OPENAI_ENDPOINT: Endpoint = {
   url: 'https://api.openai.com/v1/responses',
   inputBudgetTokens: inputBudgetOf('OPENAI'),
+  answerBudgetTokens: WINDOWS.OPENAI.outputReserveTokens,
   headers: (key) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }),
   body: (request, modelClass) => ({
     model: modelClass === 'reasoning-deep' ? 'gpt-5' : 'gpt-5-mini',
@@ -344,6 +348,7 @@ const OPENAI_ENDPOINT: Endpoint = {
 const GEMINI_ENDPOINT: Endpoint = {
   url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
   inputBudgetTokens: inputBudgetOf('GEMINI'),
+  answerBudgetTokens: WINDOWS.GEMINI.outputReserveTokens,
   headers: (key) => ({ 'x-goog-api-key': key, 'Content-Type': 'application/json' }),
   body: (request) => ({
     contents: [
@@ -399,6 +404,7 @@ const GEMINI_ENDPOINT: Endpoint = {
 const ANTHROPIC_ENDPOINT: Endpoint = {
   url: 'https://api.anthropic.com/v1/messages',
   inputBudgetTokens: inputBudgetOf('ANTHROPIC'),
+  answerBudgetTokens: WINDOWS.ANTHROPIC.outputReserveTokens,
   headers: (key) => ({
     'x-api-key': key,
     // Pinned for the same reason Stripe's is: a version rolled out on their
@@ -689,6 +695,17 @@ const CONNECT_CODES = new Set([
 export function transportFailure(error: unknown): TransportFailure {
   const reasons: string[] = [];
   let code = '';
+  /*
+   * What the transport itself knows, where it knows it.
+   *
+   * `postJson` records whether the request body was fully written and whether
+   * a status line came back, so the stage is a **fact** rather than an
+   * inference from an error code. The code table below stays for the cases
+   * nothing observed — an error thrown before the request was built, or one
+   * raised by something other than this transport.
+   */
+  const observed = error as { sent?: unknown; responded?: unknown };
+  const sawTransport = typeof observed.sent === 'boolean';
 
   // Down the `cause` chain, and through an `AggregateError`'s branches, which
   // is the shape a host with an IPv6 and an IPv4 address produces when both
@@ -708,7 +725,14 @@ export function transportFailure(error: unknown): TransportFailure {
   visit(error, 0);
 
   return {
-    stage: CONNECT_CODES.has(code) ? 'CONNECT' : 'IN_FLIGHT',
+    stage: sawTransport
+      ? // Nothing was written and nothing came back: the vendor never saw it.
+        observed.sent === false && observed.responded === false
+        ? 'CONNECT'
+        : 'IN_FLIGHT'
+      : CONNECT_CODES.has(code)
+        ? 'CONNECT'
+        : 'IN_FLIGHT',
     code: code === '' ? 'unknown' : code,
     because: reasons.length > 0 ? reasons.join(' <- ') : String(error),
   };
@@ -767,11 +791,23 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
   readonly transmits = true;
   /** This vendor's window, less the room its answer needs. */
   readonly inputBudgetTokens: number;
+  /** The most this vendor will write in one answer. */
+  readonly answerBudgetTokens: number;
   readonly #endpoint: Endpoint;
   readonly #apiKey: string;
   #consecutiveFailures = 0;
 
-  constructor(name: AIProvider, capability: ProviderCapability) {
+  /**
+   * @param endpoint Answer somewhere other than the vendor's own address.
+   *
+   * The seam a test needs to behave as a vendor does. It exists because the
+   * alternative — replacing `globalThis.fetch` — stopped working the day this
+   * adapter started using the platform's own transport, and because a test
+   * that swaps the transport out is not testing the transport. With an
+   * endpoint pointed at a local server, the status handling, the JSON parse
+   * and the socket are all the real ones.
+   */
+  constructor(name: AIProvider, capability: ProviderCapability, endpoint?: Endpoint) {
     this.name = name;
     this.capability = capability;
     // Looked up rather than branched on. The pair of ternaries this replaces
@@ -780,9 +816,10 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
     // wearing another name, and the ledger would have recorded the wrong
     // vendor against every pound of that spend.
     const provider = PROVIDERS[name];
-    this.#endpoint = provider.endpoint;
+    this.#endpoint = endpoint ?? provider.endpoint;
     this.#apiKey = provider.key();
-    this.inputBudgetTokens = provider.endpoint.inputBudgetTokens;
+    this.inputBudgetTokens = this.#endpoint.inputBudgetTokens;
+    this.answerBudgetTokens = this.#endpoint.answerBudgetTokens;
   }
 
   /** Three consecutive failures takes the adapter out of rotation for failover. */
@@ -848,13 +885,8 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
        */
       const deadlineMs = config.ai.providerDeadlineMs;
       const body = JSON.stringify(this.#endpoint.body(request, modelClass));
-      const send = (): Promise<Response> =>
-        fetch(this.#endpoint.url, {
-          method: 'POST',
-          headers: this.#endpoint.headers(this.#apiKey),
-          body,
-          ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
-        });
+      const send = (): Promise<VendorReply> =>
+        postJson({ url: this.#endpoint.url, headers: this.#endpoint.headers(this.#apiKey), body, deadlineMs });
 
       /*
        * One retry, and only where nothing was sent.
@@ -871,7 +903,7 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
        * second call the vendor may bill, and the hold is parked for
        * reconciliation instead.
        */
-      let response: Response;
+      let response: VendorReply;
       try {
         response = await send();
       } catch (error) {
@@ -884,15 +916,25 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
 
       if (!response.ok) {
         this.#consecutiveFailures += 1;
-        const detail = await response.text().catch(() => '');
         throw new DomainError(
           'AI_PROVIDER_ERROR',
-          `${this.name} returned ${response.status}: ${detail.slice(0, 200)}`,
+          `${this.name} returned ${response.status}: ${response.text.slice(0, 200)}`,
           502,
         );
       }
 
-      const reply = this.#endpoint.extract(await response.json());
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(response.text);
+      } catch {
+        this.#consecutiveFailures += 1;
+        throw new DomainError(
+          'AI_PROVIDER_ERROR',
+          `${this.name} answered ${response.status} with something that is not JSON: ${excerpt(response.text)}`,
+          502,
+        );
+      }
+      const reply = this.#endpoint.extract(parsed);
 
       // Unreadable output is a failed execution, not a partial result: the
       // engine would otherwise be free to write prose into the Golden Thread.

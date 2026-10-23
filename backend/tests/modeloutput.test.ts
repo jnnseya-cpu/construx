@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { afterEach, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
+import { createServer, type Server } from 'node:http';
 import { config } from '../src/config.ts';
 import { DomainError } from '../src/core/errors.ts';
 import { ENDPOINTS, RemoteProviderAdapter, parseModelOutput } from '../src/ai/providers/remote.ts';
@@ -285,20 +286,44 @@ describe('the schema reaches the only vendor that was never sent one', () => {
 });
 
 describe('a provider that answers unreadably is a provider that is failing', () => {
-  const realFetch = globalThis.fetch;
-  afterEach(() => {
-    globalThis.fetch = realFetch;
+  /*
+   * A real server answering as a vendor would.
+   *
+   * This used to replace `globalThis.fetch`, which stopped standing in for
+   * anything the day the adapters moved to the platform's own transport — and
+   * a test that swaps the transport out is not testing the transport. A local
+   * server costs a port and exercises the whole path: the socket, the status
+   * line, the JSON parse and the extraction.
+   */
+  let server: Server | undefined;
+  let reply: unknown = {};
+  let status = 200;
+
+  before(async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(typeof reply === 'string' ? reply : JSON.stringify(reply));
+    });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  });
+
+  after(async () => {
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
   });
 
   /** Answer every call with one fixed vendor body. */
-  function answering(body: unknown): void {
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  function answering(body: unknown, code = 200): void {
+    reply = body;
+    status = code;
   }
 
   function adapter(): RemoteProviderAdapter {
     (config.ai as unknown as { anthropicKey: string }).anthropicKey = 'test-key-not-a-real-credential';
-    return new RemoteProviderAdapter('ANTHROPIC', 'PERCEPTION');
+    const port = (server!.address() as { port: number }).port;
+    return new RemoteProviderAdapter('ANTHROPIC', 'PERCEPTION', {
+      ...ENDPOINTS.ANTHROPIC,
+      url: `http://127.0.0.1:${port}/v1/messages`,
+    });
   }
 
   const request: ProviderRequest = { task: 'Read the title block', payload: {} };

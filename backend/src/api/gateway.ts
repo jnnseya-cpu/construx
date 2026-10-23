@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,6 +157,31 @@ async function readRawBody(req: IncomingMessage, limit: number): Promise<Buffer>
   }
 
   return Buffer.concat(chunks);
+}
+
+/**
+ * What a caller asked for of a file, from the `Range` header.
+ *
+ * Only the one form that matters and the platform can serve: a single byte
+ * range, `bytes=start-` or `bytes=start-end`. A suffix range (`bytes=-500`)
+ * and a multi-range request are ignored — ignoring a range is always safe,
+ * because the answer is then the whole file with a 200, which every client
+ * handles.
+ *
+ * It exists for one reason: a browser will not let somebody seek in a long
+ * video without it. A two-hour site walkthrough played from the start, with no
+ * way to jump to the twenty minutes that matter, is a file nobody watches.
+ */
+export function byteRange(value: string | undefined): { offset: number; length?: number } | undefined {
+  if (!value) return undefined;
+  const match = /^bytes=(\d+)-(\d*)$/.exec(value.trim());
+  if (!match) return undefined;
+  const offset = Number(match[1]);
+  if (!Number.isSafeInteger(offset) || offset < 0) return undefined;
+  if (match[2] === '') return { offset };
+  const end = Number(match[2]);
+  if (!Number.isSafeInteger(end) || end < offset) return undefined;
+  return { offset, length: end - offset + 1 };
 }
 
 export function createGateway(platform: Platform): Server {
@@ -537,12 +563,33 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       );
     }
 
-    if (matched.route.upload) {
+    if (matched.route.streamed) {
+      /*
+       * Not buffered at all. The handler is handed the request and moves it to
+       * the store as it arrives, so the file's size is bounded by the volume
+       * rather than by this process's heap.
+       *
+       * No ceiling is applied here: the store counts the bytes as it writes
+       * them and refuses over `EVIDENCE_MAX_BYTES` with the plan's own
+       * accounting in the message, which is a better refusal than a byte count
+       * the gateway would have to repeat. The declared length is passed on so
+       * an oversized upload can be refused before any of it is read.
+       */
+      ctx.bodyStream = req as AsyncIterable<Buffer>;
+      const declared = Number(header(req, 'content-length') ?? '');
+      if (Number.isFinite(declared) && declared > 0) ctx.declaredBytes = declared;
+      ctx.contentType = header(req, 'content-type');
+    } else if (matched.route.upload) {
       ctx.rawBody = await readRawBody(req, matched.route.maxBytes ?? config.evidence.maxBytes);
       ctx.contentType = header(req, 'content-type');
     } else {
       ctx.body = await readBody(req);
     }
+
+    // What the caller asked for of a file. Parsed here rather than in a
+    // handler because it is a transport concern and because a browser sends it
+    // for the one thing it cannot do without: seeking in a long video.
+    ctx.range = byteRange(header(req, 'range'));
     validateRequest(ctx, matched.route.schema, isPublic);
 
     // Idempotency: a retried command returns the original result rather than
@@ -573,13 +620,74 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
       const file = result as {
         contentType: string;
         filename: string;
-        bytes: Uint8Array;
+        bytes?: Uint8Array;
+        /** A file too large to hold in memory, sent as it is read. */
+        stream?: AsyncIterable<Uint8Array>;
+        /** The length of what is being sent, where it is streamed. */
+        streamBytes?: number;
+        /** The whole file's length and what part of it this is, on a range response. */
+        contentRange?: { offset: number; length: number; total: number };
         disposition?: 'attachment' | 'inline';
       };
+
+      /*
+       * A file sent as it is read.
+       *
+       * The same headers, and two more that matter on something large:
+       * `Accept-Ranges`, because a browser will not offer to seek in a video
+       * without it, and `Content-Range` on a partial answer. Nothing is held
+       * in memory but the frame being written, so a two-gigabyte download costs
+       * the process a mebibyte.
+       */
+      if (file.stream) {
+        const partial = file.contentRange !== undefined;
+        res.writeHead(partial ? 206 : 200, {
+          'Content-Type': file.contentType,
+          'Content-Length': file.streamBytes ?? 0,
+          'Content-Disposition': `${file.disposition ?? 'attachment'}; filename="${file.filename}"`,
+          'Accept-Ranges': 'bytes',
+          ...(file.contentRange
+            ? {
+                'Content-Range': `bytes ${file.contentRange.offset}-${file.contentRange.offset + file.contentRange.length - 1}/${file.contentRange.total}`,
+              }
+            : {}),
+          'X-Content-Type-Options': 'nosniff',
+          'Content-Security-Policy': "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox",
+          'x-trace-id': ctx.traceId,
+          'x-correlation-id': ctx.correlationId,
+          'Cache-Control': 'no-store',
+        });
+        try {
+          for await (const piece of file.stream) {
+            // Back-pressure, which is the whole point of streaming: when the
+            // socket's buffer is full the loop waits rather than queueing the
+            // rest of a gigabyte in memory.
+            if (!res.write(piece)) await once(res, 'drain');
+          }
+          res.end();
+        } catch (error) {
+          /*
+           * A read that failed part way through a response.
+           *
+           * The status line and some bytes have already gone, so there is no
+           * way to turn this into a problem+json refusal — a client that
+           * believed the `Content-Length` would otherwise treat a truncated
+           * file as a complete one. The connection is destroyed instead, which
+           * is what a client reads as a failed transfer.
+           */
+          process.stderr.write(`evidence stream failed after headers: ${(error as Error).message}\n`);
+          res.destroy();
+        }
+        logRequest(ctx, partial ? 206 : 200);
+        return;
+      }
+
+      const bytes = file.bytes ?? new Uint8Array(0);
       res.writeHead(200, {
         'Content-Type': file.contentType,
-        'Content-Length': file.bytes.byteLength,
+        'Content-Length': bytes.byteLength,
         'Content-Disposition': `${file.disposition ?? 'attachment'}; filename="${file.filename}"`,
+        'Accept-Ranges': 'bytes',
         // Evidence is bytes somebody uploaded, and the content type came from
         // the same upload. Without these two headers, storing an HTML file and
         // opening its link is stored cross-site scripting on the platform's own
@@ -593,7 +701,7 @@ async function handle(platform: Platform, req: IncomingMessage, res: ServerRespo
         'x-correlation-id': ctx.correlationId,
         'Cache-Control': 'no-store',
       });
-      res.end(Buffer.from(file.bytes));
+      res.end(Buffer.from(bytes));
       logRequest(ctx, 200);
       return;
     }

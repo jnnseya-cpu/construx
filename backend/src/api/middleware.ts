@@ -33,6 +33,27 @@ export type RequestContext = {
    * has to be parsed as text.
    */
   rawBody?: Buffer;
+  /**
+   * The body as it arrives, on a route that streams a file to the store.
+   *
+   * The alternative is `rawBody`, which holds the whole file in the heap of the
+   * one process that serves everybody. That is tolerable for a photograph and
+   * impossible for what construction actually produces: a drawing set, a
+   * federated model, an hour of site walkthrough. A route that declares
+   * `streamed` gets the request itself and moves it to the volume a frame at a
+   * time, and the file's size stops being bounded by memory.
+   */
+  bodyStream?: AsyncIterable<Buffer>;
+  /**
+   * What the caller said the body's length is, where it said.
+   *
+   * A claim, not a fact — it is used to refuse an upload over the ceiling
+   * before a byte is read, and the real length is still counted and enforced as
+   * the stream runs.
+   */
+  declaredBytes?: number;
+  /** What the caller asked for of a file, from `Range`. Byte units only. */
+  range?: { offset: number; length?: number };
   /** The `Content-Type` the caller sent, on an upload route. Metadata, not trust. */
   contentType?: string;
   auth?: AuthContext;

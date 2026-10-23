@@ -60,9 +60,16 @@ import { signFor, verifyFor } from '../identity/secrets.ts';
  * ## The framed format, and why there are two
  *
  * ```
- * CXE1 ‖ version(2) ‖ frameBytes(4) ‖ frame*
+ * CXE1 ‖ format(2) ‖ keyVersion(1) ‖ frameBytes(4) ‖ frame*
  * frame = length(4) ‖ iv(12) ‖ tag(16) ‖ ciphertext(length)
  * ```
+ *
+ * The key version is its own byte here, where the single-shot format uses the
+ * one version byte for both things. That conflation is what made the first cut
+ * of this format unreadable by its own synchronous reader: the writer derived
+ * its key under version 1 and the reader under version 2, and the only symptom
+ * was every frame failing to authenticate. Separating them also means rotating
+ * the master key needs no new container format.
  *
  * The single-shot format above cannot be streamed in either direction. Its tag
  * covers the whole file and sits *before* the body, so writing it means holding
@@ -125,8 +132,18 @@ export const FRAME_BYTES = 1_048_576;
 /** Length, IV and tag in front of each frame's ciphertext. */
 export const FRAME_OVERHEAD_BYTES = 4 + IV_BYTES + TAG_BYTES;
 
-/** The framed header: magic, version, and the frame size this file was written with. */
-const FRAMED_HEADER_BYTES = MAGIC.length + 1 + 4;
+/** The framed header: magic, the format, the key version, and the frame size. */
+export const FRAMED_HEADER_BYTES = MAGIC.length + 1 + 1 + 4;
+
+/** The frame size and key version a framed file was written with. */
+export function framedLayout(head: Buffer): { keyVersion: number; frameBytes: number } {
+  return { keyVersion: head[MAGIC.length + 1]!, frameBytes: head.readUInt32BE(MAGIC.length + 2) };
+}
+
+/** Magic and a format byte, which is all a stream has to go on before it reads further. */
+function startsAsEnvelope(head: Buffer): boolean {
+  return head.length > MAGIC.length && head.subarray(0, MAGIC.length).equals(MAGIC);
+}
 
 export type EnvelopePosture = {
   /** Whether evidence is encrypted at rest at all. */
@@ -215,7 +232,361 @@ export function encrypt(tenantId: string, plaintext: Buffer): Buffer {
 
 /** True where these bytes are an envelope this build wrote. */
 export function isEnvelope(bytes: Buffer): boolean {
-  return bytes.length >= HEADER_BYTES && bytes.subarray(0, MAGIC.length).equals(MAGIC);
+  return (
+    bytes.length >= FRAMED_HEADER_BYTES &&
+    bytes.subarray(0, MAGIC.length).equals(MAGIC) &&
+    // A single-shot envelope is at least a header; a framed one is at least a
+    // header and one frame. Below either, these are not an envelope at all —
+    // which is how a four-byte file that happens to start `CXE1` stays
+    // readable instead of becoming a decrypt failure.
+    (bytes[MAGIC.length] === FRAMED_VERSION ? bytes.length >= FRAMED_HEADER_BYTES + FRAME_OVERHEAD_BYTES : bytes.length >= HEADER_BYTES)
+  );
+}
+
+/** The additional authenticated data for one frame. Binds tenancy, order and the end. */
+function frameAAD(tenantId: string, index: number, last: boolean): Buffer {
+  return Buffer.from(`${tenantId}|${index}|${last ? 'END' : 'MORE'}`, 'utf8');
+}
+
+/**
+ * Encrypt a stream of plaintext into a stream of frames.
+ *
+ * Re-chunks whatever the source yields into frames of exactly `FRAME_BYTES`,
+ * because the frame size is what makes a byte offset arithmetic rather than a
+ * search. The source is read once and nothing larger than one frame is held.
+ *
+ * Yields the plaintext unchanged where no master key is configured, exactly as
+ * `encrypt` does, so a deployment without one behaves as it always did.
+ */
+export async function* encryptFrames(
+  tenantId: string,
+  source: AsyncIterable<Buffer> | Iterable<Buffer>,
+): AsyncGenerator<Buffer> {
+  if (!enabled()) {
+    for await (const chunk of source) yield chunk;
+    return;
+  }
+
+  const key = dataKey(tenantId, CURRENT_VERSION);
+  const header = Buffer.alloc(FRAMED_HEADER_BYTES);
+  MAGIC.copy(header, 0);
+  header[MAGIC.length] = FRAMED_VERSION;
+  // The key version, written down rather than assumed to be the format's. The
+  // first cut of this derived the writer's key from the format byte, so the
+  // synchronous reader derived a different key and every frame failed.
+  header[MAGIC.length + 1] = CURRENT_VERSION;
+  header.writeUInt32BE(FRAME_BYTES, MAGIC.length + 2);
+  yield header;
+
+  let index = 0;
+  const sealed = (plaintext: Buffer, last: boolean): Buffer => {
+    const iv = randomBytes(IV_BYTES);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    cipher.setAAD(frameAAD(tenantId, index, last));
+    const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(body.length, 0);
+    index += 1;
+    return Buffer.concat([length, iv, cipher.getAuthTag(), body]);
+  };
+
+  // One frame's worth is held back so the final frame can be sealed as the
+  // last one. Without that marker a truncated file would authenticate
+  // perfectly and read as a shorter, whole file.
+  let pending: Buffer = Buffer.alloc(0);
+  for await (const chunk of source) {
+    pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+    while (pending.length > FRAME_BYTES) {
+      yield sealed(pending.subarray(0, FRAME_BYTES), false);
+      pending = pending.subarray(FRAME_BYTES);
+    }
+  }
+  // Exactly `FRAME_BYTES` remaining is still the last frame, which is why the
+  // loop above stops at `>` rather than `>=`.
+  yield sealed(pending, true);
+}
+
+/**
+ * The frames of a stored object, decrypted and authenticated one at a time.
+ *
+ * Every version is handled here so a caller never has to ask which format it
+ * is looking at:
+ *
+ *   - **Not an envelope** — passed through. A deployment that has not turned
+ *     encryption on reads its files.
+ *   - **Version 1** — accumulated and decrypted in one go, because that is the
+ *     only way a single tag over a whole file can be checked. Those files were
+ *     written under the old ceiling, so the memory is bounded by it.
+ *   - **Version 2** — streamed, a frame authenticated before it is yielded.
+ *
+ * `skipBytes` and `takeBytes` serve a range request: whole frames before the
+ * range are skipped without being decrypted, and the generator stops as soon
+ * as the range is satisfied rather than reading the rest of the file.
+ */
+export async function* decryptFrames(
+  tenantId: string,
+  source: AsyncIterable<Buffer>,
+  window: {
+    skipBytes?: number;
+    takeBytes?: number;
+    /**
+     * The file's layout, where the caller has already read the header and is
+     * handing over a stream that starts at a **frame boundary**.
+     *
+     * Without this the reader would consume ten more bytes as a header that is
+     * not there — which is what a caller opening the file at a frame offset
+     * does, and the symptom is a file that reads back as the same length and
+     * different bytes.
+     */
+    layout?: { keyVersion: number; frameBytes: number };
+    /**
+     * Which frame the stream begins at.
+     *
+     * Each frame's position is bound into what authenticates it, so a reader
+     * starting at frame 7 and counting from 0 authenticates nothing. That is
+     * the protection working — a frame moved is a frame refused — and it means
+     * random access has to say where it started.
+     */
+    startIndex?: number;
+  } = {},
+): AsyncGenerator<Buffer> {
+  const reader = byteReader(source);
+  const head = await reader.peek(FRAMED_HEADER_BYTES);
+  // Magic and a format byte is all this needs to decide, and all a ten-byte
+  // peek can show: `isEnvelope` answers for a whole buffer and would say no to
+  // a header on its own.
+  const sealed = startsAsEnvelope(head);
+
+  let skip = Math.max(0, window.skipBytes ?? 0);
+  let take = window.takeBytes === undefined ? Number.POSITIVE_INFINITY : Math.max(0, window.takeBytes);
+
+  /** What of this piece of plaintext the window actually wants. */
+  const windowed = (plaintext: Buffer): Buffer | undefined => {
+    if (take <= 0) return undefined;
+    let piece = plaintext;
+    if (skip > 0) {
+      if (skip >= piece.length) {
+        skip -= piece.length;
+        return undefined;
+      }
+      piece = piece.subarray(skip);
+      skip = 0;
+    }
+    if (piece.length > take) piece = piece.subarray(0, take);
+    take -= piece.length;
+    return piece.length > 0 ? piece : undefined;
+  };
+
+  if (window.layout) {
+    // Already positioned at a frame. Nothing to detect and no header to read.
+    yield* framesFrom(tenantId, reader, window.layout, window.startIndex ?? 0, windowed, () => take);
+    return;
+  }
+
+  if (!sealed) {
+    for await (const chunk of reader.rest()) {
+      const piece = windowed(chunk);
+      if (piece) yield piece;
+      if (take <= 0) return;
+    }
+    return;
+  }
+
+  if (!enabled()) {
+    throw new DomainError(
+      'EVIDENCE_KEY_UNAVAILABLE',
+      'This file is encrypted and no evidence master key is configured. The bytes are intact; the key is missing. ' +
+        'Restore EVIDENCE_MASTER_KEY — the file cannot be recovered without it, by this platform or by anybody else.',
+      503,
+    );
+  }
+
+  const version = head[MAGIC.length]!;
+
+  if (version === CURRENT_VERSION) {
+    const whole: Buffer[] = [];
+    for await (const chunk of reader.rest()) whole.push(chunk);
+    const piece = windowed(decrypt(tenantId, Buffer.concat(whole)));
+    if (piece) yield piece;
+    return;
+  }
+
+  if (version !== FRAMED_VERSION) {
+    throw new DomainError(
+      'EVIDENCE_KEY_VERSION_UNKNOWN',
+      `This file was written with key version ${version} and this build understands ${CURRENT_VERSION} and ${FRAMED_VERSION}`,
+      503,
+    );
+  }
+
+  await reader.take(FRAMED_HEADER_BYTES);
+  yield* framesFrom(tenantId, reader, framedLayout(head), 0, windowed, () => take);
+}
+
+/**
+ * The frames of a stream that is positioned at a frame boundary.
+ *
+ * Shared by the two ways in — a whole file whose header has just been read,
+ * and a range that opened the file at a frame offset — because a second copy of
+ * this loop is a second place the authentication rules can be got wrong.
+ */
+async function* framesFrom(
+  tenantId: string,
+  reader: { take: (count: number) => Promise<Buffer> },
+  layout: { keyVersion: number; frameBytes: number },
+  startIndex: number,
+  windowed: (plaintext: Buffer) => Buffer | undefined,
+  remaining: () => number,
+): AsyncGenerator<Buffer> {
+  const frameBytes = layout.frameBytes;
+  if (frameBytes <= 0 || frameBytes > 64 * 1_048_576) {
+    throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file declares a frame size nothing wrote', 500);
+  }
+  const key = dataKey(tenantId, layout.keyVersion);
+
+  let index = startIndex;
+  let ended = false;
+  while (!ended) {
+    const prefix = await reader.take(FRAME_OVERHEAD_BYTES);
+    if (prefix.length < FRAME_OVERHEAD_BYTES) {
+      // The file stopped between frames, so no frame ever claimed to be the
+      // last one. A truncation, not an end.
+      throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file ends part way through a frame', 500);
+    }
+    const length = prefix.readUInt32BE(0);
+    if (length > frameBytes + 64) {
+      throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'A frame declares more ciphertext than a frame can hold', 500);
+    }
+    const body = await reader.take(length);
+    if (body.length < length) {
+      throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file ends part way through a frame', 500);
+    }
+
+    /*
+     * Which frame is the last one is not read from the file — it is *tried*.
+     *
+     * A frame authenticates against exactly one of the two AADs, and only the
+     * writer could have produced the `END` one. So a file cut short fails here
+     * rather than ending early, and a frame moved or dropped fails on its
+     * index. Both attempts are cheap; the alternative is a length field an
+     * attacker gets to choose.
+     */
+    const open = (last: boolean): Buffer | undefined => {
+      const decipher = createDecipheriv('aes-256-gcm', key, prefix.subarray(4, 4 + IV_BYTES));
+      decipher.setAAD(frameAAD(tenantId, index, last));
+      decipher.setAuthTag(prefix.subarray(4 + IV_BYTES, FRAME_OVERHEAD_BYTES));
+      try {
+        return Buffer.concat([decipher.update(body), decipher.final()]);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const more = open(false);
+    const plaintext = more ?? open(true);
+    if (!plaintext) {
+      throw new DomainError(
+        'EVIDENCE_DECRYPT_FAILED',
+        'This file did not authenticate. It has been altered, it belongs to a different tenancy, or the master key has changed.',
+        500,
+      );
+    }
+    ended = more === undefined;
+    index += 1;
+
+    const piece = windowed(plaintext);
+    if (piece) yield piece;
+    // Satisfied: the rest of the file is not read at all, which is what makes a
+    // range request over a two-gigabyte video cheap.
+    if (remaining() <= 0) return;
+  }
+}
+
+/**
+ * Where in a framed file a plaintext byte offset lives.
+ *
+ * Arithmetic, not a search, because every frame but the last holds exactly
+ * `frameBytes` of plaintext and occupies exactly `frameBytes + 32` bytes. This
+ * is what lets a range request open the file at the right place.
+ */
+export function framePosition(
+  offset: number,
+  frameBytes: number = FRAME_BYTES,
+): { skipFrames: number; byteOffset: number; withinFrame: number } {
+  const skipFrames = Math.floor(offset / frameBytes);
+  return {
+    skipFrames,
+    byteOffset: FRAMED_HEADER_BYTES + skipFrames * (frameBytes + FRAME_OVERHEAD_BYTES),
+    withinFrame: offset - skipFrames * frameBytes,
+  };
+}
+
+/**
+ * Whether a stored file is the framed format, from its first bytes.
+ *
+ * Deliberately the cheap check — magic and the format byte — because the
+ * caller has a header and not a file. `isEnvelope` answers for a whole buffer
+ * and requires a frame to be present, so asking it about ten bytes of header
+ * says no about a file that certainly is framed, and the file then reads as
+ * plaintext: ciphertext served to somebody as their document.
+ */
+export function isFramed(head: Buffer): boolean {
+  return startsAsEnvelope(head) && head[MAGIC.length] === FRAMED_VERSION;
+}
+
+/**
+ * A pull reader over a stream of chunks.
+ *
+ * Needed because the framed format is read in exact lengths — a header, then a
+ * prefix and a body per frame — and a stream yields whatever sizes it likes.
+ * Nothing larger than one frame plus one source chunk is ever held.
+ */
+function byteReader(source: AsyncIterable<Buffer>): {
+  peek: (count: number) => Promise<Buffer>;
+  take: (count: number) => Promise<Buffer>;
+  rest: () => AsyncGenerator<Buffer>;
+} {
+  const iterator = source[Symbol.asyncIterator]();
+  let held: Buffer = Buffer.alloc(0);
+  let done = false;
+
+  const fill = async (count: number): Promise<void> => {
+    while (held.length < count && !done) {
+      const next = await iterator.next();
+      if (next.done) {
+        done = true;
+        return;
+      }
+      held = held.length === 0 ? next.value : Buffer.concat([held, next.value]);
+    }
+  };
+
+  return {
+    async peek(count) {
+      await fill(count);
+      return held.subarray(0, count);
+    },
+    async take(count) {
+      await fill(count);
+      const out = held.subarray(0, count);
+      held = held.subarray(out.length);
+      return out;
+    },
+    async *rest() {
+      if (held.length > 0) {
+        yield held;
+        held = Buffer.alloc(0);
+      }
+      while (!done) {
+        const next = await iterator.next();
+        if (next.done) {
+          done = true;
+          return;
+        }
+        yield next.value;
+      }
+    },
+  };
 }
 
 /**
@@ -242,10 +613,26 @@ export function decrypt(tenantId: string, stored: Buffer): Buffer {
   }
 
   const version = stored[MAGIC.length]!;
+
+  /*
+   * A framed file, read whole.
+   *
+   * Every caller that holds a buffer — the PDF renderer, the document reader,
+   * the retention sweep, `rotate` — goes through this function, and a file
+   * written by the streaming path must be readable by all of them or the store
+   * would hold two kinds of object with two sets of callers. So the frames are
+   * walked here as well, synchronously, and the whole plaintext comes back.
+   *
+   * The memory cost is the file, which is exactly what a caller asking for a
+   * whole buffer has already accepted. A caller that cannot afford it reads
+   * `decryptFrames` instead, and the large-file paths do.
+   */
+  if (version === FRAMED_VERSION) return decryptFramesSync(tenantId, stored);
+
   if (version !== CURRENT_VERSION) {
     throw new DomainError(
       'EVIDENCE_KEY_VERSION_UNKNOWN',
-      `This file was written with key version ${version} and this build understands ${CURRENT_VERSION}`,
+      `This file was written with key version ${version} and this build understands ${CURRENT_VERSION} and ${FRAMED_VERSION}`,
       503,
     );
   }
@@ -269,6 +656,67 @@ export function decrypt(tenantId: string, stored: Buffer): Buffer {
       500,
     );
   }
+}
+
+/**
+ * The framed format, walked over a buffer rather than a stream.
+ *
+ * The same rules as `decryptFrames` — per-frame authentication, the index and
+ * the end bound into the AAD — in the form `decrypt` needs, which is one
+ * buffer in and one buffer out. The two are tested against each other: a file
+ * written by the streaming writer is read by both, and they agree byte for
+ * byte, or the store holds objects only half of it can read.
+ */
+function decryptFramesSync(tenantId: string, stored: Buffer): Buffer {
+  const layout = framedLayout(stored);
+  const frameBytes = layout.frameBytes;
+  if (frameBytes <= 0 || frameBytes > 64 * 1_048_576) {
+    throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file declares a frame size nothing wrote', 500);
+  }
+  const key = dataKey(tenantId, layout.keyVersion);
+  const pieces: Buffer[] = [];
+
+  let at = FRAMED_HEADER_BYTES;
+  let index = 0;
+  for (;;) {
+    if (at + FRAME_OVERHEAD_BYTES > stored.length) {
+      throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file ends part way through a frame', 500);
+    }
+    const length = stored.readUInt32BE(at);
+    const iv = stored.subarray(at + 4, at + 4 + IV_BYTES);
+    const tag = stored.subarray(at + 4 + IV_BYTES, at + FRAME_OVERHEAD_BYTES);
+    const body = stored.subarray(at + FRAME_OVERHEAD_BYTES, at + FRAME_OVERHEAD_BYTES + length);
+    if (body.length < length) {
+      throw new DomainError('EVIDENCE_DECRYPT_FAILED', 'This file ends part way through a frame', 500);
+    }
+
+    const open = (last: boolean): Buffer | undefined => {
+      const decipher = createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAAD(frameAAD(tenantId, index, last));
+      decipher.setAuthTag(tag);
+      try {
+        return Buffer.concat([decipher.update(body), decipher.final()]);
+      } catch {
+        return undefined;
+      }
+    };
+
+    const more = open(false);
+    const plaintext = more ?? open(true);
+    if (!plaintext) {
+      throw new DomainError(
+        'EVIDENCE_DECRYPT_FAILED',
+        'This file did not authenticate. It has been altered, it belongs to a different tenancy, or the master key has changed.',
+        500,
+      );
+    }
+    pieces.push(plaintext);
+    at += FRAME_OVERHEAD_BYTES + length;
+    index += 1;
+    if (more === undefined) break;
+  }
+
+  return Buffer.concat(pieces);
 }
 
 /**

@@ -617,7 +617,43 @@ export const config = {
      * drawing set is tens. The limit exists so one upload cannot fill the
      * volume the ledger journal is also writing to.
      */
-    maxBytes: num('EVIDENCE_MAX_BYTES', 50 * 1_048_576),
+    /**
+     * The largest single file this deployment will hold.
+     *
+     * Five gibibytes, where it was fifty megabytes — and the number only
+     * became meaningful when the store stopped holding files in memory.
+     * Before that, `put` took a buffer, `read` returned one and a chunked
+     * upload concatenated every part before writing, so raising this would
+     * have turned a clean 413 into an out-of-memory kill in the middle of
+     * somebody else's request. `putStream` and `readStream` move a file a
+     * frame at a time, so what bounds a file now is the disk.
+     *
+     * Fifty megabytes was never a construction number. A drawing set is
+     * hundreds, a federated model more, an hour of site walkthrough is a
+     * gigabyte, and a scanned historic pack is whatever the archive sent.
+     * What stops a tenancy filling the volume is its **storage plan** —
+     * `billing/storage.ts` refuses an upload the allowance cannot hold, with
+     * the shortfall named — which is a commercial limit somebody can buy more
+     * of, rather than an engineering limit nobody can do anything about.
+     */
+    maxBytes: num('EVIDENCE_MAX_BYTES', 5 * 1024 * 1_048_576),
+    /**
+     * The largest file the platform will read **into memory** in one piece.
+     *
+     * Holding a file and analysing one are different acts with different
+     * costs, and conflating them is how a store that can keep a two-gigabyte
+     * video acquires a path that tries to inspect it in the heap of the one
+     * process that serves everybody. Every buffered read — `get`, `read`,
+     * `fetch`, and therefore every inspection, text extraction, PDF render and
+     * document reading behind them — refuses above this, by name, saying that
+     * the file is held and can be downloaded or streamed.
+     *
+     * 512MB covers everything the analysis paths are actually for: a
+     * five-hundred-page scanned tender, a drawing set, a priced bill of
+     * quantities. Raise it where the container has the memory for it, and
+     * remember the figure is per concurrent read, not per deployment.
+     */
+    analyseMaxBytes: num('EVIDENCE_ANALYSE_MAX_BYTES', 512 * 1_048_576),
     /** How long a signed link stays good. Short: it is a link to open now. */
     linkTtlSeconds: num('EVIDENCE_LINK_TTL_SECONDS', 300),
 

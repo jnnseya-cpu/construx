@@ -751,7 +751,17 @@ export async function readEvidence(
    * which is the honest accounting — reading twice as much document costs twice
    * as much — and the passages are combined into one reading at the end.
    */
-  const parts = partsFor(document, ctx.orchestrator.textBudgetChars({ capability, inputRefs }));
+  /*
+   * Sized by what the model can **write**, not only by what it can read.
+   *
+   * A reading restates the document — the passages are its own words — so the
+   * answer is the binding constraint, and on every vendor the answer ceiling
+   * is a fraction of the input window. A part sized from the input budget is
+   * accepted, runs for a long time, and comes back cut off at the output
+   * ceiling: a plausible partial reading, which is worse than no reading and
+   * is refused only after the vendor has billed for all of it.
+   */
+  const parts = partsFor(document, ctx.orchestrator.textBudgetChars({ capability, inputRefs, echoesInput: true }));
 
   const passages: Array<{ text: string; pageRef?: string }> = [];
   const lines: string[] = [];
@@ -765,9 +775,30 @@ export async function readEvidence(
       inputRefs,
       attribution: { customerAccountId: evidence.customerAccountId },
       request: {
-        task:
-          'Read this document and return the passages a bid writer would cite from it. Return JSON with `passages`: ' +
-          'an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per entry.',
+        /*
+         * `lines` is asked for only where the model can see something this
+         * platform cannot read.
+         *
+         * It used to be asked for always: "the document as plain text, one
+         * paragraph per entry" — of a document whose plain text the platform
+         * had *already extracted* and had just sent in the payload. The model
+         * was being paid to type back what it had been handed, which doubled
+         * the output of every reading, doubled the time it took, and made the
+         * answer ceiling the limit on how much document could go in one call.
+         * On a long document it is also how a reading got truncated: the
+         * transcription filled the answer and the passages were cut off.
+         *
+         * On a scan there is no extracted text, the model's transcription is
+         * the only text of that document anybody will ever have, and it is
+         * worth every token.
+         */
+        task: part.media
+          ? 'Read this document and return the passages a bid writer would cite from it. Return JSON with ' +
+            '`passages`: an array of { text, pageRef }, and `lines`: the document as plain text, one paragraph per ' +
+            'entry — this document is a scan, so your transcription is the only text of it anybody will have.'
+          : 'Read this document and return the passages a bid writer would cite from it. Return JSON with ' +
+            '`passages`: an array of { text, pageRef }. Do not return the document itself: the platform has its ' +
+            'text already and is sending it to you.',
         ...(part.media ? { media: part.media } : {}),
         payload: {
           // The hash travels in the payload as well as on the media, so the
@@ -819,8 +850,14 @@ export async function readEvidence(
         .filter((passage) => passage.text.length > 0),
     );
 
+    // The document as plain text: the model's transcription where it read a
+    // scan, and the platform's own extraction where it had one — which is the
+    // better record of the two and costs nothing to use.
     lines.push(
-      ...(Array.isArray(output.lines) ? output.lines : []).map((line) => String(line ?? '').trim()).filter(Boolean),
+      ...(part.text === undefined
+        ? (Array.isArray(output.lines) ? output.lines : []).map((line) => String(line ?? '').trim())
+        : part.text.split(/\n\s*\n|\r?\n/).map((line) => line.trim())
+      ).filter(Boolean),
     );
   }
 
