@@ -10,7 +10,7 @@ import * as customers from '../src/domain/bidon/customers.ts';
 import * as engagements from '../src/domain/bidon/engagements.ts';
 import * as evidence from '../src/domain/bidon/evidence.ts';
 import * as bidEngine from '../src/domain/bidon/engine.ts';
-import { questionShape } from '../src/domain/bidon/questionshape.ts';
+import { asksNothing, looksLikeQuestionSet, questionShape } from '../src/domain/bidon/questionshape.ts';
 import { configuredEmbeddingAdapter } from '../src/ai/providers/embedding.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
@@ -424,37 +424,66 @@ describe('a document with nothing question-shaped in it', () => {
    * Three charges to learn three documents are not questionnaires, which the
    * platform could have seen for nothing in the first two cases.
    */
-  it('recognises what a question set looks like', () => {
+  it('recognises a question set', () => {
     const questionnaire =
       'Section 4 — Quality\n4.1 Describe your EPC assessment process from instruction to lodgement\n' +
       '4.2 Set out your lone-working arrangements for domestic visits\n' +
       '4.3 Confirm your rates hold for the full term?';
     const shape = questionShape(questionnaire);
-    assert.ok(shape.numbered >= 3, `numbered lines: ${shape.numbered}`);
-    assert.ok(shape.imperatives >= 3, `the phrasing a questionnaire is written in: ${shape.imperatives}`);
+    assert.ok(shape.asking >= 3, `lines that begin by asking: ${shape.asking}`);
+    assert.ok(looksLikeQuestionSet(shape));
+    assert.equal(asksNothing(shape), false);
   });
 
   it('finds nothing in an insurance certificate', () => {
     // 'PI and PL' in the live run: 972 characters of policy numbers and dates.
-    const certificate =
+    const shape = questionShape(
       'Professional indemnity insurance\nInsurer: Example Mutual\nPolicy number PI/2026/44190\n' +
-      'Limit of indemnity GBP 5,000,000 any one claim\nPeriod of insurance 1 April 2026 to 31 March 2027\n';
-    const shape = questionShape(certificate);
-    assert.equal(shape.questionMarks, 0);
-    assert.equal(shape.imperatives, 0);
-    // A policy number is not a numbered question, and a date is not a clause.
-    assert.equal(shape.numbered, 0, 'a certificate has no numbered question lines');
+        'Limit of indemnity GBP 5,000,000 any one claim\nPeriod of insurance 1 April 2026 to 31 March 2027\n',
+    );
+    assert.ok(asksNothing(shape));
+    assert.equal(looksLikeQuestionSet(shape), false);
   });
 
-  it('still recognises a questionnaire that numbers nothing but asks plainly', () => {
+  it('does not call a contract or a specification a question set', () => {
+    /*
+     * The first cut of this counted "describe", "provide", "confirm" and
+     * "state" anywhere in the text, so a schedule of amendments scored 131, a
+     * cost model 32 and a specification 12 — and nine documents out of ten were
+     * labelled "looks like a question set", which cost the reader the one thing
+     * the label was for.
+     *
+     * Obligations are written with those verbs. What makes a question is that
+     * it *starts* a line and addresses the reader.
+     */
+    const amendments =
+      'Clause 2.3 is deleted and replaced with the following.\n' +
+      'The Contractor shall provide a programme within ten days of the Commencement Date.\n' +
+      'The Employer shall confirm receipt in writing.\n' +
+      'The Contractor shall state the names of all operatives attending site.\n' +
+      'Insert new clause 4.7: the Contractor shall provide evidence of insurance.\n';
+    const shape = questionShape(amendments);
+    assert.equal(looksLikeQuestionSet(shape), false, 'a schedule of amendments is not a questionnaire');
+
+    const specification =
+      'Provide and install a new consumer unit to each property.\n' +
+      'Remove all redundant cabling and make good.\n' +
+      'Provide certification to the Employer on completion.\n';
+    // It opens lines with imperatives, as a work description does — but it
+    // never addresses the reader, which is what a questionnaire does.
+    assert.equal(looksLikeQuestionSet(questionShape(specification)), false, 'a specification is not a questionnaire');
+  });
+
+  it('still recognises a questionnaire that numbers nothing', () => {
     // The case the check must not refuse: no numbering, no question marks, and
-    // unmistakably a question set. One of the three signals is enough.
+    // unmistakably a question set.
     const shape = questionShape(
-      'Describe your approach to lone working.\nSet out how certificates are lodged.\nConfirm your insurance limits.',
+      'Describe your approach to lone working.\nSet out how your certificates are lodged.\n' +
+        'Confirm your insurance limits.',
     );
     assert.equal(shape.numbered, 0);
-    assert.equal(shape.questionMarks, 0);
-    assert.ok(shape.imperatives >= 3, 'the imperatives a questionnaire is written in');
+    assert.equal(shape.questions, 0);
+    assert.ok(looksLikeQuestionSet(shape), 'it asks, and it addresses the reader');
   });
 
   /**
@@ -501,7 +530,7 @@ describe('a document with nothing question-shaped in it', () => {
       'BID_ON_NOT_A_QUESTION_SET',
     );
 
-    assert.match(refusal.message ?? '', /nothing question-shaped/);
+    assert.match(refusal.message ?? '', /asks nothing/);
     assert.match(refusal.message ?? '', /nothing has been charged/);
     // The rest of the library, so the next attempt is a choice rather than a
     // guess — and the override, so the check can be argued with.

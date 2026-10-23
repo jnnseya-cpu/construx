@@ -144,8 +144,8 @@ export async function bidon(root) {
    * signals that separate the two. Numbered lines are deliberately only a
    * tie-breaker: a list of two thousand addresses is full of house numbers.
    */
-  const askScore = (item) =>
-    item.questionish ? item.questionish.questions + item.questionish.imperatives : -1;
+  const ASK_RANK = { QUESTIONS: 3, SOMETHING: 2, UNREAD: 1, NOTHING: 0 };
+  const askScore = (item) => ASK_RANK[item.asks] ?? 1;
 
   const documentOptions = (filter = () => true, { rankByQuestions = false } = {}) => {
     const kept = documentList.filter(filter);
@@ -174,10 +174,18 @@ export async function bidon(root) {
         label:
           `${item.reference} — ${item.title}` +
           (item.read ? '' : ' · nothing read out of it yet') +
-          (rankByQuestions && askScore(item) > 2
-            ? ` · looks like a question set (${item.questionish.questions} question${item.questionish.questions === 1 ? '' : 's'}, ${item.questionish.imperatives} asked plainly)`
-            : '') +
-          (rankByQuestions && item.read && askScore(item) <= 2 ? ' · asks nothing — probably not the questionnaire' : '') +
+          /*
+           * The verdict the API published, not a rule restated here.
+           *
+           * The first version of this label counted question-ish words in the
+           * browser and called nine documents out of ten a question set — a
+           * schedule of amendments is full of "provide" and "confirm", because
+           * that is how an obligation is written. The rule now lives in one
+           * place and says one of four things.
+           */
+          (rankByQuestions && item.asks === 'QUESTIONS' ? ` · the question set — ${item.asksDetail}` : '') +
+          (rankByQuestions && item.asks === 'SOMETHING' ? ` · ${item.asksDetail}` : '') +
+          (rankByQuestions && item.asks === 'NOTHING' ? ' · asks nothing — not the questionnaire' : '') +
           (!rankByQuestions && item.embedded ? ' · searchable by meaning' : ''),
       })),
     }));

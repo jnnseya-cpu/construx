@@ -7,7 +7,7 @@ import { requireModule, requireModuleReadable } from '../../identity/modules.ts'
 // floor, so Bid-On's retriever and the record's cannot drift apart on either.
 import { cosine, MINIMUM_SIMILARITY } from '../../datalayer/vectorindex.ts';
 import { customerVisible, requireVisibleCustomer } from './customers.ts';
-import { questionShape } from './questionshape.ts';
+import { asksNothing, describeShape, looksLikeQuestionSet, questionShape } from './questionshape.ts';
 
 /**
  * The per-customer evidence library.
@@ -652,38 +652,40 @@ export type EvidenceChoice = {
   /** Whether its passages are embedded, and by which model. */
   embedded?: string;
   /**
-   * How much of a question set this document looks like, from its own passages.
+   * Whether this document asks the reader anything, from its own passages.
    *
-   * Counted here, for nothing, because the alternative was somebody paying a
-   * model to find out. A real run filed nine documents and went looking for the
-   * questionnaire one call at a time — the schedule of amendments, the
-   * insurance certificates, the order form, a 382,691-character stock list —
-   * each one read, sent, charged and answered "no questions".
+   * Decided here rather than in the browser, so one rule answers it for the
+   * chooser, for the refusal and for the pre-flight check. Counted for nothing,
+   * because the alternative was somebody paying a model to find out: a real run
+   * filed nine documents and went looking for the questionnaire one call at a
+   * time — the amendments, the certificates, the order form, a
+   * 382,691-character stock list, the cost model — each read, sent, charged and
+   * answered "no questions".
    *
-   * The platform has already read every one of those documents and can see
-   * which of them asks anything. `questions` and `imperatives` are the signals
-   * that separate a question set from a list of addresses; `numbered` is a weak
-   * one on its own, because a stock list is full of house numbers.
-   *
-   * Absent where nothing has been read out of the document, which is a
-   * different fact from a document with no questions in it.
+   * `UNREAD` is a different fact from `NOTHING`: a document nobody has read
+   * cannot be judged, and saying it asks nothing would be a measurement nobody
+   * made.
    */
-  questionish?: { numbered: number; questions: number; imperatives: number; chars: number };
+  asks?: 'QUESTIONS' | 'SOMETHING' | 'NOTHING' | 'UNREAD';
+  /** The counts behind that verdict, in a phrase a person can act on. */
+  asksDetail?: string;
   /** Withdrawn items are listed and marked, because a bid that cited one still cited it. */
   withdrawn: boolean;
   expiresOn?: string;
 };
 
-/** What one item's own passages look like, in the counts a chooser can rank on. */
-function shapeOf(item: BidOnEvidence): { numbered: number; questions: number; imperatives: number; chars: number } {
-  const text = [...(item.extractedText ?? []), ...item.chunks.map((chunk) => chunk.text)].join('\n');
-  const shape = questionShape(text);
-  return {
-    numbered: shape.numbered,
-    questions: shape.questionMarks,
-    imperatives: shape.imperatives,
-    chars: text.length,
-  };
+/** What one item's own passages say about whether it asks anything. */
+function verdictOf(item: BidOnEvidence): { asks?: 'QUESTIONS' | 'SOMETHING' | 'NOTHING' | 'UNREAD'; asksDetail?: string } {
+  if (item.chunks.length === 0) return { asks: 'UNREAD' };
+  const shape = questionShape(textOf(item));
+  if (looksLikeQuestionSet(shape)) return { asks: 'QUESTIONS', asksDetail: describeShape(shape) };
+  if (asksNothing(shape)) return { asks: 'NOTHING' };
+  return { asks: 'SOMETHING', asksDetail: describeShape(shape) };
+}
+
+/** Everything that has been read out of an item, as one body of text. */
+export function textOf(item: BidOnEvidence): string {
+  return [...(item.extractedText ?? []), ...item.chunks.map((chunk) => chunk.text)].join('\n');
 }
 
 export function visibleEvidence(ctx: EngineContext): { evidence: EvidenceChoice[] } {
@@ -702,7 +704,7 @@ export function visibleEvidence(ctx: EngineContext): { evidence: EvidenceChoice[
         hash: item.hash,
         read: item.chunks.length > 0,
         ...(item.semanticModel ? { embedded: item.semanticModel.provider } : {}),
-        ...(item.chunks.length > 0 ? { questionish: shapeOf(item) } : {}),
+        ...verdictOf(item),
         withdrawn: item.withdrawnAt !== undefined,
         ...(item.expiresOn ? { expiresOn: item.expiresOn } : {}),
       })),

@@ -6,12 +6,13 @@ import { extractText, inspect, type Extraction } from '../../evidence/ingest.ts'
 import type { ProviderMedia } from '../../ai/providers/types.ts';
 import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
-import { questionShape } from './questionshape.ts';
+import { asksNothing, describeShape, looksLikeQuestionSet, questionShape } from './questionshape.ts';
 import type { Clarification } from '../tenderintake.ts';
 import { requireVisibleCustomer } from './customers.ts';
 import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
 import { depositStanding, invoicesOf, requireFundedEngagement } from './billing.ts';
 import {
+  textOf,
   CHUNK_MIN_CHARS,
   evidenceCurrentOn,
   evidenceOf,
@@ -319,18 +320,12 @@ export async function parseQuestionnaire(
    * argued with is a rule that stops work.
    */
   const shape = questionShape(parts.map((part) => part.text ?? '').join('\n'));
-  if (
-    source?.kind === 'TEXT' &&
-    input.anyway !== true &&
-    shape.numbered === 0 &&
-    shape.questionMarks === 0 &&
-    shape.imperatives === 0
-  ) {
+  if (source?.kind === 'TEXT' && input.anyway !== true && asksNothing(shape)) {
     throw new DomainError(
       'BID_ON_NOT_A_QUESTION_SET',
-      `${documentLabel} has nothing question-shaped in it: ${sentChars.toLocaleString()} characters, no numbered ` +
-        'lines, no question marks and none of the phrasing a questionnaire is written in ("describe", "set out", ' +
-        `"confirm"). Nothing has been sent to a model and nothing has been charged. ` +
+      `${documentLabel} asks nothing: ${sentChars.toLocaleString()} characters, not one question mark and not one ` +
+        'line that begins by asking something ("Please describe…", "4.1 Set out…"). Nothing has been sent to a ' +
+        'model and nothing has been charged. ' +
         `${wrongDocumentHint(ctx, bid, input.hash)} If you know this document better than the check does, read it ` +
         'anyway and it will be sent — one call, and the check is a floor rather than a gate.',
       422,
@@ -802,21 +797,16 @@ function wrongDocumentHint(
   const others = evidenceOf(ctx)
     .filter((item) => item.customerAccountId === bid.customerAccountId && item.id !== chosenId && !item.withdrawnAt)
     .map((item) => {
-      const text = [...(item.extractedText ?? []), ...item.chunks.map((chunk) => chunk.text)].join('\n');
-      const shape = questionShape(text);
-      const asks = shape.questionMarks + shape.imperatives;
-      return {
-        asks: item.chunks.length === 0 ? -1 : asks,
-        line:
-          `${item.reference} ${item.title}` +
-          (item.chunks.length === 0
-            ? ' (nothing read out of it yet)'
-            : asks > 2
-              ? ` (${shape.questionMarks} question(s), ${shape.imperatives} asked plainly — this looks like a question set)`
-              : ' (asks nothing)'),
-      };
+      if (item.chunks.length === 0) return { rank: -1, line: `${item.reference} ${item.title} (nothing read out of it yet)` };
+      const shape = questionShape(textOf(item));
+      const describes = describeShape(shape);
+      if (looksLikeQuestionSet(shape)) {
+        return { rank: 2, line: `${item.reference} ${item.title} — this one looks like a question set: ${describes}` };
+      }
+      if (asksNothing(shape)) return { rank: 0, line: `${item.reference} ${item.title} (asks nothing)` };
+      return { rank: 1, line: `${item.reference} ${item.title} (${describes})` };
     })
-    .sort((a, b) => b.asks - a.asks)
+    .sort((a, b) => b.rank - a.rank)
     .map((entry) => entry.line);
 
   const unnumbered = returned.rows > 0 && returned.withoutNumber === returned.rows;

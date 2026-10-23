@@ -28966,3 +28966,35 @@ is what happened* — "21 rows, none carried a question number" — which on an
 order form or a cost model is the diagnosis rather than a numbering problem, and
 the way through is the manual route, where somebody assigns the numbers
 deliberately.
+
+
+### The label that fired on everything
+
+The first cut of the question-shape check counted the imperatives a
+questionnaire is written in — "describe", "provide", "confirm", "state" —
+**anywhere in the text**. On a real library that produced:
+
+    Appendix 3 — Schedule of Amendments · looks like a question set (0 questions, 131 asked plainly)
+    Appendix 5 — EPC Cost Model · looks like a question set (0 questions, 32 asked plainly)
+    Appendix 6 — EPC Specification · looks like a question set (0 questions, 12 asked plainly)
+
+Nine documents out of ten labelled as the thing the reader was looking for,
+which costs them exactly what the label was added to give. A signal that fires
+on everything is worse than no signal.
+
+The mistake was counting **vocabulary** instead of **shape**. Contract and
+specification prose is built from those verbs — *"the Contractor shall
+provide"*, *"the Employer shall confirm"* — because that is how an obligation
+is written. A question differs in two ways that are cheap to see: it **begins**
+a line, after its number if it has one (`4.1 Describe your approach…`), and it
+**addresses the reader** (*your* approach, what *you* will do). A specification
+addresses a party in the third person; a stock list addresses nobody.
+
+So `asking` counts lines that begin by asking, `addressed` counts the second
+person, and the verdict needs both unless there are three or more actual
+question marks. Numbered lines survive only as a tie-breaker: a stock list of
+two thousand addresses is full of house numbers.
+
+The verdict is computed once, server-side — `QUESTIONS`, `SOMETHING`,
+`NOTHING`, `UNREAD` — and the chooser, the refusal and the pre-flight check all
+read it. The browser restating the rule is how the two would have drifted.
