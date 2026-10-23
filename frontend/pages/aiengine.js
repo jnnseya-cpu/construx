@@ -23,7 +23,7 @@ import { badge, date, html, humanise, raw, render, table, time, toast } from '..
  */
 
 export async function aiengine(root) {
-  const [plane, evaluation, agents, ladder, credentials] = await Promise.all([
+  const [plane, evaluation, agents, ladder, credentials, vendors] = await Promise.all([
     api.get('/v1/ai/control-plane').catch((error) => ({ error })),
     api.get('/v1/admin/ai/evaluation').catch((error) => ({ error })),
     api.get('/v1/agents/fleet').catch(() => null),
@@ -31,6 +31,11 @@ export async function aiengine(root) {
     // Which keys this deployment holds. Never a value — the route has none to
     // return, which is the property the whole store exists to have.
     api.get('/v1/admin/platform-credentials').catch((error) => ({ error })),
+    // What the agreement with each vendor says: what it may be handed, and what
+    // it does with it afterwards. Both lived in `.env`, so the only way to
+    // clear a vendor for commercial material was an SSH session — and the
+    // refusal a bid manager hits on a return date is this one.
+    api.get('/v1/admin/vendor-terms').catch((error) => ({ error })),
   ]);
 
   if (plane.error) {
@@ -251,6 +256,56 @@ export async function aiengine(root) {
               `}
         </div>
         <div class="card pad0">
+          <h2 style="padding:15px 17px 0">What the agreement with each vendor says</h2>
+          <div class="metric-sub" style="padding:0 17px 10px">
+            <!--
+              The second panel that ends the SSH session, and the one that
+              actually gates work. A key makes a vendor reachable; this decides
+              what the platform may hand it. Both facts are about a contract
+              rather than about the software, so the platform is told them —
+              and until now it was told through two environment variables, with
+              nobody's name on the decision and a restart to change it.
+            -->
+            A key makes a vendor reachable. This decides what the platform may send it, and says what happens to it
+            afterwards. Both are facts about the agreement you hold with that vendor, so nothing here is discovered —
+            it is recorded, with the agreement named, and it goes on the chain with your name on it.
+          </div>
+          ${vendors?.error
+            ? html`<div style="padding:0 17px 14px">${refusal('The vendor register', vendors.error)}</div>`
+            : html`
+                <div style="padding:0 17px 11px">
+                  ${raw(commandBar([
+                    { id: 'declare-vendor-terms', label: 'Record a vendor’s terms', tone: '',
+                      permitted: can('PLATFORM_ADMINISTRATION', 'U'), reason: blockedReason('PLATFORM_ADMINISTRATION', 'U') },
+                  ]))}
+                </div>
+                ${table({
+                  headers: ['Vendor', 'May be handed', 'What it does with it', 'Agreement', 'Declared'],
+                  rows: (vendors?.vendors ?? []).map((entry) => [
+                    entry.provider,
+                    // The level, and whether anybody actually said so. An
+                    // undeclared vendor sitting at the default reads as a
+                    // decision somebody took, and it is the absence of one.
+                    entry.declared
+                      ? badge(humanise(entry.clearance), entry.clearance === 'PUBLIC' ? '' : 'ok')
+                      : html`${badge(humanise(entry.clearance), 'warn')}
+                          <div class="metric-sub" style="margin-top:4px">Nobody has declared this — it is the default.</div>`,
+                    html`<span style="font-size:12.5px;color:var(--text-3)">${entry.statement}</span>`,
+                    entry.agreementReference
+                      ? html`<span style="font-size:12px">${entry.agreementReference}</span>`
+                      : html`<span style="font-size:12px;color:var(--text-3)">—</span>`,
+                    entry.declaredAt
+                      ? html`${date(entry.declaredAt)}<div class="metric-sub">${entry.reason ?? ''}</div>`
+                      : '—',
+                  ]),
+                  empty: 'No provider is configured on this deployment.',
+                })}
+                ${vendors?.note
+                  ? html`<div class="metric-sub" style="padding:10px 17px 14px">${vendors.note}</div>`
+                  : ''}
+              `}
+        </div>
+        <div class="card pad0">
           <h2 style="padding:15px 17px 0">What each engine asks of each kind of model</h2>
           <div class="metric-sub" style="padding:0 17px 10px">
             <!--
@@ -415,6 +470,69 @@ export async function aiengine(root) {
    * can reason about after an incident. What the platform can do is refuse to
    * read it again, and say plainly which two things are still somebody's job.
    */
+  /*
+   * Declaring what a vendor's agreement says.
+   *
+   * This is the control that clears `AI_CLEARANCE_REQUIRED` — the refusal a bid
+   * manager meets on a return date, which until now could only be cleared by
+   * somebody with SSH and a restart. The platform refuses anything above
+   * internal without the agreement named, the processing region stated and the
+   * training question answered, because those are exactly the three a
+   * commercial clearance rests on and a reassurance with no contract behind it
+   * is worse than the refusal it replaces.
+   */
+  for (const button of root.querySelectorAll('[data-command="declare-vendor-terms"]')) {
+    button.addEventListener('click', async () => {
+      const result = await command({
+        title: 'Record what this vendor’s agreement says',
+        intent:
+          'Two facts, both of them about your contract rather than about the software: the highest sensitivity this ' +
+          'vendor may be handed, and what it does with it afterwards. Above internal the platform asks which ' +
+          'agreement you are reading, where the processing happens and whether the material is excluded from model ' +
+          'training — it will not clear a vendor for commercial or legal material on an unanswered question. Goes on ' +
+          'the chain with your name on it.',
+        path: (values) => `/v1/admin/vendor-terms/${values.provider}`,
+        submitLabel: 'Record it',
+        fields: [
+          { name: 'provider', label: 'Vendor', type: 'select',
+            options: (vendors?.vendors ?? []).map((entry) => ({
+              value: entry.provider,
+              label: `${entry.provider} — ${entry.declared ? `currently ${humanise(entry.clearance)}` : `undeclared, defaulting to ${humanise(entry.clearance)}`}`,
+            })) },
+          { name: 'clearance', label: 'May be handed, at most', type: 'select',
+            options: (vendors?.levels ?? []).map((level) => ({ value: level, label: humanise(level) })),
+            hint: 'Commercial-L3 is what a tender, a price or a bid response needs. Legal-L4 is privileged material.' },
+          { name: 'retentionRoute', label: 'What it does with it', type: 'select',
+            options: [
+              { value: 'ZERO', label: 'Keeps nothing' },
+              { value: 'TRANSIENT', label: 'Keeps it for a stated period, then deletes it' },
+              { value: 'RETAINED', label: 'Retains it under the agreement' },
+              { value: 'NOT_DECLARED', label: 'Not declared — nobody has read the terms yet' },
+            ] },
+          { name: 'days', label: 'For how many days', type: 'number', required: false, min: 0,
+            hint: 'Required where it keeps it for a period. Their figure, out of the agreement.' },
+          { name: 'region', label: 'Processed in', type: 'text', required: false, placeholder: 'eu-west',
+            hint: 'Where the vendor says the processing happens. Required above internal.' },
+          { name: 'trainingExcluded', label: 'Excluded from model training', type: 'checkbox',
+            hint: 'Tick only if the agreement says so in writing. Required above internal, either way.' },
+          { name: 'agreementReference', label: 'Which agreement', type: 'text', required: false,
+            placeholder: 'Enterprise agreement, zero-retention addendum, 14 Oct 2026',
+            hint: 'What somebody would have to go and read. Required above internal.' },
+          { name: 'reason', label: 'Why now', type: 'text',
+            hint: 'Recorded against the decision. "Zero-retention addendum signed; EU processing confirmed."' },
+        ],
+        transform: ({ provider: _p, ...rest }) => ({
+          ...rest,
+          ...(rest.days === undefined || rest.days === '' ? { days: undefined } : { days: Number(rest.days) }),
+        }),
+      });
+      if (result) {
+        toast('Recorded', result.effect, 'ok');
+        aiengine(root);
+      }
+    });
+  }
+
   for (const button of root.querySelectorAll('[data-command="retire-environment"]')) {
     button.addEventListener('click', async () => {
       const result = await command({

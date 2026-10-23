@@ -43,6 +43,13 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
    * out.
    */
   PlatformCredential: { area: 'PLATFORM_ADMINISTRATION' },
+  /*
+   * What the contract with an AI vendor says. Carries no secret — a clearance
+   * level, a retention route, a region and the agreement it was read from — and
+   * it decides whether the platform may hand a customer's commercial material
+   * to a third party, so it sits with the rest of the platform's governance.
+   */
+  VendorTerms: { area: 'PLATFORM_ADMINISTRATION' },
   PermissionPolicy: { area: 'PLATFORM_ADMINISTRATION' },
   ACUWallet: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   // Money entering the platform. Same area and sensitivity as the wallet it

@@ -28153,12 +28153,8 @@ was a real door for three of them, which is why that assertion is a ceiling
 rather than zero — and also exactly why the walks exist: the generated catalogue
 is reachable, and nobody bidding a tender on a deadline finds it.
 
-One write on this screen is still doorless and is left so deliberately:
-`POST /v1/pipeline/supply-chain-evidence` answers "what does the register say
-about these trades", which would suggest the supply-chain score. It takes a list
-of trades the console does not hold per pursuit, so a panel for it would be a
-box asking somebody to type trade names. Recorded here rather than given a door
-that does nothing.
+One write on this screen was left doorless, and that was wrong — see
+*The trade register answers one of the ten* below.
 
 The mechanics of both walks are now one module, `tools/walklib.mjs`, rather than
 two copies. Two definitions of "the command was accepted" is two opinions about
@@ -28361,3 +28357,76 @@ that the retirement survives the store being cleared — which is the whole poin
 of it — that the effect names both outstanding jobs, that it is reversible, that
 it is on the chain with no value on it, and that it is refused to everybody but
 the platform operator.
+
+## The vendor's terms, declared from the console
+
+Two facts decide whether the platform may hand a customer's record to a third
+party, and neither is knowable from the software: **what the vendor is cleared
+to receive** and **what it does with it afterwards**. Both lived in `.env`, as
+`AI_PROVIDER_CLEARANCE` and `AI_PROVIDER_RETENTION`.
+
+That meant the refusal a bid manager meets on the afternoon of a return —
+*"AI_CLEARANCE_REQUIRED until AI_PROVIDER_CLEARANCE names your vendor at
+COMMERCIAL_L3"* — could only be cleared by somebody with SSH and a container
+restart, and could not be cleared by the person who actually holds the contract.
+It also meant the record of the decision was a string in a file: no name, no
+date, and no reference to the agreement it was read out of. A statement about a
+legal agreement is exactly the kind of thing this platform puts on a chain, and
+this one was the single most consequential one it did not.
+
+`backend/src/ai/vendorterms.ts` is the overlay the sensitivity rules read
+first — declaration, then environment, then default, which is the credential
+store's precedence and the same argument. `PLATFORM_VENDOR_TERMS_DECLARED`
+carries the clearance, the retention route, the days, the region, whether the
+contract excludes it from training, **the agreement it is read from**, who
+decided and why. `POST /v1/admin/vendor-terms/:provider`, and *What the
+agreement with each vendor says* on the AI Engine screen.
+
+**It will not clear a vendor on an unanswered question.** Above `INTERNAL` the
+platform is being told it may hand over safety, commercial and legally
+privileged material, so it asks the three things such a clearance rests on: which
+agreement, where it is processed, and whether it is excluded from model
+training. Every missing answer is named at once. Below internal it asks none of
+them, because nothing sensitive is at stake. A reassurance on a screen with no
+contract behind it is worse than the refusal it replaces, and that is the whole
+reason this is a declaration rather than a dropdown.
+
+The register lists **every** provider the platform can call, declared or not,
+with the default marked as a default — silence on "is OPENAI cleared?" reads as
+yes, and it is not an answer.
+
+Never an agent's: an agent clearing a vendor to receive privileged material is
+the one act the whole mechanism exists to make impossible.
+
+What this does **not** do, and the screen says so: it does not obtain the
+agreement. A zero-retention, no-training term in a UK or EU region is something
+a customer gets in writing from the vendor; the platform records that they have
+it and refuses to pretend otherwise until they do.
+
+## The trade register answers one of the ten
+
+`POST /v1/pipeline/supply-chain-evidence` was recorded here as deliberately
+doorless, on the reasoning that a panel for it would be "a box asking somebody
+to type trade names". That was wrong, and it was wrong in a way worth writing
+down: the trade catalogue is **published** at `/v1/supply-chain/trades`, so the
+panel offers the register's own trades and a typed name nothing can match never
+arises.
+
+It matters because supply-chain capacity is the one factor of the ten a bid is
+scored on that the platform can answer from evidence rather than from memory.
+The register knows how many prequalified firms cover each trade and which have
+fewer than the three an enquiry needs to be competitive. *Ask the register about
+the trades* sits beside *Score an opportunity* and suggests a score; it does not
+set one, and says why — the register knows the count, not whether those firms
+would want this job.
+
+It writes nothing, so the console says the answer back rather than redrawing
+over it: the suggested score, the trades too thin to compete, and the ones not
+on the register at all.
+
+`doors.test.ts`'s ceiling falls 293 → 292.
+
+Verified: `npm test` and `npm run typecheck` clean. The vendor-terms suite
+asserts that a declaration takes effect in the function the gate reads, that
+every missing answer above internal is named at once, that it is on the chain
+with the agreement on it, and that it is the operator's and nobody else's.

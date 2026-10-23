@@ -3,6 +3,7 @@ import type { DataSensitivity } from '../identity/abac.ts';
 import { ENTITY_ACCESS } from '../identity/entityAccess.ts';
 import type { AIProvider } from '../goldenthread/types.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
+import { declaredTerms } from './vendorterms.ts';
 
 /**
  * Which vendor a record may be sent to.
@@ -102,6 +103,13 @@ export function sensitivityOf(refs: readonly EntityRef[]): DataSensitivity {
  * somebody states, per vendor, that the contract with them permits it.
  */
 export function clearanceFor(provider: AIProvider | string): DataSensitivity {
+  // Declared from the console first, then the environment, then the default —
+  // the same precedence the credential store uses and for the same reason: the
+  // newer and revocable place wins, and a deployment configured entirely
+  // through `.env` behaves exactly as it did. See `vendorterms.ts` for why a
+  // statement about a legal agreement stopped being a string in a file.
+  const declared = declaredTerms(provider)?.clearance;
+  if (declared) return declared;
   const configured = config.ai.providerClearance[provider];
   return configured ?? config.ai.defaultClearance;
 }
@@ -122,7 +130,7 @@ export function clearanceFor(provider: AIProvider | string): DataSensitivity {
  * it.
  */
 export function retentionFor(provider: AIProvider | string): ProviderRetention {
-  return config.ai.providerRetention[provider] ?? { route: 'NOT_DECLARED' };
+  return declaredTerms(provider)?.retention ?? config.ai.providerRetention[provider] ?? { route: 'NOT_DECLARED' };
 }
 
 /**
@@ -153,7 +161,7 @@ export function retentionStatement(provider: AIProvider | string, leavesPlatform
     case 'RETAINED':
       return `Sent to ${provider}, which retains it${held.days ? ` for ${held.days} days` : ''} under the agreement in place.${where}${training}`;
     default:
-      return `Sent to ${provider}. Nobody has declared what ${provider} does with it — the operator sets AI_PROVIDER_RETENTION once the agreement with this vendor is known.`;
+      return `Sent to ${provider}. Nobody has declared what ${provider} does with it — the operator records the vendor's terms on the AI Engine screen once the agreement with them is known.`;
   }
 }
 

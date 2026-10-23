@@ -159,7 +159,14 @@ describe('every command has a door', () => {
     // The catalogue was the door for three of these. That is the point of the
     // ratchet rather than zero — and also the point of the walks: the catalogue
     // is reachable, and nobody bidding a tender on a deadline finds it.
-    const CEILING = 293;
+    // 293 → 292. `POST /v1/pipeline/supply-chain-evidence` got the door it was
+    // recorded as deliberately not having. The reasoning for leaving it was
+    // that a panel would be "a box asking somebody to type trade names" — and
+    // that was the wrong conclusion: the trade catalogue is published, so the
+    // panel offers the register's own trades and the answer comes back off the
+    // register. It is the one factor of the ten a bid is scored on that the
+    // platform can answer from evidence, and it was unreachable.
+    const CEILING = 292;
     assert.ok(
       unreachable.length <= CEILING,
       `${unreachable.length} write routes have no hand-built door, up from ${CEILING}. ` +

@@ -725,7 +725,7 @@ function matrixDetail(analysis, waivers, addenda) {
 const TENANT = { tenantScoped: true };
 
 export async function pipeline(root) {
-  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList] = await Promise.all([
+  const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList, tradeCatalogue] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
     api.get('/v1/pipeline'),
     api.get('/v1/pipeline/discipline'),
@@ -758,6 +758,10 @@ export async function pipeline(root) {
     // creation, so without this the conversion below could only offer somebody
     // a box to type an id into.
     api.get('/v1/portfolios').catch(() => ({ portfolios: [] })),
+    // The trade catalogue, so the one factor of the ten the platform can answer
+    // from evidence can be asked about the trades this register actually knows
+    // rather than typed into a box.
+    api.get('/v1/supply-chain/trades').catch(() => ({ trades: [] })),
   ]);
 
   // The reader is project-scoped: a reading is filed against the project the
@@ -852,6 +856,23 @@ export async function pipeline(root) {
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
+  /*
+   * The trades the register knows, grouped the way it groups them.
+   *
+   * This is why `POST /v1/pipeline/supply-chain-evidence` had no door for so
+   * long: the objection was that a panel would be a box asking somebody to type
+   * trade names, and a typed trade is one the catalogue cannot match. It was
+   * the wrong conclusion — the catalogue is published, so the panel can offer
+   * the real trades and the answer comes back off the register.
+   */
+  // Flat, with the group in each label. A multiple-select renders no option
+  // groups — only the single chooser does — so grouping here would have put
+  // `undefined` in every row of the list somebody picks from.
+  const tradeOptions = (tradeCatalogue?.trades ?? []).map((trade) => ({
+    value: trade.code,
+    label: `${humanise(String(trade.group ?? ''))} · ${trade.label}${trade.accreditationRequired ? ' (accredited)' : ''}`,
+  }));
+
   /** Where a converted win lands. A project sits in a portfolio, always. */
   const portfolios = (portfolioList?.portfolios ?? []).map((p) => ({ value: p.portfolioId ?? p.id, label: p.name }));
 
@@ -1850,6 +1871,20 @@ export async function pipeline(root) {
             // Score it, decide it, then record how it ended — in that order,
             // because each is the gate in front of the next and the first two
             // had no door on the screen that publishes the algorithm.
+            /*
+             * The one factor of the ten the platform can answer from evidence.
+             *
+             * Supply-chain capacity is a guess everywhere else: somebody
+             * remembers roughly how many firms they have for groundworks. The
+             * register knows exactly, and knows which trades have too few to
+             * run a competitive enquiry — so this asks it, and suggests the
+             * score rather than setting one. The register knows the count; it
+             * does not know whether those firms would want the job.
+             */
+            { id: 'supply-chain-evidence', label: 'Ask the register about the trades', tone: 'quiet',
+              permitted: can('BUSINESS_DEVELOPMENT', 'R') && tradeOptions.length > 0,
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'R')
+                ?? 'The trade catalogue could not be read, so there is nothing to ask about.' },
             { id: 'qualify', label: 'Score an opportunity', tone: '',
               permitted: can('BUSINESS_DEVELOPMENT', 'U') && scorable.length > 0,
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'U')
@@ -2177,6 +2212,29 @@ export async function pipeline(root) {
      * outside 1–5, and each field says what 5 and what 1 mean on that factor
      * rather than leaving somebody to guess which end is good.
      */
+    /*
+     * What the register says about the trades a job needs.
+     *
+     * A reading, not a record: it writes nothing and suggests a score rather
+     * than setting one, because the register knows how many prequalified firms
+     * cover each trade and does not know whether any of them would want this
+     * job. The person scoring can disagree, and the panel says so.
+     */
+    'supply-chain-evidence': {
+      title: 'Ask the register about the trades',
+      intent:
+        'Supply-chain capacity is the one factor of the ten the platform can answer from evidence rather than from ' +
+        'memory. Pick the trades this job needs and the register says how many prequalified firms cover each, which ' +
+        'have too few to run a competitive enquiry, and which are not on the register at all. It suggests a score; ' +
+        'it does not set one — the register knows the count, not whether those firms would want the work.',
+      path: '/v1/pipeline/supply-chain-evidence',
+      submitLabel: 'Ask it',
+      fields: [
+        { name: 'trades', label: 'Trades this job needs', type: 'multiselect', options: tradeOptions,
+          hint: 'The catalogue’s own trades, so the answer comes off the register rather than off a typed name ' +
+            'nothing can match.' },
+      ],
+    },
     qualify: {
       title: 'Score an opportunity',
       intent:
@@ -3518,7 +3576,28 @@ export async function pipeline(root) {
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
-    if (await command(spec)) await draw();
+    const result = await command(spec);
+    if (!result) return;
+    /*
+     * One of these commands is a question rather than a record.
+     *
+     * The register's answer is the whole point of asking, and a redraw would
+     * throw it away — nothing is written, so there would be nothing on the
+     * screen to show for it. Said back instead, with the suggested score and
+     * the trades that are too thin to compete, which is what somebody scoring
+     * the opportunity is about to type.
+     */
+    if (button.dataset.command === 'supply-chain-evidence') {
+      toast(
+        `The register suggests ${result.suggestedScore} out of 5`,
+        `${result.note ?? ''}${
+          (result.uncovered ?? []).length > 0 ? ` Not on the register at all: ${result.uncovered.join(', ')}.` : ''
+        } It is a suggestion: the register knows how many firms cover each trade, not whether they would want this job.`,
+        (result.suggestedScore ?? 0) >= 4 ? 'ok' : 'warn',
+      );
+      return;
+    }
+    await draw();
   });
 
   const pendingClaims = (claimRegister?.claims ?? []).filter((claim) => claim.standing === 'PENDING');

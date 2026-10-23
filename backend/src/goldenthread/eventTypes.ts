@@ -301,6 +301,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // first would mean the only way to record the decision was to make one up.
   def('PLATFORM_CREDENTIAL_ENV_RETIRED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE', { creates: true }),
   def('PLATFORM_CREDENTIAL_ENV_RESTORED', 'PlatformCredential', 'UPDATE', 'GOVERNANCE'),
+  /*
+   * What the contract with an AI vendor says — §16.1, declared rather than
+   * discovered.
+   *
+   * Two facts decide whether the platform may hand a record to a third party:
+   * what that vendor is cleared to receive, and what it does with it
+   * afterwards. Neither is knowable from the software, and both lived in `.env`
+   * — so the only way to clear a vendor for commercial material was an SSH
+   * session, and the record of the decision was a string in a file with nobody's
+   * name on it.
+   *
+   * On the chain because it is a statement about a legal agreement: who decided
+   * it, when, and which agreement they were reading. Never an agent's — an
+   * agent clearing a vendor to receive privileged material is the one act this
+   * whole mechanism exists to make impossible.
+   */
+  def('PLATFORM_VENDOR_TERMS_DECLARED', 'VendorTerms', 'UPDATE', 'GOVERNANCE', { creates: true }),
   // Revocation is a plain UPDATE: there is nothing to take back from a company
   // that was never given it, and a revocation record with no grant behind it
   // would have to invent a grantor.
