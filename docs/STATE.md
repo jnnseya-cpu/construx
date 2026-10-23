@@ -28527,3 +28527,47 @@ What is **not** built: nothing splits a payload an engine assembled from
 records rather than from a document. Those are bounded by what the engine
 retrieves, and a refusal naming the size is the whole answer there until one of
 them is measured crossing a window in practice.
+
+## `TypeError: fetch failed` is not a diagnosis
+
+Reported from the same live run:
+
+    AI_PROVIDER_UNREACHABLE — OPENAI call failed: TypeError: fetch failed
+
+That was the whole of `String(error)`, and it is the same sentence for a name
+that did not resolve, a refused connection, a certificate that did not verify,
+a proxy that said no, a socket the vendor closed mid-answer and a network that
+went away. Node puts the reason in `error.cause` — one or two levels down, and
+inside an `AggregateError` when a host resolves to several addresses and every
+one of them fails. None of it was being read.
+
+`transportFailure` in `ai/providers/remote.ts` walks the cause chain, including
+an `AggregateError`'s branches, and reports the vendor's own code, the syscall
+and the chain in one line. Both the chat adapters and the embedding adapter use
+it, so no transport failure anywhere in the AI path says only "fetch failed".
+
+**The distinction that costs money.** These are not one kind of failure, and
+which one it is decides what happens to the customer's hold:
+
+- **`CONNECT` — nothing was sent.** DNS, a refused connection, an unroutable
+  host, a connect timeout, a refused certificate chain. The vendor has no
+  record of a request, so the failure is certain: the hold goes back, and the
+  call is retried **once** after half a second, because there is nothing to
+  duplicate. A few seconds of DNS trouble inside a container no longer costs
+  somebody a tender reading.
+- **`IN_FLIGHT` — the outcome is unknown.** A reset, a closed socket, a headers
+  or body timeout. The request may have arrived in full, been answered and been
+  billed, with only the answer lost. `AI_PROVIDER_DROPPED` (504) **parks** the
+  hold for reconciliation exactly as the deadline case does, and is never
+  retried automatically — a retry there is a second call the vendor may charge
+  for. This was previously released as a certain failure, so the platform
+  forgave charges it was going to be invoiced for.
+
+A code the list has never seen is treated as in flight, which is the safe
+direction: a parked hold is something an operator looks at, a release is a
+charge somebody absorbs. `UNRESOLVED_PROVIDER_CODES` is the one list the
+orchestrator and the adapters both read, so the two cannot drift.
+
+The refusal now names the host and says what to check — outbound DNS, egress,
+any proxy, and whether the vendor is down — because that is the next action,
+and `AI_PROVIDER_UNREACHABLE` on its own sent an operator nowhere.

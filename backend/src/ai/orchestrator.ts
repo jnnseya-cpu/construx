@@ -9,7 +9,14 @@ import type { AIProvider, EntityRef } from '../goldenthread/types.ts';
 import { outputStandardSchema } from './outputstandard.ts';
 import { configuredEmbeddingAdapter } from './providers/embedding.ts';
 import { mockPerception, mockReasoning } from './providers/mock.ts';
-import { CHARS_PER_TOKEN, remotePerception, remoteReasoning, requestInputTokens, spareAdapters } from './providers/remote.ts';
+import {
+  CHARS_PER_TOKEN,
+  UNRESOLVED_PROVIDER_CODES,
+  remotePerception,
+  remoteReasoning,
+  requestInputTokens,
+  spareAdapters,
+} from './providers/remote.ts';
 import type { AIProviderAdapter, ProviderCapability, ProviderRequest, ProviderResponse } from './providers/types.ts';
 
 /**
@@ -890,7 +897,14 @@ export class AIOrchestrator {
       // provider may have completed and billed. The hold stays reserved and the
       // execution waits for the operator's evidence (§10.2, AT-22). Every other
       // failure is certain, and the hold goes back.
-      if (error instanceof DomainError && error.code === 'AI_PROVIDER_TIMEOUT') {
+      //
+      // A connection **dropped after the request went out** is the same unknown
+      // outcome and was being released as a certain failure: the vendor may
+      // have answered and billed, and the platform would have forgiven a charge
+      // it is going to be invoiced for. `UNRESOLVED_PROVIDER_CODES` is the one
+      // list both files read, so the deadline case and the dropped case cannot
+      // drift apart.
+      if (error instanceof DomainError && UNRESOLVED_PROVIDER_CODES.has(error.code)) {
         wallet.parkHold(hold.holdId, error.message);
         execution.status = 'UNRESOLVED';
         execution.endedAt = new Date().toISOString();

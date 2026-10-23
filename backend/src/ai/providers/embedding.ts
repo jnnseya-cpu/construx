@@ -2,6 +2,7 @@ import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import type { AIProvider } from '../../goldenthread/types.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from './types.ts';
+import { transportFailure } from './remote.ts';
 
 /**
  * The embedding capability: text in, a vector out.
@@ -377,7 +378,27 @@ export class EmbeddingAdapter implements AIProviderAdapter {
           504,
         );
       }
-      throw new DomainError('AI_PROVIDER_UNREACHABLE', `${this.name} call failed: ${String(error)}`, 502);
+      // The same cause chain the chat adapters read. `TypeError: fetch failed`
+      // is not a diagnosis, and an embedding run is where it is least visible —
+      // nobody watches an index being built.
+      const failure = transportFailure(error);
+      // The host only. One of these endpoints carries the key in its query
+      // string, so the URL itself never reaches a message.
+      const host = new URL(this.#endpoint.url(modelClass, this.#apiKey)).host;
+      if (failure.stage === 'IN_FLIGHT') {
+        throw new DomainError(
+          'AI_PROVIDER_DROPPED',
+          `The connection to ${host} dropped after the request had gone out (${failure.code}: ${failure.because}). ` +
+            `${this.name} may have answered and billed for it, so the hold is held for reconciliation rather than released.`,
+          504,
+        );
+      }
+      throw new DomainError(
+        'AI_PROVIDER_UNREACHABLE',
+        `${this.name} could not be reached at ${host} (${failure.code}: ${failure.because}). Nothing was sent and ` +
+          `nothing was charged. Check that this container can resolve and reach ${host} on 443.`,
+        502,
+      );
     }
   }
 }

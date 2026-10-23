@@ -20,7 +20,8 @@ process.env.OPENAI_API_KEY = 'not-a-key-nothing-is-sent';
 const { rejectsCode, throwsCode } = await import('./helpers.ts');
 const { AIOrchestrator } = await import('../src/ai/orchestrator.ts');
 const { documentTextOf, partsOf } = await import('../src/domain/bidon/engine.ts');
-const { ENDPOINTS, RemoteProviderAdapter, requestInputTokens } = await import('../src/ai/providers/remote.ts');
+const { ENDPOINTS, RemoteProviderAdapter, UNRESOLVED_PROVIDER_CODES, requestInputTokens, transportFailure } =
+  await import('../src/ai/providers/remote.ts');
 
 /**
  * The context window, and the three places it is now known about.
@@ -277,5 +278,77 @@ describe('a document bigger than any window is read in parts', () => {
   it('never returns nothing', () => {
     assert.deepEqual(partsOf('', 100), ['']);
     assert.deepEqual(partsOf('   ', 100), ['   ']);
+  });
+});
+
+describe('why a call never got an answer', () => {
+  /*
+   * What the operator was told, in full:
+   *
+   *     AI_PROVIDER_UNREACHABLE — OPENAI call failed: TypeError: fetch failed
+   *
+   * Node puts the reason in `cause`, one or two levels down, and in an
+   * `AggregateError` when a host resolves to several addresses and all of them
+   * fail. None of it was read, so a DNS failure, a refused connection, an
+   * expired certificate and a socket the vendor closed mid-answer were one
+   * sentence — and the last of those is the one where the vendor may already
+   * have billed for the work.
+   */
+  const fetchFailed = (cause: unknown): Error => {
+    const error = new TypeError('fetch failed');
+    (error as { cause?: unknown }).cause = cause;
+    return error;
+  };
+
+  const named = (message: string, code: string, extra: Record<string, unknown> = {}): Error =>
+    Object.assign(new Error(message), { code, ...extra });
+
+  it('reads the reason out of the cause chain', () => {
+    const failure = transportFailure(fetchFailed(named('getaddrinfo ENOTFOUND api.openai.com', 'ENOTFOUND', { syscall: 'getaddrinfo' })));
+
+    assert.equal(failure.code, 'ENOTFOUND');
+    assert.match(failure.because, /fetch failed/);
+    assert.match(failure.because, /getaddrinfo ENOTFOUND api\.openai\.com/);
+    assert.match(failure.because, /\(getaddrinfo\)/, 'the syscall is part of the diagnosis');
+  });
+
+  it('walks an AggregateError, which is what two refused addresses look like', () => {
+    const both = new AggregateError(
+      [named('connect ECONNREFUSED 127.0.0.1:443', 'ECONNREFUSED'), named('connect ECONNREFUSED ::1:443', 'ECONNREFUSED')],
+      'all addresses failed',
+    );
+    const failure = transportFailure(fetchFailed(both));
+
+    assert.equal(failure.stage, 'CONNECT', 'nothing was sent, so the hold goes back');
+    assert.equal(failure.code, 'ECONNREFUSED');
+    assert.match(failure.because, /ECONNREFUSED/);
+  });
+
+  it('calls a connection that was never established CONNECT, so one retry is safe', () => {
+    for (const code of ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT', 'CERT_HAS_EXPIRED']) {
+      assert.equal(transportFailure(fetchFailed(named('…', code))).stage, 'CONNECT', code);
+    }
+  });
+
+  it('calls a dropped call IN_FLIGHT, because the vendor may have answered and billed', () => {
+    for (const code of ['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'ETIMEDOUT']) {
+      assert.equal(transportFailure(fetchFailed(named('…', code))).stage, 'IN_FLIGHT', code);
+    }
+  });
+
+  it('treats a code it has never seen as in flight, which is the safe direction', () => {
+    // An unknown code becomes a parked hold an operator looks at, never a
+    // release that forgives a charge the vendor is going to make.
+    assert.equal(transportFailure(fetchFailed(named('something new', 'UND_ERR_SOMETHING'))).stage, 'IN_FLIGHT');
+    assert.equal(transportFailure(new Error('no cause at all')).stage, 'IN_FLIGHT');
+  });
+
+  it('keeps the two unknown-outcome refusals in one list both files read', () => {
+    // The orchestrator parks a hold for exactly these and releases every other
+    // failure. Two files comparing codes of their own is a customer charged for
+    // a call nobody can account for.
+    assert.ok(UNRESOLVED_PROVIDER_CODES.has('AI_PROVIDER_TIMEOUT'));
+    assert.ok(UNRESOLVED_PROVIDER_CODES.has('AI_PROVIDER_DROPPED'));
+    assert.equal(UNRESOLVED_PROVIDER_CODES.size, 2);
   });
 });

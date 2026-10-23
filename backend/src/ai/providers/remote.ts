@@ -620,6 +620,110 @@ export function parseModelOutput(reply: ModelReply, provider: AIProvider): Recor
   );
 }
 
+/**
+ * Why a call never got an answer, in words an operator can act on.
+ *
+ * ## What happened
+ *
+ * A live run reported, in full:
+ *
+ *     AI_PROVIDER_UNREACHABLE — OPENAI call failed: TypeError: fetch failed
+ *
+ * That is the whole of what `String(error)` yields, and it is the same sentence
+ * for a DNS failure, a refused connection, an expired certificate, a proxy that
+ * denied the request, a socket the vendor closed mid-answer and a network that
+ * went away. Node puts the actual reason in `error.cause` — one or two levels
+ * down, and in an `AggregateError` when a host resolves to several addresses
+ * and every one of them failed. None of it was being read, so an operator was
+ * told their AI was broken and given nothing to check.
+ *
+ * ## The distinction that costs money
+ *
+ * These failures are not one kind of thing, and the difference decides what
+ * happens to the customer's hold:
+ *
+ *   - **Nothing was sent.** DNS did not resolve, the connection was refused,
+ *     the certificate did not verify, the proxy said no. The vendor has no
+ *     record of a request, so the failure is *certain*: the hold goes back, and
+ *     one retry is safe because there is nothing to duplicate.
+ *   - **The call was in flight.** The socket was reset, the other side closed,
+ *     the headers or the body timed out. The request may have arrived in full
+ *     and been answered and billed, with only the answer lost. That is the same
+ *     unknown outcome as the deadline case (§10.2): the hold is **parked** for
+ *     the operator to reconcile against the vendor's own account, never
+ *     silently released and never charged, and it is never retried
+ *     automatically — a retry there is a second call the vendor may bill.
+ *
+ * `transportFailure` classifies it and says the host, the code and the chain of
+ * causes. Nothing from the request body is in the message.
+ */
+type TransportFailure = {
+  /** `CONNECT` — nothing reached the vendor. `IN_FLIGHT` — the outcome is unknown. */
+  stage: 'CONNECT' | 'IN_FLIGHT';
+  /** The vendor's own code, where it gave one: `ENOTFOUND`, `ECONNRESET`, `UND_ERR_SOCKET`. */
+  code: string;
+  /** The cause chain, outermost first, as one line. */
+  because: string;
+};
+
+/**
+ * Codes for a failure that happened **before** the request was transmitted.
+ *
+ * Everything not named here is treated as in-flight, which is the safe
+ * direction: an unknown code becomes a parked hold an operator looks at, never
+ * a release that forgives a charge the vendor is going to make, and never an
+ * automatic retry.
+ */
+const CONNECT_CODES = new Set([
+  // Name resolution.
+  'ENOTFOUND', 'EAI_AGAIN',
+  // Nothing listening, nothing routable, or the host refused outright.
+  'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'ENETDOWN', 'EACCES', 'EPERM',
+  // The connect attempt itself timed out, before any byte of the request.
+  'UND_ERR_CONNECT_TIMEOUT',
+  // TLS: the certificate chain was refused, so the session was never established.
+  'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'SELF_SIGNED_CERT_IN_CHAIN', 'ERR_TLS_CERT_ALTNAME_INVALID',
+]);
+
+export function transportFailure(error: unknown): TransportFailure {
+  const reasons: string[] = [];
+  let code = '';
+
+  // Down the `cause` chain, and through an `AggregateError`'s branches, which
+  // is the shape a host with an IPv6 and an IPv4 address produces when both
+  // refuse. Bounded, because a cause chain is a graph somebody else built.
+  const visit = (value: unknown, depth: number): void => {
+    if (value === null || typeof value !== 'object' || depth > 4) return;
+    const node = value as { message?: unknown; code?: unknown; errno?: unknown; syscall?: unknown; cause?: unknown; errors?: unknown };
+    const message = typeof node.message === 'string' ? node.message : '';
+    const named = typeof node.code === 'string' ? node.code : '';
+    if (named !== '' && code === '') code = named;
+    const syscall = typeof node.syscall === 'string' ? ` (${node.syscall})` : '';
+    const line = `${message}${named === '' || message.includes(named) ? '' : ` [${named}]`}${syscall}`.trim();
+    if (line !== '' && !reasons.includes(line)) reasons.push(line);
+    if (Array.isArray(node.errors)) for (const branch of node.errors) visit(branch, depth + 1);
+    visit(node.cause, depth + 1);
+  };
+  visit(error, 0);
+
+  return {
+    stage: CONNECT_CODES.has(code) ? 'CONNECT' : 'IN_FLIGHT',
+    code: code === '' ? 'unknown' : code,
+    because: reasons.length > 0 ? reasons.join(' <- ') : String(error),
+  };
+}
+
+/**
+ * The refusals whose outcome at the vendor is **unknown**.
+ *
+ * Read by the orchestrator, which parks the hold for these and releases it for
+ * every other failure. One exported set rather than a code compared in two
+ * files, because the consequence of the two disagreeing is a customer charged
+ * for a call nobody can account for, or a charge the platform absorbs.
+ */
+export const UNRESOLVED_PROVIDER_CODES = new Set(['AI_PROVIDER_TIMEOUT', 'AI_PROVIDER_DROPPED']);
+
 /** Enough of a reply to diagnose it, never enough to fill a log with a drawing. */
 function excerpt(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
@@ -743,12 +847,40 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
        * that would rather refuse than wait sets `AI_PROVIDER_DEADLINE_MS`.
        */
       const deadlineMs = config.ai.providerDeadlineMs;
-      const response = await fetch(this.#endpoint.url, {
-        method: 'POST',
-        headers: this.#endpoint.headers(this.#apiKey),
-        body: JSON.stringify(this.#endpoint.body(request, modelClass)),
-        ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
-      });
+      const body = JSON.stringify(this.#endpoint.body(request, modelClass));
+      const send = (): Promise<Response> =>
+        fetch(this.#endpoint.url, {
+          method: 'POST',
+          headers: this.#endpoint.headers(this.#apiKey),
+          body,
+          ...(deadlineMs > 0 ? { signal: AbortSignal.timeout(deadlineMs) } : {}),
+        });
+
+      /*
+       * One retry, and only where nothing was sent.
+       *
+       * A name that did not resolve or a connection that was refused is a
+       * failure the vendor has no record of, and the commonest cause of one is
+       * a few seconds of DNS or egress trouble inside a container. Losing a
+       * tender reading to that — after the hold, after the wait — is the kind
+       * of fragility that makes a platform untrustworthy on a bad network, and
+       * retrying it duplicates nothing because nothing arrived.
+       *
+       * A socket reset or a timeout is **not** retried here. The request may
+       * have been received and answered in full, so a second attempt is a
+       * second call the vendor may bill, and the hold is parked for
+       * reconciliation instead.
+       */
+      let response: Response;
+      try {
+        response = await send();
+      } catch (error) {
+        if (error instanceof DomainError) throw error;
+        const first = transportFailure(error);
+        if (first.stage !== 'CONNECT' || (error as Error).name === 'TimeoutError' || (error as Error).name === 'AbortError') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        response = await send();
+      }
 
       if (!response.ok) {
         this.#consecutiveFailures += 1;
@@ -798,7 +930,32 @@ export class RemoteProviderAdapter implements AIProviderAdapter {
       if ((error as Error).name === 'TimeoutError' || (error as Error).name === 'AbortError') {
         throw new DomainError('AI_PROVIDER_TIMEOUT', `${this.name} did not answer within the deadline; the call may have completed`, 504);
       }
-      throw new DomainError('AI_PROVIDER_UNREACHABLE', `${this.name} call failed: ${String(error)}`, 502);
+
+      // `TypeError: fetch failed` is where this used to stop. The reason is one
+      // or two levels down the cause chain, and which level it is decides
+      // whether the customer's hold goes back or waits for an operator.
+      const failure = transportFailure(error);
+      const host = new URL(this.#endpoint.url).host;
+
+      if (failure.stage === 'IN_FLIGHT') {
+        throw new DomainError(
+          'AI_PROVIDER_DROPPED',
+          `The connection to ${host} dropped after the request had gone out (${failure.code}: ${failure.because}). ` +
+            `${this.name} may have answered and billed for it, so the hold is held for reconciliation rather than ` +
+            'released. Nothing has been recorded against this request, and it has not been retried — a retry would ' +
+            'be a second call the vendor may charge for.',
+          // 504, as with the deadline: the outcome is unknown, not refused.
+          504,
+        );
+      }
+
+      throw new DomainError(
+        'AI_PROVIDER_UNREACHABLE',
+        `${this.name} could not be reached at ${host} (${failure.code}: ${failure.because}). It was tried twice. ` +
+          'Nothing was sent, nothing was charged, and the hold has gone back. Check that this container can resolve ' +
+          `and reach ${host} on 443 — outbound DNS, egress rules, and any proxy — and whether the vendor is down.`,
+        502,
+      );
     }
   }
 

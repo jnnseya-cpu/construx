@@ -56,6 +56,46 @@ import { signFor, verifyFor } from '../identity/secrets.ts';
  * authenticate rather than decrypting into the wrong customer's evidence — an
  * attack that a scheme without AAD is wide open to precisely because the store
  * is content-addressed and the paths are predictable.
+ *
+ * ## The framed format, and why there are two
+ *
+ * ```
+ * CXE1 ‖ version(2) ‖ frameBytes(4) ‖ frame*
+ * frame = length(4) ‖ iv(12) ‖ tag(16) ‖ ciphertext(length)
+ * ```
+ *
+ * The single-shot format above cannot be streamed in either direction. Its tag
+ * covers the whole file and sits *before* the body, so writing it means holding
+ * the entire plaintext to compute the tag, and reading it means holding the
+ * entire ciphertext before a byte can be trusted. At fifty megabytes that is
+ * merely wasteful. Construction does not work at fifty megabytes: a drawing
+ * set, a point cloud, a site walkthrough recorded on a phone and a scanned
+ * historic pack are hundreds of megabytes to gigabytes each, and a format that
+ * requires the whole file in memory puts a hard ceiling on what the platform
+ * can hold — one that shows up as `EVIDENCE_TOO_LARGE` on exactly the files a
+ * project most needs to keep.
+ *
+ * So version 2 encrypts in frames of one mebibyte, each with its own IV and its
+ * own tag. Three things follow, and all three are the point:
+ *
+ *   - **It streams.** A frame is authenticated the moment it is read, so
+ *     plaintext is released a frame at a time and nothing unverified is ever
+ *     handed on — which is the property a single tag at the front of a
+ *     gigabyte cannot offer at all.
+ *   - **It is addressable.** Every frame but the last holds exactly
+ *     `frameBytes` of plaintext and occupies exactly `frameBytes + 32` bytes on
+ *     disk, so the frame containing any byte offset is arithmetic. That is what
+ *     makes a range request — a browser seeking in a two-hour site video —
+ *     possible without reading the file from the beginning.
+ *   - **It cannot be truncated or reordered silently.** Each frame's AAD binds
+ *     the tenancy, the frame's index and whether it is the last one. Dropping a
+ *     frame, swapping two, or cutting the file short all fail authentication
+ *     instead of yielding a shorter file that looks whole.
+ *
+ * Both formats are read by `decrypt`, so a file written either way is readable
+ * by every caller; the version byte says which. `encrypt` still writes version
+ * 1 for the callers that hold a whole buffer anyway, because changing what
+ * those write would be a migration for no gain.
  */
 
 export const MAGIC = Buffer.from('CXE1', 'ascii');
@@ -65,6 +105,28 @@ const HEADER_BYTES = MAGIC.length + 1 + IV_BYTES + TAG_BYTES;
 
 /** The key versions this build understands. */
 export const CURRENT_VERSION = 1;
+
+/** The framed, streamable format. Written by `encryptFrames`, read by both paths. */
+export const FRAMED_VERSION = 2;
+
+/**
+ * Plaintext per frame.
+ *
+ * One mebibyte: large enough that the 32 bytes of per-frame overhead are
+ * noise (0.003%), small enough that a reader buffers a mebibyte rather than a
+ * file, and a round number so the arithmetic that finds the frame holding a
+ * byte offset is obvious rather than clever.
+ *
+ * It is written into the header of every object rather than assumed, so
+ * changing it later leaves every file already on the volume readable.
+ */
+export const FRAME_BYTES = 1_048_576;
+
+/** Length, IV and tag in front of each frame's ciphertext. */
+export const FRAME_OVERHEAD_BYTES = 4 + IV_BYTES + TAG_BYTES;
+
+/** The framed header: magic, version, and the frame size this file was written with. */
+const FRAMED_HEADER_BYTES = MAGIC.length + 1 + 4;
 
 export type EnvelopePosture = {
   /** Whether evidence is encrypted at rest at all. */
