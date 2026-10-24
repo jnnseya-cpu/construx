@@ -29062,3 +29062,26 @@ The general lesson, which applies to the two remaining pipe-delimited fields
 (the question list and the passages): a format a person has to be taught is a
 format that will be got wrong by somebody who read the instructions properly.
 Where the shape is fixed and small, ask for the fields.
+
+## "This project holds none" was false
+
+Pressing **Draft an answer** on a tender with one bid produced:
+
+    Nothing to act on yet.
+    This needs a bid to act against, and this project holds none.
+
+The project held a bid. What it did not hold was a bid with a **confirmed
+question list** — which is what the chooser filters on, because nothing can be
+drafted against a list nobody has checked. So the empty state described the
+filter as an absence, and sent somebody looking for a bid they already had.
+
+`missingPrerequisites` fires wherever a required chooser has no options, which
+is right, and the sentence it produced asserted a reason it could not know. A
+field that filters now carries `emptyHint` saying what it filters on, and that
+sentence replaces the generic one. Where there is no hint the wording is
+honest instead of specific: "There is none here yet."
+
+Five choosers in Bid-On say their own reason now: drafting (a confirmed list),
+parsing and confirming (a list not yet confirmed — otherwise it is a resync),
+closing a gap (a bid with one open), and marking a returnable done (a bid with
+one outstanding).

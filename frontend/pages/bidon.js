@@ -1711,7 +1711,10 @@ export async function bidon(root) {
               value: bid.id,
               label: `${bid.reference} — ${bid.buyerName} · ${bid.returnablesOutstanding} outstanding`,
             })),
-          hint: 'Only a bid with something outstanding. Open the pack above and the register carries the ids.' },
+          hint: 'Only a bid with something outstanding. Open the pack above and the register carries the ids.',
+          emptyHint:
+            'No bid has an outstanding returnable — either none has been recorded yet (Record what has to be ' +
+            'returned), or everything recorded is already done or waived.' },
         { name: 'returnableId', label: 'Returnable id', type: 'text', hint: 'From the register in the opened pack.' },
         haveDocuments
           ? { name: 'evidenceId', label: 'The item that is it', type: 'select', required: false,
@@ -1784,6 +1787,9 @@ export async function bidon(root) {
           options: bidList
             .filter((bid) => bid.questions === 0)
             .map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })),
+          emptyHint:
+            'Every bid here already has a confirmed question list. A questionnaire that genuinely changed is a ' +
+            'resync, which keeps approved answers and redrafts only the questions whose wording moved.',
           hint: 'Only a bid with no confirmed list. A questionnaire that genuinely changed is a resync.' },
         { name: 'questions', label: 'The questions', type: 'textarea', rows: 12,
           hint:
@@ -1861,7 +1867,10 @@ export async function bidon(root) {
       ai: true,
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
-          options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+          options: bidList.filter((bid) => bid.questions === 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })),
+          emptyHint:
+            'Every bid here already has a confirmed list. Confirming happens once; a questionnaire that changed is ' +
+            'a resync.' },
         haveDocuments
           ? { name: 'hash', label: 'The questionnaire, as a filed document', type: 'select', required: false,
               // Ranked, because the whole difficulty is knowing which of nine
@@ -1914,7 +1923,8 @@ export async function bidon(root) {
       ai: true,
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
-          options: bidList.filter((bid) => bid.questions > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+          options: bidList.filter((bid) => bid.questions > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })),
+          emptyHint: 'A bid appears here once its question list is confirmed. Open the bid, read the proposed list against the source document and press Confirm — or confirm a list by hand. Nothing can be drafted against a list nobody has checked.' },
         { name: 'questionId', label: 'Question id', type: 'text', hint: 'From the opened pack above.' },
         { name: 'reviewerInstructions', label: 'Anything the drafter should know', type: 'textarea', rows: 2, required: false,
           hint: 'A rejected answer already carries the reviewer’s instructions; this is for anything else.' },
@@ -1958,7 +1968,8 @@ export async function bidon(root) {
       ai: true,
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
-          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })) },
+          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })),
+          emptyHint: 'No bid has an open gap. A gap is raised by the drafter when the evidence cannot support a question, or by hand.' },
       ],
       transform: () => ({}),
     },

@@ -418,8 +418,21 @@ function nothingToChoose({ title, intent, missing }) {
           ${missing
             .map(
               (f) =>
-                `<div style="margin-top:6px">This needs ${esc(article(f.label))} <b>${esc(f.label.toLowerCase())}</b> to act against, and this project holds none.${
-                  f.hint ? ` ${esc(f.hint)}` : ''
+                /*
+                 * Why the chooser is empty, where the field knows.
+                 *
+                 * "This project holds none" is true when a project genuinely
+                 * has no bids, and false — misleadingly so — when the chooser
+                 * is *filtered*: drafting offers only bids with a confirmed
+                 * question list, so somebody holding a bid whose list is still
+                 * a proposal was told their project had no bids at all, and
+                 * went looking for the wrong thing.
+                 *
+                 * A field that filters says what it filters on, and that
+                 * sentence replaces the generic one rather than following it.
+                 */
+                `<div style="margin-top:6px">This needs ${esc(article(f.label))} <b>${esc(f.label.toLowerCase())}</b> to act against. ${
+                  f.emptyHint ? esc(f.emptyHint) : `There is none here yet.${f.hint ? ` ${esc(f.hint)}` : ''}`
                 }</div>`,
             )
             .join('')}
