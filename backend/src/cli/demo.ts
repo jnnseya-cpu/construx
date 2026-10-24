@@ -9,12 +9,12 @@ import { seedDemoProject } from '../seed.ts';
  * verified by replaying its own event log.
  */
 
-const BOLD = '[1m';
-const ORANGE = '[38;5;208m';
-const GREY = '[38;5;245m';
-const GREEN = '[38;5;41m';
-const RED = '[38;5;203m';
-const RESET = '[0m';
+const BOLD = '\x1b[1m';
+const ORANGE = '\x1b[38;5;208m';
+const GREY = '\x1b[38;5;245m';
+const GREEN = '\x1b[38;5;41m';
+const RED = '\x1b[38;5;203m';
+const RESET = '\x1b[0m';
 
 const out = (text = ''): void => {
   process.stdout.write(`${text}\n`);

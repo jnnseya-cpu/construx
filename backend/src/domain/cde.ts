@@ -187,11 +187,11 @@ function publishedButNeverIssued(
   const issued = new Set<string>();
   for (const record of ctx.ledger.list(ctx.projectId, 'Transmittal')) {
     const state = record.state as unknown as { documents?: Array<{ reference: string; revision: string }> };
-    for (const document of state.documents ?? []) issued.add(`${document.reference} ${document.revision}`);
+    for (const document of state.documents ?? []) issued.add(`${document.reference}\0${document.revision}`);
   }
 
   return all
-    .filter((container) => container.state === 'PUBLISHED' && !issued.has(`${container.reference} ${container.revision}`))
+    .filter((container) => container.state === 'PUBLISHED' && !issued.has(`${container.reference}\0${container.revision}`))
     .map((container) => ({ reference: container.reference, revision: container.revision, publishedAt: container.publishedAt! }));
 }
 

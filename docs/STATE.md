@@ -29782,3 +29782,50 @@ The first build of that got it wrong in a way worth recording: it filtered to
 the untried vendors and *then* looked for a healthy one, so avoiding the only
 healthy vendor refused the work altogether. Health is the condition; having had
 a turn is only a preference between the healthy. A test caught it.
+
+## Seven source files that were not text
+
+A repository-wide audit began with a search across `backend/src`, and `grep`
+answered for 363 files out of 366. The three it skipped said so in a line that
+scrolls past:
+
+    grep: backend/src/identity/secrets.ts: binary file matches
+
+Each held a **raw NUL byte written into a string literal** where the escape
+`\0` was meant — a cache-key separator, a glyph sentinel, a composite-key
+separator. They run correctly. They are also invisible in review, and they make
+the file binary to every text tool: `grep`, `sed`, `diff`, and several of the
+invariants in `backend/tests/`, which are themselves source scans. A file three
+of this repository's own tools will not read is a file that has quietly fallen
+out of every check built on them.
+
+Seven in all, and the last four were only found by the test written for the
+first three — which is the whole argument for writing it:
+
+| File | Byte | What it was |
+|---|---|---|
+| `identity/secrets.ts` | `0x00` | key-cache separator |
+| `evidence/pdftext.ts` | `0x00` ×2 | "no glyph" sentinel |
+| `domain/cde.ts` | `0x00` ×2 | reference/revision separator |
+| `cli/demo.ts` | `0x1b` | an ANSI bold sequence |
+| `tests/ingestion.test.ts` | `0x03 0x04` | a ZIP magic number, in a comment |
+| `tests/office.test.ts` | `0x00 0x01`, `0x03 0x04` | binary fixtures |
+| `frontend/pages/field.js` | `0x00` | activity/week composite key |
+
+Every one is now the escape. Same bytes at runtime, same tests passing, and the
+files are text.
+
+### `backend/tests/sourcehygiene.test.ts`
+
+Three things an audit should not have to establish by hand, and which no
+reviewer can see:
+
+- **No control characters** outside tab and newline, anywhere in source.
+- **No byte-order marks**, which break a shebang and show as a stray character
+  at the top of a diff.
+- **No two files byte-for-byte identical** — the "one source of truth per
+  concept" rule decided rather than asserted, matched on content because the
+  pair that does damage is the one whose names look unrelated.
+
+It also asserts its own scan is reading over 400 files, because a glob that
+matched nothing would make all three pass.

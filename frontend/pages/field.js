@@ -2710,14 +2710,14 @@ function fieldCapture(diaries, measurements, tasks, plant, evidence) {
     const activity = nameOf.get(measurement.taskId) ?? String(measurement.taskId ?? '');
     if (!activity) continue;
     weeks.add(week);
-    const key = `${activity} ${week}`;
+    const key = `${activity}\0${week}`;
     cells.set(key, (cells.get(key) ?? 0) + 1);
   }
   const weekList = [...weeks].sort();
-  const activityList = [...new Set([...cells.keys()].map((key) => key.split(' ')[0]))]
+  const activityList = [...new Set([...cells.keys()].map((key) => key.split('\0')[0]))]
     .sort((a, b) => a.localeCompare(b))
     .slice(0, 14);
-  const grid = activityList.map((activity) => weekList.map((week) => cells.get(`${activity} ${week}`) ?? 0));
+  const grid = activityList.map((activity) => weekList.map((week) => cells.get(`${activity}\0${week}`) ?? 0));
 
   if (entries.length === 0 && utilisation.length === 0 && coverage.length === 0 && activityList.length === 0) return '';
 

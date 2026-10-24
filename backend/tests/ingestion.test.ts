@@ -53,7 +53,7 @@ const EICAR = ['X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR', 'STANDARD-ANTIVIRUS-TEST-FI
 /**
  * A ZIP local file header, hand-built.
  *
- * `PK`, twenty-two bytes to the declared uncompressed size, then the
+ * `PK\x03\x04`, twenty-two bytes to the declared uncompressed size, then the
  * name length, the extra length and the name. Written by hand because the point
  * of the check is that nothing is decompressed — a real archive library would
  * be testing the library.
@@ -62,7 +62,7 @@ function zip(entries: Array<{ name: string; uncompressed: number }>): Buffer {
   const parts = entries.map((entry) => {
     const name = Buffer.from(entry.name, 'utf8');
     const header = Buffer.alloc(30);
-    header.write('PK', 0, 'latin1');
+    header.write('PK\x03\x04', 0, 'latin1');
     header.writeUInt32LE(entry.uncompressed, 22);
     header.writeUInt16LE(name.length, 26);
     header.writeUInt16LE(0, 28);

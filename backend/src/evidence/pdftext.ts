@@ -711,7 +711,7 @@ function decoderFor(file: PdfFile, fontDict: string): Decoder {
     for (const item of elements(file.resolve(get(resolvedEncoding, 'Differences')) ?? '')) {
       if (/^\d+$/.test(item)) code = Number(item);
       else if (item.startsWith('/')) {
-        differences.set(code, glyphChar(item.slice(1)) ?? ' ');
+        differences.set(code, glyphChar(item.slice(1)) ?? '\0');
         code += 1;
       }
     }
@@ -798,7 +798,7 @@ function decodeString(bytes: string, font: Decoder | undefined, state: PageState
       const code = bytes.charCodeAt(index);
       const mapped = decoder.map?.get(code);
       const char = mapped ?? decoder.simple?.[code];
-      if (char === undefined || char === ' ') missed = true;
+      if (char === undefined || char === '\0') missed = true;
       else out += char;
     }
   }
