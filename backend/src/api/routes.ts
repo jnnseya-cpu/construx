@@ -14059,14 +14059,28 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/questions',
     description:
-      'Confirm the question list, once. A parser that missed a question produces a pack where every answer is good and the submission is still rejected, and only a person reading the source can catch that',
+      'Confirm the question list, once. A parser that missed a question produces a pack where every answer is good and the submission is still rejected, and only a person reading the source can catch that. An **empty list means the parse was right** and confirms what the parser proposed, which is what the console’s Confirm button sends',
     schema: {
       type: 'object',
       required: ['questions'],
       properties: {
         questions: {
           type: 'array',
-          minItems: 1,
+          /*
+           * Empty is a decision, not a missing field.
+           *
+           * `confirmQuestions` has always read an empty list as "the parse was
+           * right" and confirmed `proposedQuestions` — and this schema required
+           * at least one item, so that branch was **unreachable through the
+           * API** from the day it was written. The symptom, once the console
+           * grew a Confirm button, was `request body failed schema validation`
+           * on a list the platform had just proposed and displayed.
+           *
+           * Nothing is loosened by allowing it: the domain refuses an empty
+           * confirmation where there is no proposal either
+           * (`BID_ON_NO_QUESTIONS`), so a caller still cannot confirm nothing.
+           */
+          minItems: 0,
           items: {
             type: 'object',
             required: ['section', 'number', 'text', 'answerType', 'mandatory'],

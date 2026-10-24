@@ -15,6 +15,8 @@ import { configuredEmbeddingAdapter } from '../src/ai/providers/embedding.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { Platform } from '../src/platform.ts';
+import { ROUTES } from '../src/api/routes.ts';
+import { write } from '../src/engines/context.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 
 /**
@@ -586,4 +588,84 @@ describe('a document with nothing question-shaped in it', () => {
 
 after(() => {
   rmSync(directory, { recursive: true, force: true });
+});
+
+describe('confirming what the parser proposed', () => {
+  /*
+   * The path that could not be walked.
+   *
+   * `confirmQuestions` has always read an empty list as "the parse was right"
+   * and confirmed `proposedQuestions`. The route's schema required at least one
+   * item, so that branch was unreachable through the API from the day it was
+   * written — and nothing noticed, because nothing could reach it: an AI parse
+   * needs a provider, so no test had ever produced a proposal to confirm.
+   *
+   * The symptom, once the console grew a Confirm button under the proposal it
+   * now displays, was `request body failed schema validation` on a list the
+   * platform had just proposed, parsed and charged for.
+   */
+  it('accepts an empty list as "the parse was right"', async () => {
+    const parsed = [
+      {
+        section: 'Appendix A: Evaluation Criteria',
+        number: '1.1',
+        text: 'Please confirm that you hold an approved DEA accreditation, or equivalent.',
+        answerType: 'UPLOAD',
+        mandatory: true,
+      },
+      {
+        section: 'Appendix F: Form of Tender',
+        number: '2.1',
+        text: 'Complete the Form of Tender declarations and provide signature, printed name and position.',
+        answerType: 'UPLOAD',
+        mandatory: true,
+      },
+    ];
+
+    // A bid carrying a proposal, written through the parser's own event so the
+    // state is the state a real parse leaves behind.
+    const proposedBid = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+    });
+    const ctx = asDirector();
+    write(ctx, {
+      eventType: 'BID_ON_QUESTIONS_PARSED',
+      entity: { refType: 'BidOnBid', refId: proposedBid.id },
+      nextState: { ...proposedBid, status: 'PARSING', proposedQuestions: parsed, parsedAt: new Date().toISOString(), parsedBy: 'OPENAI' },
+    });
+
+    // Through the route, with the body the console's Confirm button sends —
+    // which is where this was refused.
+    const confirmed = bids.confirmQuestions(asDirector(), proposedBid.id, { questions: [] });
+
+    assert.equal(confirmed.questions.length, 2);
+    assert.deepEqual(
+      confirmed.questions.map((entry) => entry.number),
+      ['1.1', '2.1'],
+      'the buyer’s own numbering, in the order the parser read it',
+    );
+    assert.ok(confirmed.questionsConfirmedAt);
+
+    // And the route itself accepts that body: the schema used to require at
+    // least one item, which is what made the domain branch unreachable.
+    const route = ROUTES.find((entry) => entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/questions');
+    assert.ok(route, 'the confirm route is registered');
+    const questions = (route.schema as { properties?: { questions?: { minItems?: number } } }).properties?.questions;
+    assert.equal(questions?.minItems, 0, 'an empty list is a decision, not a missing field');
+  });
+
+  it('still refuses an empty confirmation where there is no proposal', () => {
+    const bare = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+    });
+    // Nothing is loosened by allowing the empty list: confirming nothing is
+    // still refused, because there is nothing to confirm.
+    throwsCode(() => bids.confirmQuestions(asDirector(), bare.id, { questions: [] }), 'BID_ON_NO_QUESTIONS');
+  });
 });

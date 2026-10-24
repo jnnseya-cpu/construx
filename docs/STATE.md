@@ -29085,3 +29085,29 @@ Five choosers in Bid-On say their own reason now: drafting (a confirmed list),
 parsing and confirming (a list not yet confirmed — otherwise it is a resync),
 closing a gap (a bid with one open), and marking a returnable done (a bid with
 one outstanding).
+
+## "Request body failed schema validation" on the platform's own proposal
+
+Pressing **Confirm these 13 questions** — a button sending a list the platform
+had just parsed, displayed and charged for — was refused by its own route.
+
+`confirmQuestions` has always read an empty list as *"the parse was right"* and
+confirmed `proposedQuestions`. The route's schema required `minItems: 1`. So
+that branch of the domain was **unreachable through the API from the day it was
+written**, and nothing noticed, because nothing could reach it: producing a
+proposal needs an AI parse, which needs a provider, which no test has.
+
+This is the third defect this week with the same shape — a success path that
+cannot run without a live model, and therefore has never run. The others were
+an event type that was never registered (`EVENT_TYPE_UNKNOWN`) and a console
+that never displayed the proposal at all. The pattern is worth naming: **the AI
+commands' happy paths are the least-tested code in the platform**, and the
+places they fail are the last line of the command, where the work is done and
+the money is spent.
+
+What covers it is static invariants and route-level tests that do not need a
+model: `doors.test.ts` for reachability, `catalogue.test.ts` in both directions
+for events, and now a test that confirms a parser's proposal end to end by
+writing the proposal through the parser's own event and confirming it with the
+body the console sends — plus an assertion on the schema itself, since
+`minItems: 1` is what made the branch unreachable.
