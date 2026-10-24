@@ -187,7 +187,20 @@ const asDirector = (): EngineContext =>
  * order the file happens to be in.
  */
 async function withProvider(adapter: AIProviderAdapter): Promise<{ bid: bids.Bid; questionId: string }> {
-  platform = new Platform(new AIOrchestrator({ reasoning: adapter }), new EvidenceStore(join(directory, `s-${Math.random()}`)));
+  /*
+   * Both primaries, deliberately.
+   *
+   * The reasoning chain is [reasoning, perception, ...spares], so overriding
+   * only the first leaves the local stand-in as the second — and the moment
+   * the loop asks the router to pass over a vendor that has had its turn, it
+   * would be handed that stand-in and refuse with `NO_REASONING_PROVIDER`.
+   * That is the router working correctly and the harness not saying what it
+   * meant: a test that hands in adapters should get exactly those adapters.
+   */
+  platform = new Platform(
+    new AIOrchestrator({ reasoning: adapter, perception: adapter }),
+    new EvidenceStore(join(directory, `s-${Math.random()}`)),
+  );
   seed = await seedDemoProject(platform);
   platform.setModuleGrant({
     moduleId: 'BID_ON',
@@ -400,14 +413,24 @@ describe('one press of Draft an answer, end to end', () => {
     // one again.
     const same = { COMPLIANCE: 62, EVIDENCE: 62, BUYER_RELEVANCE: 62, SPECIFICITY: 62, CLARITY_AND_LIMITS: 62 };
     const adapter = scripted(
-      [PLAN, draftReply(['First.']), draftReply(['Second.']), draftReply(['Third.'])],
+      [PLAN, draftReply(['First.']), draftReply(['Second.']), draftReply(['Third.']), draftReply(['Fourth.'])],
       [same, same, same],
     );
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(adapter.seen.length, 3, 'plan, write, one rewrite — it moved nothing, so it earned no second');
+    /*
+     * A stall buys one thing: a different model.
+     *
+     * The first rewrite moved the evaluator nothing. Another rewrite by the
+     * same vendor would be the same approach twice, which this platform's own
+     * rule says is not a second attempt — so the work goes to another cleared
+     * provider with the same evidence and the same criticism. When that one
+     * also fails to move it, it is the answer at its ceiling rather than the
+     * model, and the loop ends.
+     */
+    assert.equal(adapter.seen.length, 4, 'plan, write, a rewrite, and one more on another vendor');
     assert.equal(bids.latestAnswer(drafted.bid, questionId)!.body[0], 'First.', 'and the first stands');
   });
 
@@ -601,5 +624,210 @@ describe('one press of Draft an answer, end to end', () => {
     await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
     assert.equal(adapter.seen.length, 2, 'exactly at the floor is good enough, and buying a rewrite is not');
+  });
+});
+
+/**
+ * Asking for the evidence before paying to find out it is missing.
+ *
+ * The most expensive defect of the week, and the one that is a commercial
+ * failure rather than a technical one. A question asked for six things —
+ * workforce training and CPD plans, a HEM-compatible software platform,
+ * digital data capture, QA and audit procedures, low-carbon competency, an
+ * organisational transition plan — and the library held none of them. The
+ * platform found that out by **drafting an answer, charging for it, and
+ * raising a gap at the end**, one question at a time.
+ *
+ * On a tender that returns in nine days, the cost is not the calls. It is that
+ * nobody asked the customer for the material until the week it was needed, and
+ * a bid team only discovers the shape of what is missing by spending money to
+ * be told, question by question, what one pass over the confirmed list could
+ * have said at the start.
+ *
+ * Two halves are tested here: that the pass stops before the prose when the
+ * plan evidences nothing, and that the pack-wide pass asks for everything in
+ * one act.
+ */
+describe('finding out what is missing before paying for prose', () => {
+  it('stops at the plan when nothing in the library evidences any part of the question', async () => {
+    // One call, not seven. The plan says every limb is unevidenced, and no
+    // rewrite puts a document into a library.
+    const adapter = scripted([
+      {
+        limbs: [
+          { asks: 'Workforce training and CPD plans', chunkIds: [], evidenced: false },
+          { asks: 'HEM-compatible software platforms', chunkIds: [], evidenced: false },
+          { asks: 'Quality assurance and audit procedures', chunkIds: [], evidenced: false },
+        ],
+        missing: ['Competency in low-carbon technologies'],
+        shape: 'One paragraph per limb.',
+      },
+      draftReply(['Never written, because nothing could have been cited.']),
+    ]);
+    const { bid, questionId } = await withProvider(adapter);
+
+    const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
+
+    assert.equal(drafted.outcome, 'GAP_RAISED');
+    assert.equal(adapter.seen.length, 1, 'the plan, and nothing else');
+    assert.equal(adapter.marked, 0, 'nothing was written, so nothing was marked');
+
+    const gap = drafted.bid.gaps.find((entry) => entry.id === drafted.gapId)!;
+    assert.match(gap.promptToClient, /Workforce training and CPD plans/);
+    assert.match(gap.promptToClient, /HEM-compatible software platforms/);
+    assert.match(gap.promptToClient, /Competency in low-carbon technologies/, 'including what the plan listed as missing');
+    assert.match(gap.promptToClient, /Nothing has been written/);
+  });
+
+  it('still drafts over it where somebody has explicitly chosen to, but buys no rewrites', async () => {
+    // "Draft it anyway" is a decision a person takes two days before a return,
+    // and it stays available. What it does not buy is rewriting: a rewrite
+    // cannot reach evidence that is not there.
+    const adapter = scripted(
+      [
+        { limbs: [{ asks: 'Anything at all', chunkIds: [], evidenced: false }], missing: [], shape: 'One paragraph.' },
+        draftReply(['What little can be stood behind.']),
+        draftReply(['Never asked for.']),
+      ],
+      [THIN_MARKS],
+    );
+    const { bid, questionId } = await withProvider(adapter);
+    // A gap has to be open for the flag to be the person's to set.
+    bids.raiseGap(asDirector(), bid.id, {
+      questionId,
+      promptToClient: 'Please send the method statement and the CPD matrix for this question.',
+    });
+
+    const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId, overOpenGap: true });
+
+    assert.equal(drafted.outcome, 'DRAFTED');
+    assert.equal(adapter.seen.length, 2, 'plan and write — and no rewrite, because none could help');
+    assert.equal(adapter.marked, 1, 'marked once, so the person sees what it is worth');
+    assert.ok(bids.latestAnswer(drafted.bid, questionId)!.draftedOverGap, 'and the answer says it was written over the gap');
+  });
+
+  it('asks for the whole pack in one act, before anything is drafted', async () => {
+    const adapter = scripted([
+      {
+        needs: [
+          {
+            number: '2.01',
+            needs: [
+              { what: 'CPD training matrix', why: 'Workforce training and CPD plans' },
+              { what: 'EPC delivery method statement', why: 'How assessments are delivered', heldReference: 'EVD-0001' },
+              { what: 'ISO 9001 certificate', why: 'Quality assurance and audit procedures' },
+            ],
+          },
+        ],
+      },
+    ]);
+    const { bid } = await withProvider(adapter);
+
+    const needs = await bidEngine.planEvidenceNeeds(asDirector(), bid.id);
+
+    assert.equal(adapter.seen.length, 1, 'one call for the whole pack');
+    assert.equal(needs.held, 1, 'the method statement is already filed');
+    assert.equal(needs.raised, 1, 'and one question carries a gap for the two that are not');
+
+    const gap = needs.bid.gaps.find((entry) => !entry.resolvedAt)!;
+    assert.match(gap.promptToClient, /CPD training matrix/);
+    assert.match(gap.promptToClient, /ISO 9001 certificate/);
+    assert.ok(
+      !/EPC delivery method statement/.test(gap.promptToClient),
+      'and does not ask the customer for what they have already sent',
+    );
+    assert.match(gap.promptToClient, /Nothing has been drafted against this question yet/);
+
+    // On the record, so the screen can say it has been done and a second run
+    // can say what changed.
+    assert.equal(needs.bid.evidenceNeeds?.questions, 1);
+    assert.equal(needs.bid.evidenceNeeds?.needed, 3);
+    assert.equal(needs.bid.evidenceNeeds?.held, 1);
+  });
+
+  it('does not ask the customer twice for the same question', async () => {
+    // It is run again after evidence arrives. A second gap about a question
+    // that already has one open puts the same request in front of the customer
+    // twice, which is how a customer stops reading them.
+    const adapter = scripted([
+      { needs: [{ number: '2.01', needs: [{ what: 'CPD training matrix', why: 'Workforce training' }] }] },
+      { needs: [{ number: '2.01', needs: [{ what: 'CPD training matrix', why: 'Workforce training' }] }] },
+    ]);
+    const { bid } = await withProvider(adapter);
+
+    const first = await bidEngine.planEvidenceNeeds(asDirector(), bid.id);
+    assert.equal(first.raised, 1);
+
+    const again = await bidEngine.planEvidenceNeeds(asDirector(), bid.id);
+    assert.equal(again.raised, 0, 'the open gap already says it');
+    assert.equal(again.bid.gaps.filter((entry) => !entry.resolvedAt).length, 1);
+  });
+
+  it('refuses before spending anything where no question list has been confirmed', async () => {
+    const adapter = scripted([{ needs: [] }]);
+    await withProvider(adapter);
+    const bare = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+    });
+
+    await rejectsCode(() => bidEngine.planEvidenceNeeds(asDirector(), bare.id), 'BID_ON_NO_QUESTIONS');
+    assert.equal(adapter.seen.length, 0, 'and no provider was called');
+  });
+});
+
+/**
+ * Which vendor gets a turn, when the first one has had its.
+ *
+ * "If OpenAI is not able to provide the correct answer, use Claude or Gemini."
+ * That is the right instinct and it belongs in the router rather than in a
+ * setting: a rewrite that fails to move the evaluator has run out of ideas in
+ * that model, and this platform's own rule is that the same approach twice is
+ * not a second attempt. A different model, given the same evidence and the
+ * same criticism, is.
+ *
+ * It is a preference and never a refusal. Passing over every cleared vendor
+ * would leave the work undone, and an answer from the second-best model beats
+ * no answer on the afternoon before a return.
+ */
+describe('passing over a vendor that has already had its turn', () => {
+  const vendor = (name: 'OPENAI' | 'ANTHROPIC'): AIProviderAdapter => ({
+    name,
+    capability: 'REASONING',
+    multimodal: false,
+    transmits: false,
+    estimateCostMinor: () => 10,
+    healthy: () => true,
+    async execute(): Promise<ProviderResponse> {
+      return { provider: name, modelClass: 'test', output: {}, rawCostMinor: 10, latencyMs: 1 };
+    },
+  });
+
+  it('chooses the first cleared vendor when nothing has had a turn', () => {
+    const orchestrator = new AIOrchestrator({ reasoning: vendor('OPENAI'), perception: vendor('ANTHROPIC') });
+    assert.equal(orchestrator.adapterFor('REASONING').name, 'OPENAI');
+  });
+
+  it('moves to another cleared vendor once the first has had one', () => {
+    const orchestrator = new AIOrchestrator({ reasoning: vendor('OPENAI'), perception: vendor('ANTHROPIC') });
+    assert.equal(orchestrator.adapterFor('REASONING', 'INTERNAL', 0, ['OPENAI']).name, 'ANTHROPIC');
+  });
+
+  it('runs the work rather than refusing it when every vendor has had a turn', () => {
+    // The whole point of a preference. Refusing here would mean an answer
+    // nobody gets because two models have already tried.
+    const orchestrator = new AIOrchestrator({ reasoning: vendor('OPENAI'), perception: vendor('ANTHROPIC') });
+    const chosen = orchestrator.adapterFor('REASONING', 'INTERNAL', 0, ['OPENAI', 'ANTHROPIC']);
+    assert.equal(chosen.name, 'OPENAI', 'back to the ordinary choice');
+  });
+
+  it('does not let a turn already taken reach past clearance or health', () => {
+    // Avoiding a vendor is the fourth consideration, never the first. An
+    // unhealthy one is not a destination for work the healthy one has tried.
+    const unwell: AIProviderAdapter = { ...vendor('ANTHROPIC'), healthy: () => false };
+    const orchestrator = new AIOrchestrator({ reasoning: vendor('OPENAI'), perception: unwell });
+    assert.equal(orchestrator.adapterFor('REASONING', 'INTERNAL', 0, ['OPENAI']).name, 'OPENAI');
   });
 });

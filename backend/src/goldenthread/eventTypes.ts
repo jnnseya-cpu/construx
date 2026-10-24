@@ -2576,6 +2576,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // and nothing else. `aiAllowed` because a model genuinely authors the
   // reading; it decides nothing, recommends nothing and accepts nothing.
   def('BID_ON_AMENDMENTS_REVIEWED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // What a confirmed question list will take to answer, worked out before
+  // anything is drafted. Raises the gaps that become one request to the
+  // customer, so nobody finds out what was needed by paying for a draft.
+  def('BID_ON_EVIDENCE_NEEDS_READ', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_GAP_RAISED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_GAP_RESOLVED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
   def('BID_ON_BID_EXPORTED', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),

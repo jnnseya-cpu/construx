@@ -526,6 +526,18 @@ export type AITaskInput = {
    */
   requireModel?: { code: string; message: string };
   /**
+   * Vendors that have already had a turn at this particular piece of work.
+   *
+   * Passed to the router as a preference, not a filter. One caller uses it:
+   * the bid drafter, when a rewrite fails to move the independent evaluator.
+   * At that point another rewrite by the same model is the same approach
+   * twice, and the platform's own rule says that is not a second attempt —
+   * where a different model, given the same evidence and the same criticism,
+   * is. If no other cleared vendor is available the ordinary choice is made
+   * and the work still runs.
+   */
+  avoidProviders?: readonly string[];
+  /**
    * Who this run is being done for, where the work is done for somebody else.
    *
    * Carried onto the `AIExecution` record so an auditor — and a provider
@@ -725,6 +737,9 @@ export async function runAI(ctx: EngineContext, task: AITaskInput): Promise<AITa
         request,
         aiPermitted,
         ...(sponsorshipId ? { sponsorshipId } : {}),
+        ...(task.avoidProviders && task.avoidProviders.length > 0
+          ? { avoidProviders: task.avoidProviders }
+          : {}),
       },
       wallet,
     );

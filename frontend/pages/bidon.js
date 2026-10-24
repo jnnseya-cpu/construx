@@ -453,6 +453,8 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
           { id: 'reject-answer', label: 'Reject with instructions', tone: 'quiet',
             permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
+          { id: 'evidence-needs', label: 'Work out what this pack needs',
+            permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'raise-gap', label: 'Raise a gap', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'resolve-gap', label: 'Close a gap', tone: 'quiet',
@@ -2333,6 +2335,32 @@ export async function bidon(root) {
       ],
       transform: ({ bidId: _b, answerId: _a, ...rest }) => rest,
     },
+    'evidence-needs': {
+      title: 'Work out what this pack needs',
+      intent:
+        'Before a word is drafted. It reads the confirmed question list against this customer’s library and says ' +
+        'what answering each question will take — the CPD matrix, the accreditation certificate, the three case ' +
+        'studies, the audit outcomes — marks off what is already filed, and raises a gap naming everything that ' +
+        'is not. Then "Write the request to the customer" turns the lot into one message. Run this first: the ' +
+        'alternative is finding out what was missing by paying for a draft that could not have been evidenced, one ' +
+        'question at a time.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/evidence-needs`,
+      submitLabel: 'Work it out',
+      ai: true,
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.filter((bid) => bid.questions > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.questions} question(s)` })),
+          emptyHint:
+            'A bid appears here once its question list is confirmed — that list is what this reads. Open the bid, ' +
+            'check the proposed questions against the source document and press Confirm.' },
+      ],
+      transform: () => ({}),
+      report: (result) => ({
+        title: result.raised > 0 ? `${result.raised} question(s) now have a gap` : 'Nothing further is needed',
+        message: result.summary,
+        tone: result.raised > 0 ? 'warn' : 'ok',
+      }),
+    },
     'raise-gap': {
       title: 'Raise a gap',
       intent:
@@ -3317,6 +3345,48 @@ function bidDetail(position, estimate, source) {
                 <button class="btn quiet" data-edit-proposal="${bid.id}">Edit before confirming</button>
               </div>
             </div>`
+          : ''
+      }
+      ${
+        /*
+         * The step that should come before drafting, said before drafting.
+         *
+         * A question asked for six things and the library held none of them —
+         * and the platform found that out by drafting an answer, charging for
+         * it, and raising a gap at the end. Nobody had ever been asked for the
+         * material. The question list is confirmed days earlier; from that
+         * moment what the pack will take is knowable, and leaving somebody to
+         * discover it one paid draft at a time is the defect this notice
+         * exists to stop repeating.
+         */
+        questions.length > 0 && !bid.evidenceNeeds
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              <b>Nothing has been asked of the customer for this pack yet.</b>
+              The question list is confirmed, so what answering it will take can be worked out now — what each
+              question needs, what the library already covers, and one request for the rest. Doing this before
+              drafting is the difference between one message to the customer and finding out what was missing by
+              paying for a draft that could not have been evidenced.
+              <div class="actions" style="margin-top:9px">
+                <button class="btn sm" data-act="evidence-needs" data-act-bid="${bid.id}">
+                  Work out what this pack needs
+                </button>
+              </div>
+            </div></div>`
+          : ''
+      }
+      ${
+        bid.evidenceNeeds
+          ? html`<div class="notice info" style="margin:11px 17px 0"><div>
+              <b>What this pack needs was worked out on ${date(bid.evidenceNeeds.reviewedAt)}</b>
+              by ${bid.evidenceNeeds.provider}: ${bid.evidenceNeeds.needed} piece(s) of evidence across
+              ${bid.evidenceNeeds.questions} question(s), ${bid.evidenceNeeds.held} of them already filed,
+              ${bid.evidenceNeeds.raised} gap(s) raised.
+              ${
+                openGaps.length > 0
+                  ? html`<b>Send the request before drafting</b> — the open gaps below are what is still missing.`
+                  : ''
+              }
+            </div></div>`
           : ''
       }
       <div class="grid g4" style="padding:11px 17px 0">

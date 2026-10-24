@@ -268,6 +268,13 @@ export type ExecuteInput = {
   aiPermitted: boolean;
   /** The sponsorship an external person's spend is authorised under, carried onto the hold. */
   sponsorshipId?: string;
+  /**
+   * Vendors that have already had a turn at this piece of work.
+   *
+   * A routing preference, passed through to `adapterFor` and ignored where
+   * passing them over would leave nothing cleared, healthy and large enough.
+   */
+  avoidProviders?: readonly string[];
 };
 
 export type ExecuteResult = {
@@ -617,6 +624,22 @@ export class AIOrchestrator {
      * Zero means "not measured", and every vendor qualifies.
      */
     inputTokens = 0,
+    /**
+     * Vendors already tried for this piece of work, to be passed over.
+     *
+     * The fourth thing that decides a vendor, and the only one that is about
+     * quality rather than possibility. A drafter whose rewrite fails to move
+     * the evaluator has run out of ideas **in that model**; the platform's own
+     * rule is that the same approach twice is not a second attempt, and a
+     * different model is a genuinely different approach where a third rewrite
+     * by the same one is not.
+     *
+     * A preference, never a filter: if passing them over leaves nothing
+     * cleared, healthy and large enough, the ordinary choice is made. Running
+     * the work beats refusing it because the first vendor has already had a
+     * turn.
+     */
+    avoid: readonly string[] = [],
   ): AIProviderAdapter {
     // The order the chain is tried in, unchanged. What changes is that an
     // uncleared vendor is not in it at all.
@@ -672,7 +695,19 @@ export class AIOrchestrator {
       );
     }
 
-    const healthy = fits.find((adapter) => adapter.healthy());
+    /*
+     * A healthy vendor that has not had a turn, else a healthy one that has.
+     *
+     * Both halves matter and the first build only had one. Filtering to the
+     * untried vendors and *then* looking for a healthy one meant that avoiding
+     * the only healthy vendor refused the work altogether — an untried but
+     * unwell provider is not a destination, and "the first model has already
+     * tried" is not a reason to do nothing. Health is the condition; having
+     * had a turn is only a preference between the healthy.
+     */
+    const healthy =
+      fits.find((adapter) => !avoid.includes(adapter.name) && adapter.healthy()) ??
+      fits.find((adapter) => adapter.healthy());
     if (healthy) return healthy;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);
@@ -873,7 +908,12 @@ export class AIOrchestrator {
     // Measured before the vendor is chosen, because the size is one of the
     // things that chooses it. A request no cleared window will hold is refused
     // here — before the request is filed, before the hold, before the call.
-    const adapter = this.adapterFor(input.capability, sensitivity, requestInputTokens(input.request));
+    const adapter = this.adapterFor(
+      input.capability,
+      sensitivity,
+      requestInputTokens(input.request),
+      input.avoidProviders ?? [],
+    );
     aiRequest.routing = {
       sensitivity,
       provider: adapter.name,

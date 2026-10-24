@@ -488,6 +488,36 @@ export type Bid = {
     reviewedBy: string;
     provider: string;
   };
+  /**
+   * The pass that worked out what this pack needs before anything was drafted.
+   *
+   * ## Why it exists
+   *
+   * A question asked for six things — CPD records, a software roadmap, a
+   * survey template, a QA procedure, competency certificates, a transition
+   * plan — and the library held none of them. **Nobody was ever asked for
+   * them.** The platform found out by drafting an answer, charging for it, and
+   * raising a gap at the end; and it found out one question at a time, so the
+   * customer would have received six separate requests over six afternoons if
+   * anybody had got that far.
+   *
+   * That is backwards. The question list is confirmed days before anything is
+   * drafted, and from the moment it exists the platform can say what evidence
+   * answering it will take. One pass over the whole pack, before a penny is
+   * spent on prose: what each question needs, what the library already covers,
+   * and one request for everything else.
+   */
+  evidenceNeeds?: {
+    reviewedAt: string;
+    reviewedBy: string;
+    provider: string;
+    /** Questions looked at, needs found, and how many the library already covers. */
+    questions: number;
+    needed: number;
+    held: number;
+    /** Gaps raised by this pass, so a second run can say what changed. */
+    raised: number;
+  };
   exportedAt?: string;
   exportedBy?: string;
   outcome?: { outcome: 'SUBMITTED' | 'WON' | 'LOST'; on: string; by: string; feedback?: string };

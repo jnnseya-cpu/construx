@@ -29727,3 +29727,58 @@ told not to mark itself, the loop keeps going while the evaluator keeps moving
 and stops at the ceiling, a rewrite that moves nothing earns no second, a
 downhill rewrite is discarded with the better answer standing, and every
 recorded answer carries the marks that judged it.
+
+## Nobody was ever asked for the evidence
+
+The most serious defect of the week, and it is commercial rather than
+technical. Question 2.4 of a live ITT asked for six things — workforce training
+and CPD plans, a HEM-compatible software platform, digital data capture, QA and
+audit procedures, low-carbon competency, an organisational transition plan. The
+library held none of them.
+
+**The platform discovered that by drafting an answer, charging for it, and
+raising a gap at the end.** One question at a time. Six questions would have
+meant six requests to the customer across six afternoons — the exact failure
+`composeGapRequest` was written to prevent, arrived at from the other
+direction.
+
+The question list is confirmed days before a word is drafted. From the moment
+it exists, what the pack will take is knowable. Leaving a bid team to find out
+one paid draft at a time, in the week of the return, is not a pricing question:
+it is the platform withholding until after the charge something it could have
+said before it.
+
+### Three changes
+
+**`planEvidenceNeeds` — one pass, before any prose.** It reads the confirmed
+question list against the library — titles, types and opening lines, not
+passages — and returns what each question needs, what is already filed, and a
+gap naming the rest. All the gaps in **one** write, so **Write the request to
+the customer** turns them into one message. It refuses before calling anything
+where no question list is confirmed, and it will not raise a second gap on a
+question that already has one open, because that puts the same request in front
+of the customer twice.
+
+**The drafter stops at the plan.** Where the plan finds no evidence for any
+limb, it raises the gap and returns after **one** call instead of seven. No
+rewrite puts a document into a library. `overOpenGap` stays the exception —
+somebody who has ticked "draft it anyway" gets the write and its marking, three
+calls — but buys no rewrites, because a rewrite cannot reach what is not there.
+
+**The pack says so on the screen.** A bid with a confirmed list and no needs
+pass carries a notice: *"Nothing has been asked of the customer for this pack
+yet"*, with the button that does it.
+
+### And a vendor that has had its turn
+
+A rewrite that fails to move the independent evaluator has run out of ideas in
+that model. `adapterFor` takes `avoid`: a preference, applied after clearance,
+window and **health**, for a vendor that has not already tried this piece of
+work. The first stall moves the work to another cleared provider with the same
+evidence and the same criticism; a second stall is the answer at its ceiling
+rather than the model, and ends the loop.
+
+The first build of that got it wrong in a way worth recording: it filtered to
+the untried vendors and *then* looked for a healthy one, so avoiding the only
+healthy vendor refused the work altogether. Health is the condition; having had
+a turn is only a preference between the healthy. A test caught it.

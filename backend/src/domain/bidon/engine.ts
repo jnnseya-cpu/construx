@@ -34,6 +34,7 @@ import {
   recordAnswer,
   scoreAnswer,
   type Bid,
+  type BidGap,
   type BidQuestion,
 } from './bids.ts';
 import {
@@ -1656,6 +1657,67 @@ export async function draftAnswer(
 
   const planned = plan.output as { limbs?: unknown; missing?: unknown; shape?: unknown };
 
+  /*
+   * Stop here when the plan found nothing to write from.
+   *
+   * A question asked for six things — CPD records, a software roadmap, a
+   * survey template, a QA procedure, competency certificates, a transition
+   * plan — and the library held none of them. The planner said so, limb by
+   * limb. The platform then wrote anyway, marked what it wrote, rewrote it
+   * twice and marked it again: **seven calls to produce forty-three words
+   * whose only fault was that the evidence does not exist**, and a refusal at
+   * the end saying exactly what the planner had said at the start.
+   *
+   * No rewrite adds a document to a library. Where the plan evidences nothing,
+   * the honest act is to stop at one call and ask for the material — which is
+   * the same gap the draft would have raised, three calls and a charge later.
+   *
+   * `overOpenGap` is the exception, and stays one: somebody who has ticked
+   * "draft it anyway" has decided they want the prose that *is* supportable,
+   * usually two days before a return. They get it — the write and its marking,
+   * three calls — but no rewrites, because a rewrite cannot reach what is not
+   * there.
+   */
+  const limbs = (Array.isArray(planned.limbs) ? planned.limbs : []) as Array<{ asks?: unknown; evidenced?: unknown }>;
+  const unevidenced = limbs
+    .filter((limb) => limb.evidenced !== true)
+    .map((limb) => String(limb.asks ?? '').trim())
+    .filter(Boolean);
+  const alsoMissing = (Array.isArray(planned.missing) ? planned.missing : [])
+    .map((line) => String(line).trim())
+    .filter(Boolean);
+  const nothingEvidenced = limbs.length > 0 && unevidenced.length === limbs.length;
+
+  if (nothingEvidenced && input.overOpenGap !== true) {
+    const wanted = [...new Set([...unevidenced, ...alsoMissing])];
+    const gap = {
+      id: ulid(),
+      questionId: question.id,
+      promptToClient:
+        `For "${question.number} ${question.text}" nothing on file evidences any part of what is asked. ` +
+        `Specifically: ${wanted.join('; ')}. ` +
+        'Please send what covers these and it will be drafted from them. Nothing has been written, because an ' +
+        'answer to this question built from what we hold would be a claim nobody could stand behind.',
+      raisedAt: new Date().toISOString(),
+      raisedBy: ctx.auth.actorId,
+    };
+    const withGap: Bid = { ...bid, gaps: [...bid.gaps, gap] };
+    write(ctx, {
+      eventType: 'BID_ON_GAP_RAISED',
+      entity: { refType: 'BidOnBid', refId: bid.id },
+      nextState: { ...withGap },
+    });
+    return {
+      bid: withGap,
+      outcome: 'GAP_RAISED',
+      gapId: gap.id,
+      // The plan and the retrieval, and nothing else. The point of stopping
+      // here is that the other four calls are not made.
+      acuConsumed: plan.acuConsumed + retrieved.acuConsumed,
+      retrieval: retrievalOf(retrieved),
+    };
+  }
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_draft',
@@ -1877,6 +1939,23 @@ export async function draftAnswer(
   let revisions = 0;
 
   /*
+   * Which vendors have already had a turn at this answer.
+   *
+   * A rewrite that fails to move the independent evaluator has run out of
+   * ideas **in that model**. The platform's own rule is that the same approach
+   * twice is not a second attempt — and a third rewrite by the same vendor is
+   * exactly that, while the same evidence and the same criticism put to a
+   * different model is not.
+   *
+   * So a stalled rewrite does not end the loop any more: it moves to another
+   * cleared provider and tries once there. Where no other vendor is cleared
+   * and healthy, the router falls back to the ordinary choice and the stall
+   * ends the loop as before — a preference, never a refusal.
+   */
+  const hadATurn: string[] = result.provider ? [result.provider] : [];
+  let stalled = false;
+
+  /*
    * The first draft, marked before anything is rewritten.
    *
    * Two things come of this and both matter. A draft that is already green is
@@ -1899,11 +1978,30 @@ export async function draftAnswer(
   if (marked) spentRevising += marked.acuConsumed;
   let bestMark = marked ? weightedScore(marked.scores).score : -1;
 
-  for (let attempt = 0; attempt < MAX_REVISIONS && (marked === undefined || bestMark < GREEN_FLOOR); attempt += 1) {
+  /*
+   * Where the ceiling is the evidence, no rewrite reaches it.
+   *
+   * The caller ticked "draft it anyway" over a question the plan found nothing
+   * for. They get the prose that can be stood behind and the mark that says
+   * what it is worth — and not two rewrites of it, because the thing holding
+   * the score down is a document that is not in the library, and a rewrite
+   * cannot put one there. Those two calls would be the same approach twice,
+   * bought on a tender week.
+   */
+  const evidenceBound = nothingEvidenced;
+
+  for (
+    let attempt = 0;
+    attempt < MAX_REVISIONS && !evidenceBound && (marked === undefined || bestMark < GREEN_FLOOR);
+    attempt += 1
+  ) {
     const revised = await runAI(ctx, {
       engine: 'TENDER',
       taskType: 'bid_on_draft_revise',
       capability: 'REASONING',
+      // Only once the last attempt stalled. While the answer is still
+      // improving, the model that is improving it keeps the work.
+      ...(stalled ? { avoidProviders: [...hadATurn] } : {}),
       inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
       attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
       request: {
@@ -1987,13 +2085,27 @@ export async function draftAnswer(
     spentRevising += remarked.acuConsumed;
     const mark = weightedScore(remarked.scores).score;
 
-    // No better than what it started from: keep the better one and stop. A
-    // rewrite that does not move the evaluator has not earned another.
-    if (mark <= bestMark) break;
+    if (revised.provider && !hadATurn.includes(revised.provider)) hadATurn.push(revised.provider);
+
+    /*
+     * No better than what it started from.
+     *
+     * The first time this happens the work moves to another vendor and tries
+     * once more with the same evidence and the same criticism. The second time
+     * — a different model, no better — it is the answer that is at its
+     * ceiling rather than the model, and another call would be the same
+     * approach a third time.
+     */
+    if (mark <= bestMark) {
+      if (stalled) break;
+      stalled = true;
+      continue;
+    }
 
     current = revised.output;
     marked = remarked;
     bestMark = mark;
+    stalled = false;
   }
 
   /*
@@ -2151,6 +2263,217 @@ export async function draftAnswer(
     // one button is what the provider is charged for.
     acuConsumed: plan.acuConsumed + result.acuConsumed + spentRevising + retrieved.acuConsumed,
     retrieval: retrievalOf(retrieved),
+  };
+}
+
+// --- What the pack will need -------------------------------------------------
+
+/**
+ * Work out what answering this pack will take, before anything is drafted.
+ * `X` on `BID_SERVICES`.
+ *
+ * ## The mistake this closes
+ *
+ * A question asked for six things — workforce training and CPD plans, a
+ * HEM-compatible software platform, digital data capture, QA and audit
+ * procedures, low-carbon competency, an organisational transition plan — and
+ * the library held none of them. The platform discovered that by **drafting an
+ * answer, charging for it, and raising a gap at the end**. Nobody had ever
+ * been asked for any of it.
+ *
+ * And it discovered it one question at a time. Six questions would have meant
+ * six separate requests to the customer over six afternoons, which is how a
+ * customer stops replying — the exact failure `composeGapRequest` was written
+ * to prevent, arrived at from the other direction.
+ *
+ * The question list is confirmed days before a word is drafted. From the
+ * moment it exists, what evidence the pack will take is knowable. So this runs
+ * once, over the whole list, before any prose is paid for: what each question
+ * needs, which of those the library already covers, and a gap for every one it
+ * does not — all raised in a single act, so **Write the request to the
+ * customer** turns them into one message.
+ *
+ * ## What it does not do
+ *
+ * It reads titles, types and opening lines, not passages. Deciding whether a
+ * filed document genuinely answers a question is the retriever's job at
+ * drafting time, and doing it here would mean embedding the library twice for
+ * two different answers to the same question. This is the coarser question —
+ * *is there anything of this kind on file at all* — which is the one that
+ * decides what to ask the customer for.
+ *
+ * It raises gaps and writes nothing else. No answer, no score, no commitment:
+ * a gap is a question to the customer, and a question to the customer is the
+ * one thing this pass is for.
+ */
+export async function planEvidenceNeeds(
+  ctx: EngineContext,
+  bidId: string,
+): Promise<{
+  bid: Bid;
+  needs: Array<{ question: string; needs: Array<{ what: string; why: string; heldReference?: string }> }>;
+  raised: number;
+  held: number;
+  acuConsumed: number;
+  summary: string;
+}> {
+  const bid = gate(ctx, bidId);
+  authorise(ctx, 'BID_SERVICES', 'X', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  if (bid.questions.length === 0) {
+    throw new DomainError(
+      'BID_ON_NO_QUESTIONS',
+      `${bid.reference} has no confirmed question list, so there is nothing to work out the needs of. Read the ` +
+        'questionnaire and confirm the list first — that is the thing this reads.',
+      409,
+    );
+  }
+
+  const day = judgedOn(bid);
+  const library = evidenceOf(ctx)
+    .filter((entry) => entry.customerAccountId === bid.customerAccountId && !entry.withdrawnAt)
+    .map((entry) => ({
+      reference: entry.reference,
+      type: entry.type,
+      title: entry.title,
+      current: evidenceCurrentOn(entry, day),
+      // The first words of the first passage, where it has been read. A title
+      // is what somebody typed while filing nine documents; this is what the
+      // document actually opens with.
+      ...(entry.chunks[0] ? { opens: entry.chunks[0].text.slice(0, 180) } : {}),
+    }));
+
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_evidence_needs',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+    request: {
+      task:
+        'Work out what evidence answering this tender questionnaire will take, question by question, and say which ' +
+        'of it the library below already holds. Return JSON with `needs`: an array of ' +
+        '`{ number, needs: [{ what, why, heldReference }] }` — one entry per question that needs anything, `what` ' +
+        'being the document or record a bidder would have to produce, `why` being the part of the question it ' +
+        'answers, and `heldReference` being the reference of the filed item that already covers it where one does, ' +
+        'omitted where none does.',
+      payload: {
+        buyer: bid.buyerName,
+        scheme: bid.scheme,
+        questions: bid.questions.map((question) => ({
+          number: question.number,
+          section: question.section,
+          question: question.text,
+          ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
+          mandatory: question.mandatory,
+        })),
+        theLibrary: library,
+        constraint:
+          'Name documents a construction or assessment business would actually hold or could produce — "ISO 9001 ' +
+          'certificate", "CPD training matrix", "three case studies of social housing EPC programmes", "professional ' +
+          'indemnity schedule". Not categories and not advice: somebody is going to read this list and go and find ' +
+          'these things. Where a question asks for several separate kinds of thing, list them separately, because ' +
+          'an answer missing one of them loses those marks whatever else it does. Only set `heldReference` where a ' +
+          'filed item plainly is the thing asked for; a document with a similar title is not, and claiming it is ' +
+          'stops anybody being asked for the real one.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: {
+      code: 'BID_ON_NEEDS_NO_PROVIDER',
+      message:
+        'Working out what a pack needs reads a questionnaire against a library and cannot be done by the ' +
+        'deterministic stand-in. Nothing has been charged.',
+    },
+  });
+
+  const answered = (result.output as { needs?: unknown }).needs;
+  const perQuestion = (Array.isArray(answered) ? answered : []) as Array<{ number?: unknown; needs?: unknown }>;
+
+  const needs: Array<{ question: string; needs: Array<{ what: string; why: string; heldReference?: string }> }> = [];
+  let held = 0;
+
+  for (const entry of perQuestion) {
+    const number = String(entry.number ?? '').trim();
+    const question = bid.questions.find((held2) => held2.number === number);
+    if (!question) continue;
+    const listed = (Array.isArray(entry.needs) ? entry.needs : []) as Array<Record<string, unknown>>;
+    const cleaned = listed
+      .map((need) => ({
+        what: String(need.what ?? '').trim(),
+        why: String(need.why ?? '').trim(),
+        ...(String(need.heldReference ?? '').trim()
+          ? { heldReference: String(need.heldReference).trim() }
+          : {}),
+      }))
+      .filter((need) => need.what.length > 0);
+    if (cleaned.length === 0) continue;
+    held += cleaned.filter((need) => need.heldReference !== undefined).length;
+    needs.push({ question: number, needs: cleaned });
+  }
+
+  /*
+   * One gap per question that is short of something, raised in one write.
+   *
+   * Per question rather than per document, because a gap belongs to a question
+   * — that is what pauses the right row and what the request to the customer
+   * groups by. A question that already has an open gap is left alone: this
+   * pass runs again after evidence arrives, and raising a second gap about the
+   * same question would put the same request in front of the customer twice.
+   */
+  const open = new Set(bid.gaps.filter((gap) => !gap.resolvedAt).map((gap) => gap.questionId));
+  const raised: BidGap[] = [];
+
+  for (const entry of needs) {
+    const question = bid.questions.find((held2) => held2.number === entry.question)!;
+    const missing = entry.needs.filter((need) => need.heldReference === undefined);
+    if (missing.length === 0 || open.has(question.id)) continue;
+    raised.push({
+      id: ulid(),
+      questionId: question.id,
+      promptToClient:
+        `For "${question.number} ${question.text}" we will need: ` +
+        `${missing.map((need) => `${need.what} (${need.why})`).join('; ')}. ` +
+        'Nothing has been drafted against this question yet — these are what it will be written from.',
+      raisedAt: new Date().toISOString(),
+      raisedBy: ctx.auth.actorId,
+    });
+  }
+
+  const next: Bid = {
+    ...bid,
+    gaps: [...bid.gaps, ...raised],
+    evidenceNeeds: {
+      reviewedAt: new Date().toISOString(),
+      reviewedBy: ctx.auth.actorId,
+      provider: result.provider ?? 'unknown',
+      questions: bid.questions.length,
+      needed: needs.reduce((total, entry) => total + entry.needs.length, 0),
+      held,
+      raised: raised.length,
+    },
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_EVIDENCE_NEEDS_READ',
+    entity: { refType: 'BidOnBid', refId: bid.id },
+    nextState: { ...next },
+  });
+
+  const wanted = next.evidenceNeeds!.needed;
+  return {
+    bid: next,
+    needs,
+    raised: raised.length,
+    held,
+    acuConsumed: result.acuConsumed,
+    summary:
+      wanted === 0
+        ? `Nothing further is needed for ${bid.reference}: the library covers every question on it.`
+        : `${wanted} piece(s) of evidence would answer ${bid.reference}, of which ${held} are already filed. ` +
+          `${raised.length} question(s) now carry a gap naming what is missing. Press "Write the request to the ` +
+          'customer" and they get one message asking for all of it — before anything is drafted, and before ' +
+          'anything is charged for prose that could not have been evidenced.',
   };
 }
 

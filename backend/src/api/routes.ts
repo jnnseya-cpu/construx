@@ -14260,6 +14260,17 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/evidence-needs',
+    ai: { engine: 'TENDER', taskType: 'bid_on_evidence_needs', capability: 'REASONING' },
+    quoteScope: 'TENANT',
+    description:
+      'Work out what answering this pack will take, before a word of it is drafted. A question asked for six things — CPD plans, a HEM-compatible software platform, digital data capture, QA and audit procedures, low-carbon competency, a transition plan — and the library held none of them; the platform found that out by drafting an answer, charging for it, and raising a gap at the end, one question at a time. The question list is confirmed days earlier and from that moment what the pack needs is knowable. One pass over the whole list: what each question needs, what the library already covers, and a gap for everything it does not, all raised in one act so the customer gets one message rather than six',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      bidOnEngine.planEvidenceNeeds(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/clarifications',
     description:
       'Raise a question for the buyer that a person spotted. The module raises most of these itself — a question with no stated limit, a returnable with no stated format, an amendment that shifts a risk — and this is the door for the ones only a reader finds',
