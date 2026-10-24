@@ -645,6 +645,20 @@ button { font: inherit; }
 
 /* tables */
 .table-scroll { overflow-x: auto; }
+
+/*
+ * The act on a table row.
+ *
+ * A column of buttons in a thirteen-column table gets whatever width is left
+ * over, and the browser spends it by breaking the label: "Draft over it" came
+ * out as three stacked words, which reads as three controls rather than one.
+ *
+ * A button's label is not prose. It wraps as a phrase or not at all, and the
+ * column takes the width that needs — the table already scrolls sideways
+ * inside its own card rather than pushing the page.
+ */
+td .btn { white-space: nowrap; }
+td .row-acts { display: flex; flex-wrap: wrap; gap: 4px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 /*
  * The header is a rule, not a bar.

@@ -29336,3 +29336,14 @@ provider and this suite has none. What is tested is `yesNoFrom` across the
 shapes a vendor sends and the refusals it must not resolve, and the
 `recordAnswer` rule from the other side. The fix is implemented and typechecked;
 the vendor round trip is not exercised here.
+
+### A button label is not prose
+
+The **Next** column in a thirteen-column table gets whatever width is left over,
+and the browser spent it by breaking the label: `Draft over it` came out as
+three stacked words, which reads as three controls rather than one.
+
+`td .btn { white-space: nowrap }` and a `.row-acts` flex wrapper. A button's
+label wraps as a phrase or not at all, and the column takes the width that
+needs — the table already scrolls sideways inside its own card rather than
+pushing the page.

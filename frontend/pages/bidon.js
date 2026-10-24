@@ -3017,11 +3017,11 @@ function nextAct(bidId, entry) {
     // writes what is evidenced and says on the answer that it was written that
     // way, which two days before a return is usually the right call.
     return entry.gap
-      ? html`<div class="actions">
+      ? html`<div class="row-acts">
           ${act('draft-answer', 'Draft over it', '', { over: true })}
           ${act('resolve-gap', 'Close the gap', ' quiet')}
         </div>`
-      : html`<div class="actions">
+      : html`<div class="row-acts">
           ${act('draft-answer', 'Draft', '')}
           ${act('record-answer', 'Write it', ' quiet')}
         </div>`;
@@ -3032,17 +3032,17 @@ function nextAct(bidId, entry) {
   if (answer.status === 'REJECTED') {
     // The reviewer's instructions are already attached to the answer, so the
     // redraft is one press rather than a brief retyped.
-    return html`<div class="actions">${act('draft-answer', 'Draft again', '')}</div>`;
+    return html`<div class="row-acts">${act('draft-answer', 'Draft again', '')}</div>`;
   }
 
   if (!answer.scoredAt) {
-    return html`<div class="actions">
+    return html`<div class="row-acts">
       ${act('rescore-answer', 'Score it', '')}
       ${act('score-answer', 'By hand', ' quiet')}
     </div>`;
   }
 
-  return html`<div class="actions">
+  return html`<div class="row-acts">
     ${act('approve-answer', 'Approve', '')}
     ${act('reject-answer', 'Reject', ' quiet')}
   </div>`;
@@ -3271,7 +3271,7 @@ function bidDetail(position, estimate, source) {
                    * submission comes back rejected for the missing document.
                    */
                   item.status === 'OUTSTANDING'
-                    ? html`<div class="actions">
+                    ? html`<div class="row-acts">
                         <button class="btn sm" data-act="supply-returnable" data-act-bid="${bid.id}"
                           data-act-returnable="${item.id}">Mark done</button>
                         <button class="btn sm quiet" data-act="waive-returnable" data-act-bid="${bid.id}"
