@@ -3154,9 +3154,27 @@ function nextAct(bidId, entry) {
     </div>`;
   }
 
+  /*
+   * A scored answer has four futures, and the row offered two.
+   *
+   * Approve and Reject were there; **Score again** and **Draft again** were
+   * not, and both are things a person standing in front of a red 22.8 actually
+   * wants. Scoring again is how a reviewer gets a second read of the same
+   * words — the first one may have been the author's own, or made before the
+   * evidence was filed. Drafting again is how the answer improves, and the
+   * drafter now carries the scorer's criterion-by-criterion reasons into the
+   * rewrite, so a redraft of a scored answer is a revision rather than another
+   * guess.
+   *
+   * Rejecting is still the right act where a *person* has instructions to
+   * give: those travel with the answer and reach the next draft too. What was
+   * wrong was making it the only road back.
+   */
   return html`<div class="row-acts">
     ${act('approve-answer', 'Approve', '')}
     ${act('reject-answer', 'Reject', ' quiet')}
+    ${act('draft-answer', 'Draft again', ' quiet')}
+    ${act('rescore-answer', 'Score again', ' quiet')}
   </div>`;
 }
 

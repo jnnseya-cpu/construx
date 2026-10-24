@@ -29649,3 +29649,20 @@ An answer drawing four paragraphs from one section of one document printed that
 section four times in the approve brief, which reads as four sources and is
 one. The places are listed once each now, with how many passages came from
 each.
+
+### A scored answer had two futures on the row, and has four
+
+Scored and awaiting a signature, the row offered **Approve** and **Reject**.
+Somebody standing in front of a red 22.8 wants neither: they want it scored
+again, or drafted again.
+
+- **Score again** — a second read of the same words. The first may have been
+  the author's own, or made before the evidence that answers it was filed.
+- **Draft again** — the drafter carries the scorer's criterion-by-criterion
+  reasons into the rewrite, so a redraft of a scored answer is a revision
+  rather than another guess. The old version stays on the record, as every
+  version does.
+
+Rejecting remains the right act where a **person** has instructions to give:
+those travel with the answer and reach the next draft as well. What was wrong
+was making it the only road back.
