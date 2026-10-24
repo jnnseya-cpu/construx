@@ -930,6 +930,29 @@ input:focus, select:focus, textarea:focus {
 }
 .modal header button:hover { background: rgba(255,255,255,.06); color: var(--text); }
 .modal .body { padding: 19px 21px; }
+
+/*
+ * What is being decided, above the fields that decide it.
+ *
+ * A two-person check in which the second person cannot read what the first
+ * wrote is a signature on a reference number. This is the answer itself, its
+ * citations and the marks it was given, in the panel where somebody approves
+ * it — set apart from the form and scrollable, because a 500-word answer is
+ * longer than a modal and must not push the buttons off the screen.
+ */
+.cmd-brief {
+  margin: 0 0 16px; padding: 13px 15px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--slate);
+  max-height: 46vh; overflow-y: auto;
+}
+.cmd-brief h4 {
+  margin: 0 0 7px; font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--text-3);
+}
+.cmd-brief h4:not(:first-child) { margin-top: 15px; }
+.cmd-brief p { margin: 0 0 9px; font-size: 13px; line-height: 1.62; color: var(--text); }
+.cmd-brief p:last-child { margin-bottom: 0; }
+.cmd-brief .said { font-size: 12.5px; color: var(--text-2); line-height: 1.55; }
 .modal .foot { padding: 15px 21px; border-top: 1px solid var(--line); display: flex; gap: 9px; justify-content: flex-end; background: rgba(0,0,0,.16); }
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 1.1px; text-transform: uppercase; color: var(--text-3); margin-bottom: 6px; }

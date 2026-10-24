@@ -162,6 +162,24 @@ function gate(ctx: EngineContext, bidId: string): Bid {
  * answering the question in other words may have been missed, which is a
  * different thing to know than "nothing was found".
  */
+/**
+ * How much of the library a drafter is allowed to read.
+ *
+ * The search default is eight passages, which is right for a screen somebody
+ * scans. It is wrong for drafting: a question with a 500-word limit is marked
+ * on what is in those 500 words, and eight passages of a library is not enough
+ * material to fill them with anything specific — the model writes the twenty-
+ * five careful words its evidence supports and the answer scores forty.
+ *
+ * Twenty-four. Input tokens are the cheapest thing in this transaction: a draft
+ * reads three times as much for a fraction of what one lost tender costs, and
+ * the fit check in `adapterFor` refuses anything that will not fit the window
+ * rather than letting a vendor truncate it. Nothing here loosens the citation
+ * rule — more passages means more the answer **can** cite, never more it may
+ * claim.
+ */
+const DRAFTING_PASSAGES = 24;
+
 async function retrieveForDrafting(
   ctx: EngineContext,
   bid: Bid,
@@ -192,6 +210,7 @@ async function retrieveForDrafting(
       customerAccountId: bid.customerAccountId,
       question: `${question.text} ${question.section}`,
       asAt: day,
+      limit: DRAFTING_PASSAGES,
     });
   }
 
@@ -200,6 +219,7 @@ async function retrieveForDrafting(
       customerAccountId: bid.customerAccountId,
       question: `${question.text} ${question.section}`,
       asAt: day,
+      limit: DRAFTING_PASSAGES,
     }),
     acuConsumed: 0,
   };
@@ -1392,6 +1412,11 @@ export async function draftAnswer(
         question: question.text,
         ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
         mandatory: question.mandatory,
+        // What this question is worth, where the buyer said. A question
+        // carrying 40% of the marks deserves the whole of its limit; one
+        // carrying 2% does not, and the drafter could not tell them apart.
+        ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
+        ...(question.passFail ? { passFail: 'This question is pass/fail. A weak answer here ends the bid.' } : {}),
         answerType: question.answerType,
         ...(wantsYesNo
           ? {
@@ -1410,6 +1435,39 @@ export async function draftAnswer(
         })),
         ...(previous && previous.status === 'REJECTED' && previous.reviewNote
           ? { reviewerInstructions: previous.reviewNote }
+          : {}),
+        /*
+         * The last attempt, and exactly why it scored what it scored.
+         *
+         * A redraft used to be told only a reviewer's rejection note, where
+         * there was one. The scorer's own criterion-by-criterion reasons —
+         * already written, already paid for — were on the record and never
+         * reached the thing that could act on them, so the second attempt made
+         * the same mistakes as the first and cost the same again.
+         *
+         * Given the text and the marks together, a redraft is a revision
+         * rather than a fresh guess: the criteria that scored worst are named,
+         * and the one instruction is to fix those without disturbing what
+         * already worked.
+         */
+        ...(previous?.scores
+          ? {
+              previousAttempt: {
+                version: previous.version,
+                body: previous.body,
+                scores: previous.scores,
+                whyItScoredThat: previous.scoreReasons ?? {},
+                weakest: Object.entries(previous.scores)
+                  .sort(([, left], [, right]) => Number(left) - Number(right))
+                  .slice(0, 2)
+                  .map(([criterion]) => criterion),
+              },
+              revisionInstruction:
+                'This question has been answered before and scored. Write a better answer, not a different one: ' +
+                'keep what the marks say worked, fix what they say did not, and give the weakest criteria named ' +
+                'above the most attention. Every rule above still holds — a revision that gains a mark by ' +
+                'claiming something the passages do not support has lost the bid rather than improved the answer.',
+            }
           : {}),
         ...(input.reviewerInstructions ? { extraInstructions: input.reviewerInstructions } : {}),
         /*
@@ -1430,6 +1488,24 @@ export async function draftAnswer(
                 'though it were in hand, and do not promise anything on the customer’s behalf.',
             }
           : {}),
+        /*
+         * What the marks are actually given for.
+         *
+         * The model was told what it must not do — invent, exceed the limit —
+         * and almost nothing about what a high-scoring tender answer looks
+         * like. So it wrote the twenty-five careful words its evidence
+         * supported and scored forty, which is a correct answer and a losing
+         * one. An evaluator marks completeness against the question, evidence
+         * against what is cited, and specificity against named figures,
+         * periods and standards; a drafter that is not told that cannot aim
+         * at it.
+         *
+         * Every one of these is about using the evidence *better*, not about
+         * claiming more of it. The constraint above is unchanged and comes
+         * first, deliberately: a longer answer that asserts one uncited fact
+         * is worth less than a short one, because it is the thing that gets a
+         * submission thrown out.
+         */
         constraint:
           'State nothing the passages do not support. Every factual claim — a figure, a date, a named scheme, a ' +
           'certificate, a person — must come from a passage and must carry that passage’s chunkId in `citations`. ' +
@@ -1440,6 +1516,24 @@ export async function draftAnswer(
           (question.wordLimit === undefined
             ? ''
             : ` Stay within ${question.wordLimit} words: anything past a stated limit is usually not read at all.`),
+        howItIsMarked:
+          'An evaluator scores this on five things, and the answer should be written to be marked on them. ' +
+          '**Completeness**: every limb of the question answered, in the order asked — where the question lists ' +
+          'requirements or asks "how", take each in turn under its own paragraph. **Evidence**: every commitment ' +
+          'tied to a passage, with the document named in the prose where a buyer would expect to see it. ' +
+          '**Specificity**: named figures, periods, standards, roles and systems rather than adjectives — "within ' +
+          'ten working days, by the nominated assessor, lodged on the central register" beats "promptly, by ' +
+          'qualified staff". **Buyer relevance**: the buyer’s own words for their own scheme. **Clarity**: short ' +
+          'paragraphs, no preamble, no restating the question, no sales language.',
+        lengthInstruction:
+          question.wordLimit === undefined
+            ? 'No word limit is stated. Write what the evidence supports in full — several paragraphs where there ' +
+              'is material for them. A thin answer loses marks it had no need to lose.'
+            : `The limit is ${question.wordLimit} words, and it is a target as much as a ceiling: the buyer is ` +
+              `marking what is in those ${question.wordLimit} words, and an answer at a fraction of the limit ` +
+              'throws away marks that were available. Use the space the passages genuinely support — aim near the ' +
+              'limit where there is material, and stop short rather than padding where there is not. Never fill ' +
+              'space with anything the passages do not carry.',
       },
     },
     toWrites: () => [],

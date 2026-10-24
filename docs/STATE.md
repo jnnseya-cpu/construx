@@ -29347,3 +29347,64 @@ three stacked words, which reads as three controls rather than one.
 label wraps as a phrase or not at all, and the column takes the width that
 needs — the table already scrolls sideways inside its own card rather than
 pushing the page.
+
+## A signature on a reference number
+
+The director pressed **Approve** and was shown a note field and a score
+override. **The answer was not on the screen.** The two-person check is the
+whole value of this module, and the second person could not read what the first
+had written — in the panel where they sign it.
+
+`command()` takes an optional `brief`: pre-rendered markup above the fields,
+for the particular thing being decided rather than the sentence that is the
+same every time. Approve, Reject, Score it and By hand now carry the answer
+itself — the question with its limit and weighting, the text in full, the
+yes/no where there is one, what it cites, and the marks with the scorer's own
+reasons, **weakest first**, because the weakest criterion is the one a reviewer
+is deciding about. A draft written over an open gap says so, and the last
+reviewer's instructions are there on a redraft.
+
+Read back from the record when the button is pressed, not taken off the screen:
+the pack on display may be minutes old, and what somebody signs has to be what
+the platform currently holds.
+
+## Twenty-five words against a five-hundred-word limit
+
+The first real drafts scored 40 and 22.8 — red, at 25 words with one citation
+and 69 words with two. The citation rule was doing its job; nothing else was.
+
+The drafter was told what it must **not** do — invent, exceed the limit — and
+almost nothing about what a high-scoring tender answer looks like. So it wrote
+the twenty-five careful words its evidence supported, which is a correct answer
+and a losing one. Four changes, none of which loosen the evidence rule:
+
+- **The limit is a target, not just a ceiling.** The buyer marks what is in
+  those 500 words; an answer at a twentieth of the limit throws away marks that
+  were available. The instruction is to aim near it *where the passages support
+  it*, and to stop short rather than pad where they do not.
+- **It is told how it will be marked** — the five criteria by name, with what
+  each one rewards: every limb answered in order, each commitment tied to a
+  named document, figures and periods and standards instead of adjectives, the
+  buyer's own vocabulary, no preamble.
+- **It is told what the question is worth.** The weighting and the pass/fail
+  flag were on the record and never reached the drafter, so a question carrying
+  40% of the marks was drafted exactly like one carrying 2%.
+- **It reads three times as much of the library.** `DRAFTING_PASSAGES = 24`
+  against a search default of eight. Eight passages is right for a screen
+  somebody scans and wrong for filling 500 words with anything specific. Input
+  tokens are the cheapest thing in the transaction, and `adapterFor` already
+  refuses anything that will not fit the window.
+
+**And a redraft is now a revision.** The scorer's criterion-by-criterion
+reasons were written, paid for and recorded — and never reached the thing that
+could act on them, so a second attempt repeated the first's mistakes at the
+same price. The previous version's text, its marks, those reasons and its two
+weakest criteria now go to the drafter with one instruction: make this better,
+not different, and gaining a mark by claiming something the passages do not
+support has lost the bid rather than improved the answer.
+
+**Not verified end to end.** Every one of these is prompt and retrieval shape;
+what they produce needs a live provider and this suite has none. What is
+asserted here is that the platform typechecks and that nothing else regressed
+(7,758 passing). Whether the next draft scores better is a measurement to take
+on the deployment, not a claim to make from here.

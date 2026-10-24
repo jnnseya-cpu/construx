@@ -505,6 +505,21 @@ export function command({
    * documents reports the twelve, not the last one.
    */
   report,
+  /**
+   * What the person is deciding about, above the fields.
+   *
+   * `intent` says what a command is for and is the same sentence every time.
+   * This is the opposite: the particular thing in front of them, now. The
+   * director pressing **Approve** was shown a note field and a score override
+   * and **not the answer they were signing** — a two-person check in which the
+   * second person cannot read what the first wrote is a signature on a
+   * reference number.
+   *
+   * Pre-rendered markup from the caller, because the caller is the only thing
+   * that knows what matters here: an answer and its citations for an approval,
+   * the scorer's own reasons for a rejection.
+   */
+  brief,
 }) {
   const missing = missingPrerequisites(fields);
   if (missing.length > 0) return nothingToChoose({ title, intent, missing });
@@ -522,6 +537,7 @@ export function command({
       </header>
       <div class="body">
         <div class="cmd-error" hidden></div>
+        ${brief ? `<div class="cmd-brief">${brief}</div>` : ''}
         ${fields
           .map((f) =>
             // A hidden field is a value the door already knows — the hash a

@@ -1077,9 +1077,39 @@ export async function bidon(root) {
       return;
     }
 
+    /*
+     * What is being decided, in the panel that decides it.
+     *
+     * The director pressed **Approve** and was shown a note field and a score
+     * override — and not the answer. A two-person check in which the second
+     * person cannot read what the first wrote is a signature on a reference
+     * number, and it is the whole value of this module.
+     *
+     * Read back rather than taken off the screen, for the same reason the
+     * question list is: the pack on display may be minutes old, and what
+     * somebody signs has to be what the platform currently holds.
+     */
+    let brief;
+    if (['approve-answer', 'reject-answer', 'score-answer', 'rescore-answer'].includes(button.dataset.act)) {
+      button.disabled = true;
+      try {
+        const position = await api.read(`/v1/bid-on/bids/${filled.bidId}`, 'BID_SERVICES', 'COMMERCIAL_L3');
+        const entry = (position.questions ?? []).find(
+          (held) => held.question.id === filled.questionId || held.answer?.id === filled.answerId,
+        );
+        if (entry) brief = answerBrief(entry);
+      } catch (error) {
+        toast('Not opened', error.detail ?? error.message ?? 'The answer could not be read.', 'err');
+        button.disabled = false;
+        return;
+      }
+      button.disabled = false;
+    }
+
     if (
       await command({
         ...spec,
+        ...(brief ? { brief } : {}),
         fields: spec.fields.map((field) =>
           field.name in filled && filled[field.name] !== '' && filled[field.name] !== undefined
             ? { ...field, value: filled[field.name] }
@@ -2989,6 +3019,70 @@ function listOf(value, key) {
  * beside it. "This would have been green" is what tells somebody the writing is
  * fine and the problem is a certificate.
  */
+/**
+ * The answer itself, for the panel that decides about it.
+ *
+ * Approving was a note field and a score override, with the answer nowhere on
+ * the screen. The two-person check is the whole value of this module and it
+ * cannot be performed against a reference number — so this is what is being
+ * signed: the question it answers, the text in full, what it cites, and the
+ * marks the scorer gave with the reasons they gave them.
+ *
+ * The scores are shown worst first. A reviewer reading five criteria is
+ * deciding whether the weakest one is good enough to send, and that is the one
+ * they should read first.
+ */
+function answerBrief(entry) {
+  const answer = entry.answer;
+  if (!answer) return undefined;
+  const scores = Object.entries(answer.scores ?? {}).sort(([, a], [, b]) => Number(a) - Number(b));
+  return html`
+    <h4>The question</h4>
+    <p>
+      <b>${entry.question.number}</b> ${entry.question.text}
+      <span class="said">
+        ${entry.question.wordLimit ? html` · ${entry.question.wordLimit}-word limit` : ''}
+        ${entry.question.weighting ? html` · worth ${entry.question.weighting}%` : ''}
+        ${entry.question.mandatory ? html` · mandatory` : ''}
+      </span>
+    </p>
+    <h4>The answer — version ${answer.version}, ${answer.words} words${
+      answer.authorship === 'AI_DRAFTED' ? html`, drafted by ${answer.provider ?? 'an agent'}` : html`, written by hand`
+    }</h4>
+    ${answer.yesNo === undefined ? '' : html`<p><b>${answer.yesNo ? 'Yes' : 'No'}</b></p>`}
+    ${(answer.body ?? []).map((line) => html`<p>${line}</p>`)}
+    <h4>What it cites</h4>
+    ${
+      (answer.citations ?? []).length === 0
+        ? html`<p class="said">Nothing. Every claim in it is uncited.</p>`
+        : (answer.citations ?? []).map(
+            (citation) => html`<p class="said">${citation.reference}${citation.pageRef ? html` · ${citation.pageRef}` : ''}</p>`,
+          )
+    }
+    ${
+      scores.length === 0
+        ? html`<h4>Not scored yet</h4>`
+        : html`<h4>How it scored — weakest first</h4>
+            ${scores.map(
+              ([criterion, score]) => html`<p class="said">
+                <b>${humanise(criterion)} ${score}</b> — ${answer.scoreReasons?.[criterion] ?? 'no reason given'}
+              </p>`,
+            )}`
+    }
+    ${
+      answer.draftedOverGap
+        ? html`<h4>Written over an open gap</h4>
+            <p class="said">${answer.draftedOverGap.prompt}</p>`
+        : ''
+    }
+    ${
+      answer.reviewNote
+        ? html`<h4>What the last reviewer said</h4><p class="said">${answer.reviewNote}</p>`
+        : ''
+    }
+  `;
+}
+
 /**
  * What one question is waiting for, as the button that does it.
  *
