@@ -139,3 +139,62 @@ describe('the repository is made of text', () => {
     assert.deepEqual(duplicated, [], `identical files are two places to change one thing:\n  ${duplicated.join('\n  ')}`);
   });
 });
+
+/**
+ * One runtime version, declared in three places that must agree.
+ *
+ * `package.json` states the floor, `deploy/Dockerfile` runs the image, and CI
+ * installs a Node to test against. They are necessarily three statements, and
+ * three statements about one fact drift.
+ *
+ * The drift found in an audit was quieter than a disagreement: the floor was
+ * right, the image was right, CI was right — and **nothing enforced the
+ * floor**, so the development container ran v22.22.0, below the very advisory
+ * the floor exists to clear, and every command in the repository ran without a
+ * word. A requirement that is only observed where somebody happens to be
+ * current is not a requirement.
+ */
+describe('the runtime floor is a requirement rather than a preference', () => {
+  const manifest = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+    engines?: { node?: string };
+  };
+
+  it('declares a floor at or above the release the advisory needs', () => {
+    const floor = manifest.engines?.node;
+    assert.ok(floor, 'package.json states the Node version the platform requires');
+    const [major, minor, patch] = (/(\d+)\.(\d+)\.(\d+)/.exec(floor) ?? []).slice(1).map(Number);
+    assert.equal(major, 22, 'Node 22 is the LTS line this platform runs on');
+    // 22.23.4 carries the October 2026 fix. `deploy/Dockerfile` explains at
+    // length why the image tracks the line rather than a minor, so that it
+    // cannot be capped below this.
+    assert.ok(
+      (minor ?? 0) > 23 || ((minor ?? 0) === 23 && (patch ?? 0) >= 4),
+      `the floor is ${floor}, below the 22.23.4 the advisory needs`,
+    );
+  });
+
+  it('enforces it, rather than stating it and installing anyway', () => {
+    const npmrc = readFileSync(join(REPO_ROOT, '.npmrc'), 'utf8');
+    assert.match(
+      npmrc,
+      /^engine-strict=true$/m,
+      'without engine-strict, `engines` is a comment: npm installs on any runtime and the floor is observed only ' +
+        'by whoever is already current',
+    );
+  });
+
+  it('tests on a runtime that satisfies it', () => {
+    // CI installs Node 22 — the line, so the current patch, which is at or
+    // above the floor by construction. Asserted because a pin to an older
+    // minor here would put CI below the floor while every other file still
+    // said the right thing.
+    const ci = readFileSync(join(REPO_ROOT, '.github/workflows/ci.yaml'), 'utf8');
+    const pinned = /node-version:\s*'([^']+)'/.exec(ci)?.[1];
+    assert.equal(pinned, '22', 'CI follows the LTS line, as the image does');
+  });
+
+  it('runs the image on the same line', () => {
+    const dockerfile = readFileSync(join(REPO_ROOT, 'deploy/Dockerfile'), 'utf8');
+    assert.match(dockerfile, /^FROM node:22-/m, 'the image tracks the line, not a capped minor');
+  });
+});
