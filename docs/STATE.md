@@ -29528,3 +29528,75 @@ Four things it refuses to do:
 It appears in two places: a panel above the question table listing every answer
 that is not green and what each needs, and in the approve brief, so the
 reviewer deciding about one answer sees the same sentence.
+
+## Drafting until it is good enough, not until it is finished
+
+The instruction was not to flatter the score — it was that an answer should be
+**thought about, dived into and searched for deeply enough that a buyer's
+evaluator marks it green**. Two things were still missing after the three-pass
+draft.
+
+### The platform knew things about the company it never told the drafter
+
+A questionnaire's first section is almost always facts: the registered name,
+the company number, the sectors worked in, the headcount, the insurance limits.
+Every one of those is on the customer's record — the profile their own people
+maintain and the declarations their own admin has **confirmed** — and the
+drafter was handed document passages and nothing else. So a question asking for
+a company number raised a gap against a platform holding the company number.
+
+The standing facts and the live confirmed declarations now go to all three
+passes, clearly separated from the passages and under their own instruction:
+they are not passages, they carry no `chunkId`, and they may be stated without
+a citation **exactly as recorded** — never rounded, extended or generalised. A
+declaration of £5m each and every claim does not become £5m in the aggregate
+because the question asks about the aggregate. Anything neither attested nor in
+a passage is still `unsupported`.
+
+A confirmed declaration is an attested statement by the customer's own officer,
+with the name of who confirmed it and when. That is a stronger thing than a
+sentence found in a PDF, and the hard rule that reds an answer resting on an
+*unconfirmed* declaration is the same reasoning from the other side.
+
+### The revision is now a loop with a target
+
+One rewrite was still one rewrite. The revise pass now also marks its own
+rewrite out of 100 on the five criteria, and the loop continues until the
+first of:
+
+- **it clears the green floor** on that marking — the point of the exercise;
+- **it stops improving** — same error, same approach, stop. A rewrite that does
+  not beat the one before it is the model out of ideas, and paying for another
+  is paying for the last one again;
+- **`MAX_REVISIONS`** — three. An unbounded improvement loop on a metered
+  vendor is a bill nobody authorised.
+
+The **best** attempt is kept, not the last: a rewrite that marks itself below
+its predecessor is discarded and the predecessor stands, and an empty or
+uncited rewrite leaves the earlier answer untouched. A vendor fault late in the
+loop must never turn a good draft into a gap.
+
+The self-marking is weighed by `weightedScore` — the rubric's own function
+against the rubric's own floor — so a draft that stops at "green" is green by
+the same arithmetic the pack prints. A partial or malformed set of marks is
+refused rather than guessed: three criteria marked and two omitted would stop
+the loop for the wrong reason, and the fallback is to stop when the prose stops
+changing.
+
+### The price is quoted at the ceiling
+
+`DRAFT_PASSES = 5` — plan, write, and up to three rewrites — and it is the
+**ceiling**, not the typical case. A price that turns out lower than quoted is
+a surprise nobody minds; one that turns out higher is the platform having
+understated what it was about to spend. One constant, read by the route's
+`ai.passes`, by `acuEstimate` and by the engine.
+
+### Still not verified end to end
+
+Every one of these is prompt, payload and loop shape. The loop needs a live
+provider and this suite has none. Tested here: that a self-mark is weighed by
+the same function and against the same floor the screen uses, that a mark which
+rounds towards green without reaching it does not stop the loop, that a partial
+or invented set of marks is refused, and that the three places the pass ceiling
+appears cannot drift. **Whether the answers come back green is a measurement to
+take on the deployment.**

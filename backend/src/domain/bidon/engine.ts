@@ -8,7 +8,7 @@ import type { EvidenceStore } from '../../evidence/store.ts';
 import { requireModule } from '../../identity/modules.ts';
 import { asksNothing, describeShape, looksLikeQuestionSet, questionShape } from './questionshape.ts';
 import type { Clarification } from '../tenderintake.ts';
-import { requireVisibleCustomer } from './customers.ts';
+import { liveDeclarations, requireVisibleCustomer } from './customers.ts';
 import { engagementOpenForWork, engagementsOf, requireOpenEngagement, type Engagement } from './engagements.ts';
 import { depositStanding, invoicesOf, requireFundedEngagement } from './billing.ts';
 import {
@@ -36,7 +36,14 @@ import {
   type Bid,
   type BidQuestion,
 } from './bids.ts';
-import { CRITERION, CRITERION_QUESTION, type CriterionScores } from './rubric.ts';
+import {
+  CRITERION,
+  CRITERION_QUESTION,
+  DEFAULT_WEIGHTS,
+  GREEN_FLOOR,
+  weightedScore,
+  type CriterionScores,
+} from './rubric.ts';
 
 /**
  * The Bid Engine: parse, retrieve, draft, score, gap.
@@ -180,6 +187,21 @@ function gate(ctx: EngineContext, bidId: string): Bid {
  * claim.
  */
 const DRAFTING_PASSAGES = 24;
+
+/**
+ * How many times a draft may be marked and rewritten before it is handed over.
+ *
+ * Three. The loop stops earlier on either of the two conditions that matter —
+ * it clears the green floor, or a rewrite fails to beat the one before it —
+ * and this is the ceiling for the case where neither happens, because an
+ * unbounded improvement loop on a metered vendor is a bill nobody authorised.
+ *
+ * Three rather than one because the instruction is to arrive good on the
+ * **first attempt**, and a first attempt that has been marked and rewritten
+ * three times is still a first attempt from where the person sits: one press,
+ * one answer, one price quoted before it starts.
+ */
+const MAX_REVISIONS = 3;
 
 /** How many separate searches one question is allowed to become. */
 const MAX_FACETS = 6;
@@ -357,6 +379,33 @@ async function retrieveForDrafting(
  * bidder: a bid ends at the gate on a "no", and "probably yes" is not a thing
  * a platform may resolve on a company's behalf.
  */
+/** The paragraphs a pass came back with, whatever else it returned. */
+function bodyOf(from: unknown): string[] {
+  const body = (from as { body?: unknown })?.body;
+  return (Array.isArray(body) ? body : []).map((line) => String(line).trim()).filter(Boolean);
+}
+
+/**
+ * The marks a revision gave its own rewrite, where it gave usable ones.
+ *
+ * The loop's stopping condition rests on this, so a partial or invented set is
+ * worse than none: five criteria, each a number between 0 and 100, or
+ * `undefined` and the loop falls back to stopping when the prose stops
+ * changing. A model that marks three criteria and omits two has not answered
+ * the question that was asked of it.
+ */
+export function selfScoreFrom(value: unknown): CriterionScores | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const said = value as Record<string, unknown>;
+  const marks = {} as CriterionScores;
+  for (const criterion of CRITERION) {
+    const mark = Number(said[criterion]);
+    if (!Number.isFinite(mark) || mark < 0 || mark > 100) return undefined;
+    marks[criterion] = mark;
+  }
+  return marks;
+}
+
 export function yesNoFrom(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value;
   if (typeof value !== 'string') return undefined;
@@ -1506,6 +1555,53 @@ export async function draftAnswer(
   const previous = latestAnswer(bid, question.id);
 
   /*
+   * What this platform already knows about the company, and never told the
+   * drafter.
+   *
+   * A questionnaire's first section is almost always facts: the registered
+   * name, the company number, the sectors worked in, the headcount, the
+   * insurance limits. Every one of those is on the customer's record — the
+   * profile their own people maintain, and the declarations their own admin
+   * has **confirmed** — and the drafter was handed passages of documents and
+   * nothing else. So a question asking for a company number raised a gap
+   * against a platform holding the company number.
+   *
+   * These are not passages and are not offered as ones. A confirmed
+   * declaration is an attested statement by the customer's own officer, which
+   * is a stronger thing than a sentence found in a PDF, and the record carries
+   * who confirmed it and when. So they may be stated — and the instruction
+   * says exactly that, and says that an unconfirmed one may not, because the
+   * hard rule that reds an answer resting on an unconfirmed declaration exists
+   * for the same reason.
+   */
+  const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
+  const attested = liveDeclarations(customer, judgedOn(bid)).map((entry) => ({
+    kind: entry.kind,
+    statement: entry.statement,
+    ...(entry.value ? { value: entry.value } : {}),
+    confirmedBy: `${entry.confirmedByOrganisation} on ${entry.confirmedAt.slice(0, 10)}`,
+    ...(entry.validUntil ? { validUntil: entry.validUntil } : {}),
+  }));
+
+  const ourselves = {
+    legalName: customer.profile.legalName,
+    ...(customer.profile.companyNumber ? { companyNumber: customer.profile.companyNumber } : {}),
+    ...(customer.profile.sicCodes.length > 0 ? { sicCodes: customer.profile.sicCodes } : {}),
+    ...(customer.profile.headcount === undefined ? {} : { headcount: customer.profile.headcount }),
+    ...(customer.profile.turnoverBand ? { turnoverBand: customer.profile.turnoverBand } : {}),
+    ...(customer.profile.sectors.length > 0 ? { sectors: customer.profile.sectors } : {}),
+    ...(customer.profile.regions.length > 0 ? { regions: customer.profile.regions } : {}),
+  };
+
+  const factsInstruction =
+    'These are this company’s own standing facts and the declarations its own officer has confirmed, held on the ' +
+    'record with the name of whoever confirmed each and when. They are not passages and carry no `chunkId`: state ' +
+    'them where the question asks for them, without a citation, exactly as recorded and never rounded, extended or ' +
+    'generalised. Anything not here and not in a passage is still `unsupported`. A figure is what it says: a ' +
+    'declaration of £5m each and every claim does not become £5m in the aggregate because the question asks about ' +
+    'the aggregate.';
+
+  /*
    * The plan, before the prose.
    *
    * A single pass asked a model to find what is relevant, decide a structure
@@ -1542,6 +1638,9 @@ export async function draftAnswer(
           source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
           text: chunk.text,
         })),
+        ourStandingFacts: ourselves,
+        ...(attested.length > 0 ? { confirmedDeclarations: attested } : {}),
+        factsInstruction,
         constraint:
           'Split the question the way an evaluator would mark it: every limb it asks, including the ones buried ' +
           'in an "including" or a sub-clause, because an answer that misses one loses those marks whatever else ' +
@@ -1596,6 +1695,9 @@ export async function draftAnswer(
                 '`yesNo` with the position the passages do support.',
             }
           : {}),
+        ourStandingFacts: ourselves,
+        ...(attested.length > 0 ? { confirmedDeclarations: attested } : {}),
+        factsInstruction,
         // The passages, each with the id the answer has to cite it by.
         passages: retrieved.chunks.map((chunk) => ({
           chunkId: chunk.chunkId,
@@ -1734,81 +1836,124 @@ export async function draftAnswer(
    * the person had to approve. The criticism is worth more before the record
    * than after it.
    *
-   * So the draft is marked and revised inside the same press: the pass is
-   * given its own answer, the question, the marking criteria and the same
-   * passages, and asked what an evaluator would take marks off for and then to
-   * fix exactly that. One revision, not a loop — a second one trades real money
-   * for diminishing prose, and the separate `Score it` is still there for a
-   * reviewer who wants an independent read of what was recorded.
+   * So the draft is marked and revised inside the same press, and **it keeps
+   * going until it is good enough**. The pass is given its own answer, the
+   * question, the marking criteria and the same passages, and asked what an
+   * evaluator would take marks off for, to fix exactly that, and to mark the
+   * result honestly. The loop stops on whichever comes first:
+   *
+   *   - **it clears the green floor** on its own marking — the point of the
+   *     exercise, and there is nothing further to buy;
+   *   - **it stops improving.** Same error, same approach, stop: a revision
+   *     that does not beat the one before it is the model out of ideas, and
+   *     paying for a fourth is paying for the third again;
+   *   - **the ceiling.** `MAX_REVISIONS` passes, because an unbounded loop on
+   *     a metered vendor is a bill nobody authorised.
+   *
+   * The best attempt is kept, not the last. A revision that marks itself lower
+   * than its predecessor is discarded and the predecessor stands.
    *
    * The constraint does not move. A revision that gains a mark by claiming
    * something the passages do not support has lost the bid rather than improved
    * the answer, and its citations are checked exactly as the first draft's are.
    */
-  const revised = await runAI(ctx, {
-    engine: 'TENDER',
-    taskType: 'bid_on_draft_revise',
-    capability: 'REASONING',
-    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
-    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
-    request: {
-      task:
-        'Mark this draft tender answer as the buyer’s evaluator would, then rewrite it to score higher. Return ' +
-        'JSON in exactly the shape of the draft — `body`, `citations`, `unsupported`' +
-        (wantsYesNo ? ', `yesNo`' : '') +
-        ' — plus `tookMarksOffFor`: an array of what an evaluator would have marked it down for. Return the ' +
-        'improved answer in `body`, not the original.',
-      payload: {
-        buyer: bid.buyerName,
-        section: question.section,
-        number: question.number,
-        question: question.text,
-        ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
-        ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
-        answerType: question.answerType,
-        theDraft: result.output,
-        passages: retrieved.chunks.map((chunk) => ({
-          chunkId: chunk.chunkId,
-          source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
-          text: chunk.text,
-        })),
-        markOn:
-          'Completeness — is every limb of the question answered, in the order asked? Evidence — is every ' +
-          'commitment tied to a passage and named where a buyer would look for it? Specificity — are there ' +
-          'figures, periods, standards, roles and systems, or adjectives? Buyer relevance — is it in the buyer’s ' +
-          'own vocabulary for their own scheme? Clarity and limits — short paragraphs, no preamble, no restating ' +
-          'the question, inside any stated word limit.',
-        constraint:
-          'Every rule the draft was written under still holds. State nothing the passages do not support; every ' +
-          'claim carries its passage’s `chunkId` in `citations`; anything asked that nothing covers goes in ' +
-          '`unsupported` and stays out of the prose. A mark gained by claiming something the passages do not ' +
-          'carry is a false statement to a buyer and loses the bid rather than improving the answer. If the draft ' +
-          'cannot honestly be improved, return it unchanged and say so in `tookMarksOffFor`.',
+  let current = result.output;
+  let bestMark = -1;
+  let spentRevising = 0;
+  let revisions = 0;
+
+  for (let attempt = 0; attempt < MAX_REVISIONS; attempt += 1) {
+    const revised = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'bid_on_draft_revise',
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+      attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+      request: {
+        task:
+          'Mark this draft tender answer as the buyer’s evaluator would, then rewrite it to score higher. ' +
+          'Return JSON in exactly the shape of the draft — `body`, `citations`, `unsupported`' +
+          (wantsYesNo ? ', `yesNo`' : '') +
+          ' — plus `tookMarksOffFor`: an array of what an evaluator would have marked it down for, and ' +
+          '`selfScore`: your honest marks out of 100 for the **rewritten** answer as `{ COMPLIANCE, EVIDENCE, ' +
+          'BUYER_RELEVANCE, SPECIFICITY, CLARITY_AND_LIMITS }`. Mark it as the buyer would, not as its author ' +
+          'would: a flattering mark here stops the work early and the buyer marks it properly afterwards. Return ' +
+          'the improved answer in `body`, not the original.',
+        payload: {
+          buyer: bid.buyerName,
+          section: question.section,
+          number: question.number,
+          question: question.text,
+          ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
+          ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
+          answerType: question.answerType,
+          ourStandingFacts: ourselves,
+          ...(attested.length > 0 ? { confirmedDeclarations: attested } : {}),
+          factsInstruction,
+          theDraft: current,
+          revisionNumber: attempt + 1,
+          passages: retrieved.chunks.map((chunk) => ({
+            chunkId: chunk.chunkId,
+            source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
+            text: chunk.text,
+          })),
+          markOn:
+            'Completeness — is every limb of the question answered, in the order asked? Evidence — is ' +
+            'every commitment tied to a passage and named where a buyer would look for it? Specificity — are ' +
+            'there figures, periods, standards, roles and systems, or adjectives? Buyer relevance — is it in ' +
+            'the buyer’s own vocabulary for their own scheme? Clarity and limits — short paragraphs, no ' +
+            'preamble, no restating the question, inside any stated word limit.',
+          aimingAt:
+            `An evaluator marking this at ${GREEN_FLOOR} or above out of 100, weighted ` +
+            `${CRITERION.map((criterion) => `${criterion} ${Math.round(DEFAULT_WEIGHTS[criterion] * 100)}%`).join(', ')}. ` +
+            'Below that it is being revised again, so an honest mark now is worth more than a generous one.',
+          constraint:
+            'Every rule the draft was written under still holds. State nothing the passages or the standing facts ' +
+            'support; every claim from a passage carries its `chunkId` in `citations`; anything asked that nothing ' +
+            'covers goes in `unsupported` and stays out of the prose. A mark gained by claiming something nothing ' +
+            'carries is a false statement to a buyer and loses the bid rather than improving the answer. If the ' +
+            'draft cannot honestly be improved, return it unchanged, say so in `tookMarksOffFor`, and mark it as ' +
+            'it stands.',
+        },
       },
-    },
-    toWrites: () => [],
-    requireModel: NO_PROVIDER,
-  });
+      toWrites: () => [],
+      requireModel: NO_PROVIDER,
+    });
+
+    spentRevising += revised.acuConsumed;
+    revisions += 1;
+
+    // An empty or uncited rewrite is a vendor fault, not an improvement. What
+    // was already written stands and the loop stops: paying again to be handed
+    // nothing again is the definition of the same approach twice.
+    const rewritten = bodyOf(revised.output);
+    if (rewritten.length === 0) break;
+
+    const marked = selfScoreFrom((revised.output as { selfScore?: unknown }).selfScore);
+    const mark = marked ? weightedScore(marked).score : bestMark + 1;
+
+    // Worse than what it started from, by its own marking: keep the better one
+    // and stop. A model talking itself downhill does not recover by going
+    // round again.
+    if (mark < bestMark) break;
+
+    current = revised.output;
+    const improved = mark > bestMark;
+    bestMark = mark;
+
+    if (marked && mark >= GREEN_FLOOR) break;
+    if (!improved) break;
+  }
 
   /*
-   * Whichever of the two actually has an answer in it.
+   * The best attempt, which is what `current` holds.
    *
-   * The revision is preferred and the draft is the fallback, because a revise
-   * pass that comes back empty or uncited must not turn a perfectly good first
-   * draft into a gap. A vendor fault on the third call is not a reason to
-   * throw away the second.
+   * The loop only moves `current` onto a rewrite that came back with prose and
+   * did not mark itself below what it started from, so a vendor fault or a
+   * model talking itself downhill leaves the earlier answer standing. A revise
+   * pass going wrong must never turn a perfectly good draft into a gap.
    */
-  const bodyOf = (from: unknown): string[] =>
-    (Array.isArray((from as { body?: unknown })?.body) ? ((from as { body: unknown[] }).body) : [])
-      .map((line) => String(line).trim())
-      .filter(Boolean);
-
-  const output = (bodyOf(revised.output).length > 0 ? revised.output : result.output) as {
-    body?: unknown;
-    citations?: unknown;
-    unsupported?: unknown;
-    yesNo?: unknown;
-  };
+  const output = current as { body?: unknown; citations?: unknown; unsupported?: unknown; yesNo?: unknown };
   const body = bodyOf(output);
   const cited = (Array.isArray(output.citations) ? output.citations : []).map((id) => String(id));
   const unsupported = (Array.isArray(output.unsupported) ? output.unsupported : [])
@@ -1856,7 +2001,7 @@ export async function draftAnswer(
       bid: withGap,
       outcome: 'GAP_RAISED',
       gapId: gap.id,
-      acuConsumed: plan.acuConsumed + result.acuConsumed + revised.acuConsumed + retrieved.acuConsumed,
+      acuConsumed: plan.acuConsumed + result.acuConsumed + spentRevising + retrieved.acuConsumed,
       retrieval: retrievalOf(retrieved),
     };
   }
@@ -1933,7 +2078,7 @@ export async function draftAnswer(
     ...(open ? { draftedOverGapId: open.id } : {}),
     // The draft and the retrieval that fed it. One number, because one press of
     // one button is what the provider is charged for.
-    acuConsumed: plan.acuConsumed + result.acuConsumed + revised.acuConsumed + retrieved.acuConsumed,
+    acuConsumed: plan.acuConsumed + result.acuConsumed + spentRevising + retrieved.acuConsumed,
     retrieval: retrievalOf(retrieved),
   };
 }

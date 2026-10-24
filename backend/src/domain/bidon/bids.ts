@@ -217,15 +217,21 @@ export const RETURNABLE_OWNER = ['PROVIDER', 'CUSTOMER'] as const;
 export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
 
 /**
- * Model calls in one press of **Draft an answer**.
+ * Model calls in one press of **Draft an answer**, at most.
  *
- * Plan, write, then mark-and-revise. Named here rather than written as a 3 in
- * two files, because the quote a person reads before pressing the button and
- * the estimate for a whole pack have to be the same arithmetic as the thing
- * that actually runs. `backend/src/domain/bidon/engine.ts` is where the three
- * passes are, and `ai.passes` on the draft route is what the panel quotes.
+ * Plan, write, then mark-and-rewrite up to three times — stopping as soon as
+ * the draft clears the green floor on its own marking, or as soon as a rewrite
+ * fails to beat the one before it. Five is therefore the **ceiling** and the
+ * common case is fewer.
+ *
+ * Quoted at the ceiling deliberately. A price that turns out lower than quoted
+ * is a surprise nobody minds; one that turns out higher is the platform having
+ * understated what it was about to spend, which is the rule this figure exists
+ * to serve. Named here rather than written as a number in three files, because
+ * the quote a person reads before pressing, the estimate for a whole pack and
+ * the thing that actually runs have to be the same arithmetic.
  */
-export const DRAFT_PASSES = 3;
+export const DRAFT_PASSES = 5;
 
 export const RETURNABLE_STATUS = ['OUTSTANDING', 'SUPPLIED', 'WAIVED'] as const;
 export type ReturnableStatus = (typeof RETURNABLE_STATUS)[number];
@@ -2956,7 +2962,7 @@ export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
     summary:
       runs === 0
         ? 'Nothing outstanding. An agent run on this pack would do nothing and is refused rather than charged.'
-        : `${runs} run(s): ${outstanding} draft(s) at ${DRAFT_PASSES} call(s) each, ` +
+        : `${runs} run(s): ${outstanding} draft(s) at up to ${DRAFT_PASSES} call(s) each, ` +
           `${outstanding + toScore} score(s)` +
           (bid.questionsConfirmedAt ? '' : ', and one parse') +
           `, against ${passages} passage(s) of evidence.`,

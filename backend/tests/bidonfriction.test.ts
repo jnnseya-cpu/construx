@@ -1117,11 +1117,11 @@ describe('one question, searched as the several questions it is', () => {
 });
 
 describe('the price quoted is the work that runs', () => {
-  it('counts a draft as the three calls it makes', () => {
+  it('counts a draft at the ceiling of the calls it may make', () => {
     // One number, in one place. The quote the panel shows, the estimate for a
     // whole pack and the engine itself drifting apart is how somebody funds
     // a third of a run.
-    assert.equal(bids.DRAFT_PASSES, 3);
+    assert.equal(bids.DRAFT_PASSES, 5, 'plan, write, and up to three mark-and-rewrite passes');
 
     const route = ROUTES.find((entry) => entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/draft');
     assert.ok(route, 'the drafter is routed');
@@ -1129,10 +1129,11 @@ describe('the price quoted is the work that runs', () => {
     assert.equal(route.ai?.capability, 'REASONING');
   });
 
-  it('estimates a pack at four calls a question, not two', () => {
-    // Three to draft and one to score. A pack estimated at half its cost is a
-    // run that stops in the middle, which on a tender week is worse than a
-    // figure somebody flinched at.
+  it('estimates a pack at the drafting ceiling plus a score, not two calls a question', () => {
+    // Up to five to draft and one to score. A pack estimated at a fraction of
+    // its cost is a run that stops in the middle, which on a tender week is
+    // worse than a figure somebody flinched at. The ceiling is quoted because
+    // a price that turns out lower is a surprise nobody minds.
     let packBid = bids.createBid(asDirector(), {
       engagementId: engagement.id,
       buyerName: 'Platform Housing Group',
@@ -1148,8 +1149,8 @@ describe('the price quoted is the work that runs', () => {
 
     const estimate = bids.acuEstimate(asDirector(), packBid.id);
     assert.equal(estimate.questionsOutstanding, 2);
-    assert.equal(estimate.runs, 2 * (bids.DRAFT_PASSES + 1), 'three drafting calls and one score, per question');
-    assert.match(estimate.summary, /3 call\(s\) each/);
+    assert.equal(estimate.runs, 2 * (bids.DRAFT_PASSES + 1), 'the drafting ceiling and one score, per question');
+    assert.match(estimate.summary, /up to 5 call\(s\) each/);
   });
 });
 
@@ -1257,5 +1258,78 @@ describe('what an answer needs to be green', () => {
     // is to write green answers.
     assert.equal(rubric.GREEN_FLOOR, 80);
     assert.equal(rubric.AMBER_FLOOR, 50);
+  });
+});
+
+/**
+ * The stopping conditions of the improvement loop.
+ *
+ * The draft is marked and rewritten until it clears the green floor, stops
+ * improving, or hits its ceiling — and the whole of that judgement rests on
+ * reading the marks a pass gives its own rewrite. A partial or invented set of
+ * marks read as a good score would stop the loop early and hand over a thin
+ * answer; read as a bad one it would pay for three more passes it did not
+ * need. So the parse refuses anything that is not five usable criteria, and
+ * the loop falls back to stopping when the prose stops changing.
+ *
+ * The loop itself needs a live provider and cannot run here. What is tested is
+ * the arithmetic it turns on.
+ */
+describe('reading the marks a revision gives itself', () => {
+  const full = { COMPLIANCE: 85, EVIDENCE: 80, BUYER_RELEVANCE: 90, SPECIFICITY: 75, CLARITY_AND_LIMITS: 85 };
+
+  it('weighs a self-mark exactly as the rubric weighs a scorer', () => {
+    // The loop compares its stopping threshold against the same weighted sum
+    // the published verdict uses. Two different weightings of the same marks
+    // would mean a draft that stopped at "green" and displayed as amber.
+    const { score } = rubric.weightedScore(full);
+    const byHand = Math.round((85 * 0.3 + 80 * 0.25 + 90 * 0.2 + 75 * 0.15 + 85 * 0.1) * 10) / 10;
+    assert.equal(score, byHand);
+    assert.ok(score >= rubric.GREEN_FLOOR, 'these marks are the stopping case');
+  });
+
+  it('keeps going on marks that round towards green without reaching it', () => {
+    // 79.75 rounds to 79.8 and is still short. A loop that compared an
+    // unrounded number against a rounded floor would stop a hair early and
+    // hand over an answer the pack then prints as amber.
+    const nearly = { COMPLIANCE: 80, EVIDENCE: 75, BUYER_RELEVANCE: 90, SPECIFICITY: 70, CLARITY_AND_LIMITS: 85 };
+    assert.equal(rubric.weightedScore(nearly).score, 79.8);
+    assert.ok(rubric.weightedScore(nearly).score < rubric.GREEN_FLOOR);
+  });
+
+  it('stops only on a mark that clears the floor the screen uses', () => {
+    // One floor, one meaning. A loop that stopped at 70 would be handing over
+    // answers the pack then prints in amber.
+    const thin = { COMPLIANCE: 60, EVIDENCE: 55, BUYER_RELEVANCE: 70, SPECIFICITY: 50, CLARITY_AND_LIMITS: 80 };
+    assert.ok(rubric.weightedScore(thin).score < rubric.GREEN_FLOOR, 'and this one keeps going');
+  });
+
+  it('refuses a partial set of marks rather than guessing the rest', () => {
+    // Three criteria marked and two omitted is a pass that did not answer the
+    // question put to it. Treating the missing two as zero would stop the loop
+    // for the wrong reason; treating them as a hundred would stop it for a
+    // worse one.
+    for (const bad of [
+      { COMPLIANCE: 80, EVIDENCE: 75 },
+      { ...full, SPECIFICITY: undefined },
+      { ...full, EVIDENCE: 'good' },
+      { ...full, CLARITY_AND_LIMITS: 140 },
+      { ...full, COMPLIANCE: -5 },
+      null,
+      'green',
+      42,
+      [80, 75, 90, 70, 85],
+    ]) {
+      const read = bidEngine.selfScoreFrom(bad);
+      assert.equal(read, undefined, `${JSON.stringify(bad)} is not a set of marks`);
+    }
+  });
+
+  it('reads a complete set, including the edges', () => {
+    assert.deepEqual(bidEngine.selfScoreFrom(full), full);
+    const floor = { COMPLIANCE: 0, EVIDENCE: 0, BUYER_RELEVANCE: 0, SPECIFICITY: 0, CLARITY_AND_LIMITS: 0 };
+    assert.deepEqual(bidEngine.selfScoreFrom(floor), floor);
+    const top = { COMPLIANCE: 100, EVIDENCE: 100, BUYER_RELEVANCE: 100, SPECIFICITY: 100, CLARITY_AND_LIMITS: 100 };
+    assert.deepEqual(bidEngine.selfScoreFrom(top), top);
   });
 });
