@@ -29235,3 +29235,30 @@ act anybody can take. Each carries what that severity means in the words the
 form that sets it uses — somebody deciding whether to send four questions or
 twenty-five is deciding what "major" is worth, and that should not be on
 another screen.
+
+## A gap reported as a successful draft
+
+Pressing **Draft an answer** on a question nothing in the library supports
+raised a gap — correctly, with no model call and no charge beyond the
+retrieval — and the console said, in green:
+
+    Draft an answer
+    Recorded in the Golden Thread
+
+Nothing was drafted. The command answers with an **outcome**, `DRAFTED` or
+`GAP_RAISED`, and both are a 200 because both are the platform working
+correctly; the console reported the same sentence for either. So somebody who
+asked for a draft, paid for a retrieval and received no draft was told their
+draft was recorded, and went looking for it.
+
+`command()` takes an optional `report(response)` returning
+`{ title, message, tone }`, used for a single run in place of the generic line.
+Every other command keeps the generic one, which is right for them: they either
+did the thing or were refused.
+
+The drafter now says which of the two happened, and on a term-overlap retrieval
+adds the fact that decides what to do next — *"the library is not embedded, so
+this was a word search and 14 passage(s) were not compared; the answer may be on
+file in words the question does not use."* A gap raised after a word search and
+a gap raised after a semantic search are not the same finding, and only the
+second one means the evidence is genuinely absent.

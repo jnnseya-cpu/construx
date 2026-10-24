@@ -488,6 +488,23 @@ export function command({
    * enforces the rule; this only stops the round trip.
    */
   validate,
+  /**
+   * What to say about what came back, where "recorded" is not the whole truth.
+   *
+   * Every command used to report the same green line — *"Recorded in the
+   * Golden Thread"* — and for almost all of them that is exactly right: the
+   * command either did the thing or was refused. The AI commands are not like
+   * that. `Draft an answer` answers with an **outcome**: it either wrote a
+   * draft or found nothing it could cite and raised a gap instead. Both are a
+   * 200, because both are the platform working correctly, and both produced
+   * the same green "Recorded" — so somebody who asked for a draft, paid for a
+   * retrieval and got a gap was told, in green, that their draft was recorded.
+   *
+   * Given the response, returns `{ title, message, tone }` to say what
+   * actually happened. Used for a single run only: a command filing twelve
+   * documents reports the twelve, not the last one.
+   */
+  report,
 }) {
   const missing = missingPrerequisites(fields);
   if (missing.length > 0) return nothingToChoose({ title, intent, missing });
@@ -693,10 +710,13 @@ export function command({
           throw error;
         }
 
+        // What came back, in the command's own words where it has any.
+        const said = report && runs.length === 1 ? report(response) : null;
         toast(
-          title,
-          runs.length === 1 ? 'Recorded in the Golden Thread' : `${runs.length} documents recorded in the Golden Thread`,
-          'ok',
+          said?.title ?? title,
+          said?.message ??
+            (runs.length === 1 ? 'Recorded in the Golden Thread' : `${runs.length} documents recorded in the Golden Thread`),
+          said?.tone ?? 'ok',
         );
         // Afterwards, and never as a condition of the command. The record is
         // what the chain is made of; the file is what makes it useful in three

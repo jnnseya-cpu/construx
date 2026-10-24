@@ -2150,6 +2150,42 @@ export async function bidon(root) {
           : {}),
         ...(overOpenGap ? { overOpenGap: true } : {}),
       }),
+      /*
+       * A gap is not a draft, and must not be reported as one.
+       *
+       * This command answers with an outcome: it either wrote something it can
+       * cite, or it found nothing it could cite and raised a gap instead. Both
+       * are a 200 — both are the platform working correctly — and both used to
+       * produce the same green "Recorded in the Golden Thread". So somebody who
+       * pressed Draft, paid for a retrieval and received no draft at all was
+       * told in green that their draft was recorded, and went looking for it.
+       */
+      report: (result) => {
+        const how =
+          result.retrieval?.method === 'TERM_OVERLAP'
+            ? ' The library is not embedded, so this was a word search' +
+              (result.retrieval.skipped > 0 ? ` and ${result.retrieval.skipped} passage(s) were not compared` : '') +
+              ' — the answer may be on file in words the question does not use. Making the library searchable by ' +
+              'meaning is worth doing before deciding it is missing.'
+            : '';
+        return result.outcome === 'GAP_RAISED'
+          ? {
+              title: 'No draft — a gap was raised',
+              message:
+                'Nothing on file could be cited for this question, so nothing was written: a model asked to answer ' +
+                'from evidence it has not got writes the uncited claim that gets a submission thrown out. The gap ' +
+                'is on the bid, with the request to send to the customer.' +
+                how,
+              tone: 'warn',
+            }
+          : {
+              title: 'Drafted',
+              message:
+                'A version is written and cited, waiting to be scored. Read it against the question before you ' +
+                'sign it.' + how,
+              tone: 'ok',
+            };
+      },
     },
     'rescore-answer': {
       title: 'Score it as the buyer would',
