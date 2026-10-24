@@ -669,3 +669,275 @@ describe('confirming what the parser proposed', () => {
     throwsCode(() => bids.confirmQuestions(asDirector(), bare.id, { questions: [] }), 'BID_ON_NO_QUESTIONS');
   });
 });
+
+/**
+ * Thirty-seven questions for one buyer, and the two things the platform made
+ * impossible.
+ *
+ * Reading a schedule of amendments against JCT MTC 2024 raised **thirty-seven**
+ * clarifications on the first real tender through here. Both halves of what
+ * happens next were unusable:
+ *
+ *   - The register printed them in the order they were raised, so the first
+ *     question anybody has of thirty-seven rows — which cannot be left unasked
+ *     — was answered by scanning a badge column. The reader asked it in those
+ *     words: *"show me the critical ones"*.
+ *   - They go to the buyer as **one** portal message, numbered inside it, and
+ *     answered in one response issued to every bidder. Recording that message
+ *     meant thirty-seven separate acts, each wanting an id typed in and the
+ *     same date typed again — thirty-seven chances to put a different date on
+ *     two questions that went in the same email, when the date is the only
+ *     thing the record is for.
+ *
+ * What the platform must not do is send anything: a clarification goes through
+ * the buyer's own portal, under a named account, in an audited procurement. So
+ * the message is generated and the sending is theirs — and our own severity
+ * stays out of the message, because "critical, we cannot price this as it
+ * stands" tells a buyer exactly where we are soft.
+ */
+describe('thirty-seven questions for one buyer', () => {
+  let asking: bids.Bid;
+
+  before(() => {
+    asking = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+      clarificationDeadline: '2026-10-27',
+    });
+    // Raised out of severity order on purpose: the order they were raised in
+    // is the order that was useless, and it has to be the input here.
+    for (const entry of [
+      { severity: 'MINOR' as const, subject: 'Format of the cost model', question: 'Should the cost model be returned as the issued spreadsheet or as a PDF of it?' },
+      { severity: 'CRITICAL' as const, subject: 'Collateral warranties', question: 'Clause 7 requires collateral warranties to an unnamed class of beneficiary. Who are they and how many?' },
+      { severity: 'MAJOR' as const, subject: 'Liquidated damages', question: 'The amendment states liquidated damages at a rate per week with no cap. Will a cap be applied?' },
+      { severity: 'CRITICAL' as const, subject: 'Insurance limit', question: 'The amended indemnity is uncapped. Our professional indemnity cover is limited per claim — is that acceptable?' },
+      { severity: 'MINOR' as const, subject: 'Site access hours', question: 'Are the stated site access hours the same during the school holidays as in term time?' },
+    ]) {
+      asking = bids.raiseClarification(asDirector(), asking.id, entry).bid;
+    }
+  });
+
+  it('puts the worst first, so a list of thirty-seven answers the question anybody has of it', () => {
+    const position = bids.bidPosition(asDirector(), asking.id, '2026-10-24');
+    assert.deepEqual(
+      position.clarifications.map((entry) => entry.severity),
+      ['CRITICAL', 'CRITICAL', 'MAJOR', 'MINOR', 'MINOR'],
+    );
+    // Within a severity, the order they were raised. Not re-sorted by subject:
+    // two readers' questions about the same clause belong together.
+    assert.deepEqual(
+      position.clarifications.filter((entry) => entry.severity === 'CRITICAL').map((entry) => entry.subject),
+      ['Collateral warranties', 'Insurance limit'],
+    );
+  });
+
+  it('renders the message to paste, worst first and numbered', () => {
+    const set = bids.clarificationsToSend(asDirector(), asking.id, { asAt: '2026-10-24' });
+
+    assert.equal(set.entries.length, 5);
+    assert.deepEqual(set.counts, { critical: 2, major: 1, minor: 2 });
+    assert.deepEqual(
+      set.entries.map((entry) => entry.position),
+      [1, 2, 3, 4, 5],
+      'numbered in the order they are printed, because that is what the buyer will answer by',
+    );
+    assert.equal(set.entries[0]!.subject, 'Collateral warranties');
+    // The window, which is the whole reason this is time-critical.
+    assert.equal(set.clarificationDeadline, '2026-10-27');
+    assert.equal(set.daysToAsk, 3);
+    assert.match(set.summary, /3 day\(s\) left to ask/);
+
+    // The message itself: the tender named, every question in it, and our own
+    // reference against each one so the buyer's answer leads back to one row.
+    assert.match(set.content, /Platform Housing Group — /);
+    for (const entry of set.entries) {
+      assert.ok(set.content.includes(entry.question), `${entry.subject} is in the message`);
+      assert.ok(set.content.includes(entry.id), `${entry.subject} carries our reference`);
+    }
+    assert.ok(set.content.indexOf('Collateral warranties') < set.content.indexOf('Site access hours'));
+  });
+
+  it('keeps our own severity out of the message', () => {
+    // The ordering is by severity and the message does not say so. A buyer
+    // reading "critical — we cannot price or insure it as it stands" learns
+    // exactly where we are soft, and that sentence was written for a colleague.
+    const set = bids.clarificationsToSend(asDirector(), asking.id, { asAt: '2026-10-24' });
+    for (const word of ['CRITICAL', 'Critical', 'MAJOR', 'Major', 'MINOR', 'Minor']) {
+      assert.ok(!set.content.includes(word), `the message does not carry "${word}"`);
+    }
+  });
+
+  it('sends the critical ones on their own when that is the decision', () => {
+    const critical = bids.clarificationsToSend(asDirector(), asking.id, { severity: 'CRITICAL', asAt: '2026-10-24' });
+    assert.equal(critical.entries.length, 2);
+    assert.deepEqual(critical.counts, { critical: 2, major: 0, minor: 0 });
+    assert.deepEqual(critical.entries.map((entry) => entry.position), [1, 2]);
+    assert.match(critical.filename, /-critical\.txt$/);
+    // And it still says how many are waiting in total, so choosing the two
+    // does not hide the other three.
+    assert.equal(critical.outstanding, 5);
+  });
+
+  it('records the whole message as one act, with one date and one reference', () => {
+    const before = platform.ledger.events({}).length;
+    const ids = bids.clarificationsToSend(asDirector(), asking.id, { asAt: '2026-10-24' }).entries.map((e) => e.id);
+
+    const recorded = bids.markClarificationsAsked(asDirector(), asking.id, ids, {
+      askedOn: '2026-10-24',
+      buyerReference: 'PHG-CLAR-014',
+    });
+
+    assert.equal(recorded.clarifications.length, 5);
+    assert.equal(recorded.late, false);
+    assert.equal(recorded.askedOn, '2026-10-24');
+    for (const entry of recorded.clarifications) {
+      assert.equal(entry.status, 'ASKED');
+      assert.equal(entry.askedAt, '2026-10-24', 'one message is one date');
+      assert.equal(entry.buyerReference, 'PHG-CLAR-014', 'and one reference');
+    }
+
+    // One act, one entry. Thirty-seven entries for one email would be a ledger
+    // that reads as thirty-seven things having happened.
+    const written = platform.ledger.events({}).slice(before);
+    assert.equal(written.length, 1, 'one message to the buyer is one event');
+    assert.equal(written[0]!.eventType, 'BID_ON_CLARIFICATION_ASKED');
+
+    // Nothing is left waiting, and the standing says so.
+    const after = bids.clarificationsToSend(asDirector(), asking.id, { asAt: '2026-10-24' });
+    assert.equal(after.entries.length, 0);
+    assert.match(after.summary, /Nothing is waiting to be asked/);
+    assert.equal(bids.bidPosition(asDirector(), asking.id, '2026-10-24').clarificationStanding.raised, 0);
+  });
+
+  it('refuses the whole set rather than recording part of it', () => {
+    let partial = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+      clarificationDeadline: '2026-10-27',
+    });
+    const first = bids.raiseClarification(asDirector(), partial.id, {
+      severity: 'CRITICAL',
+      subject: 'Parent company guarantee',
+      question: 'Is a parent company guarantee required where the bidder meets the financial thresholds alone?',
+    });
+    partial = first.bid;
+    const second = bids.raiseClarification(asDirector(), partial.id, {
+      severity: 'MAJOR',
+      subject: 'Retention percentage',
+      question: 'The retention percentage in the amendment differs from the one in the order form. Which governs?',
+    });
+    partial = second.bid;
+
+    // An id that is not on this bid. Recording the other one and reporting a
+    // problem with this one would leave nobody able to say which went.
+    throwsCode(
+      () =>
+        bids.markClarificationsAsked(asDirector(), partial.id, [first.clarification.id, 'not-an-id'], {
+          askedOn: '2026-10-24',
+        }),
+      'BID_ON_CLARIFICATION_NOT_FOUND',
+    );
+    assert.equal(
+      bids.bidPosition(asDirector(), partial.id, '2026-10-24').clarificationStanding.raised,
+      2,
+      'nothing was recorded',
+    );
+
+    // Nothing selected is a refusal that names the field, not an empty act.
+    throwsCode(
+      () => bids.markClarificationsAsked(asDirector(), partial.id, [], { askedOn: '2026-10-24' }),
+      'BID_ON_NOTHING_TO_RECORD',
+    );
+
+    // One already answered, in a set of two: the same refusal the single path
+    // gives, because one offender needs no new wording.
+    bids.markClarificationAsked(asDirector(), partial.id, first.clarification.id, { askedOn: '2026-10-24' });
+    bids.recordClarificationAnswer(asDirector(), partial.id, first.clarification.id, {
+      answer: 'A parent company guarantee is not required where the bidder meets the thresholds in its own right.',
+      answeredOn: '2026-10-25',
+    });
+    throwsCode(
+      () =>
+        bids.markClarificationsAsked(asDirector(), partial.id, [first.clarification.id, second.clarification.id], {
+          askedOn: '2026-10-26',
+        }),
+      'BID_ON_CLARIFICATION_ANSWERED',
+    );
+    assert.equal(
+      bids.bidPosition(asDirector(), partial.id, '2026-10-26').clarificationStanding.raised,
+      1,
+      'the second one is still waiting, unrecorded',
+    );
+
+    // Two or more offenders get a refusal that names them all, because
+    // deselecting them is the next action and a list of one is not enough.
+    bids.markClarificationAsked(asDirector(), partial.id, second.clarification.id, { askedOn: '2026-10-26' });
+    bids.recordClarificationAnswer(asDirector(), partial.id, second.clarification.id, {
+      answer: 'The retention percentage stated in the schedule of amendments governs over the order form.',
+      answeredOn: '2026-10-27',
+    });
+    const refusal = throwsCode(
+      () =>
+        bids.markClarificationsAsked(asDirector(), partial.id, [first.clarification.id, second.clarification.id], {
+          askedOn: '2026-10-28',
+        }),
+      'BID_ON_CLARIFICATIONS_NOT_ASKABLE',
+    );
+    assert.match(refusal.message ?? '', /Parent company guarantee/);
+    assert.match(refusal.message ?? '', /Retention percentage/);
+  });
+
+  it('records a late set as late rather than refusing it', () => {
+    let late = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+      clarificationDeadline: '2026-10-27',
+    });
+    const raised = bids.raiseClarification(asDirector(), late.id, {
+      severity: 'MINOR',
+      subject: 'Bid bond wording',
+      question: 'Is the bid bond wording in appendix 6 negotiable, or is it issued on a take-it-or-leave-it basis?',
+    });
+    late = raised.bid;
+
+    // After the window. A fact, and often one worth having: a buyer may answer
+    // a late question and may not. Refusing it would make the honest entry
+    // impossible and leave the question looking un-asked for ever.
+    const recorded = bids.markClarificationsAsked(asDirector(), late.id, [raised.clarification.id], {
+      askedOn: '2026-10-29',
+    });
+    assert.equal(recorded.late, true);
+    assert.equal(recorded.clarifications[0]!.status, 'ASKED');
+  });
+
+  it('routes both halves, and the read is a read', () => {
+    const send = ROUTES.find(
+      (entry) => entry.method === 'GET' && entry.pattern === '/v1/bid-on/bids/:bidId/clarifications/to-send',
+    );
+    assert.ok(send, 'the message is reachable');
+    assert.equal(send.readOnly, true, 'generating the message records nothing');
+
+    const asked = ROUTES.find(
+      (entry) => entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/clarifications/asked',
+    );
+    assert.ok(asked, 'the bulk record is routed');
+    const ids = (asked.schema as { properties?: { clarificationIds?: { minItems?: number; maxItems?: number } } })
+      .properties?.clarificationIds;
+    assert.equal(ids?.minItems, 1, 'an empty set is nothing having happened');
+    assert.ok((ids?.maxItems ?? 0) >= 200, 'a schedule of amendments raises dozens at once');
+
+    // The single path is untouched: one question asked on its own still works,
+    // and still carries its own date.
+    const one = ROUTES.find(
+      (entry) =>
+        entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/clarifications/:clarificationId/asked',
+    );
+    assert.ok(one, 'recording one question on its own is still routed');
+  });
+});

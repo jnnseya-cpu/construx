@@ -14266,6 +14266,58 @@ export const ROUTES: Route[] = [
       bidOnBids.raiseClarification(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
   },
   {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications/to-send',
+    readOnly: true,
+    description:
+      'The questions for the buyer as one message, worst first, ready to paste into their portal. Reading a schedule of amendments raises a question per clause it moves — thirty or forty at once on a real tender — and none of them goes separately: a portal takes one clarification message and the buyer answers the lot in one response issued to every bidder. Our own severity orders the list and is deliberately not in the message, because "critical, we cannot price this as it stands" tells a buyer exactly where we are soft. A read: generating the message records nothing, because a message drafted and not sent is a note',
+    handler: (platform, ctx) => {
+      // Only the three the register knows. An unrecognised severity asks for a
+      // filter nothing can satisfy, and silently returning everything would be
+      // a message somebody sends believing it is the critical ones.
+      const severity = (ctx.query.get('severity') ?? '').toUpperCase();
+      if (severity !== '' && !['CRITICAL', 'MAJOR', 'MINOR'].includes(severity)) {
+        throw new DomainError(
+          'BID_ON_SEVERITY_UNKNOWN',
+          `"${severity}" is not a severity. A question for the buyer is CRITICAL, MAJOR or MINOR.`,
+          400,
+        );
+      }
+      return bidOnBids.clarificationsToSend(tenantContext(platform, ctx), ctx.params.bidId as string, {
+        ...(severity ? { severity: severity as 'CRITICAL' | 'MAJOR' | 'MINOR' } : {}),
+        ...(ctx.query.get('all') === '1' ? { all: true } : {}),
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/clarifications/asked',
+    description:
+      'Record that a set of questions went to the buyer in one message, with one date and one reference. A portal takes one clarification message and the buyer answers the lot in one issued response, so one message is one act — recording thirty-seven of them separately is a transcription exercise with thirty-seven chances to put a different date on two questions that went in the same email, and the date is the only thing the record is for. All of them or none: a set with one unknown id, or one question the buyer has already answered, is refused whole rather than leaving nobody able to say which ones went',
+    schema: {
+      type: 'object',
+      required: ['clarificationIds'],
+      properties: {
+        clarificationIds: { type: 'array', minItems: 1, maxItems: 200, items: { type: 'string', maxLength: 64 } },
+        askedOn: { type: 'string', minLength: 10, maxLength: 10 },
+        buyerReference: { type: 'string', maxLength: 120 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body(ctx) as { clarificationIds: string[]; askedOn?: string; buyerReference?: string };
+      return bidOnBids.markClarificationsAsked(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        input.clarificationIds,
+        {
+          ...(input.askedOn ? { askedOn: input.askedOn } : {}),
+          ...(input.buyerReference ? { buyerReference: input.buyerReference } : {}),
+        },
+      );
+    },
+  },
+  {
     method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/clarifications/:clarificationId/asked',
     description:

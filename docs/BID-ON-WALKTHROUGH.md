@@ -499,7 +499,13 @@ properly, and approve that.
 
 ## Part 9 — Questions to the buyer
 
-Anything you cannot price or insure as it stands.
+Most of these are already there. Reading the limits, the returnables register
+and the schedule of amendments each raises questions of its own — a schedule of
+amendments against JCT MTC 2024 raised **thirty-seven** on one tender — and
+they are all in the opened pack under **Questions for the buyer**, worst first,
+with the count by severity in the heading.
+
+Add the ones only a reader finds:
 
 **Bid-On → Bids → Raise a question for the buyer**
 
@@ -507,9 +513,58 @@ Anything you cannot price or insure as it stands.
 - **Subject** → `Rate schedule and third-floor walk-ups`
 - **The question, as you would ask it** → written to send, not summarised
 
-Then **Record that we asked it** with the day it went and the buyer's reference,
-and **Record the buyer's answer** when Harry O'Neill replies. The answer becomes
-part of the record the submission is built on.
+### Sending them
+
+They go as **one message**, not one at a time. A procurement portal takes a
+single clarification message with the questions numbered inside it, and the
+buyer answers the lot in one response issued to every bidder.
+
+So in the **Questions for the buyer** panel:
+
+- **Copy the N critical** — the ones that cannot be left unasked, as a message
+  ready to paste. Use this when the window is nearly shut and you have to
+  choose.
+- **Copy all N to send** — every question not yet asked, worst first.
+- **Download it** — the same message as a `.txt`, for a portal that takes an
+  attachment and for your own record of what went.
+
+The message names the tender, numbers each question and carries **our**
+reference against it, so the buyer's answer leads back to one row. It does
+**not** carry the severity: *"critical — we cannot price or insure it as it
+stands"* is written for a colleague, and a buyer reading it learns exactly where
+you are soft.
+
+Sending is done in the buyer's portal. The platform does not email a buyer and
+will not: a clarification goes under a named account in an audited procurement.
+
+### Recording that they went
+
+**Questions for the buyer → Record that they went**
+
+- **What went** → pre-ticked with everything outstanding, worst first. Untick
+  anything you held back.
+- **The day it went** → blank is today. Put the real date if you are recording
+  it after the fact.
+- **Their reference** → the buyer's own number for the message.
+
+One message, one date, one reference, one entry on the thread. Recorded as all
+of them or none — a set with one id the bid does not hold is refused whole,
+rather than leaving nobody able to say which ones went.
+
+A date after the clarification deadline is **recorded, not refused**. It is a
+fact, and a buyer may or may not answer a late question; the standing says
+plainly that it went late.
+
+**Record that we asked it** is still there for one question sent on its own.
+
+Then **Record the buyer's answer** when they reply, verbatim. Their answer is
+part of the tender documents from the moment they give it, so a paraphrase is a
+new claim with nobody's name on it. What the answer *changes* — a stated limit,
+a waived returnable, a moved date — is a separate act on the record it changes.
+
+**Withdraw a question** for one that will not be asked, with the reason. The
+reason is what stops the module raising the same subject again next time a
+register is added to.
 
 ---
 

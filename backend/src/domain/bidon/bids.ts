@@ -10,7 +10,7 @@ import { hashEvidence } from '../../core/canonical.ts';
 // The standard section's own clarification type, reused rather than restated: a
 // question for the buyer is the same thing whichever module raised it, and two
 // shapes for it would eventually say different things about the same tender.
-import type { Clarification } from '../tenderintake.ts';
+import type { Clarification, ClarificationSeverity } from '../tenderintake.ts';
 import { liveDeclarations, requireVisibleCustomer, type CustomerAccount } from './customers.ts';
 import { requireOpenEngagement, engagementsOf, type Engagement } from './engagements.ts';
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
@@ -1363,6 +1363,32 @@ export function raiseClarification(
 }
 
 /**
+ * Why a question cannot be recorded as having gone to the buyer.
+ *
+ * The two conditions, in one place and in one wording, because the same check
+ * now runs for one question and for the set somebody sent in a single portal
+ * message. A refusal that read differently depending on how many were selected
+ * would be the same rule described twice.
+ */
+function notAskable(held: BidClarification): { code: string; message: string } | undefined {
+  if (held.status === 'ANSWERED') {
+    return {
+      code: 'BID_ON_CLARIFICATION_ANSWERED',
+      message:
+        `${held.subject} has already been answered by the buyer. Asking it again would invite a second answer that ` +
+        'has to be reconciled with the first.',
+    };
+  }
+  if (held.status === 'WITHDRAWN') {
+    return {
+      code: 'BID_ON_CLARIFICATION_WITHDRAWN',
+      message: `${held.subject} was withdrawn. Raise it again rather than sending something somebody decided not to ask.`,
+    };
+  }
+  return undefined;
+}
+
+/**
  * Record that a question actually went to the buyer. `U` on `BID_SERVICES`.
  *
  * Takes the date rather than assuming today, because somebody records this
@@ -1388,21 +1414,8 @@ export function markClarificationAsked(
   const { bid } = requireWorkableBid(ctx, bidId);
   const held = requireClarification(bid, clarificationId);
 
-  if (held.status === 'ANSWERED') {
-    throw new DomainError(
-      'BID_ON_CLARIFICATION_ANSWERED',
-      `${held.subject} has already been answered by the buyer. Asking it again would invite a second answer that has ` +
-        'to be reconciled with the first.',
-      409,
-    );
-  }
-  if (held.status === 'WITHDRAWN') {
-    throw new DomainError(
-      'BID_ON_CLARIFICATION_WITHDRAWN',
-      `${held.subject} was withdrawn. Raise it again rather than sending something somebody decided not to ask.`,
-      409,
-    );
-  }
+  const refusal = notAskable(held);
+  if (refusal) throw new DomainError(refusal.code, refusal.message, 409);
 
   const askedOn = (input.askedOn ?? new Date().toISOString()).slice(0, 10);
   const late = bid.clarificationDeadline !== undefined && askedOn > bid.clarificationDeadline;
@@ -1427,6 +1440,129 @@ export function markClarificationAsked(
   });
 
   return { bid: next, clarification: asked, late };
+}
+
+/**
+ * Record that a whole set of questions went to the buyer. `U` on `BID_SERVICES`.
+ *
+ * ## Why one act and not thirty-seven
+ *
+ * Reading a schedule of amendments against a contract form raises a question
+ * per clause it moves, and on a real tender that is thirty or forty at once.
+ * None of them goes to the buyer separately: a procurement portal takes one
+ * clarification message, the questions are numbered inside it, and the buyer
+ * answers the lot in one issued response to every bidder. One message is one
+ * date and one reference.
+ *
+ * Recording that one message as thirty-seven separate acts — each needing an id
+ * typed in, the same date typed again and the same reference typed again — is
+ * not a record of what happened. It is a transcription exercise with
+ * thirty-seven chances to put a different date on two questions that went in the
+ * same email, and the date is the only thing the record is *for*.
+ *
+ * ## All of them or none
+ *
+ * A set with one unknown id, or one question the buyer has already answered, is
+ * refused whole. Recording twenty-nine of thirty-one and reporting a problem
+ * with the other two leaves nobody able to say which twenty-nine without
+ * reading the ledger — and the person's next action would be to send the set
+ * again, which is how a question gets two dates.
+ *
+ * One ledger entry, because one thing happened. The event is the same
+ * `BID_ON_CLARIFICATION_ASKED` the single path writes: what changed is how many
+ * questions moved in it, not what kind of act it is.
+ */
+export function markClarificationsAsked(
+  ctx: EngineContext,
+  bidId: string,
+  clarificationIds: string[],
+  input: { askedOn?: string; buyerReference?: string },
+): { bid: Bid; clarifications: BidClarification[]; late: boolean; askedOn: string } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+
+  // Duplicates in the selection are a double-click, not a decision: the same
+  // question twice in one message is one question.
+  const wanted = [...new Set(clarificationIds.map((id) => id.trim()).filter(Boolean))];
+  if (wanted.length === 0) {
+    throw new DomainError(
+      'BID_ON_NOTHING_TO_RECORD',
+      `No questions were selected, so there is nothing to record against ${bid.reference}. Choose the ones that went ` +
+        'to the buyer in the message you sent.',
+      400,
+      [{ field: 'clarificationIds', message: 'Choose at least one question' }],
+    );
+  }
+
+  const missing = wanted.filter((id) => !bid.clarifications.some((entry) => entry.id === id));
+  if (missing.length > 0) {
+    throw new DomainError(
+      'BID_ON_CLARIFICATION_NOT_FOUND',
+      `${missing.length} of the ${wanted.length} selected question(s) are not on ${bid.reference}: ` +
+        `${missing.join(', ')}. Nothing has been recorded.`,
+      404,
+    );
+  }
+
+  const held = wanted.map((id) => requireClarification(bid, id));
+  const refused = held
+    .map((entry) => ({ entry, refusal: notAskable(entry) }))
+    .filter((pair): pair is { entry: BidClarification; refusal: { code: string; message: string } } =>
+      pair.refusal !== undefined,
+    );
+
+  if (refused.length === 1) {
+    // One offender: the same refusal the single path gives, word for word.
+    throw new DomainError(refused[0]!.refusal.code, refused[0]!.refusal.message, 409);
+  }
+  if (refused.length > 1) {
+    throw new DomainError(
+      'BID_ON_CLARIFICATIONS_NOT_ASKABLE',
+      `${refused.length} of the ${wanted.length} selected question(s) cannot be recorded as asked, so none has been: ` +
+        `${refused.map((pair) => `${pair.entry.subject} (${pair.entry.status.toLowerCase()})`).join('; ')}. ` +
+        'Deselect those and record the rest.',
+      409,
+    );
+  }
+
+  const askedOn = (input.askedOn ?? new Date().toISOString()).slice(0, 10);
+  const late = bid.clarificationDeadline !== undefined && askedOn > bid.clarificationDeadline;
+  const buyerReference = input.buyerReference?.trim();
+
+  const asked = new Map<string, BidClarification>(
+    held.map((entry) => [
+      entry.id,
+      {
+        ...entry,
+        status: 'ASKED' as const,
+        askedAt: askedOn,
+        askedBy: ctx.auth.actorId,
+        ...(buyerReference ? { buyerReference } : {}),
+      },
+    ]),
+  );
+
+  const next: Bid = {
+    ...bid,
+    clarifications: bid.clarifications.map((entry) => asked.get(entry.id) ?? entry),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_CLARIFICATION_ASKED',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+  });
+
+  // In the order they are held on the bid, not the order they were selected: a
+  // caller showing the result shows the register.
+  return {
+    bid: next,
+    clarifications: next.clarifications.filter((entry) => asked.has(entry.id)),
+    late,
+    askedOn,
+  };
 }
 
 /**
@@ -1587,6 +1723,179 @@ export function clarificationStanding(bid: Bid, asAt?: string): ClarificationSta
                     'rather than negotiated.'
                   : '')
               : ` ${daysToAsk} day(s) left to ask, until ${bid.clarificationDeadline}.`),
+  };
+}
+
+/**
+ * Worst first. The one order in which a list of thirty-seven is usable.
+ *
+ * A clarification window shuts on a date, and what a bid team does with the last
+ * three days is decided by severity: the Critical ones go whatever else happens,
+ * the Major ones go if the message can carry them, the Minor ones are often
+ * better answered internally than spent on a buyer's patience. A register in
+ * the order the reader happened to raise them answers no question anybody has.
+ */
+const SEVERITY_RANK: Record<ClarificationSeverity, number> = { CRITICAL: 0, MAJOR: 1, MINOR: 2 };
+
+/** Worst first, and within a severity the order they were raised. */
+export function bySeverity(entries: readonly BidClarification[]): BidClarification[] {
+  return entries
+    .map((entry, at) => ({ entry, at }))
+    .sort((left, right) =>
+      SEVERITY_RANK[left.entry.severity] - SEVERITY_RANK[right.entry.severity] || left.at - right.at,
+    )
+    .map((held) => held.entry);
+}
+
+/** The questions to send, and the message to send them in. */
+export type ClarificationSet = {
+  bidId: string;
+  reference: string;
+  buyerName: string;
+  /** Worst first. Only the ones not yet asked, unless `all` was asked for. */
+  entries: Array<{
+    /** Its number in the message below, which is what the buyer will answer by. */
+    position: number;
+    id: string;
+    severity: ClarificationSeverity;
+    subject: string;
+    question: string;
+    source: ClarificationSource;
+    status: ClarificationStatus;
+  }>;
+  counts: { critical: number; major: number; minor: number };
+  /** Everything raised and not yet asked, before any severity filter. */
+  outstanding: number;
+  clarificationDeadline?: string;
+  daysToAsk: number | null;
+  /** The message itself: plain text, ready to paste into a portal box. */
+  content: string;
+  contentType: string;
+  filename: string;
+  summary: string;
+};
+
+/**
+ * The questions to the buyer as one message. `R` on `BID_SERVICES`.
+ *
+ * ## What this is for
+ *
+ * The platform does not send anything to a buyer, and should not: a
+ * clarification goes through the buyer's own portal, under an account with a
+ * named person behind it, and is part of a procurement that is audited. What
+ * the platform can do is stop somebody retyping thirty-seven questions into
+ * that portal out of a table on a screen — which is where a question gets
+ * dropped, and the dropped one is never the Minor one.
+ *
+ * So this renders the message: numbered, worst first, each with the subject it
+ * concerns and our own reference for it, in text with no formatting because
+ * formatting pasted into a portal box arrives as literal asterisks.
+ *
+ * ## Our severity is not in it
+ *
+ * The ordering is by severity and the message does not say so. "Critical — we
+ * cannot price or insure this as it stands" is a statement about our own
+ * position in a negotiation, written for a colleague, and a buyer reading it in
+ * a clarification message learns exactly where we are soft. The register keeps
+ * it, the screen shows it, the message carries the question.
+ *
+ * ## It is a read
+ *
+ * Nothing is recorded by generating the message. What was actually sent, and
+ * when, is a separate act — `markClarificationsAsked` — because a message
+ * drafted and not sent is a note, and the date it went is the only thing a
+ * dispute about a late question turns on.
+ */
+export function clarificationsToSend(
+  ctx: EngineContext,
+  bidId: string,
+  options: { severity?: ClarificationSeverity; all?: boolean; asAt?: string } = {},
+): ClarificationSet {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const bid = requireBid(ctx, bidId);
+  const standing = clarificationStanding(bid, options.asAt);
+
+  const unasked = bid.clarifications.filter((entry) => entry.status === 'RAISED');
+  const pool = options.all === true ? bid.clarifications : unasked;
+  const chosen = bySeverity(
+    options.severity === undefined ? pool : pool.filter((entry) => entry.severity === options.severity),
+  );
+
+  const entries = chosen.map((entry, at) => ({
+    position: at + 1,
+    id: entry.id,
+    severity: entry.severity,
+    subject: entry.subject,
+    question: entry.question,
+    source: entry.source,
+    status: entry.status,
+  }));
+
+  const counts = {
+    critical: chosen.filter((entry) => entry.severity === 'CRITICAL').length,
+    major: chosen.filter((entry) => entry.severity === 'MAJOR').length,
+    minor: chosen.filter((entry) => entry.severity === 'MINOR').length,
+  };
+
+  /*
+   * The message. A heading naming the tender, because a portal box is often
+   * the only thing the buyer sees and a message that does not name its own
+   * procurement gets answered against the wrong one; then the questions, each
+   * as a numbered block with the subject on its own line.
+   *
+   * Our reference goes on each question rather than a number of our own
+   * invention, because it is the id the register already holds — so when the
+   * buyer's answer comes back quoting "your question 4", the position in this
+   * message and the reference beside it both lead to one row.
+   */
+  const content = [
+    `${bid.buyerName} — ${bid.reference}`,
+    'Clarification questions',
+    '',
+    `${entries.length} question${entries.length === 1 ? '' : 's'}.`,
+    '',
+    ...entries.flatMap((entry) => [
+      `${entry.position}. ${entry.subject}`,
+      '',
+      entry.question,
+      '',
+      `(our reference ${entry.id})`,
+      '',
+      '---',
+      '',
+    ]),
+  ].join('\n');
+
+  const suffix = options.severity ? `-${options.severity.toLowerCase()}` : '';
+  const window =
+    bid.clarificationDeadline === undefined
+      ? ' No clarification deadline is recorded, so nothing here knows when the window shuts.'
+      : standing.daysToAsk !== null && standing.daysToAsk < 0
+        ? ` The window shut on ${bid.clarificationDeadline}.`
+        : ` ${standing.daysToAsk} day(s) left to ask, until ${bid.clarificationDeadline}.`;
+
+  return {
+    bidId: bid.id,
+    reference: bid.reference,
+    buyerName: bid.buyerName,
+    entries,
+    counts,
+    outstanding: unasked.length,
+    ...(bid.clarificationDeadline ? { clarificationDeadline: bid.clarificationDeadline } : {}),
+    daysToAsk: standing.daysToAsk,
+    content,
+    contentType: 'text/plain; charset=utf-8',
+    filename: `${bid.reference}-clarifications${suffix}.txt`,
+    summary:
+      entries.length === 0
+        ? options.severity
+          ? `Nothing ${options.severity.toLowerCase()} is waiting to be asked on ${bid.reference}.`
+          : `Nothing is waiting to be asked on ${bid.reference}.`
+        : `${entries.length} question(s) to send: ${counts.critical} critical, ${counts.major} major, ` +
+          `${counts.minor} minor.${window} Sending is done in the buyer’s portal; record the date it went ` +
+          'afterwards, in one act for the whole message.',
   };
 }
 
@@ -2035,7 +2344,17 @@ export type BidPosition = {
   readiness: PackReadiness;
   /** What has to be returned rather than answered, and where each one stands. */
   returnables: BidReturnable[];
-  /** What to ask the buyer, raised from the questions, the register and the amendments. */
+  /**
+   * What to ask the buyer, raised from the questions, the register and the
+   * amendments — **worst first**.
+   *
+   * Ordered here rather than on the screen, because the order a list of
+   * thirty-seven is read in is not a presentation choice. Reading a schedule of
+   * amendments against a contract form raises a question per clause it moves,
+   * and the first thing anybody needs of the result is which ones cannot be
+   * left unasked. In the order they were raised, that is thirty-seven rows to
+   * scan for a badge; worst first, it is the top of the list.
+   */
   clarifications: BidClarification[];
   /** Where those stand, and how long is left to ask them. */
   clarificationStanding: ClarificationStanding;
@@ -2142,7 +2461,7 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
       returnableReadiness(bid, day),
     ),
     returnables: bid.returnables,
-    clarifications: bid.clarifications,
+    clarifications: bySeverity(bid.clarifications),
     clarificationStanding: clarificationStanding(bid, readOn),
     openGaps: bid.gaps.filter((entry) => !entry.resolvedAt),
     limits,

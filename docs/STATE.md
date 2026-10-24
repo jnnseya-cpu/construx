@@ -29124,3 +29124,56 @@ It takes the chooser now, with the paste box as the alternative for amendments
 that arrived in an email, and the browser says which is missing rather than
 sending nothing and being refused. The hint names what belongs there: the
 schedule of amendments, or the contract particulars, which read the same way.
+
+## Thirty-seven questions, and no way to ask them
+
+Reading the schedule of amendments against JCT MTC 2024 raised **thirty-seven**
+clarifications on one bid. Both halves of what happens next were unusable, and
+the reader said so in six words: *"show me the critical ones"*.
+
+**The register was in the order it was raised.** The first question anybody has
+of thirty-seven rows is which of them cannot be left unasked, and the only way
+to answer it was to scan a badge column. `bidPosition` now publishes the
+clarifications **worst first** — Critical, Major, Minor, and within a severity
+the order they were raised, because two readers' questions about the same clause
+belong together. The ordering is server-side, in `bySeverity`, rather than a
+comparator in the browser: the order a list of thirty-seven is read in is not a
+presentation choice. The panel heading carries the count by severity.
+
+**They go to the buyer as one message.** A procurement portal takes a single
+clarification message with the questions numbered inside it, and the buyer
+answers the lot in one response issued to every bidder. The platform offered one
+act per question, each wanting an id typed in, the same date typed again and the
+same reference typed again — thirty-seven chances to put a different date on two
+questions that went in the same email, when the date is the only thing the
+record is *for*.
+
+Two capabilities close it:
+
+- `GET /v1/bid-on/bids/:bidId/clarifications/to-send` renders the message:
+  numbered, worst first, each question with the subject it concerns and **our**
+  reference for it, in plain text because formatting pasted into a portal box
+  arrives as literal asterisks. `?severity=CRITICAL` is the one to send when the
+  window is nearly shut. It is a read — generating a message records nothing,
+  because a message drafted and not sent is a note.
+- `POST /v1/bid-on/bids/:bidId/clarifications/asked` records the whole set in
+  one act, with one date and one reference, as **one** ledger entry, because one
+  thing happened. All of them or none: a set with one unknown id, or one
+  question the buyer has already answered, is refused whole rather than leaving
+  nobody able to say which ones went. One offender gets the same refusal the
+  single path gives, word for word; several get one that names them all, because
+  deselecting them is the next action.
+
+The single-question path is untouched and still routed, for one question sent on
+its own.
+
+**Our severity is not in the message.** The ordering is by severity and the text
+does not say so. *"Critical — we cannot price or insure it as it stands"* is a
+statement about our own position in a negotiation, written for a colleague, and
+a buyer reading it in a clarification message learns exactly where we are soft.
+A test asserts the words do not appear.
+
+**The platform still does not send anything.** A clarification goes through the
+buyer's own portal, under a named account, in a procurement that is audited. The
+console copies the message to the clipboard or downloads it; the sending, and
+the account it goes under, stay with the person.

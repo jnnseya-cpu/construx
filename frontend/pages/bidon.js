@@ -1006,6 +1006,117 @@ export async function bidon(root) {
   });
 
   /*
+   * The questions for the buyer, as one message.
+   *
+   * Sending happens in the buyer's own portal — the platform does not email a
+   * buyer and should not — so what is needed here is the text, in the order it
+   * should be read in, with nothing in it that was written for a colleague. The
+   * severity orders the message and is deliberately not in it: "critical, we
+   * cannot price this as it stands" tells a buyer exactly where we are soft.
+   *
+   * Clipboard by default, because a portal has a box to paste into. The file is
+   * for the ones that take an attachment, and for the record of what was sent.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-clar-send]');
+    if (!button) return;
+    button.disabled = true;
+    try {
+      const set = await api.read(
+        `/v1/bid-on/bids/${button.dataset.clarSend}/clarifications/to-send` +
+          (button.dataset.clarSeverity ? `?severity=${button.dataset.clarSeverity}` : ''),
+        'BID_SERVICES',
+        'COMMERCIAL_L3',
+      );
+      if (set.entries.length === 0) {
+        toast('Nothing to send', set.summary, 'warn');
+        return;
+      }
+      if (button.dataset.clarFile === '1') {
+        const url = URL.createObjectURL(new Blob([set.content], { type: set.contentType }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = set.filename;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast('Downloaded', `${set.filename} — ${set.summary}`, 'ok');
+      } else {
+        await navigator.clipboard?.writeText(set.content);
+        toast('Copied', set.summary, 'ok');
+      }
+    } catch (error) {
+      toast('Not copied', error.detail ?? error.message ?? 'The questions could not be read.', 'err');
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  /*
+   * Recording that they went, in one act.
+   *
+   * One message to the buyer is one date and one reference, so the form asks
+   * for those once and takes the questions as a tick list — pre-ticked with
+   * everything outstanding, because the normal case is that the whole set went
+   * in one message and the exception is one held back.
+   *
+   * The list is read back rather than taken off the screen: the pack on display
+   * may be minutes old, and what somebody is recording has to be the register
+   * the platform currently holds.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-clar-asked]');
+    if (!button) return;
+    const bidId = button.dataset.clarAsked;
+    button.disabled = true;
+    let set;
+    try {
+      set = await api.read(`/v1/bid-on/bids/${bidId}/clarifications/to-send`, 'BID_SERVICES', 'COMMERCIAL_L3');
+    } catch (error) {
+      toast('Not opened', error.detail ?? error.message ?? 'The questions could not be read.', 'err');
+      button.disabled = false;
+      return;
+    }
+    button.disabled = false;
+    if (set.entries.length === 0) {
+      toast('Nothing to record', set.summary, 'warn');
+      return;
+    }
+    const options = set.entries.map((entry) => ({
+      value: entry.id,
+      label: `${humanise(entry.severity)} · ${entry.subject}`,
+    }));
+    if (
+      await command({
+        title: 'Record that the questions went to the buyer',
+        intent:
+          'One message, one date, one reference. A portal takes a single clarification message with the questions ' +
+          'numbered inside it and the buyer answers the lot in one response issued to every bidder — so this is one ' +
+          'act, not one per question. The date is the point: a question is only worth having if it reached the buyer ' +
+          'before their window shut. Untick anything held back; all of them or none is recorded.',
+        path: `/v1/bid-on/bids/${bidId}/clarifications/asked`,
+        submitLabel: `Record ${set.entries.length}`,
+        fields: [
+          { name: 'clarificationIds', label: 'What went', type: 'multiselect', options, value: options.map((o) => o.value),
+            hint: 'Pre-ticked with everything outstanding, worst first. Untick anything that was held back.' },
+          { name: 'askedOn', label: 'The day it went', type: 'date', required: false,
+            hint: 'Blank is today. Put the real date if you are recording it after the fact.' },
+          { name: 'buyerReference', label: 'Their reference', type: 'text', required: false,
+            hint: 'The buyer’s own number for the message, which is what their answer will quote back.' },
+        ],
+        transform: (v) => ({
+          clarificationIds: Array.isArray(v.clarificationIds)
+            ? v.clarificationIds
+            : [v.clarificationIds].filter(Boolean),
+          ...(String(v.askedOn ?? '').trim() ? { askedOn: v.askedOn } : {}),
+          ...(String(v.buyerReference ?? '').trim() ? { buyerReference: v.buyerReference } : {}),
+        }),
+      })
+    ) {
+      await draw();
+    }
+  });
+
+  /*
    * One customer's library, and what it has for one question.
    *
    * Two buttons on one chooser rather than two choosers. The question is the
@@ -2770,6 +2881,18 @@ function listOf(value, key) {
  */
 function bidDetail(position, estimate, source) {
   const { bid, customer, questions, readiness, openGaps, limits } = position;
+  /*
+   * The questions for the buyer, counted by severity.
+   *
+   * Reading a schedule of amendments against a contract form raises one per
+   * clause it moves — thirty-seven on the first real tender through here — and
+   * the first thing anybody needs of that is how many cannot be left unasked.
+   * The register arrives worst first from the platform; this is the count that
+   * says what the top of the list is made of.
+   */
+  const clarifications = position.clarifications ?? [];
+  const toAsk = clarifications.filter((entry) => entry.status === 'RAISED');
+  const bySev = (severity) => toAsk.filter((entry) => entry.severity === severity).length;
   return html`
     <div class="card pad0">
       <h2 style="padding:15px 17px 0">
@@ -2957,17 +3080,57 @@ function bidDetail(position, estimate, source) {
         // Questions for the buyer. Separate from gaps, which go to the
         // customer, and time-critical in a different way: a clarification
         // deadline is almost always well before the return.
-        (position.clarifications ?? []).length > 0
+        clarifications.length > 0
           ? html`<div style="padding:11px 17px 0">
-              <h2 style="margin:0 0 4px;font-size:14px">Questions for the buyer</h2>
+              <h2 style="margin:0 0 4px;font-size:14px">
+                Questions for the buyer
+                ${bySev('CRITICAL') > 0 ? badge(`${bySev('CRITICAL')} critical`, 'bad') : ''}
+                ${bySev('MAJOR') > 0 ? badge(`${bySev('MAJOR')} major`, 'warn') : ''}
+                ${bySev('MINOR') > 0 ? badge(`${bySev('MINOR')} minor`, '') : ''}
+              </h2>
               <p style="margin:0 0 6px;font-size:12.5px;color:var(--text-3)">
                 ${position.clarificationStanding?.summary ?? ''}
-                A question nobody sent is worth nothing, and a buyer usually issues their answers to every bidder —
-                so the words matter and so does the date it went.
+                Worst first. A question nobody sent is worth nothing, and a buyer usually issues their answers to
+                every bidder — so the words matter and so does the date it went.
               </p>
+              ${
+                /*
+                 * Sending them, and recording that they went.
+                 *
+                 * A portal takes one clarification message with the questions
+                 * numbered inside it, and the buyer answers the lot in one
+                 * response issued to every bidder. So the message is generated
+                 * whole — nobody retypes thirty-seven questions out of a table,
+                 * which is where one gets dropped, and the dropped one is never
+                 * the minor one — and the record of it going is one act with one
+                 * date, not thirty-seven.
+                 *
+                 * Sending itself happens in the buyer's portal. The platform
+                 * does not email a buyer and should not: a clarification goes
+                 * under a named account in an audited procurement.
+                 */
+                toAsk.length > 0
+                  ? html`<div class="actions" style="margin:0 0 9px">
+                      ${
+                        bySev('CRITICAL') > 0
+                          ? html`<button class="btn sm" data-clar-send="${bid.id}" data-clar-severity="CRITICAL"
+                              title="The ones we cannot price or insure as it stands, as a message to paste">
+                              Copy the ${bySev('CRITICAL')} critical
+                            </button>`
+                          : ''
+                      }
+                      <button class="btn sm quiet" data-clar-send="${bid.id}"
+                        title="Every question not yet asked, worst first, as a message to paste into the portal">
+                        Copy all ${toAsk.length} to send
+                      </button>
+                      <button class="btn sm quiet" data-clar-send="${bid.id}" data-clar-file="1">Download it</button>
+                      <button class="btn sm quiet" data-clar-asked="${bid.id}">Record that they went</button>
+                    </div>`
+                  : ''
+              }
               ${table({
                 headers: ['', 'Subject', 'The question', 'Raised by', 'Asked', 'Their answer', 'Standing', 'id'],
-                rows: position.clarifications.map((entry) => [
+                rows: clarifications.map((entry) => [
                   badge(
                     humanise(entry.severity),
                     entry.severity === 'CRITICAL' ? 'bad' : entry.severity === 'MAJOR' ? 'warn' : '',
