@@ -454,6 +454,8 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'record-returnables', label: 'Record what has to be returned',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
+          { id: 'record-returnables-bulk', label: 'Record several at once', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'supply-returnable', label: 'Mark a returnable done', tone: 'quiet',
             permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'waive-returnable', label: 'Waive a returnable', tone: 'quiet',
@@ -1578,17 +1580,104 @@ export async function bidon(root) {
         'completely as one missing an answer, and none of it shows in a readiness percentage. Adds to the register ' +
         'rather than replacing it, because these are found across nine documents over an afternoon.',
       path: (v) => `/v1/bid-on/bids/${v.bidId}/returnables`,
-      submitLabel: 'Record',
+      submitLabel: 'Record it',
+      /*
+       * One returnable, in fields.
+       *
+       * This was a textarea taking nine values separated by pipes, with the
+       * format explained in a hint underneath. Somebody recording their first
+       * one read the hint as a set of prompts and answered them a line at a
+       * time —
+       *
+       *     Ref — RFX1000209
+       *     M — EPC Assessments
+       *     CUSTOMER — JCC
+       *     SIG — Justin Nseya
+       *     Your own date — 24/11/2026
+       *
+       * — which is an entirely reasonable reading of a blank box under an
+       * explanation, and produced "must contain at least 1 item(s)". Four of
+       * those five lines are also answering the wrong question: `M` is a flag
+       * rather than a name, `CUSTOMER` says who produces it rather than who
+       * they are, and `SIG` says it needs signing rather than who signs.
+       *
+       * A format nobody can get wrong is better than a format explained well.
+       * The register appends, so one per press is the natural shape — and the
+       * bulk form is still there under its own command for somebody with nine
+       * to enter at once.
+       */
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
           options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
-        { name: 'returnables', label: 'The returnables', type: 'textarea', rows: 10,
-          hint:
-            'One per line as "ref | what it is | M or O | PROVIDER or CUSTOMER | format | pages | MB | SIG | our ' +
-            'date". Only the first four matter; the rest may be blank. M is mandatory and gates the export. ' +
-            'CUSTOMER means only they can produce it — their rates, their signature — and it goes into the request ' +
-            'that we send them. SIG means it needs signing, which is a lead time rather than a task.' },
+        { name: 'reference', label: 'Its reference', type: 'text',
+          hint: 'The buyer’s own, so the register maps onto what you upload: a portal slot like 2.01, or APP3.' },
+        { name: 'title', label: 'What it is', type: 'text',
+          hint: 'As somebody checking the submission would name it — "Order form, completed and signed".' },
+        { name: 'mandatory', label: 'Mandatory', type: 'checkbox', value: true,
+          hint: 'Gates the export. A submission missing a mandatory return is rejected, not marked down.' },
+        { name: 'owner', label: 'Who produces it', type: 'select',
+          options: [
+            { value: 'CUSTOMER', label: 'The customer — their rates, their signature, their certificate' },
+            { value: 'PROVIDER', label: 'Us — we write it' },
+          ],
+          hint: 'A customer item goes into the request we send them.' },
+        { name: 'signatureRequired', label: 'Needs signing', type: 'checkbox', required: false,
+          hint: 'A lead time rather than a task: a document needing a director’s signature on the 30th cannot be started on the 30th.' },
+        // A plain date, not `iso`: the register holds the day, and a timestamp
+        // would be a precision nobody chose.
+        { name: 'internalDueBy', label: 'Our own date', type: 'date', required: false,
+          hint: 'Earlier than the buyer’s. With an afternoon close, ours is the only date that binds.' },
+        { name: 'format', label: 'Format', type: 'text', required: false, hint: 'PDF, XLSX, native spreadsheet. Optional.' },
+        { name: 'pageLimit', label: 'Page limit', type: 'number', required: false },
+        { name: 'fileSizeLimitMb', label: 'Size limit in MB', type: 'number', required: false },
       ],
+      transform: ({ bidId: _b, reference, title, mandatory, owner, signatureRequired, internalDueBy, format, pageLimit, fileSizeLimitMb }) => ({
+        returnables: [
+          {
+            reference: String(reference).trim(),
+            title: String(title).trim(),
+            mandatory: mandatory === true,
+            owner,
+            ...(String(format ?? '').trim() ? { format: String(format).trim() } : {}),
+            ...(pageLimit ? { pageLimit: Number(pageLimit) } : {}),
+            ...(fileSizeLimitMb ? { fileSizeLimitMb: Number(fileSizeLimitMb) } : {}),
+            ...(signatureRequired ? { signatureRequired: true } : {}),
+            ...(internalDueBy ? { internalDueBy } : {}),
+          },
+        ],
+      }),
+    },
+    'record-returnables-bulk': {
+      title: 'Record several returnables at once',
+      intent:
+        'The same register, for somebody reading nine documents in an afternoon who would rather type than press a ' +
+        'button nine times. One per line; anything the line does not carry is left unset. The field-by-field form ' +
+        'is the one to use for a single item.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/returnables`,
+      submitLabel: 'Record them',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'returnables', label: 'One per line', type: 'textarea', rows: 10,
+          placeholder:
+            'APP2 | Order form, completed and signed | M | CUSTOMER | PDF | | | SIG | 2026-10-29\n' +
+            'APP5 | EPC cost model, fully priced | M | CUSTOMER | XLSX | | | | 2026-10-30',
+          hint:
+            'ref | what it is | M or O | PROVIDER or CUSTOMER | format | pages | MB | SIG | our date. Only the ' +
+            'first four matter; the rest may be blank, and the bars still have to be there for the blanks.' },
+      ],
+      validate: ({ returnables }) =>
+        String(returnables ?? '')
+          .split('\n')
+          .some((line) => line.split('|').length >= 4 && line.split('|')[0].trim() && line.split('|')[1].trim())
+          ? undefined
+          : {
+              field: 'returnables',
+              message:
+                'Each line needs at least "ref | what it is | M or O | PROVIDER or CUSTOMER", with the bars. One ' +
+                'returnable per line, not one field per line — or use "Record what has to be returned", which asks ' +
+                'for the fields one at a time.',
+            },
       transform: ({ returnables }) => ({
         returnables: String(returnables ?? '')
           .split('\n')

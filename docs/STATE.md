@@ -29028,3 +29028,37 @@ readiness reads 100%, and the submission is rejected for a missing mandatory
 response — and nothing downstream can detect it, because what is wrong is the
 list. What changed is that confirming is now a reading rather than a typing
 exercise.
+
+## A format explained is not a format nobody can get wrong
+
+Recording the first returnable on a real tender produced this, typed into the
+box:
+
+    Ref — RFX1000209
+    M — EPC Assessments
+    CUSTOMER — JCC
+    SIG — Justin Nseya
+    Your own date — 24/11/2026
+
+and the refusal `must contain at least 1 item(s)`.
+
+The field was a bare textarea taking nine values separated by bars, with the
+format explained in a hint underneath. Reading that hint as a set of prompts
+and answering one per line is an entirely reasonable thing to do with a blank
+box under an explanation — and four of the five lines are also answering a
+question the field was not asking: `M` is a flag rather than a name, `CUSTOMER`
+says who produces the item rather than who they are, and `SIG` says it needs
+signing rather than who will sign it.
+
+So the panel now asks for the fields: reference, what it is, mandatory, who
+produces it, needs signing, our own date, and the optional format and limits.
+One returnable per press, which is the register's natural shape since it
+appends. The bulk form survives as its own quiet command for somebody reading
+nine documents in an afternoon, with an example in the placeholder and a
+browser-side refusal that names what a line needs — and points at the
+field-by-field form.
+
+The general lesson, which applies to the two remaining pipe-delimited fields
+(the question list and the passages): a format a person has to be taught is a
+format that will be got wrong by somebody who read the instructions properly.
+Where the shape is fixed and small, ask for the fields.
