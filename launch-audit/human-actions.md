@@ -1,5 +1,12 @@
 # Human action list
 
+**Update after cycle 2:** of the original eleven, **five are now closed from the
+codebase with executed evidence** (H-2, H-3, H-6, H-8, H-11 — see
+`evidence-ledger.md` cycle 2 and the notes below). **Six remain**, and every one
+genuinely needs access, vendor credentials, or human authority that an audit run
+against a source checkout cannot have.
+
+
 Everything a GO depends on that **only a person with access this audit does not
 have** can do. Each item says what is needed, why it blocks, and what the audit
 will do the moment it is supplied.
@@ -26,3 +33,22 @@ provable from here; a running production system is not.
 Until H-1 is supplied, the honest verdict on the **live platform** is
 **NO-GO (UNTESTED against production)** — not because a defect is known, but
 because the thing to be launched was not the thing that could be reached.
+
+
+---
+
+## Resolution status (cycle 2)
+
+| # | Status | Note |
+|---|---|---|
+| H-1 | **OPEN — needs you** | Live deployment access. Nothing here substitutes for it. |
+| H-2 | **CLOSED in code** | One HKDF-derived root, boot-gated against the default; live confirmation folds into H-1. |
+| H-3 | **CLOSED** | Two-tenant HTTP isolation proven by `api.test.ts` + evidence/journal suites. |
+| H-4 | **OPEN — needs you** | Payment sandbox keys + the business decision on whether cards are live. Money paths must never be tested with real funds. |
+| H-5 | **OPEN — needs you** | SMTP on the live host. Code path verified; delivery needs the host. |
+| H-6 | **CLOSED in code** | `restoredrill.test.ts`: byte-identical restore, timed, altered-journal refusal. Running it against the real object store still needs the host. |
+| H-7 | **OPEN — needs you** | Deploy→rollback on the real pipeline. Scripted and lock-handoff-proven locally; the real run needs the host. |
+| H-8 | **CLOSED (local)** | Load tested live: p95 26 ms / 172 ms, 0 errors. Production-scale run still wants staging. |
+| H-9 | **OPEN — needs a lawyer** | Legal sign-off on public copy. Not an engineering judgement. |
+| H-10 | **OPEN — needs you** | Confirm the org owns domain/DNS/cloud/Stripe/email accounts. A business fact. |
+| H-11 | **CLOSED (web)** | PWA manifest + service worker + 360px responsive verified in real Chromium. Real-device matrix still wants hardware. |

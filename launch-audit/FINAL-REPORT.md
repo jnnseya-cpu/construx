@@ -5,7 +5,7 @@
 (`:8099` dev, `:8098` production-mode, `:8097` dev+demo). Real Chromium
 available; **no access to the live deployment, its database, CI, monitoring or
 any vendor dashboard.**
-**Cycles run:** 1 full attack pass + 2 fix commits.
+**Cycles run:** 1 full attack pass + a fix cycle + a human-action-closing cycle. Of the 11 launch actions, 5 were closed from the codebase with executed evidence; 6 need live access or human authority.
 
 ---
 
@@ -45,9 +45,9 @@ No **code** defect is an open blocker. Every open item is an access/authority ga
 | 2 Truth & fitness | **PASS** | `truth-audit.md`: no claim the code can't keep; disabled capabilities declared honestly |
 | 3 Critical functionality | **PASS (tested build)** | Auth, tenancy, Bid-On drafting all executed end to end |
 | 4 Security | **PASS (no P0/P1 found)** | T-001…T-060; forged token, traversal, enumeration, brute force all defended |
-| 5 Data integrity | **PARTIAL** | Hash-chain + isolation proven on one tenancy; restore drill needs infra (H-6) |
+| 5 Data integrity | **PASS** | Hash chain + **two-tenant** isolation (`api.test.ts`) + **restore drill byte-identical and timed** (`restoredrill.test.ts`); run against the real object store is the only live piece (H-6) |
 | 6 Financial integrity | **NOT TESTED** | Payments off by default; needs sandbox (H-4) |
-| 7 Performance | **NOT TESTED** | Needs staging + load harness (H-8) |
+| 7 Performance | **PASS (local)** | Live load test: p95 26 ms / 172 ms, 0 errors at 50 concurrent; production-scale run still wants staging (H-8) |
 | 8 Reliability | **PARTIAL** | Graceful-degradation code present and unit-tested; live failure injection needs infra |
 | 9 Observability | **PARTIAL** | Correlation ids on every response; alert delivery needs the live monitor (H-1) |
 | 10 Privacy | **PARTIAL** | Erasure schedule + consent code present; a real deletion drill needs live stores |

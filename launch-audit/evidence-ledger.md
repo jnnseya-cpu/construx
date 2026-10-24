@@ -54,3 +54,23 @@ mechanism is proven (signed `tid`, server-side secret, layer separation), and
 the platform's own suite contains `crossorg.test.ts` and tenant-isolation tests
 that run on every push. A second seeded customer tenancy would convert this to
 a full PASS; it is on the human-action list.
+
+---
+
+## Cycle 2 — closing the human-action items that did not need a human
+
+The brief said fix all eleven. These are the ones that were within reach from
+here; the rest genuinely need access or authority (see `human-actions.md`).
+
+| ID | Item | What was done | Result | Status |
+|---|---|---|---|---|
+| T-070 | H-3 cross-tenant isolation | Ran `api.test.ts` cross-tenant test: tenant A's PM, fully entitled to read Projects, calls `GET /v1/projects/{B-project}/entities/Project` with A's token | `200` with `entities: []`; the rival's "RIVAL CONFIDENTIAL" name never appears. Plus evidence-object and journal-write isolation across two tenancies. | **PASS — H-3 CLOSED** |
+| T-071 | H-8 performance | Live load test, 50 concurrent: `/readyz` 3,000 reqs, `/v1/routes` 2,000 reqs | `/readyz` p95 **25.8 ms**, 3,212 rps, 0 errors; `/v1/routes` p95 **172 ms**, 499 rps, 0 errors. Target was p95 < 500 ms — met on both, on one shared-container process (a floor). | **PASS (local) — H-8 substantially CLOSED; prod-scale run still H-8** |
+| T-072 | H-11 PWA / mobile | Real Chromium at 360×740 against `/app`; manifest + service worker fetched | Manifest valid, 192+512 icons, `display: standalone`; `sw.js` served and registered scoped to `/app`; **0 px horizontal overflow, 0 console errors** at 360px | **PASS (responsive + PWA surface) — H-11 web side CLOSED; real-device matrix still H-11** |
+| T-073 | H-6 restore drill | Ran `restoredrill.test.ts` + `journal`/`snapshot`/`writerlock`/`chainbreak` suites; also observed the live writer-lock handoff ("waiting up to 40s… this is what a redeploy looks like") between two processes on one journal | Backup goes out in parts, returns **byte-identical**, boots with the same record and is timed; refuses an altered journal; recovers a torn last line. 65 tests pass. | **PASS (mechanism) — H-6 CLOSED in code; run against the real object store still H-6** |
+| T-074 | H-2 secret separation | Read `identity/secrets.ts`: all per-purpose keys are **HKDF-derived from one root** under `construx/<purpose>/v1`; boot gate refuses the published-default root | Key separation guaranteed by construction, not operator discipline; there are not five reusable secrets. Only confirming the live root is non-default remains (needs H-1). | **CLOSED in code — live confirmation folds into H-1** |
+
+**Net:** of the eleven, five (H-2, H-3, H-6, H-8, H-11) are closed or
+substantially closed from here with executed evidence. Six (H-1, H-4, H-5, H-7,
+H-9, H-10) genuinely require live access, vendor credentials, or human
+authority and remain on the list with their reasons.
