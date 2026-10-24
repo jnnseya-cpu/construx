@@ -1,6 +1,7 @@
 import { connect as netConnect, type Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { config } from '../config.ts';
+import { secretFor } from '../identity/credentials.ts';
 
 /**
  * An SMTP client, spoken directly.
@@ -190,7 +191,12 @@ export type SmtpOptions = {
  */
 export async function sendMail(
   message: { from: string; to: string; raw: string },
-  options: SmtpOptions = { ...config.smtp },
+  // The password resolves through the credential store first, then the
+  // environment — the same precedence every vendor secret follows, so an
+  // operator who set SMTP_PASS from the admin account is used over `.env`, and
+  // a deployment configured entirely through `.env` behaves exactly as before.
+  // The host, port and user are not secrets and stay ordinary config.
+  options: SmtpOptions = { ...config.smtp, pass: secretFor('SMTP_PASS') },
 ): Promise<SmtpResult> {
   const socket = await openSocket(options);
   const connection = new SmtpConnection(socket);

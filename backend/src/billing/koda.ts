@@ -12,6 +12,7 @@ import {
   type WebhookDiagnosis,
   type WebhookHealthRecord,
 } from './webhookdelivery.ts';
+import { secretFor } from '../identity/credentials.ts';
 
 /**
  * KODA — mobile money, as a second rail beside the card.
@@ -59,7 +60,7 @@ const LATE_SETTLEMENT_EVENT = 'payment.verified.late';
 export const KODA_SETTLEMENT_CURRENCY = 'USD';
 
 export function kodaConfigured(): boolean {
-  return config.koda.secretKey !== '' && config.koda.webhookSecret !== '';
+  return secretFor('KODA_SECRET_KEY') !== '' && secretFor('KODA_WEBHOOK_SECRET') !== '';
 }
 
 // ------------------------------------------------------------- delivery health
@@ -81,7 +82,7 @@ export function resetKodaWebhookHealth(): void {
  * checkable without knowing the format, and are the mistakes that matter.
  */
 export function kodaWebhookSecretShape(): SecretShape {
-  return secretShape(config.koda.webhookSecret);
+  return secretShape(secretFor('KODA_WEBHOOK_SECRET'));
 }
 
 /** What is wrong with the mobile-money webhook and what to do next, or that nothing is. */
@@ -109,7 +110,7 @@ async function kodaRequest(path: string, body: unknown): Promise<Record<string, 
   const response = await fetch(`${config.koda.baseUrl}${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${config.koda.secretKey}`,
+      Authorization: `Bearer ${secretFor('KODA_SECRET_KEY')}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -181,7 +182,7 @@ export function verifyKodaWebhook(rawBody: Buffer, signatureHeader: string | und
     reject(new DomainError('KODA_SIGNATURE_MISSING', 'No KODA signature on the request', 400));
   }
 
-  const expected = createHmac('sha256', config.koda.webhookSecret).update(rawBody).digest('hex');
+  const expected = createHmac('sha256', secretFor('KODA_WEBHOOK_SECRET')).update(rawBody).digest('hex');
   const supplied = Buffer.from(signatureHeader.trim(), 'utf8');
   const computed = Buffer.from(expected, 'utf8');
 

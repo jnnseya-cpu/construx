@@ -100,6 +100,27 @@ export const CREDENTIALS = [
     unlocks:
       'Trusting what Stripe sends back. Without it a settlement notice cannot be verified as Stripe’s, and the platform refuses it rather than crediting a wallet on an unsigned message.',
   },
+  {
+    name: 'KODA_SECRET_KEY',
+    label: 'KODA mobile money — secret key',
+    group: 'Payments',
+    unlocks:
+      'The mobile-money rail beside the card: an STK/USSD top-up at all. Without it no mobile-money checkout can be created.',
+  },
+  {
+    name: 'KODA_WEBHOOK_SECRET',
+    label: 'KODA mobile money — webhook signing secret',
+    group: 'Payments',
+    unlocks:
+      'Trusting a KODA callback. Without it the endpoint that credits a wallet refuses every message rather than crediting one on an unsigned callback — the only safe unconfigured state for a rail that moves money.',
+  },
+  {
+    name: 'SMTP_PASS',
+    label: 'Email — SMTP password',
+    group: 'Email',
+    unlocks:
+      'Sending any email: the one-time sign-in code above all. The host, port and user are ordinary settings, but the password is the secret — and without a way to set it here, a deployment whose mail is not yet configured cannot be signed into by anybody, because the login code has nowhere to go.',
+  },
 ] as const;
 
 export type CredentialName = (typeof CREDENTIALS)[number]['name'];
@@ -479,6 +500,12 @@ function environmentValue(name: CredentialName): string {
       return config.stripe.secretKey;
     case 'STRIPE_WEBHOOK_SECRET':
       return config.stripe.webhookSecret;
+    case 'KODA_SECRET_KEY':
+      return config.koda.secretKey;
+    case 'KODA_WEBHOOK_SECRET':
+      return config.koda.webhookSecret;
+    case 'SMTP_PASS':
+      return config.smtp.pass;
     default:
       return '';
   }

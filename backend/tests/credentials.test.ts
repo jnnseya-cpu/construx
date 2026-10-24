@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 import { after, before, describe, it } from 'node:test';
 import { createGateway } from '../src/api/gateway.ts';
 import {
@@ -343,7 +346,55 @@ describe('a credential set from the console', () => {
     }
     assert.deepEqual(
       CREDENTIALS.map((entry) => entry.name).slice().sort(),
-      ['ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OPENAI_API_KEY', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
+      [
+        'ANTHROPIC_API_KEY',
+        'GEMINI_API_KEY',
+        'KODA_SECRET_KEY',
+        'KODA_WEBHOOK_SECRET',
+        'OPENAI_API_KEY',
+        'SMTP_PASS',
+        'STRIPE_SECRET_KEY',
+        'STRIPE_WEBHOOK_SECRET',
+      ],
+    );
+  });
+
+  it('actually consumes every credential it offers, through secretFor', () => {
+    /*
+     * The comment above says "each one is read somewhere". This enforces it.
+     *
+     * A credential the console offers but no call site reads through `secretFor`
+     * is the exact failure the closed list exists to prevent: a screen that
+     * accepts a key, shows it stored, and changes nothing. So every name must
+     * appear in a `secretFor('NAME')` somewhere in the source tree — the one
+     * resolver that applies the store-over-environment precedence. The env
+     * fallback alone (`environmentValue`) is not enough: that is read *by*
+     * `secretFor`, so a name only wired there would ignore the stored value.
+     */
+    const root = join(REPO_ROOT, 'backend', 'src');
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) walk(full, out);
+        else if (e.name.endsWith('.ts')) out.push(full);
+      }
+      return out;
+    };
+    const source = walk(root)
+      // credentials.ts is the resolver itself; its `secretFor(name)` is generic,
+      // not a per-name call site, so it does not count as consumption.
+      .filter((file) => !file.endsWith(join('identity', 'credentials.ts')))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+
+    const unconsumed = CREDENTIALS.map((entry) => entry.name).filter(
+      (name) => !source.includes(`secretFor('${name}')`),
+    );
+    assert.deepEqual(
+      unconsumed,
+      [],
+      `these credentials are offered on the console but no call site reads them through secretFor, so setting one ` +
+        `would change nothing: ${unconsumed.join(', ')}`,
     );
   });
 });

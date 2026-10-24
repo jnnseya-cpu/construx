@@ -29829,3 +29829,40 @@ reviewer can see:
 
 It also asserts its own scan is reading over 400 files, because a glob that
 matched nothing would make all three pass.
+
+## Every vendor secret is settable from the admin account
+
+The platform already let an operator set the three AI provider keys and both
+Stripe secrets from the AI Engine console, through `identity/credentials.ts`: an
+encrypted store beside the journal, operator-only, written once from the
+vendor's dialog and never readable back, with the ledger recording only the act.
+`secretFor(name)` resolves store → (retired?) → environment at each call site.
+
+Three vendor secrets a deployment also needs were **not** on that list and could
+only be set in `.env` — so an operator with no shell could not complete the
+configuration from the account:
+
+- **`SMTP_PASS`** — the email password. The one that matters most: with no mail,
+  a production sign-in code has nowhere to go, so nobody can sign in. Host, port
+  and user are ordinary settings; the password is the secret, now settable here.
+- **`KODA_SECRET_KEY`** and **`KODA_WEBHOOK_SECRET`** — the mobile-money rail,
+  the same shape as Stripe's pair.
+
+All three are added to the closed `CREDENTIALS` list and wired through
+`secretFor` at their one consumption point each (`messaging/smtp.ts`,
+`billing/koda.ts`), so a value set from the account overrides `.env` for the
+running process exactly as the AI keys do. The console surface is data-driven,
+so the table and the "Set a key" chooser picked them up with no UI change.
+
+**What is deliberately still env-only, and why it must be:** the root
+cryptographic secrets — `GATEWAY_JWT_SECRET`, `SESSION_SIGNING_KEY`/signing PEM,
+`EVIDENCE_MASTER_KEY`. These bootstrap the account itself: the credential store
+is *encrypted under* `GATEWAY_JWT_SECRET`, and the session that would set it is
+*signed by* the session key. A secret cannot live in the store it secures, so
+these are set in the environment and the production boot gate refuses the
+published defaults. That is a bootstrapping constraint, not a gap.
+
+A new invariant in `credentials.test.ts` enforces the whole point of the closed
+list: every credential the console offers must be read somewhere through
+`secretFor`, so the screen can never become evidence that a key was configured
+when nothing consumes it.
