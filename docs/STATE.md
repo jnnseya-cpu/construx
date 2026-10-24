@@ -29177,3 +29177,29 @@ A test asserts the words do not appear.
 buyer's own portal, under a named account, in a procurement that is audited. The
 console copies the message to the clipboard or downloads it; the sending, and
 the account it goes under, stay with the person.
+
+## The next act, on the row it belongs to
+
+The pack printed the question id and the answer id, and every answer command
+asked for one of them "from the opened pack above". That was already better
+than printing neither — but on a six-question tender it is eighteen acts, each
+a copy out of a table into a form, and on a thirty-question ITT it is ninety.
+
+The pack knows which question has nothing written, which answer is unscored and
+which is waiting for a signature. It now offers the act instead of the value: a
+**Next** column with the one button that moves that row — Draft, Write it,
+Draft over it, Close the gap, Score it, By hand, Approve, Reject, Draft again,
+or `signed` where there is nothing left to do.
+
+The forms are unchanged. Each button opens the command that already exists,
+pre-filled from the row, so what the form offers and what the platform enforces
+still come from one place, and every command stays reachable from the row of
+doors above for anybody working from an id.
+
+One guard: each of these commands builds its path from the submitted `bidId`,
+and several of the choosers filter. Setting a value a `select` does not carry
+leaves the browser showing its first option, so the form would open looking
+filled and act on a different bid. The handler refuses to open in that case and
+says to reload. It cannot happen on a current screen — the pack and the chooser
+come from the same read — but it would take a list that moved under somebody
+mid-afternoon, which is exactly when nobody checks.

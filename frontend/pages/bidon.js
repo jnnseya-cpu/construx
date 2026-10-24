@@ -1017,6 +1017,65 @@ export async function bidon(root) {
    * Clipboard by default, because a portal has a box to paste into. The file is
    * for the ones that take an attachment, and for the record of what was sent.
    */
+  /*
+   * The next act on one question, from the row it belongs to.
+   *
+   * One handler for every per-row button, because the difference between them
+   * is which command and which ids — and the command itself is the one in
+   * `COMMANDS`, opened with the ids filled in. Nothing about the form changes:
+   * the fields, the hints, the AI cost and the validation are the same whether
+   * somebody reaches it from here or from the row of doors above.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-act]');
+    if (!button) return;
+    const spec = COMMANDS[button.dataset.act];
+    if (!spec) return;
+    const filled = {
+      bidId: button.dataset.actBid,
+      questionId: button.dataset.actQuestion,
+      answerId: button.dataset.actAnswer,
+      gapId: button.dataset.actGap,
+      overOpenGap: button.dataset.actOver === '1',
+    };
+
+    /*
+     * The one way pre-filling could do harm, closed.
+     *
+     * Every one of these commands builds its path from the submitted `bidId`,
+     * and a chooser filters — `Draft an answer` offers bids with a confirmed
+     * list, `Close a gap` offers bids with one open. Setting a value a select
+     * does not carry leaves the browser showing its first option, so the form
+     * would open looking filled and act on a different bid. The pack and the
+     * chooser come from the same read, so this cannot happen on a current
+     * screen; it would take a list that moved under somebody mid-afternoon,
+     * which is exactly when nobody checks.
+     */
+    const chooser = spec.fields.find((field) => field.name === 'bidId' && field.type === 'select');
+    if (chooser && !(chooser.options ?? []).some((option) => String(option.value) === String(filled.bidId))) {
+      toast(
+        'Reload the screen',
+        'This bid is no longer in the list this form offers, so the form cannot be filled in for it. Nothing has ' +
+          'been sent.',
+        'warn',
+      );
+      return;
+    }
+
+    if (
+      await command({
+        ...spec,
+        fields: spec.fields.map((field) =>
+          field.name in filled && filled[field.name] !== '' && filled[field.name] !== undefined
+            ? { ...field, value: filled[field.name] }
+            : field,
+        ),
+      })
+    ) {
+      await draw();
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-clar-send]');
     if (!button) return;
@@ -2879,6 +2938,65 @@ function listOf(value, key) {
  * beside it. "This would have been green" is what tells somebody the writing is
  * fine and the problem is a certificate.
  */
+/**
+ * What one question is waiting for, as the button that does it.
+ *
+ * The pack prints the question id and the answer id and every answer command
+ * asks for one of them "from the opened pack above". That was already an
+ * improvement on printing neither — but on a six-question tender it is
+ * eighteen acts, each one a copy out of a table into a form, and on a
+ * thirty-question ITT it is ninety. The pack knows which question has nothing
+ * written, which answer is unscored and which is waiting for a signature, so
+ * it can offer the one act that is next instead of a value to carry.
+ *
+ * The forms are unchanged. Each button opens the command that already exists,
+ * pre-filled — so what the form offers and what the platform enforces still
+ * come from one place, and the same command is still reachable from the row of
+ * doors above for anybody working from an id.
+ */
+function nextAct(bidId, entry) {
+  const answer = entry.answer;
+  const act = (name, label, tone, extra = {}) => html`<button class="btn sm${raw(tone)}"
+    data-act="${name}" data-act-bid="${bidId}" data-act-question="${entry.question.id}"
+    data-act-answer="${answer?.id ?? ''}" data-act-gap="${entry.gap?.id ?? ''}"
+    data-act-over="${extra.over ? '1' : ''}">${label}</button>`;
+
+  if (answer === null || answer === undefined) {
+    // Nothing written. A gap on the question is not a wall: drafting over it
+    // writes what is evidenced and says on the answer that it was written that
+    // way, which two days before a return is usually the right call.
+    return entry.gap
+      ? html`<div class="actions">
+          ${act('draft-answer', 'Draft over it', '', { over: true })}
+          ${act('resolve-gap', 'Close the gap', ' quiet')}
+        </div>`
+      : html`<div class="actions">
+          ${act('draft-answer', 'Draft', '')}
+          ${act('record-answer', 'Write it', ' quiet')}
+        </div>`;
+  }
+
+  if (answer.status === 'APPROVED') return html`<span style="font-size:12px;color:var(--text-3)">signed</span>`;
+
+  if (answer.status === 'REJECTED') {
+    // The reviewer's instructions are already attached to the answer, so the
+    // redraft is one press rather than a brief retyped.
+    return html`<div class="actions">${act('draft-answer', 'Draft again', '')}</div>`;
+  }
+
+  if (!answer.scoredAt) {
+    return html`<div class="actions">
+      ${act('rescore-answer', 'Score it', '')}
+      ${act('score-answer', 'By hand', ' quiet')}
+    </div>`;
+  }
+
+  return html`<div class="actions">
+    ${act('approve-answer', 'Approve', '')}
+    ${act('reject-answer', 'Reject', ' quiet')}
+  </div>`;
+}
+
 function bidDetail(position, estimate, source) {
   const { bid, customer, questions, readiness, openGaps, limits } = position;
   /*
@@ -3178,8 +3296,8 @@ function bidDetail(position, estimate, source) {
           : ''
       }
       ${table({
-        headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict', 'ids'],
-        align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
+        headers: ['#', 'Section', 'Question', 'Type', 'Limit', 'Weight', 'Words', 'Cites', 'v', 'Answer', 'Verdict', 'Next', 'ids'],
+        align: ['', '', '', '', 'num', 'num', 'num', 'num', 'num', '', '', '', ''],
         rows: questions.map((entry) => [
           entry.question.number,
           entry.question.section,
@@ -3202,6 +3320,8 @@ function bidDetail(position, estimate, source) {
               ? html`<span style="font-size:12px;color:var(--text-3)"> prose alone: ${entry.verdict.weightedBand} ${entry.verdict.weightedScore}</span>`
               : html`<span style="font-size:12px;color:var(--text-3)"> ${entry.verdict.weightedScore}</span>`
           }`,
+          // What this question is waiting for, as the button that does it.
+          nextAct(position.bid.id, entry),
           /*
            * The two ids every answer command asks for.
            *
