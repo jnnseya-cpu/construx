@@ -29487,3 +29487,44 @@ count appears cannot drift apart.
 **Not tested: whether the answers score higher.** That needs a live model and
 this suite has none. The shape is verified, the arithmetic is verified, the
 result is a measurement to take on the deployment.
+
+## "Make sure the level of all answers to be on a green side not red"
+
+There are two ways to make every answer green and only one of them is worth
+having. **The platform does not take the other.** Nothing moves the green
+floor, softens a criterion or shows an answer as green that a buyer's evaluator
+would mark at forty. `GREEN_FLOOR` is 80 and a test now pins it, with the
+reason written beside it: an answer shown green and marked red by the buyer is
+the single failure this module cannot recover from, and a readiness figure
+built out of flattering numbers is exactly the screen showing invented numbers
+that rule 9 forbids.
+
+What was genuinely missing is that **"RED 40" is a verdict, not an
+instruction.** The distance to green is exactly computable from the weights the
+score was made with — Evidence at 25% needs four points for every one Clarity
+at 10% needs — and the platform left that arithmetic to a person's head on a
+tender week.
+
+`toGreenFrom` now computes it beside every verdict:
+
+- **how many weighted points short**, and
+- **every criterion that could close the gap on its own**, with the mark it
+  would have to reach — ordered by how far each has to move, so the lightest
+  lift is the first thing read.
+
+Four things it refuses to do:
+
+- **Never names a mark above 100.** A criterion that would need 126 is not a
+  route, and a route somebody cannot take is worse than no route because they
+  will take it.
+- **Where no single criterion can close it**, it says so and names where
+  everything stands rather than proposing the least-impossible one.
+- **A hard rule is not a shortfall.** An expired certificate is not fixed by
+  writing better, so it is said first and separately — *"the prose is green at
+  90; a hard rule holds it red: file the renewed certificate and re-cite it"*.
+- **"Nobody has read it" is not "it is bad."** Every row on a fresh pack reads
+  RED 0, and that is the state of the reading. The note says so.
+
+It appears in two places: a panel above the question table listing every answer
+that is not green and what each needs, and in the approve brief, so the
+reviewer deciding about one answer sees the same sentence.

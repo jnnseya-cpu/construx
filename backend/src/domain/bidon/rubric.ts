@@ -66,6 +66,15 @@ export const CRITERION = [
 ] as const;
 export type Criterion = (typeof CRITERION)[number];
 
+/** Each criterion as a person names it, for a sentence somebody acts on. */
+export const CRITERION_LABEL: Record<Criterion, string> = {
+  COMPLIANCE: 'Compliance',
+  EVIDENCE: 'Evidence',
+  BUYER_RELEVANCE: 'Buyer relevance',
+  SPECIFICITY: 'Specificity',
+  CLARITY_AND_LIMITS: 'Clarity and limits',
+};
+
 /** What each criterion asks, in the words the scorer is given. */
 export const CRITERION_QUESTION: Record<Criterion, string> = {
   COMPLIANCE: 'Is every part of the question answered, in the order asked?',
@@ -137,7 +146,90 @@ export type Verdict = {
   hardRules: HardRuleHit[];
   /** The working, so a score is arguable rather than asserted. */
   basis: Array<{ criterion: Criterion; score: number; weight: number; contribution: number }>;
+  /** What would make this green. Absent where it already is. */
+  toGreen?: ToGreen;
 };
+
+/**
+ * What this answer needs to clear the green floor.
+ *
+ * Arithmetic, not advice. The verdict already published a number and a colour
+ * and left the person holding it to work out what to do — and "red 40" with a
+ * 500-word limit and five weighted criteria is not something anybody works out
+ * in their head on a tender week. The shortfall is exactly computable from the
+ * weights, so it is computed.
+ *
+ * `routes` is every criterion that could close the gap **on its own** and the
+ * mark it would have to reach, which is the honest way to show a weighted sum:
+ * Evidence at 25% needs four points for every one that Clarity at 10% needs
+ * ten. Where no single criterion can do it — the gap is wider than any one
+ * criterion's remaining headroom buys — the list is empty and `note` says so,
+ * because the answer then needs work in more than one place and pretending
+ * otherwise would send somebody to polish the wrong thing.
+ *
+ * A hard rule is not a shortfall and is never expressed as one. It overrides
+ * the score to red whatever the prose scores, so `blockedByHardRules` is said
+ * first and separately: an expired certificate is not fixed by writing better.
+ */
+export type ToGreen = {
+  /** Weighted points short of the green floor. Zero where only a rule blocks it. */
+  shortBy: number;
+  /** True where a hard rule holds it red regardless of the score. */
+  blockedByHardRules: boolean;
+  /** Single-criterion routes to green: the criterion, its mark now, and the mark it needs. */
+  routes: Array<{ criterion: Criterion; from: number; to: number; weight: number }>;
+  note: string;
+};
+
+/**
+ * The shortfall, from the scores and the weights that produced it.
+ *
+ * Pure, and separate from `verdictFor`, so the one piece of arithmetic a person
+ * acts on can be tested directly rather than inferred from a colour.
+ */
+export function toGreenFrom(
+  scores: CriterionScores,
+  score: number,
+  hardRules: HardRuleHit[],
+  scored: boolean,
+  weights: Record<Criterion, number> = DEFAULT_WEIGHTS,
+): ToGreen | undefined {
+  if (hardRules.length === 0 && score >= GREEN_FLOOR) return undefined;
+
+  const shortBy = round(Math.max(0, GREEN_FLOOR - score));
+  const routes = CRITERION.map((criterion) => ({
+    criterion,
+    from: scores[criterion],
+    to: round(scores[criterion] + shortBy / weights[criterion]),
+    weight: weights[criterion],
+  }))
+    .filter((route) => route.to <= 100 && route.to > route.from)
+    .sort((left, right) => left.to - left.from - (right.to - right.from));
+
+  const said = (route: { criterion: Criterion; from: number; to: number }): string =>
+    `${CRITERION_LABEL[route.criterion]} from ${route.from} to ${route.to}`;
+
+  return {
+    shortBy,
+    blockedByHardRules: hardRules.length > 0,
+    routes,
+    note: !scored
+      ? 'Not scored yet. An unscored answer is red because nothing has read it, not because it is bad — score it ' +
+        'before judging it.'
+      : hardRules.length > 0 && shortBy === 0
+        ? `The prose is green at ${score}. A hard rule holds it red: ${hardRules.map((hit) => hit.remedy).join('; ')}.`
+        : hardRules.length > 0
+          ? `${shortBy} point(s) short of green at ${score}, and a hard rule holds it red whatever the prose ` +
+            `scores: ${hardRules.map((hit) => hit.remedy).join('; ')}.`
+          : routes.length === 0
+            ? `${shortBy} point(s) short of green at ${score}, and no single criterion can close it — this needs ` +
+              'work in more than one place, starting with the heaviest: ' +
+              CRITERION.map((criterion) => `${CRITERION_LABEL[criterion]} ${scores[criterion]}`).join(', ') +
+              '.'
+            : `${shortBy} point(s) short of green at ${score}. Any one of these would do it: ` +
+              `${routes.slice(0, 3).map(said).join('; ')}.`,
+  };
+}
 
 /**
  * What the verdict is judged against.
@@ -281,6 +373,12 @@ export function verdictFor(input: ScoreInput, weights: Record<Criterion, number>
     rag: hardRules.length > 0 ? 'RED' : bandFor(score),
     hardRules,
     basis,
+    // What it would take, where it is not there yet. Computed beside the
+    // verdict rather than left to whoever reads the colour.
+    ...(() => {
+      const lift = toGreenFrom(scores, score, hardRules, input.scores !== undefined, weights);
+      return lift ? { toGreen: lift } : {};
+    })(),
   };
 }
 

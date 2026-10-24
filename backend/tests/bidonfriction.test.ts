@@ -10,6 +10,7 @@ import * as customers from '../src/domain/bidon/customers.ts';
 import * as engagements from '../src/domain/bidon/engagements.ts';
 import * as evidence from '../src/domain/bidon/evidence.ts';
 import * as bidEngine from '../src/domain/bidon/engine.ts';
+import * as rubric from '../src/domain/bidon/rubric.ts';
 import { asksNothing, looksLikeQuestionSet, questionShape } from '../src/domain/bidon/questionshape.ts';
 import { configuredEmbeddingAdapter } from '../src/ai/providers/embedding.ts';
 import type { EngineContext } from '../src/engines/context.ts';
@@ -1149,5 +1150,112 @@ describe('the price quoted is the work that runs', () => {
     assert.equal(estimate.questionsOutstanding, 2);
     assert.equal(estimate.runs, 2 * (bids.DRAFT_PASSES + 1), 'three drafting calls and one score, per question');
     assert.match(estimate.summary, /3 call\(s\) each/);
+  });
+});
+
+/**
+ * "Make sure the level of all answers to be on a green side not red."
+ *
+ * There are two ways to make every answer green and only one of them is worth
+ * having. The platform does **not** take the other: nothing here moves the
+ * green floor, softens a criterion or shows an answer as green that a buyer's
+ * evaluator would mark at forty. An answer shown green and marked red by the
+ * buyer is the single failure this module cannot recover from, and a readiness
+ * figure built out of flattering numbers is the thing `docs/STATE.md` calls a
+ * screen showing invented numbers.
+ *
+ * What the platform can do is stop leaving the work to a person's head. "RED
+ * 40" is a verdict, not an instruction, and the distance to green is exactly
+ * computable from the weights the score was made with — Evidence at 25% needs
+ * four points for every one Clarity at 10% needs. So it is computed, named per
+ * criterion, and put where the answer is read.
+ */
+describe('what an answer needs to be green', () => {
+  const scores = (over: Partial<rubric.CriterionScores> = {}): rubric.CriterionScores => ({
+    COMPLIANCE: 60,
+    EVIDENCE: 60,
+    BUYER_RELEVANCE: 60,
+    SPECIFICITY: 60,
+    CLARITY_AND_LIMITS: 60,
+    ...over,
+  });
+
+  it('says nothing where the answer is already green', () => {
+    const lift = rubric.toGreenFrom(scores({ COMPLIANCE: 90, EVIDENCE: 90, BUYER_RELEVANCE: 90, SPECIFICITY: 90, CLARITY_AND_LIMITS: 90 }), 90, [], true);
+    assert.equal(lift, undefined, 'an answer over the floor needs nothing and should not be told it does');
+  });
+
+  it('names the shortfall and every single-criterion route to closing it', () => {
+    // 60 across the board is a weighted 60: twenty points short of the floor.
+    const lift = rubric.toGreenFrom(scores(), 60, [], true);
+    assert.ok(lift);
+    assert.equal(lift.shortBy, 20);
+    assert.equal(lift.blockedByHardRules, false);
+
+    // And at sixty across the board, no single criterion can close twenty
+    // weighted points: the heaviest is Compliance at 30%, which would have to
+    // reach 126. So no route is offered and the note says what is actually
+    // true — this one needs work in more than one place. Naming an impossible
+    // route would be worse than naming none, because somebody would take it.
+    assert.deepEqual(lift.routes, []);
+    assert.match(lift.note, /no single criterion can close it/);
+    assert.match(lift.note, /Compliance 60/, 'and it names where everything stands, heaviest first');
+  });
+
+  it('never proposes a mark above 100', () => {
+    // The arithmetic is only useful if every route it names is one somebody
+    // could actually be given. A criterion that would need 126 is not a route.
+    for (const weighted of [10, 25, 40, 55, 70, 79]) {
+      const lift = rubric.toGreenFrom(scores({ COMPLIANCE: weighted, EVIDENCE: weighted, BUYER_RELEVANCE: weighted, SPECIFICITY: weighted, CLARITY_AND_LIMITS: weighted }), weighted, [], true);
+      assert.ok(lift, `${weighted} is below the floor`);
+      for (const route of lift.routes) {
+        assert.ok(route.to <= 100, `${route.criterion} would need ${route.to}`);
+        assert.ok(route.to > route.from, 'a route that asks for less than it has is not a route');
+      }
+    }
+  });
+
+  it('puts the lightest lift first', () => {
+    // Evidence at 25% and Clarity at 10%, both at 70: eight weighted points
+    // short. Evidence needs +32, Clarity +80 — so Evidence is named first,
+    // because a person acts on the first thing they read.
+    const lift = rubric.toGreenFrom(scores({ COMPLIANCE: 72, EVIDENCE: 72, BUYER_RELEVANCE: 72, SPECIFICITY: 72, CLARITY_AND_LIMITS: 72 }), 72, [], true);
+    assert.ok(lift);
+    const climbs = lift.routes.map((route) => route.to - route.from);
+    assert.deepEqual([...climbs].sort((a, b) => a - b), climbs, 'ordered by how far each one has to move');
+    assert.equal(lift.routes[0]!.criterion, 'COMPLIANCE', 'the heaviest criterion is the lightest climb');
+  });
+
+  it('says a hard rule is a hard rule, not a shortfall', () => {
+    // An expired certificate is not fixed by writing better, and a sentence
+    // that said "4 points short" would send somebody to do exactly that.
+    const hit = {
+      rule: 'EVIDENCE_LAPSES_BEFORE_DEADLINE' as const,
+      detail: 'The PI certificate expires before the return date',
+      remedy: 'File the renewed certificate and re-cite it',
+    };
+    const lift = rubric.toGreenFrom(scores({ COMPLIANCE: 90, EVIDENCE: 90, BUYER_RELEVANCE: 90, SPECIFICITY: 90, CLARITY_AND_LIMITS: 90 }), 90, [hit], true);
+    assert.ok(lift, 'a hard rule means there is something to say even at 90');
+    assert.equal(lift.blockedByHardRules, true);
+    assert.equal(lift.shortBy, 0);
+    assert.match(lift.note, /The prose is green at 90/);
+    assert.match(lift.note, /File the renewed certificate/);
+  });
+
+  it('distinguishes "nobody has read it" from "it is bad"', () => {
+    // Every row on a fresh pack reads RED 0, and that is the state of the
+    // reading rather than the state of the answer.
+    const lift = rubric.toGreenFrom(scores({ COMPLIANCE: 0, EVIDENCE: 0, BUYER_RELEVANCE: 0, SPECIFICITY: 0, CLARITY_AND_LIMITS: 0 }), 0, [], false);
+    assert.ok(lift);
+    assert.match(lift.note, /Not scored yet/);
+    assert.match(lift.note, /not because it is bad/);
+  });
+
+  it('keeps the floor where it is', () => {
+    // The one line in this file that is a decision rather than a test. A
+    // buyer's evaluator is not generous, and the way to get every answer green
+    // is to write green answers.
+    assert.equal(rubric.GREEN_FLOOR, 80);
+    assert.equal(rubric.AMBER_FLOOR, 50);
   });
 });

@@ -3070,6 +3070,11 @@ function answerBrief(entry) {
             )}`
     }
     ${
+      entry.verdict?.toGreen
+        ? html`<h4>What it needs to be green</h4><p class="said">${entry.verdict.toGreen.note}</p>`
+        : html`<h4>Green</h4><p class="said">${entry.verdict?.weightedScore ?? ''} — above the floor of 80.</p>`
+    }
+    ${
       answer.draftedOverGap
         ? html`<h4>Written over an open gap</h4>
             <p class="said">${answer.draftedOverGap.prompt}</p>`
@@ -3550,6 +3555,37 @@ function bidDetail(position, estimate, source) {
           'The question list is confirmed by a person once, against the source document. A parser that missed a ' +
           'question produces a pack where every answer is good and the submission is still rejected.',
       })}
+      ${
+        /*
+         * What every answer that is not green needs, in one place.
+         *
+         * "RED 40" is a verdict, not an instruction. The shortfall is exactly
+         * computable from the weights the score was made with — Evidence at
+         * 25% needs four points for every one Clarity at 10% needs — so the
+         * platform does that arithmetic instead of leaving somebody to do it
+         * in their head on a tender week.
+         *
+         * Nothing here moves a threshold or softens a score. The green floor
+         * is 80 because a buyer's evaluator is not generous, and an answer
+         * shown as green that a buyer will mark at 40 is the one failure this
+         * module cannot recover from.
+         */
+        questions.filter((entry) => entry.answer && entry.verdict.toGreen).length > 0
+          ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
+              <b>${questions.filter((entry) => entry.answer && entry.verdict.toGreen).length} answer(s) are not green
+              yet, and this is what each one needs.</b>
+              The floor is 80. The arithmetic is the rubric's own weights, so the lightest route is the first one
+              named — but a route is only worth taking if the evidence actually supports it.
+              ${questions
+                .filter((entry) => entry.answer && entry.verdict.toGreen)
+                .map(
+                  (entry) => html`<div style="margin-top:6px">
+                    <b>${entry.question.number}</b> ${entry.verdict.toGreen.note}
+                  </div>`,
+                )}
+            </div></div>`
+          : ''
+      }
       ${
         questions.some((entry) => entry.verdict.hardRules.length > 0)
           ? html`<div class="notice bad" style="margin:11px 17px 0"><div>
