@@ -29111,3 +29111,16 @@ for events, and now a test that confirms a parser's proposal end to end by
 writing the proposal through the parser's own event and confirming it with the
 body the console sends — plus an assertion on the schema itself, since
 `minItems: 1` is what made the branch unreachable.
+
+### The same library, named two different ways
+
+The questionnaire reader was given a chooser; the amendments reader was left
+asking for a content hash as free text, with the pasted schedule above it. So
+somebody told to "choose Appendix 3" opened the panel and found two text boxes
+— and the two commands that read a filed document had two different ideas of
+how a document is named.
+
+It takes the chooser now, with the paste box as the alternative for amendments
+that arrived in an email, and the browser says which is missing rather than
+sending nothing and being refused. The hint names what belongs there: the
+schedule of amendments, or the contract particulars, which read the same way.

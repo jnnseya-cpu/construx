@@ -1763,11 +1763,38 @@ export async function bidon(root) {
           options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
         { name: 'contractForm', label: 'The form it amends', type: 'text', required: false,
           hint: 'As the invitation names it — "JCT Measured Term Contract 2024". The reading is against the unamended form.' },
-        { name: 'text', label: 'The amendments', type: 'textarea', rows: 14, required: false,
-          hint: 'Paste the schedule. Or file it in the customer’s library and give its hash below.' },
-        { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false,
-          hint: 'File the document in the library first, then press Copy hash on its row.' },
+        /*
+         * The document, chosen rather than typed.
+         *
+         * This panel was still asking for a hash as free text with the pasted
+         * schedule above it, so being told "choose Appendix 3" and finding two
+         * text boxes is the panel's fault. The questionnaire reader was given
+         * a chooser and this one was not — the same command, the same library,
+         * two different ways of naming a document.
+         *
+         * Ordered with the documents that look like contract prose first,
+         * since that is what a schedule of amendments is, and the hint names
+         * what it is for.
+         */
+        haveDocuments
+          ? { name: 'hash', label: 'The schedule, as a filed document', type: 'select', required: false,
+              options: documentOptions(), placeholder: 'Choose the filed schedule of amendments',
+              hint: 'Appendix 3 on a JCT tender, or whatever the invitation calls its schedule of amendments. The ' +
+                'contract particulars read the same way, so that document works here too.' }
+          : { name: 'hash', label: 'Or the file’s hash', type: 'text', required: false,
+              hint: 'File the document in the library first and it will be offered here by name.' },
+        { name: 'text', label: 'Or paste the clauses', type: 'textarea', rows: 10, required: false,
+          hint: 'For amendments that arrived in an email or a portal page rather than as a document.' },
       ],
+      // One of the two, said here rather than by the platform after a round
+      // trip: the command needs something to read.
+      validate: ({ text, hash }) =>
+        String(text ?? '').trim() || String(hash ?? '').trim()
+          ? undefined
+          : {
+              field: 'hash',
+              message: 'Choose the filed schedule, or paste the clauses below. Either will do.',
+            },
       transform: ({ bidId: _b, anyway, ...rest }) => ({
         ...Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
         ...(anyway ? { anyway: true } : {}),
