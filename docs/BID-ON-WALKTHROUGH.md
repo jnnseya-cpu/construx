@@ -373,66 +373,97 @@ because one appendix was missing from the upload.
 
 **Bid-On → Bids → Record what has to be returned**
 
+One per press, in fields — the register appends, because these are found across
+nine documents over an afternoon rather than listed in one place.
+
 - **Bid** → yours
-- **The returnables** → one per line as
-  `ref | what it is | M or O | PROVIDER or CUSTOMER | format | pages | MB | SIG | our date`:
-  ```
-  APP2 | Order form, completed and signed | M | CUSTOMER | PDF | | | SIG | 2026-10-29
-  APP3 | Schedule of amendments, accepted or qualified | M | PROVIDER | PDF | | | SIG | 2026-10-29
-  APP5 | EPC cost model, fully priced | M | CUSTOMER | XLSX | | | | 2026-10-30
-  APP6 | Method statement against the specification | M | PROVIDER | PDF | 10 | | | 2026-10-30
-  ```
+- **Its reference** → the buyer's own, so the register maps onto what you
+  upload: `APP3`, or a portal slot like `2.01`
+- **What it is** → as somebody checking the submission would name it —
+  *"Order form, completed and signed"*
+- **Mandatory** → ticked by default. It **gates the export**: the pack will not
+  go out with one outstanding
+- **Who produces it** → *the customer* (their rates, their signature, their
+  certificate — it goes into the request you send them) or *us*
+- **Needs signing** → a lead time rather than a task. A document needing a
+  director's signature on the 30th cannot be started on the 30th
+- **Our own date** → earlier than the buyer's. With a 14:00 close, ours is the
+  only date that binds
+- **Format**, **Page limit**, **Size limit** → optional
 
-Only the first four matter; the rest may be blank.
+For a tender with nine of them, **Record several at once** takes the same
+register as one block.
 
-- **`M`** gates the export. The pack will not go out with one outstanding.
-- **`CUSTOMER`** means only they can produce it — their rates, their signature —
-  and it goes into the request you send them.
-- **`SIG`** means it needs signing, which is a lead time rather than a task.
-- **our date** is *your* internal date, earlier than the buyer's. It is the one
-  that actually binds, and with a 14:00 close it is the only date that does.
+A worked set for this ITT:
+
+| Reference | What it is | Mandatory | Who | Signing | Our date |
+|---|---|---|---|---|---|
+| APP2 | Order form, completed and signed | yes | customer | yes | 2026-10-29 |
+| APP3 | Schedule of amendments, accepted or qualified | yes | us | yes | 2026-10-29 |
+| APP5 | EPC cost model, fully priced | yes | customer | — | 2026-10-30 |
+| APP6 | Method statement against the specification | yes | us | — | 2026-10-30 |
 
 ---
 
 ## Part 7 — Answering
 
-### 7.1 Open the pack and take the ids off it
+### 7.1 Open the pack and work from the rows
 
 **Bid-On → Bids →** press **Open** on your bid's row. Press the row's own
 button, not the row: the first table on this screen is *Import from Tender &
 Procurement*, and opening a row there reads an empty panel.
 
-The opened pack carries, each copyable by pressing it:
+Every question row carries a **Next** column: the one act that moves that row,
+opening the command already filled in. You do not copy an id to answer a
+question.
 
-- the bid's own reference, `BON-nnnn` — the export picker names a bid by this
-  and not by the buyer
-- a **question id** per question
-- a **returnable id** per returnable
-- an **answer id** per answer, once one exists
-- a **gap id** per open gap
+| What the row shows | What **Next** offers |
+|---|---|
+| nothing written | **Draft** · **Write it** |
+| nothing written, a gap open | **Draft over it** · **Close the gap** |
+| a draft, unscored | **Score it** · **By hand** |
+| scored, unapproved | **Approve** · **Reject** |
+| rejected | **Draft again** |
+| approved | `signed` |
 
-These four are still typed into their panels: they belong to this pack and the
-pack is the screen you are already on. Anything that names a **document** is a
-chooser now — including *Mark a returnable done* and *Close a gap*, where the
-item that discharges it is one of your filed documents.
+The ids are still printed on each row — `Q …`, `A …`, and the returnable and
+clarification ids beside theirs — and still copy when pressed, for the panels
+reached from the row of doors at the top.
 
 ### 7.2 Write the answer
 
-**With AI — Bids → Draft an answer**
+**With AI — the row's own Draft**
 
-- **Bid** → yours
-- **Question id** → from the pack
 - **Anything the drafter should know** → optional
-- **Draft it even though the customer has not come back** → for a question with
-  an open gap
+- **Draft it even though the customer has not come back** → already ticked
+  where you came from **Draft over it**
 
 The panel quotes what the pass will cost before you commit, and will not submit
 until the price is on screen.
 
-Retrieval runs first, against this customer's evidence only. If nothing supports
-the question it **raises a gap instead of drafting** and costs nothing — a model
-asked to answer a question its evidence cannot support writes exactly the
-uncited claim that gets a submission thrown out.
+Retrieval runs first, against this customer's evidence only. Then one of two
+things happens, and the console says which:
+
+- **Drafted** — a version is written and cited, waiting to be scored.
+- **No draft — a gap was raised.** Nothing on file could be cited, so nothing
+  was written and no model was called: a model asked to answer a question its
+  evidence cannot support writes exactly the uncited claim that gets a
+  submission thrown out. The gap is on the bid with the request to send the
+  customer.
+
+Where the library has not been embedded (4.4), the message adds that this was a
+**word search** and how many passages were not compared. That changes what to do
+next: a gap after a word search often means *not found*, not *not held*, and
+making the library searchable by meaning is worth doing before deciding a
+document is missing.
+
+**A question that asks for a fact about the company** — a registration number, a
+share code, an insurance limit — will always raise a gap, because no document in
+the library evidences it. That is what **Write it** is for. A hand-written
+answer goes through the same citation check, versioning and approval as an
+agent's, and no hard rule fires on an uncited one; it scores lower on Evidence,
+which for a registration number is correct and unavoidable. Then **Close the
+gap** on that row with the note that says what closed it.
 
 A question already waiting on the customer is refused *unless* you tick the box.
 Then the model is told what is outstanding and told not to write as though it
@@ -459,9 +490,12 @@ approve it defeats the check in 8.2.
 
 ### 8.1 Score it (writer)
 
-**Bid-On → Bids → Score an answer**
+**The row's own Score it** runs the same rubric as an adversarial read, with a
+cleared vendor, and is deliberately not shown the retrieval — a scorer that saw
+it would be marking the drafter's homework against the drafter's own notes.
 
-- **Bid** → yours, **Answer id** → from the pack
+**By hand** on the same row opens the five criteria:
+
 - **Compliance (30%)** + **Why** → *"Answers every part of 4.1 in the order asked"*
 - **Evidence (25%)** + **Why** → *"Cites the lodgement passage from Appendix 6"*
 - **Buyer relevance (20%)** + **Why** → *"Uses the buyer's own response-time language"*
@@ -471,16 +505,11 @@ approve it defeats the check in 8.2.
 Every score carries a reason. A number with no sentence behind it is an opinion
 with a decimal point on it.
 
-**Bids → Score it as the buyer would** runs the same rubric as an adversarial
-read, if you have a cleared vendor.
-
 ### 8.2 Approve it (director)
 
-Sign back in as the director.
+Sign back in as the director. The scored row now offers **Approve** and
+**Reject**.
 
-**Bid-On → Bids → Approve an answer**
-
-- **Bid** → yours, **Answer id** → from the pack
 - **Note** → *"Read against 4.1; citations check out; inside the word limit"*
 
 > As the writer you will not find this button. It is not disabled — it is not
@@ -621,7 +650,8 @@ blocking item rather than the first. That is the gate doing its job the day
 before the return rather than the buyer doing it after.
 
 For each one that is done: **Bids → Mark a returnable done** with the returnable
-id from the pack, a note, and the filed document that is it where there is one.
+id from the pack, a note, and the filed document that is it — a chooser, not a
+hash to type.
 **Waive a returnable** where the buyer has agreed it does not apply — and the
 waiver goes on the record with it.
 

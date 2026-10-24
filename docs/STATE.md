@@ -29262,3 +29262,22 @@ this was a word search and 14 passage(s) were not compared; the answer may be on
 file in words the question does not use."* A gap raised after a word search and
 a gap raised after a semantic search are not the same finding, and only the
 second one means the evidence is genuinely absent.
+
+### The walkthrough caught up with the build
+
+Three sections of `docs/BID-ON-WALKTHROUGH.md` were teaching a console that no
+longer exists, which is worse than no walkthrough: somebody following it looks
+for a field that is not there and concludes the platform is broken.
+
+- **Part 6** taught the pipe-delimited returnables textarea that was replaced
+  with real fields. It now describes the fields, and points at the bulk form for
+  somebody with nine to enter.
+- **Part 7.1** told the reader to take four ids off the pack and type them into
+  panels. It now describes the **Next** column — what each row offers and when —
+  and says the ids are still there for the doors above.
+- **Part 7.2** stated that a gap "costs nothing" as the only outcome worth
+  naming. It now gives both outcomes as the console reports them, including what
+  a term-overlap retrieval means for the decision, and the case the first real
+  tender hit: a question asking for a fact about the company will always raise a
+  gap, because no document evidences a registration number.
+- **Part 8** was two panels reached by id; it is now the row's own buttons.
