@@ -1049,6 +1049,8 @@ export async function bidon(root) {
       questionId: button.dataset.actQuestion,
       answerId: button.dataset.actAnswer,
       gapId: button.dataset.actGap,
+      returnableId: button.dataset.actReturnable,
+      clarificationId: button.dataset.actClarification,
       overOpenGap: button.dataset.actOver === '1',
     };
 
@@ -3243,7 +3245,7 @@ function bidDetail(position, estimate, source) {
                 missing an answer, and none of this is in the readiness figure above.
               </p>
               ${table({
-                headers: ['Ref', 'What', 'Who', 'Format', 'Limit', 'Sign', 'We need it by', 'Standing', 'id'],
+                headers: ['Ref', 'What', 'Who', 'Format', 'Limit', 'Sign', 'We need it by', 'Standing', 'Next', 'id'],
                 align: ['', '', '', '', 'num', '', '', '', ''],
                 rows: position.returnables.map((item) => [
                   item.mandatory ? html`${item.reference} ${badge('must', 'warn')}` : item.reference,
@@ -3258,6 +3260,24 @@ function bidDetail(position, estimate, source) {
                     : item.status === 'WAIVED'
                       ? html`<span title="${item.waivedReason ?? ''}">${badge('waived', '')}</span>`
                       : badge('outstanding', item.mandatory ? 'bad' : 'warn'),
+                  /*
+                   * The two acts that discharge a returnable, on its own row.
+                   *
+                   * This is the half of a submission that gets bids rejected
+                   * rather than marked down, and both commands wanted the
+                   * returnable id typed in from the register they are printed
+                   * beside. Waiving stays quiet and second: it removes a gate,
+                   * and the reason it asks for is what somebody reads if the
+                   * submission comes back rejected for the missing document.
+                   */
+                  item.status === 'OUTSTANDING'
+                    ? html`<div class="actions">
+                        <button class="btn sm" data-act="supply-returnable" data-act-bid="${bid.id}"
+                          data-act-returnable="${item.id}">Mark done</button>
+                        <button class="btn sm quiet" data-act="waive-returnable" data-act-bid="${bid.id}"
+                          data-act-returnable="${item.id}">Waive</button>
+                      </div>`
+                    : html`<span style="font-size:12px;color:var(--text-3)">—</span>`,
                   html`<code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${item.id}" data-copy-what="returnable id" title="${item.id}">${item.id.slice(-8)}</code>`,
                 ]),
               })}
@@ -3324,7 +3344,7 @@ function bidDetail(position, estimate, source) {
                   : ''
               }
               ${table({
-                headers: ['', 'Subject', 'The question', 'Raised by', 'Asked', 'Their answer', 'Standing', 'id'],
+                headers: ['', 'Subject', 'The question', 'Raised by', 'Asked', 'Their answer', 'Standing', 'Next', 'id'],
                 rows: clarifications.map((entry) => [
                   badge(
                     humanise(entry.severity),
@@ -3349,6 +3369,21 @@ function bidDetail(position, estimate, source) {
                       : entry.status === 'WITHDRAWN'
                         ? html`<span title="${entry.withdrawnReason ?? ''}">${badge('withdrawn', '')}</span>`
                         : badge('not asked yet', 'bad'),
+                  /*
+                   * What this question is waiting for.
+                   *
+                   * Asking is the buttons above — one message, not one act per
+                   * question. What is left per row is what only applies to one
+                   * of them: the buyer's answer when it comes back, and the
+                   * withdrawal of one that will not be sent.
+                   */
+                  entry.status === 'ASKED'
+                    ? html`<button class="btn sm" data-act="clarification-answer" data-act-bid="${bid.id}"
+                        data-act-clarification="${entry.id}">Their answer</button>`
+                    : entry.status === 'RAISED'
+                      ? html`<button class="btn sm quiet" data-act="clarification-withdraw" data-act-bid="${bid.id}"
+                          data-act-clarification="${entry.id}">Withdraw</button>`
+                      : html`<span style="font-size:12px;color:var(--text-3)">—</span>`,
                   html`<code class="idcell" style="font-size:11px;color:var(--text-3)" data-copy="${entry.id}" data-copy-what="clarification id" title="${entry.id}">${entry.id.slice(-8)}</code>`,
                 ]),
               })}

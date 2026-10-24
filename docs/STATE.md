@@ -29281,3 +29281,20 @@ for a field that is not there and concludes the platform is broken.
   tender hit: a question asking for a fact about the company will always raise a
   gap, because no document evidences a registration number.
 - **Part 8** was two panels reached by id; it is now the row's own buttons.
+
+### The other two registers get their own Next column
+
+The question rows offer the act; the returnables and the clarifications beside
+them still wanted their id typed into a panel printed next to the id.
+
+- **Returnables** — `Mark done` and `Waive` on every outstanding row. This is
+  the half of a submission that gets bids rejected rather than marked down, and
+  it was the half still being worked by copy-and-paste. Waiving stays quiet and
+  second: it removes a gate, and the reason it asks for is what somebody reads
+  if the submission comes back rejected for the missing document.
+- **Clarifications** — `Their answer` on an asked question, `Withdraw` on one
+  that will not be sent. Asking is not here: that is the message above, one act
+  for the whole set.
+
+Both go through the same handler and the same `COMMANDS` entries as the question
+rows, so there is one place a command is defined and one place it is guarded.
