@@ -29600,3 +29600,52 @@ rounds towards green without reaching it does not stop the loop, that a partial
 or invented set of marks is refused, and that the three places the pass ceiling
 appears cannot drift. **Whether the answers come back green is a measurement to
 take on the deployment.**
+
+## The drafter is tested end to end, and the caveat is withdrawn
+
+Every entry above about the AI commands ended the same way: *not verified end
+to end — that needs a live provider and this suite has none.* **That was wrong
+about this suite.**
+
+`AIOrchestrator` takes adapter overrides, and its own comment says why: *"a
+test that hands in two adapters gets exactly those two and nothing reaches the
+network behind its back."* The seam was there the whole time. Four defects in
+one week failed on the last line of an AI command after the vendor had been
+called and billed, and every one of them was reachable from here.
+
+`backend/tests/bidondraft.test.ts` runs the whole of `draftAnswer` against a
+scripted provider — one that records what each pass was asked and answers in
+the shapes a vendor really answers in, including the empty, the malformed and
+the implausible. Fourteen tests over the thing that actually runs:
+
+- the three passes run in order, each given its job, the passages, and the
+  company's standing facts;
+- the plan reaches the writer as structure and the draft reaches the reviser;
+- the loop takes all three revisions when each beats the last, **stops the
+  moment one does not**, stops the moment one marks itself green, and keeps the
+  **best** attempt rather than the last;
+- an empty revision leaves the draft standing — the vendor fault that would
+  have cost a paid call and returned nothing;
+- prose citing nothing becomes a gap, and an invented chunk id is dropped
+  without taking the prose with it;
+- a yes/no question the model answers is recorded; one it leaves unanswered is
+  refused **with the drafted prose in the refusal**;
+- exactly at the green floor is good enough, and buying another pass is not.
+
+The first run of the file was itself the point: every test came back
+`GAP_RAISED`, because the script cited a chunk id the retriever had never
+offered. That is the platform behaving exactly as designed, caught by a test
+written to check something else — and it is the same mistake a real model
+makes.
+
+What this does **not** prove is how a real model writes. That is the vendor's
+half and it is measured on a deployment. But "the success path has never run"
+is no longer true of the drafter, and no new AI command should be able to say
+it again.
+
+### And one line of polish from the live run
+
+An answer drawing four paragraphs from one section of one document printed that
+section four times in the approve brief, which reads as four sources and is
+one. The places are listed once each now, with how many passages came from
+each.

@@ -3053,10 +3053,23 @@ function answerBrief(entry) {
     ${(answer.body ?? []).map((line) => html`<p>${line}</p>`)}
     <h4>What it cites</h4>
     ${
+      /*
+       * One line per place, not one per passage.
+       *
+       * An answer drawing four paragraphs from one section of one document
+       * printed that section four times, which reads as four sources and is
+       * one. What a reviewer is checking is where the claims come from, so the
+       * places are listed once each with how many passages came from each.
+       */
       (answer.citations ?? []).length === 0
         ? html`<p class="said">Nothing. Every claim in it is uncited.</p>`
-        : (answer.citations ?? []).map(
-            (citation) => html`<p class="said">${citation.reference}${citation.pageRef ? html` · ${citation.pageRef}` : ''}</p>`,
+        : [...(answer.citations ?? []).reduce((places, citation) => {
+            const key = `${citation.reference}${citation.pageRef ? ` · ${citation.pageRef}` : ''}`;
+            return places.set(key, (places.get(key) ?? 0) + 1);
+          }, new Map())].map(
+            ([place, passages]) => html`<p class="said">
+              ${place}${passages > 1 ? html` <span style="color:var(--text-3)">· ${passages} passages</span>` : ''}
+            </p>`,
           )
     }
     ${
