@@ -773,6 +773,21 @@ export class AIOrchestrator {
      * hide a refusal until after the user had committed to it.
      */
     inputRefs?: readonly EntityRef[];
+    /**
+     * How many model calls the one press actually makes.
+     *
+     * One, for almost everything here. The bid drafter is three: it plans the
+     * answer against the passages, writes it, then marks its own draft as an
+     * evaluator would and rewrites it once. Quoting one call for an action that
+     * makes three would understate the price by two thirds — and the rule this
+     * quote exists to serve is that nothing spends without showing its cost
+     * first, which a third of the cost does not satisfy.
+     *
+     * Multiplied into the raw estimate before pricing rather than onto the
+     * charge afterwards, so affordability, the cap check and the balance left
+     * are all decided against what will really be spent.
+     */
+    passes?: number;
   }): CostQuote {
     // Derived once and used twice: the adapter chosen must be one cleared for
     // this material, and the disclosure below has to name the same level the
@@ -786,7 +801,8 @@ export class AIOrchestrator {
     const floorRawMinor = adapter.estimateCostMinor({ task: input.taskType, payload: {} });
 
     const basis: QuoteBasis = observed.length > 0 ? 'MEASURED' : 'FLOOR';
-    const estimatedRawCostMinor = basis === 'MEASURED' ? median(observed) : floorRawMinor;
+    const passes = Math.max(1, Math.round(input.passes ?? 1));
+    const estimatedRawCostMinor = (basis === 'MEASURED' ? median(observed) : floorRawMinor) * passes;
 
     // Quoted as AI work, which is what it is: the disclosure a person reads
     // before pressing the button has to match what the reservation will do.
@@ -802,8 +818,8 @@ export class AIOrchestrator {
       observations: observed.length,
       estimatedRawCostMinor,
       estimatedChargeMinor: priced.chargeMinor,
-      lowChargeMinor: basis === 'MEASURED' ? charge(observed[0]!) : charge(floorRawMinor),
-      highChargeMinor: basis === 'MEASURED' ? charge(observed[observed.length - 1]!) : undefined,
+      lowChargeMinor: basis === 'MEASURED' ? charge(observed[0]! * passes) : charge(floorRawMinor * passes),
+      highChargeMinor: basis === 'MEASURED' ? charge(observed[observed.length - 1]! * passes) : undefined,
       multiplier: priced.multiplier,
       availableMinor: priced.availableMinor,
       balanceAfterMinor: Math.max(0, priced.availableMinor - priced.chargeMinor),

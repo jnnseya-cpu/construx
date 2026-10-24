@@ -22,6 +22,7 @@ import {
   type BidOnEvidence,
   type EvidenceType,
   type Retrieval,
+  type RetrievedChunk,
 } from './evidence.ts';
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MAX_CHARS } from '../../ai/providers/embedding.ts';
 import {
@@ -180,11 +181,83 @@ function gate(ctx: EngineContext, bidId: string): Bid {
  */
 const DRAFTING_PASSAGES = 24;
 
+/** How many separate searches one question is allowed to become. */
+const MAX_FACETS = 6;
+
+/**
+ * What a question actually asks, as separate searches.
+ *
+ * A tender question is rarely one question. *"Describe your approach to
+ * programme management, including how you resource peak demand, how you report
+ * progress, and what you do when a milestone slips"* is four, and ranking the
+ * whole paragraph as a single string returns passages about the first limb and
+ * nothing about the fourth — so the draft answers three quarters of the
+ * question and loses the marks for the rest. One search for a four-part
+ * question is not a search strategy.
+ *
+ * So each limb gets its own search and the results are unioned. The splits are
+ * where a question genuinely changes subject: a sentence end, a semicolon, an
+ * enumerated item, or an `including`/`and how`/`as well as` hinge. The whole
+ * question stays first, because it is the one query that carries the context
+ * the limbs are read in.
+ *
+ * Lexical rather than a planning call, deliberately. A model asked to split a
+ * question would cost a call, take a second, and get it right about as often —
+ * and a wrong split here is invisible, where a wrong one in prose is not.
+ */
+export function questionFacets(question: BidQuestion): string[] {
+  const whole = `${question.text} ${question.section}`.trim();
+  const limbs = question.text
+    .split(/(?<=[.?;:])\s+|\n+|\s*•\s*|\s+(?=\(?[a-z][).]\s)|\s+(?=\b(?:including|and how|as well as|together with|in addition)\b)/i)
+    .map((part) => part.replace(/^[\s•>*-]*(?:\(?[a-z0-9]{1,3}[).]\s*)?/i, '').trim())
+    .filter((part) => part.split(/\s+/).length >= 4 && part.length >= 16);
+
+  // One limb is not a decomposition: it is the question again, with the
+  // section cut off. Searching it twice buys nothing and costs an embedding.
+  const seen = new Set<string>();
+  const facets: string[] = [];
+  for (const facet of limbs.length > 1 ? [whole, ...limbs] : [whole]) {
+    const key = facet.toLowerCase();
+    if (facet.length < 8 || seen.has(key)) continue;
+    seen.add(key);
+    facets.push(facet);
+    if (facets.length === MAX_FACETS) break;
+  }
+  return facets;
+}
+
+/**
+ * Every search's results as one ranked set.
+ *
+ * Keyed on the chunk, keeping the best score any limb gave it: a passage that
+ * answers the fourth limb precisely should not be buried because it ranks
+ * poorly against the first. What comes back is the ordinary `Retrieval` shape,
+ * so everything downstream — the gap, the citation check, the reporting — is
+ * unchanged.
+ */
+function unionRetrievals(parts: Retrieval[], limit: number): Retrieval {
+  const best = new Map<string, RetrievedChunk>();
+  for (const part of parts) {
+    for (const chunk of part.chunks) {
+      const held = best.get(chunk.chunkId);
+      if (!held || chunk.score > held.score) best.set(chunk.chunkId, chunk);
+    }
+  }
+  const chunks = [...best.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+  const first = parts[0]!;
+  return {
+    ...first,
+    chunks,
+    considered: parts.reduce((total, part) => total + part.considered, 0),
+    skipped: Math.max(...parts.map((part) => part.skipped)),
+  };
+}
+
 async function retrieveForDrafting(
   ctx: EngineContext,
   bid: Bid,
   question: BidQuestion,
-): Promise<Retrieval & { acuConsumed: number }> {
+): Promise<Retrieval & { acuConsumed: number; queries: number }> {
   // The day this pack is judged against: its deadline, or today on a rolling
   // submission that has no return date. The retriever must use the same day
   // the verdicts do, or the drafter is handed a certificate the pack will
@@ -205,24 +278,69 @@ async function retrieveForDrafting(
         entry.semanticModel.modelClass === EMBEDDING_CLASS,
     );
 
+  const facets = questionFacets(question);
+
   if (inSpace) {
-    return retrieveSemantic(ctx, {
-      customerAccountId: bid.customerAccountId,
-      question: `${question.text} ${question.section}`,
-      asAt: day,
-      limit: DRAFTING_PASSAGES,
+    /*
+     * Every limb embedded in one call.
+     *
+     * The embedding adapter takes an array of passages and answers with a
+     * vector for each, so six searches cost one round trip rather than six.
+     * The spend is here rather than in `retrieveFor`, so the library screen
+     * still costs nothing.
+     */
+    const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
+    const engagement = requireFundedCustomer(ctx, bid.customerAccountId);
+    const intended = ctx.orchestrator.adapterFor('EMBEDDING');
+    const embedded = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'bid_on_retrieve',
+      capability: 'EMBEDDING',
+      inputRefs: [{ refType: 'BidOnCustomer', refId: customer.id }],
+      attribution: { customerAccountId: customer.id, engagementId: engagement.id, bidId: bid.id },
+      request: { task: 'bid_on_retrieve', payload: { passages: facets }, modelClass: EMBEDDING_CLASS },
+      toWrites: () => [],
     });
+
+    const vectors = (embedded.output as { vectors?: number[][] }).vectors ?? [];
+    const usable = vectors.filter((vector) => vector?.length === EMBEDDING_DIMENSIONS);
+    if (usable.length === 0) {
+      throw new DomainError(
+        'AI_EMBEDDING_MALFORMED',
+        `The question embedded to ${vectors[0]?.length ?? 0} dimensions; this index is built at ` +
+          `${EMBEDDING_DIMENSIONS}. Ranking against it would produce scores that look ordinary and mean nothing.`,
+        502,
+      );
+    }
+
+    const parts = usable.map((queryVector, at) =>
+      retrieveFor(ctx, {
+        customerAccountId: bid.customerAccountId,
+        question: facets[at] ?? facets[0]!,
+        asAt: day,
+        limit: DRAFTING_PASSAGES,
+        queryVector,
+        queryModel: { provider: intended.name, modelClass: EMBEDDING_CLASS },
+      }),
+    );
+
+    return {
+      ...unionRetrievals(parts, DRAFTING_PASSAGES),
+      acuConsumed: embedded.acuConsumed,
+      queries: parts.length,
+    };
   }
 
-  return {
-    ...retrieveFor(ctx, {
+  const parts = facets.map((facet) =>
+    retrieveFor(ctx, {
       customerAccountId: bid.customerAccountId,
-      question: `${question.text} ${question.section}`,
+      question: facet,
       asAt: day,
       limit: DRAFTING_PASSAGES,
     }),
-    acuConsumed: 0,
-  };
+  );
+
+  return { ...unionRetrievals(parts, DRAFTING_PASSAGES), acuConsumed: 0, queries: parts.length };
 }
 
 /** How a retrieval is reported on a draft, however the draft turned out. */
@@ -1386,6 +1504,57 @@ export async function draftAnswer(
    */
   const wantsYesNo = question.answerType === 'YES_NO';
   const previous = latestAnswer(bid, question.id);
+
+  /*
+   * The plan, before the prose.
+   *
+   * A single pass asked a model to find what is relevant, decide a structure
+   * and write to a word limit in one movement, and the thing that fell out was
+   * the structure: twenty-five words answering the first limb of a four-limb
+   * question, correctly cited and worth forty marks.
+   *
+   * So the limbs are settled first, on their own, against the passages: what
+   * the question actually asks, which passage evidences each part, and what
+   * nothing covers. It is a cheap call — no prose, no word limit to hit — and
+   * the pass that writes is then writing rather than deciding what to write.
+   */
+  const plan = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_draft_plan',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+    request: {
+      task:
+        'Plan one answer to one tender question. Do not write the answer. Return JSON with `limbs`: an array of ' +
+        '`{ asks, chunkIds, evidenced }` — one entry per distinct thing the question asks, in the order it asks ' +
+        'them, with the `chunkId` values that evidence it and `evidenced` true or false; `missing`: an array of ' +
+        'anything asked that no passage covers; and `shape`: one sentence on how the answer should be ordered.',
+      payload: {
+        buyer: bid.buyerName,
+        section: question.section,
+        number: question.number,
+        question: question.text,
+        ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
+        ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
+        passages: retrieved.chunks.map((chunk) => ({
+          chunkId: chunk.chunkId,
+          source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
+          text: chunk.text,
+        })),
+        constraint:
+          'Split the question the way an evaluator would mark it: every limb it asks, including the ones buried ' +
+          'in an "including" or a sub-clause, because an answer that misses one loses those marks whatever else ' +
+          'it does. Claim no passage evidences something it does not — a limb with nothing behind it is `missing`, ' +
+          'and saying so here is what stops the answer inventing it.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: NO_PROVIDER,
+  });
+
+  const planned = plan.output as { limbs?: unknown; missing?: unknown; shape?: unknown };
+
   const result = await runAI(ctx, {
     engine: 'TENDER',
     taskType: 'bid_on_draft',
@@ -1516,6 +1685,22 @@ export async function draftAnswer(
           (question.wordLimit === undefined
             ? ''
             : ` Stay within ${question.wordLimit} words: anything past a stated limit is usually not read at all.`),
+        /*
+         * The plan this answer is written to.
+         *
+         * Passed as the structure rather than as a suggestion: the limbs in
+         * the order the question asks them is exactly what "completeness" is
+         * marked on, and it has already been worked out against the passages.
+         */
+        plan: {
+          ...(Array.isArray(planned.limbs) ? { limbs: planned.limbs } : {}),
+          ...(Array.isArray(planned.missing) ? { nothingCoversThese: planned.missing } : {}),
+          ...(typeof planned.shape === 'string' ? { shape: planned.shape } : {}),
+        },
+        planInstruction:
+          'Answer every limb of the plan, in its order, each with the evidence named against it. A limb the plan ' +
+          'marks as not evidenced goes in `unsupported` and stays out of the prose entirely — the plan having ' +
+          'named it is not evidence for it.',
         howItIsMarked:
           'An evaluator scores this on five things, and the answer should be written to be marked on them. ' +
           '**Completeness**: every limb of the question answered, in the order asked — where the question lists ' +
@@ -1540,8 +1725,91 @@ export async function draftAnswer(
     requireModel: NO_PROVIDER,
   });
 
-  const output = result.output as { body?: unknown; citations?: unknown; unsupported?: unknown; yesNo?: unknown };
-  const body = (Array.isArray(output.body) ? output.body : []).map((line) => String(line).trim()).filter(Boolean);
+  /*
+   * The draft, marked as a buyer would mark it, and rewritten once.
+   *
+   * A first attempt is a first attempt. The platform already owns a scorer
+   * that reads an answer adversarially against the five criteria — and it ran
+   * *after* the answer was recorded, so the thing it criticised was the thing
+   * the person had to approve. The criticism is worth more before the record
+   * than after it.
+   *
+   * So the draft is marked and revised inside the same press: the pass is
+   * given its own answer, the question, the marking criteria and the same
+   * passages, and asked what an evaluator would take marks off for and then to
+   * fix exactly that. One revision, not a loop — a second one trades real money
+   * for diminishing prose, and the separate `Score it` is still there for a
+   * reviewer who wants an independent read of what was recorded.
+   *
+   * The constraint does not move. A revision that gains a mark by claiming
+   * something the passages do not support has lost the bid rather than improved
+   * the answer, and its citations are checked exactly as the first draft's are.
+   */
+  const revised = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_draft_revise',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+    request: {
+      task:
+        'Mark this draft tender answer as the buyer’s evaluator would, then rewrite it to score higher. Return ' +
+        'JSON in exactly the shape of the draft — `body`, `citations`, `unsupported`' +
+        (wantsYesNo ? ', `yesNo`' : '') +
+        ' — plus `tookMarksOffFor`: an array of what an evaluator would have marked it down for. Return the ' +
+        'improved answer in `body`, not the original.',
+      payload: {
+        buyer: bid.buyerName,
+        section: question.section,
+        number: question.number,
+        question: question.text,
+        ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
+        ...(question.weighting === undefined ? {} : { weightingPercent: question.weighting }),
+        answerType: question.answerType,
+        theDraft: result.output,
+        passages: retrieved.chunks.map((chunk) => ({
+          chunkId: chunk.chunkId,
+          source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
+          text: chunk.text,
+        })),
+        markOn:
+          'Completeness — is every limb of the question answered, in the order asked? Evidence — is every ' +
+          'commitment tied to a passage and named where a buyer would look for it? Specificity — are there ' +
+          'figures, periods, standards, roles and systems, or adjectives? Buyer relevance — is it in the buyer’s ' +
+          'own vocabulary for their own scheme? Clarity and limits — short paragraphs, no preamble, no restating ' +
+          'the question, inside any stated word limit.',
+        constraint:
+          'Every rule the draft was written under still holds. State nothing the passages do not support; every ' +
+          'claim carries its passage’s `chunkId` in `citations`; anything asked that nothing covers goes in ' +
+          '`unsupported` and stays out of the prose. A mark gained by claiming something the passages do not ' +
+          'carry is a false statement to a buyer and loses the bid rather than improving the answer. If the draft ' +
+          'cannot honestly be improved, return it unchanged and say so in `tookMarksOffFor`.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: NO_PROVIDER,
+  });
+
+  /*
+   * Whichever of the two actually has an answer in it.
+   *
+   * The revision is preferred and the draft is the fallback, because a revise
+   * pass that comes back empty or uncited must not turn a perfectly good first
+   * draft into a gap. A vendor fault on the third call is not a reason to
+   * throw away the second.
+   */
+  const bodyOf = (from: unknown): string[] =>
+    (Array.isArray((from as { body?: unknown })?.body) ? ((from as { body: unknown[] }).body) : [])
+      .map((line) => String(line).trim())
+      .filter(Boolean);
+
+  const output = (bodyOf(revised.output).length > 0 ? revised.output : result.output) as {
+    body?: unknown;
+    citations?: unknown;
+    unsupported?: unknown;
+    yesNo?: unknown;
+  };
+  const body = bodyOf(output);
   const cited = (Array.isArray(output.citations) ? output.citations : []).map((id) => String(id));
   const unsupported = (Array.isArray(output.unsupported) ? output.unsupported : [])
     .map((line) => String(line).trim())
@@ -1588,7 +1856,7 @@ export async function draftAnswer(
       bid: withGap,
       outcome: 'GAP_RAISED',
       gapId: gap.id,
-      acuConsumed: result.acuConsumed + retrieved.acuConsumed,
+      acuConsumed: plan.acuConsumed + result.acuConsumed + revised.acuConsumed + retrieved.acuConsumed,
       retrieval: retrievalOf(retrieved),
     };
   }
@@ -1665,7 +1933,7 @@ export async function draftAnswer(
     ...(open ? { draftedOverGapId: open.id } : {}),
     // The draft and the retrieval that fed it. One number, because one press of
     // one button is what the provider is charged for.
-    acuConsumed: result.acuConsumed + retrieved.acuConsumed,
+    acuConsumed: plan.acuConsumed + result.acuConsumed + revised.acuConsumed + retrieved.acuConsumed,
     retrieval: retrievalOf(retrieved),
   };
 }

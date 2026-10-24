@@ -216,6 +216,17 @@ export type BidClarification = Clarification & {
 export const RETURNABLE_OWNER = ['PROVIDER', 'CUSTOMER'] as const;
 export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
 
+/**
+ * Model calls in one press of **Draft an answer**.
+ *
+ * Plan, write, then mark-and-revise. Named here rather than written as a 3 in
+ * two files, because the quote a person reads before pressing the button and
+ * the estimate for a whole pack have to be the same arithmetic as the thing
+ * that actually runs. `backend/src/domain/bidon/engine.ts` is where the three
+ * passes are, and `ai.passes` on the draft route is what the panel quotes.
+ */
+export const DRAFT_PASSES = 3;
+
 export const RETURNABLE_STATUS = ['OUTSTANDING', 'SUPPLIED', 'WAIVED'] as const;
 export type ReturnableStatus = (typeof RETURNABLE_STATUS)[number];
 
@@ -2888,11 +2899,21 @@ export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
     .filter((entry) => entry.customerAccountId === customer.id)
     .reduce((sum, entry) => sum + entry.chunks.length, 0);
 
-  // One draft and one score per outstanding question, plus one score for each
-  // answer written and not yet scored. The parse, where it has not run, is one
-  // more. Each is its own call because each is one question — a single call for
-  // the whole pack has no way to refuse when it runs out of room.
-  const runs = outstanding * 2 + toScore + (bid.questionsConfirmedAt ? 0 : 1);
+  /*
+   * What an agent pass over this pack really costs.
+   *
+   * A draft is **three** calls, not one: it plans the answer against the
+   * passages, writes it, then marks its own draft as an evaluator would and
+   * rewrites it once. Counting it as one understated the figure by two thirds
+   * — and this estimate exists so that nobody starts a run on a pack they
+   * cannot fund half way through.
+   *
+   * Then one score per outstanding question, one more for each answer written
+   * and not yet scored, and the parse where it has not run. Each is its own
+   * call because each is one question: a single call for the whole pack has no
+   * way to refuse when it runs out of room.
+   */
+  const runs = outstanding * (DRAFT_PASSES + 1) + toScore + (bid.questionsConfirmedAt ? 0 : 1);
 
   // Both passes are reasoning calls over one question and its passages, which
   // is the MED tier the tender engine already prices its section drafting at.
@@ -2935,7 +2956,8 @@ export function acuEstimate(ctx: EngineContext, bidId: string): AcuEstimate {
     summary:
       runs === 0
         ? 'Nothing outstanding. An agent run on this pack would do nothing and is refused rather than charged.'
-        : `${runs} run(s): ${outstanding} draft(s), ${outstanding + toScore} score(s)` +
+        : `${runs} run(s): ${outstanding} draft(s) at ${DRAFT_PASSES} call(s) each, ` +
+          `${outstanding + toScore} score(s)` +
           (bid.questionsConfirmedAt ? '' : ', and one parse') +
           `, against ${passages} passage(s) of evidence.`,
   };

@@ -29408,3 +29408,82 @@ what they produce needs a live provider and this suite has none. What is
 asserted here is that the platform typechecks and that nothing else regressed
 (7,758 passing). Whether the next draft scores better is a measurement to take
 on the deployment, not a claim to make from here.
+
+## One press, three passes, every limb searched
+
+> "The system MUST deep dive, deep thinking and deep search to answer very
+> higher in the first attempt. This tool has been created as a machine winning
+> tool not a failure."
+
+The first real drafts scored 40 and 22.8 — correct, cited, and losing. The
+instruction was to make the **first** attempt the good one, and the previous
+round's answer (a better-written prompt) was not enough on its own. Three
+structural changes:
+
+### Deep search — a question is searched as the several questions it is
+
+A tender question is rarely one question. *"Describe your approach to programme
+management, including how you resource peak demand, how you report progress,
+and what you do when a milestone slips"* is four, and ranking that paragraph as
+a single string returns passages about the first limb and nothing about the
+fourth — so the draft answers a quarter of the question well and loses the
+marks for the rest.
+
+`questionFacets` cuts it where it changes subject: a sentence end, a semicolon,
+an enumerated item, an `including` / `and how` / `as well as` hinge. The whole
+question stays first because it carries the context the limbs are read in, each
+limb gets its own search, and the results are unioned on the chunk keeping the
+best score any limb gave it. Capped at six, and a question that is one question
+is searched once — one limb is not a decomposition, it is the question again
+with the section cut off.
+
+The splits are lexical, not a planning call: a model asked to split a question
+would cost a call, take a second and get it right about as often, and a wrong
+split here is invisible where a wrong one in prose is not. On the semantic path
+every facet is embedded in **one** call, because the adapter takes an array.
+
+### Deep thinking — plan, write, mark, revise
+
+Three model calls in one press:
+
+1. **Plan.** The limbs the question actually asks, in order, each with the
+   passages that evidence it and a flag for the ones nothing covers. No prose,
+   no word limit to hit. A single pass had to find what was relevant, decide a
+   structure and write to a limit in one movement, and the thing that fell out
+   was the structure.
+2. **Write**, to that plan, under every rule it was already under.
+3. **Mark and revise.** The draft is marked as the buyer's evaluator would mark
+   it — the five criteria, by name — and rewritten once to fix what it was
+   marked down for. The platform already owned an adversarial scorer and ran it
+   **after** the answer was recorded, so its criticism arrived too late to act
+   on. One revision, not a loop: a second trades real money for diminishing
+   prose, and `Score it` is still there for an independent read of what was
+   recorded.
+
+If the revision comes back empty or uncited, the first draft stands. A vendor
+fault on the third call must not turn a good second call into a gap.
+
+**The citation rule does not move.** Every pass carries it, the revision's
+citations are checked exactly as the draft's are, and a mark gained by claiming
+something the passages do not support has lost the bid rather than improved the
+answer.
+
+### An honest price
+
+Three calls is three calls. `DRAFT_PASSES = 3` is one constant read by all
+three places that have to agree: `ai.passes` on the draft route, which the
+panel quotes before anybody presses the button; `acuEstimate`, which now counts
+four calls a question rather than two; and the engine itself. The quote
+multiplies the raw estimate **before** pricing, so affordability, the cap check
+and the balance left are all decided against what will really be spent.
+
+### What is tested, and what is not
+
+Tested without a provider: how a question is cut up, that a single question is
+not split, that a twenty-item question does not become twenty searches, that
+fragments too short to rank are dropped, and that the three places the pass
+count appears cannot drift apart.
+
+**Not tested: whether the answers score higher.** That needs a live model and
+this suite has none. The shape is verified, the arithmetic is verified, the
+result is a measurement to take on the deployment.

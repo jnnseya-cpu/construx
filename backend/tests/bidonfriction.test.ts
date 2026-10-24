@@ -1031,3 +1031,123 @@ describe('the yes or the no a model sends back', () => {
     assert.equal(written.answer.yesNo, true);
   });
 });
+
+/**
+ * "The system MUST deep dive, deep think and deep search to answer very high on
+ * the first attempt."
+ *
+ * The first real drafts scored 40 and 22.8 — correct, cited, and losing. The
+ * instruction was to make the first attempt the good one, and the three
+ * answers to it are structural rather than a better sentence in a prompt:
+ *
+ *   1. **Deep search.** A tender question is rarely one question. Each limb is
+ *      searched separately and the results unioned, because ranking a four-part
+ *      paragraph as one string returns passages for the first part and nothing
+ *      for the fourth — so the draft answers a quarter of the question well and
+ *      loses the rest of the marks.
+ *   2. **Deep thinking.** Three passes in one press: plan the limbs against the
+ *      passages, write to that plan, then mark the draft as the buyer's
+ *      evaluator would and rewrite it once. The platform already owned an
+ *      adversarial scorer and ran it *after* the answer was recorded, so its
+ *      criticism arrived too late to act on.
+ *   3. **An honest price.** Three calls is three calls. The quote a person
+ *      reads before pressing the button, the estimate for a whole pack and the
+ *      thing that actually runs must be the same arithmetic.
+ *
+ * What a test without a provider can hold is the shape: how a question is cut
+ * up, that every limb's results survive the union, and that the price quoted is
+ * for the work that will really run. **Whether the answers score higher cannot
+ * be asserted here** — that needs a live model, and this suite has none.
+ */
+describe('one question, searched as the several questions it is', () => {
+  const asQuestion = (text: string): bids.BidQuestion => ({
+    id: 'q1',
+    section: 'Quality',
+    number: '2.01',
+    text,
+    answerType: 'TEXT',
+    mandatory: true,
+    passFail: false,
+  });
+
+  it('keeps the whole question first, because it carries the context', () => {
+    const facets = bidEngine.questionFacets(asQuestion('Describe your approach to programme management.'));
+    assert.ok(facets[0]!.startsWith('Describe your approach to programme management.'));
+    assert.ok(facets[0]!.includes('Quality'), 'the section is part of the query it always was');
+  });
+
+  it('cuts a multi-part question where it changes subject', () => {
+    // The shape that was losing marks: four things asked in one paragraph, of
+    // which a single ranked search finds the first.
+    const facets = bidEngine.questionFacets(
+      asQuestion(
+        'Describe your approach to programme management, including how you resource peak demand, and how you ' +
+          'report progress to the client. What do you do when a milestone slips?',
+      ),
+    );
+    assert.ok(facets.length >= 3, `expected the limbs to be separated, got ${facets.length}`);
+    assert.ok(
+      facets.some((facet) => /milestone slips/i.test(facet)),
+      'the last limb gets a search of its own — it is the one a single query never reaches',
+    );
+    assert.ok(facets.some((facet) => /resource peak demand/i.test(facet)));
+  });
+
+  it('does not split a question that is one question', () => {
+    const facets = bidEngine.questionFacets(asQuestion('Are you registered on the Central Digital Platform?'));
+    assert.equal(facets.length, 1, 'one search for one question — nothing to gain and an embedding to pay for');
+  });
+
+  it('never runs away with a question written as a list', () => {
+    // A question with twenty bullet points is one press, not twenty searches.
+    const facets = bidEngine.questionFacets(
+      asQuestion(Array.from({ length: 20 }, (_, at) => `Describe your arrangements for item number ${at + 1}.`).join(' ')),
+    );
+    assert.ok(facets.length <= 6, `capped, got ${facets.length}`);
+  });
+
+  it('drops fragments too short to rank against anything', () => {
+    const facets = bidEngine.questionFacets(asQuestion('Describe your quality system. Yes. Why?'));
+    assert.ok(
+      facets.every((facet) => facet.split(/\s+/).length >= 4),
+      'a two-word fragment ranks against everything equally badly and costs an embedding to find that out',
+    );
+  });
+});
+
+describe('the price quoted is the work that runs', () => {
+  it('counts a draft as the three calls it makes', () => {
+    // One number, in one place. The quote the panel shows, the estimate for a
+    // whole pack and the engine itself drifting apart is how somebody funds
+    // a third of a run.
+    assert.equal(bids.DRAFT_PASSES, 3);
+
+    const route = ROUTES.find((entry) => entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/draft');
+    assert.ok(route, 'the drafter is routed');
+    assert.equal(route.ai?.passes, bids.DRAFT_PASSES, 'the quote is for every pass, not the first');
+    assert.equal(route.ai?.capability, 'REASONING');
+  });
+
+  it('estimates a pack at four calls a question, not two', () => {
+    // Three to draft and one to score. A pack estimated at half its cost is a
+    // run that stops in the middle, which on a tender week is worse than a
+    // figure somebody flinched at.
+    let packBid = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+    });
+    packBid = bids.confirmQuestions(asDirector(), packBid.id, {
+      questions: [
+        { section: 'Quality', number: '2.01', text: 'Describe your approach to EPC assessment at scale', answerType: 'TEXT', mandatory: true },
+        { section: 'Quality', number: '2.02', text: 'Describe how you quality assure lodged certificates', answerType: 'TEXT', mandatory: true },
+      ],
+    });
+
+    const estimate = bids.acuEstimate(asDirector(), packBid.id);
+    assert.equal(estimate.questionsOutstanding, 2);
+    assert.equal(estimate.runs, 2 * (bids.DRAFT_PASSES + 1), 'three drafting calls and one score, per question');
+    assert.match(estimate.summary, /3 call\(s\) each/);
+  });
+});

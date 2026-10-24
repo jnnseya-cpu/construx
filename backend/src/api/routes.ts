@@ -442,7 +442,16 @@ export type Route = {
    * The browser then needs no vocabulary of its own: it asks what the request
    * it is about to send would cost.
    */
-  ai?: { engine: Engine; taskType: string; capability: ProviderCapability };
+  /**
+   * That this route calls a model, and how many times.
+   *
+   * `passes` is one unless stated. The bid drafter is three — it plans the
+   * answer against the passages, writes it, then marks its own draft as an
+   * evaluator would and rewrites it once — and quoting one call for an action
+   * that makes three would show a third of the price to somebody about to
+   * spend the whole of it.
+   */
+  ai?: { engine: Engine; taskType: string; capability: ProviderCapability; passes?: number };
   /**
    * A control that never belongs on a handset, and which control it is.
    *
@@ -14567,7 +14576,7 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/draft',
     quoteScope: 'TENANT',
-    ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING' },
+    ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING', passes: 3 },
     description:
       'Draft one answer from this customer’s own evidence. Retrieval runs first and if it returns nothing the command raises a gap instead of drafting, because a model asked to answer a question its evidence cannot support writes exactly the uncited claim that gets a submission thrown out. A question already waiting on the customer is refused unless `overOpenGap` says to draft from what is known anyway — the model is then told what is outstanding, and the answer carries the gap for whoever reviews it',
     schema: {
@@ -25713,6 +25722,7 @@ export const ROUTES: Route[] = [
           capability: matched.route.ai.capability,
           engine: matched.route.ai.engine,
           taskType: matched.route.ai.taskType,
+          ...(matched.route.ai.passes ? { passes: matched.route.ai.passes } : {}),
           wallet: platformCtx.wallet,
           projectId: blog.BLOG_PROJECT_ID,
         });
@@ -25736,6 +25746,7 @@ export const ROUTES: Route[] = [
         capability: matched.route.ai.capability,
         engine: matched.route.ai.engine,
         taskType: matched.route.ai.taskType,
+        ...(matched.route.ai.passes ? { passes: matched.route.ai.passes } : {}),
         wallet: engineCtx.wallet,
         projectId,
       });
