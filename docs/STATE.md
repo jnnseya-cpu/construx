@@ -29203,3 +29203,16 @@ filled and act on a different bid. The handler refuses to open in that case and
 says to reload. It cannot happen on a current screen — the pack and the chooser
 come from the same read — but it would take a list that moved under somebody
 mid-afternoon, which is exactly when nobody checks.
+
+### A refusal about a field it no longer describes
+
+A person who left **Subject** empty, read *"must be at least 3 characters"* and
+then typed one sat looking at a form that still said their subject was too
+short. `showProblem` clears every field error and sets the ones the server just
+sent — but it only runs on the next submit, so the denial was true when it was
+made and false by the time it was read, which is the one thing an error message
+may not be.
+
+Field errors now clear on `input` and `change`. Nothing is validated in the
+browser by this: it says "that was about what you had before", not "that is
+fixed", and the server still decides on submit.

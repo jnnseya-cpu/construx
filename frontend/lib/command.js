@@ -578,6 +578,31 @@ export function command({
       }
     }
 
+    /*
+     * A refusal about a field it no longer describes.
+     *
+     * `showProblem` clears every field error and sets the ones the server just
+     * sent, which is right — but it only runs on the next submit. So a person
+     * who left Subject empty, read "must be at least 3 characters" and then
+     * typed a subject sat looking at a form that still said their subject was
+     * too short. The denial was true when it was made and false by the time it
+     * was read, which is the one thing an error message may not be.
+     *
+     * Cleared as soon as the field changes. Nothing is validated here — this
+     * says "that was about what you had before", not "that is fixed", and the
+     * server still decides on submit.
+     */
+    const clearFieldError = (event) => {
+      const field = event.target.closest?.('[data-field]');
+      const box = field?.querySelector('.field-error');
+      if (box && !box.hidden) {
+        box.hidden = true;
+        box.textContent = '';
+      }
+    };
+    host.addEventListener('input', clearFieldError);
+    host.addEventListener('change', clearFieldError);
+
     host.addEventListener('click', async (event) => {
       if (event.target === host || event.target.closest('[data-close]')) return close(null);
 
