@@ -219,10 +219,15 @@ export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
 /**
  * Model calls in one press of **Draft an answer**, at most.
  *
- * Plan, write, then mark-and-rewrite up to three times — stopping as soon as
- * the draft clears the green floor on its own marking, or as soon as a rewrite
- * fails to beat the one before it. Five is therefore the **ceiling** and the
- * common case is fewer.
+ * Plan, write, mark — then up to two rounds of rewrite-and-mark, stopping as
+ * soon as the **independent evaluator** puts the answer at or above the green
+ * floor, or as soon as a rewrite fails to move it. Seven is therefore the
+ * **ceiling** and the common case is three or five.
+ *
+ * The marking is the scorer, not the writer's opinion of itself. That cost a
+ * call per round and bought the only thing that makes the loop mean anything:
+ * a first build asked each rewrite to mark its own work, stopped at a
+ * self-reported green, and the real scorer then gave those answers 36.
  *
  * Quoted at the ceiling deliberately. A price that turns out lower than quoted
  * is a surprise nobody minds; one that turns out higher is the platform having
@@ -231,7 +236,7 @@ export type ReturnableOwner = (typeof RETURNABLE_OWNER)[number];
  * the quote a person reads before pressing, the estimate for a whole pack and
  * the thing that actually runs have to be the same arithmetic.
  */
-export const DRAFT_PASSES = 5;
+export const DRAFT_PASSES = 7;
 
 export const RETURNABLE_STATUS = ['OUTSTANDING', 'SUPPLIED', 'WAIVED'] as const;
 export type ReturnableStatus = (typeof RETURNABLE_STATUS)[number];

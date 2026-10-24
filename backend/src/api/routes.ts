@@ -14578,7 +14578,7 @@ export const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/v1/bid-on/bids/:bidId/draft',
     quoteScope: 'TENANT',
-    ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING', passes: 5 },
+    ai: { engine: 'TENDER', taskType: 'bid_on_draft', capability: 'REASONING', passes: 7 },
     description:
       'Draft one answer from this customer’s own evidence. Retrieval runs first and if it returns nothing the command raises a gap instead of drafting, because a model asked to answer a question its evidence cannot support writes exactly the uncited claim that gets a submission thrown out. A question already waiting on the customer is refused unless `overOpenGap` says to draft from what is known anyway — the model is then told what is outstanding, and the answer carries the gap for whoever reviews it',
     schema: {

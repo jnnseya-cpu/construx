@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import { rejectsCode } from './helpers.ts';
 import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
+import type { CriterionScores } from '../src/domain/bidon/rubric.ts';
 import * as bids from '../src/domain/bidon/bids.ts';
 import * as customers from '../src/domain/bidon/customers.ts';
 import * as engagements from '../src/domain/bidon/engagements.ts';
@@ -60,9 +61,21 @@ type Seen = { task: string; payload: Record<string, unknown> };
  */
 type Reply = Record<string, unknown> | ((payload: Record<string, unknown>) => Record<string, unknown>);
 
-function scripted(replies: Reply[]): AIProviderAdapter & { seen: Seen[] } {
+/**
+ * The scorer's answers, in order, for the marking calls the loop makes.
+ *
+ * Kept on their own queue rather than interleaved into the script, because the
+ * number of *drafting* calls is what each test is asserting and threading the
+ * marking calls through that sequence would make every test a count of
+ * something it does not care about.
+ */
+function scripted(
+  replies: Reply[],
+  marks: CriterionScores[] = [],
+): AIProviderAdapter & { seen: Seen[]; marked: number } {
   const seen: Seen[] = [];
   let at = 0;
+  let markAt = 0;
   return {
     name: 'OPENAI',
     capability: 'REASONING',
@@ -71,7 +84,28 @@ function scripted(replies: Reply[]): AIProviderAdapter & { seen: Seen[] } {
     seen,
     estimateCostMinor: () => 40,
     healthy: () => true,
+    get marked() {
+      return markAt;
+    },
     async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      // The evaluator's own prompt, answered from the marks queue. Matched on
+      // the prompt rather than on a call index so a test that adds a drafting
+      // pass does not have to renumber its marking.
+      if (request.task.startsWith('You are the buyer')) {
+        const scores = marks[Math.min(markAt, marks.length - 1)] ?? THIN_MARKS;
+        markAt += 1;
+        return {
+          provider: 'OPENAI',
+          modelClass: 'test',
+          output: {
+            scores,
+            reasons: Object.fromEntries(Object.keys(scores).map((criterion) => [criterion, 'Said why.'])),
+          },
+          rawCostMinor: 40,
+          latencyMs: 5,
+        };
+      }
+
       seen.push({ task: request.task, payload: request.payload });
       const reply = replies[Math.min(at, replies.length - 1)] ?? {};
       const output = typeof reply === 'function' ? reply(request.payload) : reply;
@@ -232,42 +266,70 @@ after(() => {
 });
 
 describe('one press of Draft an answer, end to end', () => {
-  it('plans, writes, revises once when the revision marks itself green, and records', async () => {
-    const adapter = scripted([
-      PLAN,
-      draftReply(['We complete every assessment within ten working days of instruction.']),
-      draftReply(
-        [
+  it('plans, writes, and stops where the evaluator says the draft is already green', async () => {
+    const adapter = scripted(
+      [
+        PLAN,
+        draftReply([
           'We complete every assessment within ten working days of instruction, by a nominated domestic energy assessor.',
           'Each certificate is lodged on the central register within five working days of completion.',
-        ],
-        { selfScore: GREEN_MARKS, tookMarksOffFor: ['The first draft named no reporting route'] },
-      ),
-    ]);
+        ]),
+        draftReply(['Never asked for.']),
+      ],
+      [GREEN_MARKS],
+    );
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
     assert.equal(drafted.outcome, 'DRAFTED');
-    assert.equal(adapter.seen.length, 3, 'plan, write, one revision — it stopped as soon as it was green');
+    assert.equal(adapter.seen.length, 2, 'plan and write — a green draft buys no rewrite');
+    assert.equal(adapter.marked, 1, 'and the evaluator read it once');
 
-    // The passes ran in order and each was given its own job.
     assert.match(adapter.seen[0]!.task, /Plan one answer/);
     assert.match(adapter.seen[0]!.task, /Do not write the answer/);
     assert.match(adapter.seen[1]!.task, /Write one answer/);
-    assert.match(adapter.seen[2]!.task, /Mark this draft/);
 
-    // The recorded answer is the revision, not the first draft.
     const written = bids.latestAnswer(drafted.bid, questionId);
     assert.ok(written);
     assert.equal(written.body.length, 2);
-    assert.match(written.body[1]!, /central register/);
     assert.equal(written.authorship, 'AI_DRAFTED');
     assert.equal(written.citations.length, 1, 'and it carries the citation the retriever offered');
+
+    // It arrives scored. The marks the loop already paid for are the marks on
+    // the record, rather than being thrown away to leave the row at RED 0 and
+    // the person buying the same marking again.
+    assert.deepEqual(written.scores, GREEN_MARKS);
+    assert.ok(written.scoreReasons);
+    assert.equal(bids.bidPosition(asDirector(), bid.id).questions[0]!.verdict.rag, 'GREEN');
+  });
+
+  it('rewrites against the evaluator\u2019s own marks, not its opinion of itself', async () => {
+    // The defect this replaced: each rewrite marked its own work, the loop
+    // stopped at a self-reported green, and the independent scorer then gave
+    // the same answers 36. A drafter may not score its own work — the module
+    // has said so since the scorer was written.
+    const adapter = scripted(
+      [PLAN, draftReply(['Thin.']), draftReply(['Better, against the criticism.'])],
+      [THIN_MARKS, GREEN_MARKS],
+    );
+    const { bid, questionId } = await withProvider(adapter);
+
+    await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
+
+    const revising = adapter.seen[2]!;
+    assert.match(revising.task, /An independent evaluator has marked this draft/);
+    assert.match(revising.task, /Do not mark your own work/);
+    assert.deepEqual(revising.payload.theEvaluatorsMarks, THIN_MARKS, 'the real marks reach the rewrite');
+    assert.ok(revising.payload.whyItScoredThat, 'and so do the reasons it will be judged by');
+    assert.ok(
+      (revising.payload.weakest as string[]).includes('SPECIFICITY'),
+      'with the criteria below the floor named',
+    );
   });
 
   it('gives every pass the passages, and the writer the plan the planner made', async () => {
-    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'], { selfScore: GREEN_MARKS })]);
+    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'])], [THIN_MARKS, GREEN_MARKS]);
     const { bid, questionId } = await withProvider(adapter);
     await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
@@ -291,7 +353,7 @@ describe('one press of Draft an answer, end to end', () => {
     // record, and the drafter used to be handed document passages and nothing
     // else — so a question asking for a company number raised a gap against a
     // platform holding the company number.
-    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'], { selfScore: GREEN_MARKS })]);
+    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'])], [THIN_MARKS, GREEN_MARKS]);
     const { bid, questionId } = await withProvider(adapter);
     await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
@@ -307,30 +369,29 @@ describe('one press of Draft an answer, end to end', () => {
     }
   });
 
-  it('keeps revising while each rewrite beats the last, and stops at the ceiling', async () => {
-    // Four marks, each better than the one before and none of them green: the
-    // loop takes all three revisions it is allowed and then hands over the best
-    // it got rather than paying for a fourth.
-    const climbing = [60, 68, 74].map((mark) => ({
+  it('keeps rewriting while the evaluator keeps moving, and stops at the ceiling', async () => {
+    // Marks that climb and never reach green: the loop takes both rewrites it
+    // is allowed and hands over the best it got rather than paying for a third.
+    const climbing = [55, 65, 72].map((mark) => ({
       COMPLIANCE: mark,
       EVIDENCE: mark,
       BUYER_RELEVANCE: mark,
       SPECIFICITY: mark,
       CLARITY_AND_LIMITS: mark,
     }));
-    const adapter = scripted([
-      PLAN,
-      draftReply(['First.']),
-      draftReply(['Second.'], { selfScore: climbing[0] }),
-      draftReply(['Third.'], { selfScore: climbing[1] }),
-      draftReply(['Fourth.'], { selfScore: climbing[2] }),
-    ]);
+    const adapter = scripted(
+      [PLAN, draftReply(['First.']), draftReply(['Second.']), draftReply(['Third.']), draftReply(['Fourth.'])],
+      climbing,
+    );
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(adapter.seen.length, 5, 'plan, write and three revisions — the ceiling, not an open loop');
-    assert.equal(bids.latestAnswer(drafted.bid, questionId)!.body[0], 'Fourth.', 'the best of them is the last here');
+    assert.equal(adapter.seen.length, 4, 'plan, write and two rewrites — the ceiling, not an open loop');
+    assert.equal(adapter.marked, 3, 'and the evaluator marked every one of them');
+    const written = bids.latestAnswer(drafted.bid, questionId)!;
+    assert.equal(written.body[0], 'Third.', 'the best the evaluator saw');
+    assert.deepEqual(written.scores, climbing[2], 'recorded with the marks that judged it');
   });
 
   it('stops paying the moment a rewrite fails to beat the one before it', async () => {
@@ -338,19 +399,16 @@ describe('one press of Draft an answer, end to end', () => {
     // predecessor is the model out of ideas, and a third call buys the second
     // one again.
     const same = { COMPLIANCE: 62, EVIDENCE: 62, BUYER_RELEVANCE: 62, SPECIFICITY: 62, CLARITY_AND_LIMITS: 62 };
-    const adapter = scripted([
-      PLAN,
-      draftReply(['First.']),
-      draftReply(['Second.'], { selfScore: same }),
-      draftReply(['Third.'], { selfScore: same }),
-      draftReply(['Fourth.'], { selfScore: same }),
-    ]);
+    const adapter = scripted(
+      [PLAN, draftReply(['First.']), draftReply(['Second.']), draftReply(['Third.'])],
+      [same, same, same],
+    );
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(adapter.seen.length, 4, 'plan, write, and two revisions — the second one did not earn a third');
-    assert.equal(bids.latestAnswer(drafted.bid, questionId)!.body[0], 'Third.');
+    assert.equal(adapter.seen.length, 3, 'plan, write, one rewrite — it moved nothing, so it earned no second');
+    assert.equal(bids.latestAnswer(drafted.bid, questionId)!.body[0], 'First.', 'and the first stands');
   });
 
   it('keeps the better answer when a rewrite marks itself worse', async () => {
@@ -358,24 +416,24 @@ describe('one press of Draft an answer, end to end', () => {
     // and the answer that goes on the record is the best one it produced.
     const better = { COMPLIANCE: 70, EVIDENCE: 70, BUYER_RELEVANCE: 70, SPECIFICITY: 70, CLARITY_AND_LIMITS: 70 };
     const worse = { COMPLIANCE: 40, EVIDENCE: 40, BUYER_RELEVANCE: 40, SPECIFICITY: 40, CLARITY_AND_LIMITS: 40 };
-    const adapter = scripted([
-      PLAN,
-      draftReply(['First.']),
-      draftReply(['Better.'], { selfScore: better }),
-      draftReply(['Worse.'], { selfScore: worse }),
-    ]);
+    const adapter = scripted(
+      [PLAN, draftReply(['First.']), draftReply(['Better.']), draftReply(['Worse.'])],
+      [better, worse],
+    );
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(bids.latestAnswer(drafted.bid, questionId)!.body[0], 'Better.', 'the downhill rewrite is discarded');
+    const written = bids.latestAnswer(drafted.bid, questionId)!;
+    assert.equal(written.body[0], 'First.', 'the downhill rewrite is discarded and the better answer stands');
+    assert.deepEqual(written.scores, better, 'with the marks that belong to it');
   });
 
   it('keeps the draft when a revision comes back empty', async () => {
     // A vendor fault late in the loop must not turn a perfectly good draft into
     // a gap. This is the failure that would have cost somebody a paid call and
     // left them with nothing.
-    const adapter = scripted([PLAN, draftReply(['The draft that survives.']), { body: [], citations: [] }]);
+    const adapter = scripted([PLAN, draftReply(['The draft that survives.']), { body: [], citations: [] }], [THIN_MARKS]);
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
@@ -415,9 +473,8 @@ describe('one press of Draft an answer, end to end', () => {
         body: ['Revised.'],
         citations: [offeredId(payload), 'invented-again'],
         unsupported: [],
-        selfScore: GREEN_MARKS,
       }),
-    ]);
+    ], [THIN_MARKS, GREEN_MARKS]);
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
@@ -429,7 +486,7 @@ describe('one press of Draft an answer, end to end', () => {
   it('refuses to record a yes/no answer the model left unanswered, and keeps the prose', async () => {
     // The defect this file would have caught: the drafter called a vendor, was
     // charged, built the answer and was refused on the last line.
-    const adapter = scripted([PLAN, draftReply(['We are registered.']), draftReply(['We are registered.'], { selfScore: GREEN_MARKS })]);
+    const adapter = scripted([PLAN, draftReply(['We are registered.'])], [GREEN_MARKS]);
     const { bid: base } = await withProvider(adapter);
     const yesNoBid = bids.confirmQuestions(
       asDirector(),
@@ -464,8 +521,7 @@ describe('one press of Draft an answer, end to end', () => {
     const adapter = scripted([
       PLAN,
       draftReply(['We are registered on the Central Digital Platform.'], { yesNo: 'yes' }),
-      draftReply(['We are registered on the Central Digital Platform.'], { yesNo: true, selfScore: GREEN_MARKS }),
-    ]);
+    ], [GREEN_MARKS]);
     await withProvider(adapter);
     const yesNoBid = bids.confirmQuestions(
       asDirector(),
@@ -500,13 +556,14 @@ describe('one press of Draft an answer, end to end', () => {
     // The spend reported back is what the wallet settled. A loop that stopped
     // after two calls and reported three would be a figure nobody could
     // reconcile against the ledger.
-    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'], { selfScore: GREEN_MARKS })]);
+    const adapter = scripted([PLAN, draftReply(['Drafted.']), draftReply(['Revised.'])], [THIN_MARKS, GREEN_MARKS]);
     const { bid, questionId } = await withProvider(adapter);
 
     const drafted = await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(adapter.seen.length, 3);
-    assert.ok(drafted.acuConsumed > 0, 'the passes are charged');
+    assert.equal(adapter.seen.length, 3, 'plan, write, one rewrite');
+    assert.equal(adapter.marked, 2, 'and a marking after each piece of prose');
+    assert.ok(drafted.acuConsumed > 0, 'every one of them charged');
   });
 
   it('reads the question as the several questions it is, before it spends anything', async () => {
@@ -535,11 +592,14 @@ describe('one press of Draft an answer, end to end', () => {
       SPECIFICITY: GREEN_FLOOR,
       CLARITY_AND_LIMITS: GREEN_FLOOR,
     };
-    const adapter = scripted([PLAN, draftReply(['First.']), draftReply(['At the floor.'], { selfScore: boundary }), draftReply(['Never asked for.'])]);
+    const adapter = scripted(
+      [PLAN, draftReply(['At the floor.']), draftReply(['Never asked for.'])],
+      [boundary],
+    );
     const { bid, questionId } = await withProvider(adapter);
 
     await bidEngine.draftAnswer(asDirector(), bid.id, { questionId });
 
-    assert.equal(adapter.seen.length, 3, 'exactly at the floor is good enough, and buying another pass is not');
+    assert.equal(adapter.seen.length, 2, 'exactly at the floor is good enough, and buying a rewrite is not');
   });
 });

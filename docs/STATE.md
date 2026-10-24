@@ -29666,3 +29666,64 @@ again, or drafted again.
 Rejecting remains the right act where a **person** has instructions to give:
 those travel with the answer and reach the next draft as well. What was wrong
 was making it the only road back.
+
+## The drafter was marking its own homework
+
+Two answers redrafted through the new loop came back **36.5** and **36**,
+against 40 and 22.8 before it. Longer, better cited, and no better scored. The
+reason was a rule this module settled long ago, broken from the inside by the
+loop I had just built.
+
+`scoreAnswerWithAI` exists because **a drafter may not score its own work**,
+and it is given the answer *without* the passages for the same reason: a scorer
+that saw the retrieval would be marking the drafter's homework against the
+drafter's own notes. The revision loop then asked each rewrite to mark its own
+rewrite — that fault in its purest form — and stopped as soon as it said it was
+green. The independent scorer, called afterwards by the person, disagreed by
+forty points.
+
+A self-report is not a measurement. The stopping condition was worthless and
+every rewrite was aiming at criticism it had invented.
+
+### What it does now
+
+`markWithScorer` is the scorer's prompt, split out of `scoreAnswerWithAI` and
+recording nothing: the same criteria in the rubric's own words, the same
+adversarial constraint — *"you did not write this and you are not trying to
+help it"* — and the answer without the passages.
+
+- The **first draft is marked** before anything is rewritten. A draft that is
+  already green is handed over without paying for a rewrite it does not need.
+- Each rewrite is given **the evaluator's actual marks and reasons**, criterion
+  by criterion, with the ones below the floor named. It is told explicitly not
+  to mark its own work.
+- Each rewrite is then **marked by the same evaluator**, and that is the only
+  number the loop may stop on — the number the pack will print.
+- A rewrite that does not **move the evaluator** earns no further round.
+- The best answer by the evaluator's marks is kept, not the last.
+
+### It arrives scored
+
+The loop had the evaluator mark the exact text it is about to record, with
+reasons, and was throwing that away — leaving the row at RED 0 and the person
+pressing **Score it** to buy the same marking again. The answer is now recorded
+with those marks, through `scoreAnswer` so the superseded check and the event
+are the ones every score goes through.
+
+### The price
+
+`DRAFT_PASSES = 7` — plan, write, mark, and up to two rounds of rewrite-and-
+mark. `MAX_REVISIONS` drops from three to two because each round now costs two
+calls rather than one. It is the ceiling; a draft the evaluator passes first
+time is three calls, and it comes back already scored, which removes a call the
+person was making separately.
+
+### Tested
+
+`bidondraft.test.ts` runs all of it against a scripted provider that answers
+the drafting prompts and the scorer's prompt separately: a green first draft
+buys no rewrite, a rewrite is handed the evaluator's real marks and reasons and
+told not to mark itself, the loop keeps going while the evaluator keeps moving
+and stops at the ceiling, a rewrite that moves nothing earns no second, a
+downhill rewrite is discarded with the better answer standing, and every
+recorded answer carries the marks that judged it.

@@ -1121,7 +1121,7 @@ describe('the price quoted is the work that runs', () => {
     // One number, in one place. The quote the panel shows, the estimate for a
     // whole pack and the engine itself drifting apart is how somebody funds
     // a third of a run.
-    assert.equal(bids.DRAFT_PASSES, 5, 'plan, write, and up to three mark-and-rewrite passes');
+    assert.equal(bids.DRAFT_PASSES, 7, 'plan, write, mark, and up to two rounds of rewrite-and-mark');
 
     const route = ROUTES.find((entry) => entry.method === 'POST' && entry.pattern === '/v1/bid-on/bids/:bidId/draft');
     assert.ok(route, 'the drafter is routed');
@@ -1150,7 +1150,7 @@ describe('the price quoted is the work that runs', () => {
     const estimate = bids.acuEstimate(asDirector(), packBid.id);
     assert.equal(estimate.questionsOutstanding, 2);
     assert.equal(estimate.runs, 2 * (bids.DRAFT_PASSES + 1), 'the drafting ceiling and one score, per question');
-    assert.match(estimate.summary, /up to 5 call\(s\) each/);
+    assert.match(estimate.summary, /up to 7 call\(s\) each/);
   });
 });
 

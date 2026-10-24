@@ -191,17 +191,19 @@ const DRAFTING_PASSAGES = 24;
 /**
  * How many times a draft may be marked and rewritten before it is handed over.
  *
- * Three. The loop stops earlier on either of the two conditions that matter —
- * it clears the green floor, or a rewrite fails to beat the one before it —
- * and this is the ceiling for the case where neither happens, because an
- * unbounded improvement loop on a metered vendor is a bill nobody authorised.
+ * Two, and each one now costs two calls rather than one: the rewrite, and the
+ * independent evaluator marking it. The loop stops earlier on either of the
+ * conditions that matter — the evaluator puts it at or above the green floor,
+ * or a rewrite fails to move the evaluator at all — and this is the ceiling
+ * for the case where neither happens, because an unbounded improvement loop on
+ * a metered vendor is a bill nobody authorised.
  *
- * Three rather than one because the instruction is to arrive good on the
- * **first attempt**, and a first attempt that has been marked and rewritten
- * three times is still a first attempt from where the person sits: one press,
- * one answer, one price quoted before it starts.
+ * More than one, because the instruction is to arrive good on the **first
+ * attempt**, and a first attempt that has been marked and rewritten twice is
+ * still a first attempt from where the person sits: one press, one answer, one
+ * price quoted before it starts, and the marks already on it.
  */
-const MAX_REVISIONS = 3;
+const MAX_REVISIONS = 2;
 
 /** How many separate searches one question is allowed to become. */
 const MAX_FACETS = 6;
@@ -1837,10 +1839,23 @@ export async function draftAnswer(
    * than after it.
    *
    * So the draft is marked and revised inside the same press, and **it keeps
-   * going until it is good enough**. The pass is given its own answer, the
-   * question, the marking criteria and the same passages, and asked what an
-   * evaluator would take marks off for, to fix exactly that, and to mark the
-   * result honestly. The loop stops on whichever comes first:
+   * going until it is good enough** — where "good enough" is the independent
+   * scorer's verdict and never the rewrite's opinion of itself.
+   *
+   * The first build of this loop asked each rewrite to mark its own work. On a
+   * live tender it stopped at a self-reported green and the scorer then gave
+   * the same two answers 36 and 36.5. That is this module's own settled rule
+   * being broken from the inside: a drafter may not score its own work, which
+   * is why `scoreAnswerWithAI` exists and why it is given the answer without
+   * the passages. A rewrite marking its own rewrite is that fault in its
+   * purest form, and it made the stopping condition worthless.
+   *
+   * Now each rewrite is marked by `markWithScorer` — the same prompt, the same
+   * criteria in the rubric's words, the same adversarial constraint, and the
+   * marks that will actually be published. Those marks and the scorer's reasons
+   * go back into the next rewrite, so the revision is answering the criticism
+   * it will be judged by rather than one it invented. The loop stops on
+   * whichever comes first:
    *
    *   - **it clears the green floor** on its own marking — the point of the
    *     exercise, and there is nothing further to buy;
@@ -1858,11 +1873,33 @@ export async function draftAnswer(
    * the answer, and its citations are checked exactly as the first draft's are.
    */
   let current = result.output;
-  let bestMark = -1;
   let spentRevising = 0;
   let revisions = 0;
 
-  for (let attempt = 0; attempt < MAX_REVISIONS; attempt += 1) {
+  /*
+   * The first draft, marked before anything is rewritten.
+   *
+   * Two things come of this and both matter. A draft that is already green is
+   * handed over without paying for a rewrite it does not need; and every
+   * rewrite after it has the scorer's real criticism to answer, which is the
+   * only kind worth paying for.
+   */
+  const offered = new Map(retrieved.chunks.map((chunk) => [chunk.chunkId, chunk]));
+  const citedCount = (from: unknown): number =>
+    new Set(
+      (Array.isArray((from as { citations?: unknown })?.citations) ? ((from as { citations: unknown[] }).citations) : [])
+        .map((id) => String(id))
+        .filter((id) => offered.has(id)),
+    ).size;
+
+  let marked =
+    bodyOf(current).length > 0
+      ? await markWithScorer(ctx, bid, question, bodyOf(current), citedCount(current))
+      : undefined;
+  if (marked) spentRevising += marked.acuConsumed;
+  let bestMark = marked ? weightedScore(marked.scores).score : -1;
+
+  for (let attempt = 0; attempt < MAX_REVISIONS && (marked === undefined || bestMark < GREEN_FLOOR); attempt += 1) {
     const revised = await runAI(ctx, {
       engine: 'TENDER',
       taskType: 'bid_on_draft_revise',
@@ -1871,14 +1908,13 @@ export async function draftAnswer(
       attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
       request: {
         task:
-          'Mark this draft tender answer as the buyer’s evaluator would, then rewrite it to score higher. ' +
-          'Return JSON in exactly the shape of the draft — `body`, `citations`, `unsupported`' +
+          'An independent evaluator has marked this draft and its marks and reasons are below. Rewrite the ' +
+          'answer to score higher against exactly those criticisms. Return JSON in exactly the shape of the ' +
+          'draft — `body`, `citations`, `unsupported`' +
           (wantsYesNo ? ', `yesNo`' : '') +
-          ' — plus `tookMarksOffFor`: an array of what an evaluator would have marked it down for, and ' +
-          '`selfScore`: your honest marks out of 100 for the **rewritten** answer as `{ COMPLIANCE, EVIDENCE, ' +
-          'BUYER_RELEVANCE, SPECIFICITY, CLARITY_AND_LIMITS }`. Mark it as the buyer would, not as its author ' +
-          'would: a flattering mark here stops the work early and the buyer marks it properly afterwards. Return ' +
-          'the improved answer in `body`, not the original.',
+          ' — plus `tookMarksOffFor`: an array of what you changed and why. Return the improved answer in ' +
+          '`body`, not the original. Do not mark your own work: the same evaluator marks every version of this ' +
+          'answer, and what it gives the rewrite is what decides whether this stops here.',
         payload: {
           buyer: bid.buyerName,
           section: question.section,
@@ -1892,6 +1928,22 @@ export async function draftAnswer(
           factsInstruction,
           theDraft: current,
           revisionNumber: attempt + 1,
+          /*
+           * What the evaluator actually gave it, and said about it.
+           *
+           * Not an opinion the rewrite formed about itself: the marks and the
+           * reasons that will be published, criterion by criterion, from the
+           * same scorer that will mark the rewrite. A revision answering real
+           * criticism is worth paying for; one answering its own is not.
+           */
+          ...(marked
+            ? {
+                theEvaluatorsMarks: marked.scores,
+                whyItScoredThat: marked.reasons,
+                weightedSoFar: bestMark,
+                weakest: CRITERION.filter((criterion) => marked!.scores[criterion] < GREEN_FLOOR),
+              }
+            : {}),
           passages: retrieved.chunks.map((chunk) => ({
             chunkId: chunk.chunkId,
             source: `${chunk.reference} ${chunk.title}${chunk.pageRef ? ` (${chunk.pageRef})` : ''}`,
@@ -1923,26 +1975,25 @@ export async function draftAnswer(
     spentRevising += revised.acuConsumed;
     revisions += 1;
 
-    // An empty or uncited rewrite is a vendor fault, not an improvement. What
-    // was already written stands and the loop stops: paying again to be handed
-    // nothing again is the definition of the same approach twice.
+    // An empty rewrite is a vendor fault, not an improvement. What was already
+    // written stands and the loop stops: paying again to be handed nothing
+    // again is the definition of the same approach twice.
     const rewritten = bodyOf(revised.output);
     if (rewritten.length === 0) break;
 
-    const marked = selfScoreFrom((revised.output as { selfScore?: unknown }).selfScore);
-    const mark = marked ? weightedScore(marked).score : bestMark + 1;
+    // Marked by the evaluator, not by its author. This is the number the pack
+    // will print, so it is the only number the loop may stop on.
+    const remarked = await markWithScorer(ctx, bid, question, rewritten, citedCount(revised.output));
+    spentRevising += remarked.acuConsumed;
+    const mark = weightedScore(remarked.scores).score;
 
-    // Worse than what it started from, by its own marking: keep the better one
-    // and stop. A model talking itself downhill does not recover by going
-    // round again.
-    if (mark < bestMark) break;
+    // No better than what it started from: keep the better one and stop. A
+    // rewrite that does not move the evaluator has not earned another.
+    if (mark <= bestMark) break;
 
     current = revised.output;
-    const improved = mark > bestMark;
+    marked = remarked;
     bestMark = mark;
-
-    if (marked && mark >= GREEN_FLOOR) break;
-    if (!improved) break;
   }
 
   /*
@@ -1962,8 +2013,8 @@ export async function draftAnswer(
 
   // Only citations the retriever actually offered. A chunk id the model
   // invented would be refused by `recordAnswer` anyway; dropping it here means
-  // the refusal does not throw away the prose as well.
-  const offered = new Map(retrieved.chunks.map((chunk) => [chunk.chunkId, chunk]));
+  // the refusal does not throw away the prose as well. `offered` is the map the
+  // loop above already built for exactly this question.
   const citations = [...new Set(cited)]
     .filter((id) => offered.has(id))
     .map((id) => ({ evidenceId: offered.get(id)!.evidenceId, chunkId: id }));
@@ -2047,10 +2098,30 @@ export async function draftAnswer(
     ...(open ? { draftedOverGap: { gapId: open.id, prompt: open.promptToClient } } : {}),
   });
 
+  /*
+   * The marks it already has, recorded with it.
+   *
+   * The loop had the evaluator mark this exact text, criterion by criterion,
+   * with reasons — and that was being thrown away, leaving the row at RED 0
+   * and the person pressing **Score it** to buy the same marking again. The
+   * answer now arrives scored, by the same independent scorer that would have
+   * been called next, at no additional charge.
+   *
+   * Recorded through `scoreAnswer`, so the superseded check, the event and the
+   * refusal on a missing reason are the ones every score goes through.
+   */
+  let next = written.bid;
+  if (marked) {
+    next = scoreAnswer(ctx, bid.id, written.answer.id, {
+      scores: marked.scores,
+      reasons: marked.reasons,
+      ...(marked.provider ? { provider: marked.provider } : {}),
+    }).bid;
+  }
+
   // Anything the evidence did not cover is still raised, beside the draft. A
   // partial answer with a known hole is better than either a gap that throws
   // away good prose or a draft that hides what is missing.
-  let next = written.bid;
   if (unsupported.length > 0) {
     const gap = {
       id: ulid(),
@@ -2097,6 +2168,81 @@ export async function draftAnswer(
  * the same model is a second pass, not an independent one, and reporting it as
  * independent is the overclaim.
  */
+/**
+ * The evaluator's marks for one piece of prose, without recording anything.
+ *
+ * Split out of `scoreAnswerWithAI` so the **drafting loop can stop on the mark
+ * that will actually be published** rather than on the drafter's opinion of its
+ * own work.
+ *
+ * That distinction is the whole of a defect found on a live tender. The loop
+ * asked each rewrite to mark itself, stopped when it said it was green — and
+ * the independent scorer then gave the same answers 36 and 36.5. Of course it
+ * did: this module's own settled design says a scorer that saw the retrieval
+ * would be marking the drafter's homework against the drafter's own notes, and
+ * a rewrite marking its own rewrite is that fault in its purest form. The
+ * platform refuses to let a human author approve their own answer and refuses
+ * to let the drafter score it, and the loop I built did exactly that in
+ * between.
+ *
+ * So the loop calls this: the same prompt, the same criteria in the rubric's
+ * own words, the same adversarial constraint, and the answer **without** the
+ * passages — the mark a buyer's evaluator working through a matrix could
+ * actually find and award.
+ */
+async function markWithScorer(
+  ctx: EngineContext,
+  bid: Bid,
+  question: BidQuestion,
+  body: string[],
+  citationCount: number,
+): Promise<{ scores: CriterionScores; reasons: Record<string, string>; provider?: string; acuConsumed: number }> {
+  const result = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'bid_on_score',
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'BidOnBid', refId: bid.id }],
+    attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
+    request: {
+      task:
+        'You are the buyer\u2019s evaluator. Score this answer against five criteria, each out of 100, and say why ' +
+        'for each. Return JSON with `scores`: an object keyed by criterion, and `reasons`: an object keyed by the ' +
+        'same criteria.',
+      payload: {
+        buyer: bid.buyerName,
+        scheme: bid.scheme,
+        question: `${question.number} ${question.text}`,
+        ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
+        mandatory: question.mandatory,
+        words: body.join(' ').split(/\s+/).filter(Boolean).length,
+        citationCount,
+        answer: body.join('\n\n'),
+        criteria: CRITERION.map((criterion) => ({ criterion, asks: CRITERION_QUESTION[criterion] })),
+        constraint:
+          'You did not write this and you are not trying to help it. Score what a scorer working through a matrix ' +
+          'could actually find and award, not what the answer probably means. A reason is required for every ' +
+          'criterion and is what a reviewer will argue with, so say what is missing rather than restating the ' +
+          'score. Do not rewrite the answer.',
+      },
+    },
+    toWrites: () => [],
+    requireModel: NO_PROVIDER,
+  });
+
+  const output = result.output as { scores?: Record<string, unknown>; reasons?: Record<string, unknown> };
+  const scores = Object.fromEntries(
+    CRITERION.map((criterion) => [criterion, clamp(Number(output.scores?.[criterion] ?? 0))]),
+  ) as CriterionScores;
+  const reasons = Object.fromEntries(
+    CRITERION.map((criterion) => [
+      criterion,
+      String(output.reasons?.[criterion] ?? '').trim() || 'The scorer gave no reason for this criterion.',
+    ]),
+  );
+
+  return { scores, reasons, ...(result.provider ? { provider: result.provider } : {}), acuConsumed: result.acuConsumed };
+}
+
 export async function scoreAnswerWithAI(
   ctx: EngineContext,
   bidId: string,
