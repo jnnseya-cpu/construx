@@ -941,3 +941,93 @@ describe('thirty-seven questions for one buyer', () => {
     assert.ok(one, 'recording one question on its own is still routed');
   });
 });
+
+/**
+ * The yes/no question the drafter could never answer.
+ *
+ * `recordAnswer` refuses an answer to a `YES_NO` question that carries no
+ * `yesNo`, and it is right to: the hard rule that ends a bid on a "no" reads
+ * that field, and prose saying "we do not hold ISO 14001" leaves the check
+ * seeing an unanswered question.
+ *
+ * The drafter never asked the model for the field and never passed one on. So
+ * **every yes/no question in the catalogue called a vendor, was charged for the
+ * call, built the answer and was refused on the last line** — money spent,
+ * nothing recorded, and the refusal talking about a field the person had no way
+ * to set from the panel they were in.
+ *
+ * It is the same shape as the three before it: an AI success path that cannot
+ * run without a live model, and had therefore never run. What is testable here
+ * without a vendor is the half that a vendor's variety actually breaks — how a
+ * `yes` comes back — and the rule that nothing is guessed. The end-to-end draft
+ * of a yes/no question **cannot be exercised in this environment**: it needs a
+ * live provider, and this suite has none.
+ */
+describe('the yes or the no a model sends back', () => {
+  it('reads a boolean, which is what the schema asks for', () => {
+    assert.equal(bidEngine.yesNoFrom(true), true);
+    assert.equal(bidEngine.yesNoFrom(false), false);
+  });
+
+  it('reads the words a vendor sends instead, in whatever case', () => {
+    // Refusing these would throw away a perfectly good answer and charge for
+    // the retry.
+    for (const yes of ['yes', 'Yes', 'YES', ' y ', 'true', 'True']) {
+      assert.equal(bidEngine.yesNoFrom(yes), true, `"${yes}" is a yes`);
+    }
+    for (const no of ['no', 'No', 'NO', 'n', 'false', 'False']) {
+      assert.equal(bidEngine.yesNoFrom(no), false, `"${no}" is a no`);
+    }
+  });
+
+  it('guesses nothing, because a bid ends at the gate on a no', () => {
+    // Each of these is a model declining to answer the question as asked. The
+    // platform does not resolve any of them on a bidder's behalf: a wrong yes
+    // is a representation to a buyer that the company cannot stand behind.
+    for (const unclear of ['maybe', 'see our answer', 'partially', 'yes, subject to survey', '', 1, 0, null, undefined, {}, ['yes']]) {
+      assert.equal(bidEngine.yesNoFrom(unclear), undefined, `${JSON.stringify(unclear)} is not an answer`);
+    }
+  });
+
+  it('is what a yes/no answer needs, and prose alone is still refused', () => {
+    // The rule the drafter now satisfies, asserted from the other side: this is
+    // what the refusal on the last line was, and it stays exactly as it was for
+    // a hand-written answer.
+    let yesNoBid = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Platform Housing Group',
+      scheme: 'ITT',
+      deadline: '2026-11-02',
+    });
+    yesNoBid = bids.confirmQuestions(asDirector(), yesNoBid.id, {
+      questions: [
+        {
+          section: 'Central Digital Platform',
+          number: '1.2',
+          text: 'Are you registered on the Central Digital Platform?',
+          answerType: 'YES_NO',
+          mandatory: true,
+        },
+      ],
+    });
+    const question = yesNoBid.questions[0]!;
+
+    throwsCode(
+      () =>
+        bids.recordAnswer(asWriter(), yesNoBid.id, {
+          questionId: question.id,
+          body: ['We are registered on the Central Digital Platform.'],
+          authorship: 'HUMAN',
+        }),
+      'BID_ON_YES_NO_REQUIRED',
+    );
+
+    const written = bids.recordAnswer(asWriter(), yesNoBid.id, {
+      questionId: question.id,
+      body: ['We are registered on the Central Digital Platform.'],
+      yesNo: true,
+      authorship: 'HUMAN',
+    });
+    assert.equal(written.answer.yesNo, true);
+  });
+});

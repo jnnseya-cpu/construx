@@ -29298,3 +29298,41 @@ them still wanted their id typed into a panel printed next to the id.
 
 Both go through the same handler and the same `COMMANDS` entries as the question
 rows, so there is one place a command is defined and one place it is guarded.
+
+## The yes/no question the drafter could never answer
+
+`BID_ON_YES_NO_REQUIRED — 1.2 is a yes/no question, and the hard rule that ends
+a bid on a "no" reads that field.`
+
+That refusal is correct, and it fired on **Draft an answer**. The drafter asked
+the model for `body`, `citations` and `unsupported` — never `yesNo` — and passed
+none on, while `recordAnswer` requires it for a `YES_NO` question. So every
+yes/no question in the catalogue called a vendor, was charged for the call,
+built the answer and was refused on the last line: money spent, nothing
+recorded, and a refusal naming a field the person had no way to set from the
+panel they were standing in.
+
+The fourth defect of this shape this week, after the unregistered event, the
+unreachable empty-list confirm and the proposal nothing displayed. **An AI
+command's success path is the least-tested code in the platform**, and the place
+it fails is the last line, where the work is done and the money is spent.
+
+The drafter now tells the model the question is a yes/no, asks for the field,
+and passes it to `recordAnswer`. Three rules around it:
+
+- **Nothing is inferred from the prose.** A bid ends at the gate on a "no", and
+  that is not a decision to read out of a paragraph that was not written to be
+  parsed.
+- **A vendor's variety is read, not refused.** `yesNoFrom` takes a boolean, and
+  `yes`/`y`/`true`/`no`/`n`/`false` in any case. Refusing those would throw away
+  a good answer and charge for the retry.
+- **Anything unclear is `undefined`** — `maybe`, `partially`, `yes, subject to
+  survey`, a number, an omission — and the draft is refused rather than decided.
+  The refusal carries the drafted prose so the call that was paid for is not
+  lost, and names the one place to put it.
+
+**Not verified end to end.** The draft of a yes/no question needs a live
+provider and this suite has none. What is tested is `yesNoFrom` across the
+shapes a vendor sends and the refusals it must not resolve, and the
+`recordAnswer` rule from the other side. The fix is implemented and typechecked;
+the vendor round trip is not exercised here.

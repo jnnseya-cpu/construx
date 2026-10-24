@@ -206,6 +206,28 @@ async function retrieveForDrafting(
 }
 
 /** How a retrieval is reported on a draft, however the draft turned out. */
+/**
+ * The yes or the no a model sent back, whatever shape it chose.
+ *
+ * A vendor told to return a boolean returns a boolean most of the time, and
+ * `"yes"`, `"Yes"`, `"true"` or `"Y"` the rest of it. Reading only `true` would
+ * refuse a perfectly good answer and charge for it again on the retry.
+ *
+ * What it will **not** do is guess. Anything that is not plainly one or the
+ * other — `"maybe"`, `"see our answer"`, a number, a null, an omission —
+ * returns `undefined`, and the caller refuses rather than deciding for a
+ * bidder: a bid ends at the gate on a "no", and "probably yes" is not a thing
+ * a platform may resolve on a company's behalf.
+ */
+export function yesNoFrom(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  const said = value.trim().toLowerCase();
+  if (['yes', 'y', 'true'].includes(said)) return true;
+  if (['no', 'n', 'false'].includes(said)) return false;
+  return undefined;
+}
+
 function retrievalOf(retrieved: Retrieval): { method: Retrieval['method']; model?: string; skipped: number } {
   return {
     method: retrieved.method,
@@ -1328,6 +1350,21 @@ export async function draftAnswer(
     };
   }
 
+  /*
+   * A yes/no question needs the field, not just the prose.
+   *
+   * `recordAnswer` refuses an answer to a `YES_NO` question that carries no
+   * `yesNo`, and it is right to: the hard rule that ends a bid on a "no" reads
+   * that field, and prose saying "we do not hold ISO 14001" leaves the check
+   * seeing an unanswered question. The drafter never asked the model for it and
+   * never passed it on — so **every yes/no question in the catalogue called a
+   * vendor, was charged for the call, built the answer and was refused on the
+   * last line**, with the money spent and nothing recorded.
+   *
+   * The same shape as the three defects before it: an AI success path that
+   * cannot run without a live model, and therefore had never run.
+   */
+  const wantsYesNo = question.answerType === 'YES_NO';
   const previous = latestAnswer(bid, question.id);
   const result = await runAI(ctx, {
     engine: 'TENDER',
@@ -1340,7 +1377,13 @@ export async function draftAnswer(
         'Write one answer to one question of a construction prequalification or tender questionnaire, using only the ' +
         'supplied passages. Return JSON with `body`: an array of paragraph strings, `citations`: an array of the ' +
         '`chunkId` values you actually relied on, and `unsupported`: an array of anything the question asks for that ' +
-        'the passages do not support.',
+        'the passages do not support.' +
+        (wantsYesNo
+          ? ' This question is answered **yes or no**. Also return `yesNo` as a boolean — `true` for yes, `false` ' +
+            'for no — decided from the passages and consistent with the prose. It is a separate field because a ' +
+            'rule reads it directly, and prose alone leaves the question unanswered as far as that rule is ' +
+            'concerned.'
+          : ''),
       payload: {
         buyer: bid.buyerName,
         scheme: bid.scheme,
@@ -1349,6 +1392,16 @@ export async function draftAnswer(
         question: question.text,
         ...(question.wordLimit === undefined ? {} : { wordLimit: question.wordLimit }),
         mandatory: question.mandatory,
+        answerType: question.answerType,
+        ...(wantsYesNo
+          ? {
+              yesNoInstruction:
+                'Answer `yesNo` from the passages. Do not answer yes to be agreeable: a wrong yes is a ' +
+                'representation to a buyer that the bidder cannot stand behind, and a true no is better than a ' +
+                'yes that is not. Where the passages do not settle it, say so in `unsupported` and answer ' +
+                '`yesNo` with the position the passages do support.',
+            }
+          : {}),
         // The passages, each with the id the answer has to cite it by.
         passages: retrieved.chunks.map((chunk) => ({
           chunkId: chunk.chunkId,
@@ -1393,7 +1446,7 @@ export async function draftAnswer(
     requireModel: NO_PROVIDER,
   });
 
-  const output = result.output as { body?: unknown; citations?: unknown; unsupported?: unknown };
+  const output = result.output as { body?: unknown; citations?: unknown; unsupported?: unknown; yesNo?: unknown };
   const body = (Array.isArray(output.body) ? output.body : []).map((line) => String(line).trim()).filter(Boolean);
   const cited = (Array.isArray(output.citations) ? output.citations : []).map((id) => String(id));
   const unsupported = (Array.isArray(output.unsupported) ? output.unsupported : [])
@@ -1446,12 +1499,39 @@ export async function draftAnswer(
     };
   }
 
+  /*
+   * The yes or the no, where the question has one.
+   *
+   * Read rather than inferred from the prose. A bid ends at the gate on a "no",
+   * so deriving one from a paragraph — "we do not currently hold…" — would be
+   * the platform deciding something that binds a company, out of a sentence
+   * that was not written to be parsed.
+   *
+   * Where the model did not answer it, nothing is invented and the prose is not
+   * thrown away: the refusal carries the draft so the call that was paid for is
+   * not lost, and says the one place to put it.
+   */
+  const yesNo = yesNoFrom(output.yesNo);
+  if (wantsYesNo && yesNo === undefined) {
+    throw new DomainError(
+      'BID_ON_YES_NO_NOT_DRAFTED',
+      `${question.number} is a yes/no question and ${result.provider ?? 'the provider'} answered in prose without ` +
+        'the yes or the no. Nothing has been recorded, and nothing has been guessed from the wording: a bid ends ' +
+        'at the gate on a "no", and that is not a decision to read out of a paragraph. The draft it produced is ' +
+        'below — put it into "Write an answer" with the yes/no field set, and the call is not wasted.\n\n' +
+        body.join('\n\n'),
+      502,
+      [{ field: 'yesNo', message: 'Answer it yes or no in "Write an answer"' }],
+    );
+  }
+
   // Through the ordinary command, so the citation check, the versioning and the
   // review state are the same ones a hand-written answer goes through.
   const written = recordAnswer(ctx, bid.id, {
     questionId: question.id,
     body,
     citations,
+    ...(yesNo === undefined ? {} : { yesNo }),
     authorship: 'AI_DRAFTED',
     ...(result.provider ? { provider: result.provider } : {}),
     // Written over a gap the caller chose not to wait for. On the answer, so a
