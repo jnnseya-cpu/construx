@@ -57,6 +57,19 @@ const RAG_TONE = { GREEN: 'ok', AMBER: 'warn', RED: 'bad' };
 /** An answer's own review state. */
 const ANSWER_TONE = { DRAFT: '', IN_REVIEW: 'warn', APPROVED: 'ok', REJECTED: 'bad' };
 
+/**
+ * What each severity means, in the words the form that sets it uses.
+ *
+ * On the buttons rather than in a legend: somebody deciding whether to send
+ * four questions or twenty-five is deciding what "major" is worth, and the
+ * answer should not be on another screen.
+ */
+const SEVERITY_MEANS = {
+  CRITICAL: 'We cannot price or insure it as it stands.',
+  MAJOR: 'It changes what we would commit to.',
+  MINOR: 'It changes how we answer.',
+};
+
 /** An invoice's standing. A waiver is neutral: it was a decision, not a failure. */
 const INVOICE_TONE = { ISSUED: 'warn', PAID: 'ok', WAIVED: '', VOID: '' };
 
@@ -3011,6 +3024,27 @@ function bidDetail(position, estimate, source) {
   const clarifications = position.clarifications ?? [];
   const toAsk = clarifications.filter((entry) => entry.status === 'RAISED');
   const bySev = (severity) => toAsk.filter((entry) => entry.severity === severity).length;
+  /*
+   * All three severities, including the ones at nought.
+   *
+   * The first cut printed a badge only where the count was above zero, and on
+   * a bid whose twelve minor questions had all been withdrawn the heading read
+   * `4 CRITICAL 21 MAJOR` — which says nothing about whether this tender ever
+   * raised a minor question or whether somebody dealt with twelve of them. A
+   * register that hides a row at nought cannot be read as a register: the
+   * reader has to know the difference between *none* and *none left*.
+   *
+   * So all three, always, with the rest of the story on the badge itself.
+   */
+  const severityBadge = (severity, tone) => {
+    const all = clarifications.filter((entry) => entry.severity === severity);
+    const waiting = all.filter((entry) => entry.status === 'RAISED').length;
+    const settled = all.length - waiting;
+    const word = severity.toLowerCase();
+    return html`<span title="${`${waiting} of ${all.length} ${word} still to ask.${
+      settled === 0 ? '' : ` ${settled} asked, answered or withdrawn.`
+    }`}">${badge(`${waiting} ${word}`, waiting === 0 ? '' : tone)}</span>`;
+  };
   return html`
     <div class="card pad0">
       <h2 style="padding:15px 17px 0">
@@ -3202,9 +3236,9 @@ function bidDetail(position, estimate, source) {
           ? html`<div style="padding:11px 17px 0">
               <h2 style="margin:0 0 4px;font-size:14px">
                 Questions for the buyer
-                ${bySev('CRITICAL') > 0 ? badge(`${bySev('CRITICAL')} critical`, 'bad') : ''}
-                ${bySev('MAJOR') > 0 ? badge(`${bySev('MAJOR')} major`, 'warn') : ''}
-                ${bySev('MINOR') > 0 ? badge(`${bySev('MINOR')} minor`, '') : ''}
+                ${severityBadge('CRITICAL', 'bad')}
+                ${severityBadge('MAJOR', 'warn')}
+                ${severityBadge('MINOR', '')}
               </h2>
               <p style="margin:0 0 6px;font-size:12.5px;color:var(--text-3)">
                 ${position.clarificationStanding?.summary ?? ''}
@@ -3230,12 +3264,19 @@ function bidDetail(position, estimate, source) {
                 toAsk.length > 0
                   ? html`<div class="actions" style="margin:0 0 9px">
                       ${
-                        bySev('CRITICAL') > 0
-                          ? html`<button class="btn sm" data-clar-send="${bid.id}" data-clar-severity="CRITICAL"
-                              title="The ones we cannot price or insure as it stands, as a message to paste">
-                              Copy the ${bySev('CRITICAL')} critical
-                            </button>`
-                          : ''
+                        // One per severity that has something waiting, in the
+                        // order they would be sent. A button that would copy
+                        // nothing is not offered — that is the rule for an act,
+                        // where the rule for the register above is the opposite.
+                        ['CRITICAL', 'MAJOR', 'MINOR']
+                          .filter((severity) => bySev(severity) > 0)
+                          .map(
+                            (severity) => html`<button class="btn sm${raw(severity === 'CRITICAL' ? '' : ' quiet')}"
+                              data-clar-send="${bid.id}" data-clar-severity="${severity}"
+                              title="${SEVERITY_MEANS[severity]}">
+                              Copy the ${bySev(severity)} ${severity.toLowerCase()}
+                            </button>`,
+                          )
                       }
                       <button class="btn sm quiet" data-clar-send="${bid.id}"
                         title="Every question not yet asked, worst first, as a message to paste into the portal">

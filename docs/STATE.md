@@ -29216,3 +29216,22 @@ may not be.
 Field errors now clear on `input` and `change`. Nothing is validated in the
 browser by this: it says "that was about what you had before", not "that is
 fixed", and the server still decides on submit.
+
+### A register that hides a row at nought is not a register
+
+The severity counts in the **Questions for the buyer** heading printed only
+where the count was above zero. On a bid whose twelve minor questions had all
+been withdrawn, the heading read `4 CRITICAL 21 MAJOR` — which says nothing
+about whether this tender ever raised a minor question or whether somebody
+dealt with twelve of them. The reader has to be able to tell *none* from *none
+left*.
+
+All three severities are shown now, always, and each badge carries the rest of
+its story: *"0 of 12 minor still to ask. 12 asked, answered or withdrawn."*
+
+The copy buttons follow the opposite rule, and deliberately: one per severity
+that has something waiting, because a button that would copy nothing is not an
+act anybody can take. Each carries what that severity means in the words the
+form that sets it uses — somebody deciding whether to send four questions or
+twenty-five is deciding what "major" is worth, and that should not be on
+another screen.
