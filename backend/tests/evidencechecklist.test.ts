@@ -64,6 +64,44 @@ describe('the evidence checklist', () => {
     assert.equal(c.essentialsCovered, 1);
   });
 
+  it('lets one document satisfy two rows when it genuinely covers both', () => {
+    // The real case: a single Simply Business certificate titled "PI and PL"
+    // covers professional indemnity and public liability. Both rows resolve to
+    // it; employer's liability, which it does not mention, stays missing.
+    const c = checklistCoverage([
+      doc({ reference: 'EVD-0002', title: 'PI and PL', type: 'INSURANCE', currentNow: true }),
+    ]);
+    assert.equal(c.items.find((i) => i.key === 'professional-indemnity')!.status, 'CURRENT');
+    assert.equal(c.items.find((i) => i.key === 'public-liability')!.status, 'CURRENT');
+    assert.equal(c.items.find((i) => i.key === 'professional-indemnity')!.coveredBy?.reference, 'EVD-0002');
+    assert.equal(c.items.find((i) => i.key === 'employers-liability')!.status, 'MISSING');
+  });
+
+  it('matches an abbreviation in the opening line, not only the title', () => {
+    // Filed under a bare filename but read, with the body spelling it out.
+    const c = checklistCoverage([
+      doc({
+        reference: 'EVD-0009',
+        title: 'Simply Business certificate',
+        type: 'INSURANCE',
+        currentNow: true,
+        opens: 'This certifies professional indemnity and public liability cover for the insured.',
+      }),
+    ]);
+    assert.equal(c.items.find((i) => i.key === 'professional-indemnity')!.status, 'CURRENT');
+    assert.equal(c.items.find((i) => i.key === 'public-liability')!.status, 'CURRENT');
+  });
+
+  it('does not false-match an abbreviation inside another word', () => {
+    // "pi" must match the word PI, never "pipe" or "shipping". The whole reason
+    // the match is on word boundaries.
+    const c = checklistCoverage([
+      doc({ reference: 'EVD-0010', title: 'Pipework inspection and shipping log', type: 'OTHER', currentNow: true }),
+    ]);
+    assert.equal(c.items.find((i) => i.key === 'professional-indemnity')!.status, 'MISSING');
+    assert.equal(c.items.find((i) => i.key === 'public-liability')!.status, 'MISSING');
+  });
+
   it('does not let one insurance satisfy the other two', () => {
     // The whole reason the match fragments are specific. Holding PL must not
     // mark PI and EL as covered.

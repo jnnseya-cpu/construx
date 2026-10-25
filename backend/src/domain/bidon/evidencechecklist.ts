@@ -54,10 +54,11 @@ export type ChecklistItem = {
   /** What it is for, in the words of somebody deciding whether to go and find it. */
   why: string;
   /**
-   * Lower-case fragments; a current document whose title contains one is taken
-   * as likely covering this item. Deliberately specific — "professional
-   * indemnity" not "insurance" — so three different insurances do not all
-   * satisfy one row.
+   * Fragments matched as whole words against a document's title and its opening
+   * line. Deliberately specific — "professional indemnity" not "insurance" — so
+   * three different insurances do not all satisfy one row, and matched on word
+   * boundaries so the abbreviations earn their place: "PI" matches the word *PI*
+   * in a title like "PI and PL" without also matching "pipe" or "shipping".
    */
   match: string[];
 };
@@ -77,7 +78,7 @@ export const EVIDENCE_CHECKLIST: readonly ChecklistItem[] = [
     type: 'INSURANCE',
     importance: 'ESSENTIAL',
     why: 'Almost every professional-services tender states a minimum PI limit and fails a bidder who cannot show it. The certificate also carries the renewal date, which a hard rule checks against the return.',
-    match: ['professional indemnity', 'pi insurance', 'pi cover'],
+    match: ['professional indemnity', 'pi insurance', 'pi cover', 'pi', 'pii'],
   },
   {
     key: 'public-liability',
@@ -85,7 +86,7 @@ export const EVIDENCE_CHECKLIST: readonly ChecklistItem[] = [
     type: 'INSURANCE',
     importance: 'ESSENTIAL',
     why: 'A stated minimum on any tender involving work on or around a site or the public.',
-    match: ['public liability', 'pl insurance'],
+    match: ['public liability', 'pl insurance', 'pl'],
   },
   {
     key: 'employers-liability',
@@ -93,7 +94,7 @@ export const EVIDENCE_CHECKLIST: readonly ChecklistItem[] = [
     type: 'INSURANCE',
     importance: 'ESSENTIAL',
     why: 'A legal requirement for a business with employees, and a document buyers ask to see rather than assume.',
-    match: ["employer's liability", 'employers liability', 'el insurance'],
+    match: ["employer's liability", 'employers liability', 'el insurance', 'el'],
   },
   {
     key: 'health-safety-policy',
@@ -203,11 +204,27 @@ export type ChecklistCoverage = {
   summary: string;
 };
 
-/** A document's title matches an item when it contains one of the item's fragments. */
+/** A fragment escaped and anchored on word boundaries, matched case-insensitively. */
+function fragmentRegex(fragment: string): RegExp {
+  const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i');
+}
+
+/**
+ * A document matches an item when its title or its opening line contains one of
+ * the item's fragments as a whole word.
+ *
+ * The opening line is read as well as the title because a certificate is often
+ * filed under an abbreviation — "PI and PL" — while its body spells out
+ * "Professional Indemnity" and "Public Liability". The document has already been
+ * read, so its first words cost nothing to consult and catch exactly the case a
+ * title alone misses.
+ */
 function matchFor(item: ChecklistItem, documents: EvidenceSummary[]): EvidenceSummary | undefined {
+  const patterns = item.match.map(fragmentRegex);
   return documents.find((doc) => {
-    const title = doc.title.toLowerCase();
-    return item.match.some((fragment) => title.includes(fragment));
+    const haystack = `${doc.title} ${doc.opens ?? ''}`;
+    return patterns.some((pattern) => pattern.test(haystack));
   });
 }
 

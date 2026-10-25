@@ -29903,3 +29903,20 @@ model; `planEvidenceNeeds` is the per-tender pass that reads one questionnaire
 for what it specifically asks beyond the standing set. The standing list stops
 the obvious gaps before drafting; the per-tender pass catches the particular
 ones.
+
+
+### The checklist reads abbreviations and opening lines, not just full-word titles
+
+First live use found the gap immediately: a single Simply Business certificate
+titled "PI and PL" covered professional indemnity and public liability, and the
+checklist marked both essentials not-on-file. The fragments held only the full
+words, matched as substrings.
+
+Fixed two ways. The abbreviations (PI, PL, EL, PII) are now fragments, matched
+on **word boundaries** so "PI" matches the word in "PI and PL" but not "pipe"
+or "shipping". And matching reads the document's **opening line** as well as its
+title, because a certificate filed under a bare filename usually spells the
+cover out in its body — which the platform has already read. One document
+legitimately satisfies two rows where it covers both; a third it does not
+mention stays missing. Tests cover the PI-and-PL case, the opening-line match,
+and the false-match guard.
