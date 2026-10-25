@@ -8,6 +8,7 @@ import { requireModule, requireModuleReadable } from '../../identity/modules.ts'
 import { cosine, MINIMUM_SIMILARITY } from '../../datalayer/vectorindex.ts';
 import { customerVisible, requireVisibleCustomer } from './customers.ts';
 import { asksNothing, describeShape, looksLikeQuestionSet, questionShape } from './questionshape.ts';
+import { checklistCoverage, type ChecklistCoverage } from './evidencechecklist.ts';
 
 /**
  * The per-customer evidence library.
@@ -642,6 +643,12 @@ export type EvidenceSummary = Omit<BidOnEvidence, 'extractedText' | 'chunks'> & 
 export type EvidenceLibrary = {
   evidence: EvidenceSummary[];
   byType: Array<{ type: EvidenceType; held: number; current: number }>;
+  /**
+   * What a bidder is asked for, measured against what is on file — said from the
+   * start, so the library is built before a question is read rather than found
+   * wanting after a draft scores low. See `evidencechecklist.ts`.
+   */
+  checklist: ChecklistCoverage;
   limits: string[];
   summary: string;
 };
@@ -821,6 +828,7 @@ export function evidenceLibrary(
   return {
     evidence,
     byType,
+    checklist: checklistCoverage(mine.map(summarise)),
     limits,
     summary:
       mine.length === 0

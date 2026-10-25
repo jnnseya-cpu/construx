@@ -29866,3 +29866,40 @@ A new invariant in `credentials.test.ts` enforces the whole point of the closed
 list: every credential the console offers must be read somewhere through
 `secretFor`, so the screen can never become evidence that a key was configured
 when nothing consumes it.
+
+## What a tender will ask for, said at the start
+
+The library was a bag you filled and then found out, one low-scoring answer at a
+time, what it was missing: a question wanted a method statement, the drafter had
+nothing to cite, the answer scored forty, and only then — after a paid draft —
+did anybody learn the document was needed. The most expensive order to learn
+things in.
+
+A tender does not ask for surprising things. A construction or assessment
+business is asked for the same two dozen documents by every buyer: the
+insurances, the accreditations, the policies, a few case studies, the people's
+qualifications, the accounts. That set is knowable on the day the workspace is
+opened, before a question is read.
+
+`domain/bidon/evidencechecklist.ts` is that standing set — a reference table like
+the rubric weights — each item mapped to an evidence type, marked by importance
+(essential / common / sometimes), with what it is for and the title fragments
+that match a holding. `checklistCoverage` measures the customer's library against
+it: current match → on file (and names the document); lapsed match → surfaced as
+a renewal, because citing a lapsed certificate is a hard red; no match → not on
+file. It never over-claims — coverage is a transparent title match stated as
+"likely", and the precise "does this actually evidence PI at the limit" check
+stays the retriever's job at drafting time. Specific fragments, so holding public
+liability does not mark professional indemnity and employer's liability covered.
+
+It rides on the existing library read (new `checklist` field on
+`EvidenceLibrary`, no new route) and renders at the top of the library panel,
+essentials first, with a **File it** button on every gap that opens the filing
+form with the kind and title already set and re-reads the library so the row
+flips to "on file" at once.
+
+Two passes, deliberately: this is the fixed list every bidder works to, needs no
+model; `planEvidenceNeeds` is the per-tender pass that reads one questionnaire
+for what it specifically asks beyond the standing set. The standing list stops
+the obvious gaps before drafting; the per-tender pass catches the particular
+ones.

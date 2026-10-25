@@ -1232,6 +1232,45 @@ export async function bidon(root) {
   const evidenceDetail = root.querySelector('#evidence-detail');
   const chosenCustomer = () => root.querySelector('#ev-customer')?.value;
 
+  /*
+   * Filing a document straight from the checklist gap it fills.
+   *
+   * The checklist named what is missing; this opens the filing form for it with
+   * the kind and the title already set, so "file the health & safety policy" is
+   * one press and a file picker rather than a form filled from scratch. The same
+   * `file-evidence` command, pre-filled — one definition, one set of rules.
+   */
+  root.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-file-for]');
+    if (!button) return;
+    const spec = COMMANDS['file-evidence'];
+    if (!spec) return;
+    const filled = {
+      customerId: button.dataset.fileFor,
+      type: button.dataset.fileType,
+      title: button.dataset.fileTitle,
+    };
+    if (
+      await command({
+        ...spec,
+        fields: spec.fields.map((field) =>
+          field.name in filled ? { ...field, value: filled[field.name] } : field,
+        ),
+      })
+    ) {
+      // Re-read the library so the checklist reflects the new document at once.
+      const customerId = filled.customerId;
+      if (customerId && evidenceDetail) {
+        try {
+          const library = await api.read(`/v1/bid-on/customers/${customerId}/evidence`, 'BID_SERVICES', 'COMMERCIAL_L3');
+          render(evidenceDetail, evidencePanel(library, customerId));
+        } catch {
+          /* the next open will show it */
+        }
+      }
+    }
+  });
+
   root.querySelector('#ev-open')?.addEventListener('click', async () => {
     const customerId = chosenCustomer();
     if (!customerId || !evidenceDetail) return;
@@ -1241,7 +1280,7 @@ export async function bidon(root) {
         'BID_SERVICES',
         'COMMERCIAL_L3',
       );
-      render(evidenceDetail, evidencePanel(library));
+      render(evidenceDetail, evidencePanel(library, customerId));
     } catch (error) {
       render(evidenceDetail, notice(`The library could not be read: ${error.message}`, 'err'));
     }
@@ -3770,10 +3809,58 @@ function bidDetail(position, estimate, source) {
   `;
 }
 
+/** The badge tone for a checklist item's state. */
+const CHECKLIST_TONE = { CURRENT: 'ok', LAPSED: 'bad', MISSING: 'warn' };
+
+/**
+ * What a bidder is asked for, shown before anything is drafted.
+ *
+ * This is the answer to "the system must know from the start what to put in and
+ * where." The standing set of documents a tender asks for, measured against the
+ * library, essentials first — so the gaps are visible on the day the workspace
+ * is opened rather than discovered when an answer scores low for want of them.
+ * Each gap carries a File button that opens the filing form with the kind and
+ * the title already set.
+ */
+function checklistPanel(coverage, customerId) {
+  if (!coverage) return '';
+  const order = { ESSENTIAL: 0, COMMON: 1, SOMETIMES: 2 };
+  const items = [...coverage.items].sort(
+    (a, b) => order[a.importance] - order[b.importance] || a.label.localeCompare(b.label),
+  );
+  return html`<div class="card pad0" style="margin-bottom:11px">
+    <h2 style="padding:15px 17px 0">What a tender will ask for</h2>
+    <p style="padding:4px 17px 0;margin:0;font-size:12.5px;color:var(--text-3)">
+      ${coverage.summary}
+      <b> Essentials: ${coverage.essentialsCovered} of ${coverage.essentialsTotal}.</b>
+      Build this before drafting — an answer can only cite what is already on file.
+    </p>
+    <div style="padding:11px 17px 15px">
+      ${table({
+        headers: ['', 'Document', 'What it is for', 'On file', 'Next'],
+        rows: items.map((item) => [
+          badge(humanise(item.importance), item.importance === 'ESSENTIAL' ? 'bad' : item.importance === 'COMMON' ? 'warn' : ''),
+          html`${item.label}<div class="metric-sub"><code>${humanise(item.type)}</code></div>`,
+          html`<span style="font-size:12.5px;color:var(--text-3)">${item.why}</span>`,
+          item.status === 'CURRENT'
+            ? html`${badge('on file', 'ok')}${item.coveredBy ? html`<div class="metric-sub">${item.coveredBy.reference}</div>` : ''}`
+            : item.status === 'LAPSED'
+              ? html`${badge('lapsed', 'bad')}${item.coveredBy ? html`<div class="metric-sub">${item.coveredBy.reference} — renew it</div>` : ''}`
+              : badge('not on file', 'warn'),
+          item.status === 'CURRENT'
+            ? html`<span style="font-size:12px;color:var(--text-3)">—</span>`
+            : html`<button class="btn sm" data-file-for="${customerId}" data-file-type="${item.type}" data-file-title="${item.label}">File it</button>`,
+        ]),
+      })}
+    </div>
+  </div>`;
+}
+
 /** One customer's evidence library. */
-function evidencePanel(library) {
+function evidencePanel(library, customerId) {
   return html`
     <div style="margin-top:11px">
+      ${checklistPanel(library.checklist, customerId)}
       <p class="metric-sub">${library.summary}</p>
       ${table({
         headers: ['Ref', 'Type', 'Title', 'Valid from', 'Expires', 'Days left', 'Passages', 'Searchable', 'Standing', 'ids'],
