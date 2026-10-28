@@ -147,6 +147,7 @@ import * as bidOnEngine from '../domain/bidon/engine.ts';
 import * as bidOnBilling from '../domain/bidon/billing.ts';
 import * as bidOnImporting from '../domain/bidon/importing.ts';
 import * as bidOnCarry from '../domain/bidon/carryforward.ts';
+import * as bidOnCostModel from '../domain/bidon/costmodel.ts';
 import { REQUIREMENT_CATEGORIES } from '../domain/itt.ts';
 import * as learning from '../domain/learning.ts';
 import * as portal from '../domain/portal.ts';
@@ -13447,6 +13448,27 @@ export const ROUTES: Route[] = [
     description:
       'The provider’s own service catalogue: what it sells, at what starting price, on what billing basis. Every value is the provider’s, never a platform constant',
     handler: (platform, ctx) => bidOnEngagements.offeringCatalogue(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/cost-model/build-up',
+    readOnly: true,
+    description:
+      'Arithmetic on the client’s own cost and margin: what price covers cost plus the margin they want, with the profit shown on cost and on price, and a check of any price they are weighing. Holds no market price — that stays the client’s',
+    schema: {
+      type: 'object',
+      required: ['unitCostMinor', 'quantity', 'targetMargin', 'marginBasis'],
+      properties: {
+        unitCostMinor: { type: 'integer', minimum: 0 },
+        quantity: { type: 'integer', minimum: 1 },
+        fixedCostMinor: { type: 'integer', minimum: 0 },
+        targetMargin: { type: 'number', minimum: 0 },
+        marginBasis: { type: 'string', enum: [...bidOnCostModel.MARGIN_BASIS] },
+        proposedUnitPriceMinor: { type: 'integer', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => bidOnCostModel.costModelBuildUp(tenantContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

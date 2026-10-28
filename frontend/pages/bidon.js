@@ -878,6 +878,63 @@ export async function bidon(root) {
     }
   });
 
+  /*
+   * The cost-model calculator. Revealed on demand, and it stays open after a
+   * calculation so a client can try a different margin or test a price they are
+   * weighing — iterating is the point, and a modal that closed on each submit
+   * would fight that.
+   */
+  root.addEventListener('click', (event) => {
+    const open = event.target.closest('[data-cost-open]');
+    if (!open) return;
+    const panel = root.querySelector('#cost-detail');
+    if (!panel) return;
+    if (panel.dataset.open === '1') {
+      panel.dataset.open = '0';
+      render(panel, html``);
+    } else {
+      panel.dataset.open = '1';
+      render(panel, costPanel());
+    }
+  });
+
+  root.addEventListener('click', async (event) => {
+    const calc = event.target.closest('#cost-calc');
+    if (!calc) return;
+    const slot = root.querySelector('#cost-result');
+    if (!slot) return;
+    const num = (id) => {
+      const el = root.querySelector(id);
+      const value = el ? el.value.trim() : '';
+      return value === '' ? null : Number(value);
+    };
+    const pounds = (value) => (value === null ? null : Math.round(value * 100));
+    const unitCostMinor = pounds(num('#cost-unit'));
+    const quantity = num('#cost-qty');
+    const fixedCostMinor = pounds(num('#cost-fixed'));
+    const marginPercent = num('#cost-margin');
+    const marginBasis = root.querySelector('#cost-basis')?.value ?? 'ON_COST';
+    const proposedUnitPriceMinor = pounds(num('#cost-proposed'));
+    // The same words the server would use, said here, so a blank or nonsense
+    // entry is a sentence under the button rather than a round-trip and a 400.
+    if (unitCostMinor === null || quantity === null || marginPercent === null) {
+      render(slot, notice('Enter at least the unit cost, the quantity and the target margin.', 'warn'));
+      return;
+    }
+    const request = { unitCostMinor, quantity, targetMargin: marginPercent / 100, marginBasis };
+    if (fixedCostMinor !== null) request.fixedCostMinor = fixedCostMinor;
+    if (proposedUnitPriceMinor !== null) request.proposedUnitPriceMinor = proposedUnitPriceMinor;
+    calc.disabled = true;
+    try {
+      const result = await api.post('/v1/bid-on/cost-model/build-up', request);
+      render(slot, costResult(result));
+    } catch (error) {
+      render(slot, notice(error.detail ?? error.message, 'err'));
+    } finally {
+      calc.disabled = false;
+    }
+  });
+
   root.addEventListener('click', async (event) => {
     const open = event.target.closest('[data-prior]');
     if (!open) return;
@@ -3023,6 +3080,84 @@ export async function bidon(root) {
  * with a strong prior answer are where somebody should start, and a list in
  * source order buries them among the fifty that have nothing.
  */
+/**
+ * The cost-model calculator form.
+ *
+ * Reused `.field` controls, nothing bespoke. The only thing it insists on in
+ * words is what it is not: a tool for the client's own cost and margin, never a
+ * source of a market price.
+ */
+function costPanel() {
+  return html`
+    <div class="card" style="margin-top:10px">
+      <p style="margin:0 0 11px;font-size:12.5px;color:var(--text-3)">
+        Your own numbers only. This works out the price that covers your cost and the margin you want, and shows the
+        profit on cost and on price so "20% margin" is not two different numbers. It holds no market price — what the
+        market pays is yours to bring.
+      </p>
+      <div class="grid g3" style="gap:0 14px">
+        <div class="field"><label>What one unit costs you (all-in)</label>
+          <input id="cost-unit" type="number" step="any" min="0" placeholder="e.g. 68.00"></div>
+        <div class="field"><label>How many units</label>
+          <input id="cost-qty" type="number" step="1" min="1" placeholder="e.g. 250"></div>
+        <div class="field"><label>Fixed cost across the line <span class="opt">(optional)</span></label>
+          <input id="cost-fixed" type="number" step="any" min="0" placeholder="mobilisation, PM…"></div>
+        <div class="field"><label>Target margin %</label>
+          <input id="cost-margin" type="number" step="any" min="0" placeholder="e.g. 20"></div>
+        <div class="field"><label>Margin basis</label>
+          <select id="cost-basis">
+            <option value="ON_COST">Cost plus (markup on cost)</option>
+            <option value="ON_PRICE">Share of the price (margin on price)</option>
+          </select></div>
+        <div class="field"><label>A price you’re weighing <span class="opt">(optional, per unit)</span></label>
+          <input id="cost-proposed" type="number" step="any" min="0" placeholder="check it covers cost"></div>
+      </div>
+      <div class="actions" style="margin-top:4px">
+        <button class="btn sm" id="cost-calc">Work out the price</button>
+      </div>
+      <div id="cost-result"></div>
+    </div>`;
+}
+
+/** The build-up the server returned, as three figures, any price check, and the notes. */
+function costResult(result) {
+  const percent = (fraction) => `${Math.round(fraction * 1000) / 10}%`;
+  const proposed = result.proposed;
+  return html`
+    <div style="margin-top:12px">
+      <div class="grid g3" style="gap:10px">
+        <div class="card">
+          <h2>Your cost</h2>
+          <div class="metric">${money(result.totalCostMinor)}</div>
+          <div class="metric-sub">
+            ${money(result.unitCostMinor)}/unit × ${result.quantity}${
+              result.fixedCostMinor ? html` + ${money(result.fixedCostMinor)} fixed` : ''
+            }
+          </div>
+        </div>
+        <div class="card">
+          <h2>Price to offer</h2>
+          <div class="metric good">${money(result.priceMinor)}</div>
+          <div class="metric-sub">${money(result.unitPriceMinor)} per unit</div>
+        </div>
+        <div class="card">
+          <h2>Profit</h2>
+          <div class="metric">${money(result.profitMinor)}</div>
+          <div class="metric-sub">${percent(result.marginOnCost)} on cost · ${percent(result.marginOnPrice)} on price</div>
+        </div>
+      </div>
+      ${
+        proposed
+          ? html`<div class="notice ${raw(proposed.belowCost ? 'err' : proposed.belowTarget ? 'warn' : 'ok')}" style="margin:10px 0 0"><div>
+              <b>${money(proposed.unitPriceMinor)} per unit makes ${percent(proposed.marginOnCost)} on cost
+              (${money(proposed.profitMinor)} across ${result.quantity}).</b>
+            </div></div>`
+          : ''
+      }
+      ${result.notes.map((line) => html`<p style="margin:8px 0 0;font-size:12px;color:var(--text-3)">${line}</p>`)}
+    </div>`;
+}
+
 function carryPanel(board, bidId) {
   const useful = board.questions
     .filter((entry) => entry.candidates > 0)
@@ -3670,6 +3805,22 @@ function bidDetail(position, estimate, source) {
               })}
             </div>`
           : ''
+      }
+      ${
+        /*
+         * Pricing guidance, not a price. A cost model (an EPC rate schedule, a
+         * priced bill) is the hardest returnable to get right and the one a
+         * client most often does blind — the real defect this closes was a unit
+         * priced below its own cost, found only after the bid was won. The
+         * calculator takes the client's own cost and margin and shows the price
+         * that covers both, with the profit on cost and on price so "20%" is
+         * not two different numbers. It holds no market price: what the market
+         * pays is the client's to bring.
+         */
+        html`<div style="padding:11px 17px 0">
+          <button class="btn sm quiet" data-cost-open>Price a cost line (cost + margin)</button>
+          <div id="cost-detail" style="margin-top:0"></div>
+        </div>`
       }
       ${
         // Questions for the buyer. Separate from gaps, which go to the

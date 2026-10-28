@@ -1063,6 +1063,31 @@ refusal, the gate blockers and the "do this next" guide all inherit the same
 wording, so the fact is met once and said one way. Covered in
 `bidonreturnables`.
 
+### Pricing a cost model blind
+
+The returnable a client most often gets wrong is a priced one — a rate
+schedule, a cost model. The real defect was a unit priced at £45 against its own
+£68 cost, a loss on every unit, found only after the bid was won. Nothing in the
+tool helped a client see what a price does before they committed it.
+
+`domain/bidon/costmodel.ts` (`costBuildUp`, pure; `costModelBuildUp` behind the
+module check) does the arithmetic out loud. It takes the client's **own** unit
+cost, quantity, any fixed cost, and the margin they want, and returns the price
+that covers both — showing the profit as a share of cost **and** as a share of
+price, because "20% margin" is said two incompatible ways and computing a
+margin-on-price instruction as a markup-on-cost under-recovers on every line. A
+client may also pass a price they are weighing, and the build-up says what
+margin it makes and warns, in plain words, if it is below cost or below the
+target. `POST /v1/bid-on/cost-model/build-up` exposes it (read-only — it stores
+nothing); the Bid-On screen has a calculator beside the returnables that stays
+open for iterating.
+
+The boundary is deliberate and is the property that makes it safe: it computes a
+price **from** a cost and a margin, never the other way round, so it holds no
+market rate and cannot invent one. What the market pays is the client's
+commercial judgement to bring — rule 9, a screen that invented that number would
+be faking data with someone else's money. Covered in `bidoncostmodel`.
+
 **A production deployment could not be administered at all.** Found on the live
 server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
 thing that created one was `seedDemoProject`; and that is reachable only through
