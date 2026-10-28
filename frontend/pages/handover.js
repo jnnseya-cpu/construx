@@ -320,6 +320,28 @@ export async function handover(root) {
   const today = new Date().toISOString().slice(0, 10);
   const activeWarranties = b.Warranty.filter((w) => String(w.expiryDate ?? '') >= today);
 
+  // The H-WF-09 acceptance spine, read from `/handover-acceptance` so a shown
+  // control never 403s or dead-ends. Each command names the one state it needs:
+  //
+  //   compile pack → compile manifest → decide → activate operations
+  //                → freeze baseline → transfer residuals
+  //
+  // The pack selectors are deliberately narrow. A pack that already carries a
+  // decision, is frozen, or was accepted through the older `engines/handover`
+  // accept path (status ACCEPTED with no H-WF-09 decision) is not offered for a
+  // fresh decision — the two accept paths diverge, and a console that let you
+  // re-decide an already-accepted pack would be depending on that divergence.
+  const accPacks = acceptance?.packs ?? [];
+  const manifestablePacks = accPacks.filter((p) => !p.frozen);
+  const decidablePacks = accPacks.filter((p) => !p.decision && p.status !== 'ACCEPTED' && !p.frozen);
+  const acceptedPacks = accPacks.filter((p) => p.decision === 'ACCEPTED' || p.decision === 'ACCEPTED_WITH_CONDITIONS');
+  const accManifests = acceptance?.manifests ?? [];
+  const hasActivation = Boolean(acceptance?.activation);
+  const hasBaseline = Boolean(acceptance?.baseline);
+  const residualCount = (acceptance?.residual ?? []).length;
+  const residualsTransferred = acceptance?.transferred === true;
+  const packLabel = (p) => `${String(p.packId).slice(-6)} · ${humanise(p.decision ?? p.status ?? 'pack')}`;
+
   render(
     root,
     html`
@@ -332,6 +354,51 @@ export async function handover(root) {
           ${raw(commandBar([
             { id: 'defect', label: 'Raise defect', tone: '', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
             { id: 'asset', label: 'Register asset', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
+            { id: 'compilepack', label: 'Compile handover pack', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
+            {
+              id: 'compilemanifest',
+              label: 'Compile manifest',
+              permitted: can('HANDOVER_OM', 'C') && manifestablePacks.length > 0,
+              reason: can('HANDOVER_OM', 'C')
+                ? (manifestablePacks.length > 0 ? '' : 'Compile a handover pack first — a manifest is compiled against a pack.')
+                : blockedReason('HANDOVER_OM', 'C'),
+            },
+            {
+              id: 'decidehandover',
+              label: 'Decide handover',
+              permitted: can('HANDOVER_OM', 'A') && decidablePacks.length > 0,
+              reason: can('HANDOVER_OM', 'A')
+                ? (decidablePacks.length > 0 ? '' : 'No compiled pack is awaiting a decision.')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
+            {
+              id: 'activateoperations',
+              label: 'Activate operations',
+              permitted: can('HANDOVER_OM', 'X') && acceptedPacks.length > 0 && !hasActivation,
+              reason: can('HANDOVER_OM', 'X')
+                ? (hasActivation
+                    ? 'Operations are already activated for this project.'
+                    : acceptedPacks.length > 0 ? '' : 'Accept a handover pack before activating operations.')
+                : blockedReason('HANDOVER_OM', 'X'),
+            },
+            {
+              id: 'baselinehandover',
+              label: 'Freeze baseline',
+              permitted: can('HANDOVER_OM', 'A') && !hasBaseline,
+              reason: can('HANDOVER_OM', 'A')
+                ? (hasBaseline ? 'The handover baseline is already frozen.' : '')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
+            {
+              id: 'transferresiduals',
+              label: 'Transfer residuals',
+              permitted: can('HANDOVER_OM', 'A') && residualCount > 0 && !residualsTransferred,
+              reason: can('HANDOVER_OM', 'A')
+                ? (residualsTransferred
+                    ? 'The residual obligations have already been transferred.'
+                    : residualCount > 0 ? '' : 'Nothing residual is outstanding to transfer.')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
           ]))}
           ${can('HANDOVER_OM', 'X') ? html`<button class="btn ghost" id="maintenance">Forecast maintenance</button>` : ''}
         </div>
@@ -895,6 +962,160 @@ export async function handover(root) {
         { name: 'expectedLifeYears', label: 'Expected life (years)', type: 'number', min: 1 },
         { name: 'replacementCostMinor', label: 'Replacement cost', type: 'number', money: true, hint: 'In pounds' },
       ],
+    },
+
+    // --- H-WF-09 acceptance spine ------------------------------------------
+    compilepack: {
+      title: 'Compile handover pack',
+      intent:
+        'Engine G assesses handover readiness and sets out what the receiving party should require before acceptance. ' +
+        'The pack is the record they decide against.',
+      path: `/v1/projects/${projectId}/handover/pack`,
+      submitLabel: 'Compile',
+      aiCost: true,
+      fields: [
+        { name: 'receivingPartyName', label: 'Receiving party', type: 'text', placeholder: 'Meridian Infrastructure Group' },
+        { name: 'receivingPartyId', label: 'Receiving party reference', type: 'text', placeholder: 'org-client-estates',
+          hint: 'The identifier the pack is addressed to.' },
+      ],
+      report: (r) => ({
+        title: 'Handover pack compiled',
+        message: `${Math.round(Number(r.completeness ?? 0) * 100)}% complete · ${(r.gaps ?? []).length} gap(s) · ${r.acuConsumed} ACU`,
+        tone: (r.gaps ?? []).length === 0 ? 'ok' : 'warn',
+      }),
+    },
+    compilemanifest: {
+      title: 'Compile evidence manifest',
+      intent:
+        'The machine-readable half of the pack: every entity, its hash and its source version. It carries no narrative, ' +
+        'so what a recipient checks a delivery against is a list of hashes nobody can write prose into.',
+      path: (v) => `/v1/projects/${projectId}/handover-packs/${v.packId}/manifest`,
+      submitLabel: 'Compile manifest',
+      // The subject is the pack in the URL; the route takes no body.
+      transform: () => ({}),
+      fields: [
+        { name: 'packId', label: 'Handover pack', type: 'select',
+          options: manifestablePacks.map((p) => ({ value: p.packId, label: packLabel(p) })) },
+      ],
+      report: (r) => ({ title: 'Manifest compiled', message: `${r.entries} entries · ${shortHash(r.manifestHash ?? '')}`, tone: 'ok' }),
+    },
+    decidehandover: {
+      title: 'Decide the handover',
+      intent:
+        'Accept, accept with conditions, or reject. A conditional acceptance carries a risk owner, a due date, an expiry ' +
+        'and an escalation — the common failure of conditional acceptance is a list of conditions nobody owns.',
+      path: (v) => `/v1/projects/${projectId}/handover-packs/${v.packId}/decide`,
+      submitLabel: 'Record decision',
+      fields: [
+        { name: 'packId', label: 'Handover pack', type: 'select',
+          options: decidablePacks.map((p) => ({ value: p.packId, label: packLabel(p) })) },
+        { name: 'decision', label: 'Decision', type: 'select', options: [
+          { value: 'ACCEPTED', label: 'Accept' },
+          { value: 'ACCEPTED_WITH_CONDITIONS', label: 'Accept with conditions' },
+          { value: 'REJECTED', label: 'Reject' },
+        ] },
+        { name: 'decidedBy', label: 'Decided by', type: 'text', value: state.session.user.name },
+        { name: 'forOrganisation', label: 'For organisation', type: 'text', placeholder: 'Meridian Infrastructure Group' },
+        { name: 'reasons', label: 'Reasons', type: 'textarea',
+          hint: 'State the basis, at least a sentence. An acceptance with no stated reason is the document that gets disputed.' },
+        { name: 'manifestId', label: 'Verify against manifest', type: 'select', required: false,
+          placeholder: 'Do not verify against a manifest',
+          options: accManifests.map((m) => ({ value: m.manifestId, label: `${String(m.manifestId).slice(-6)} · ${shortHash(m.manifestHash ?? '')}` })) },
+        { name: 'conditionDescription', label: 'Condition — what has to happen', type: 'textarea', required: false,
+          hint: 'For an acceptance with conditions only.' },
+        { name: 'conditionRiskOwner', label: 'Condition — risk owner', type: 'text', required: false },
+        { name: 'conditionDueDate', label: 'Condition — due by', type: 'date', required: false },
+        { name: 'conditionExpiresOn', label: 'Condition — acceptance lapses on', type: 'date', required: false },
+        { name: 'conditionEscalateTo', label: 'Condition — escalate to', type: 'text', required: false },
+      ],
+      // The one rule the schema cannot express as a flat shape: a conditional
+      // acceptance needs a complete condition, and a clean acceptance needs none.
+      validate: (v) => {
+        if (v.decision !== 'ACCEPTED_WITH_CONDITIONS') return undefined;
+        if (!v.conditionDescription) return { field: 'conditionDescription', message: 'Say what the condition is.' };
+        if (!v.conditionRiskOwner) return { field: 'conditionRiskOwner', message: 'Name who carries the risk while it is open.' };
+        if (!v.conditionDueDate) return { field: 'conditionDueDate', message: 'Give the condition a due date.' };
+        if (!v.conditionExpiresOn) return { field: 'conditionExpiresOn', message: 'Give the acceptance an expiry.' };
+        if (!v.conditionEscalateTo) return { field: 'conditionEscalateTo', message: 'Name the escalation route.' };
+        return undefined;
+      },
+      transform: (v) => {
+        const out = { decision: v.decision, decidedBy: v.decidedBy, forOrganisation: v.forOrganisation, reasons: v.reasons };
+        if (v.manifestId) out.manifestId = v.manifestId;
+        if (v.decision === 'ACCEPTED_WITH_CONDITIONS') {
+          out.conditions = [{
+            description: v.conditionDescription,
+            riskOwner: v.conditionRiskOwner,
+            dueDate: v.conditionDueDate,
+            expiresOn: v.conditionExpiresOn,
+            escalateTo: v.conditionEscalateTo,
+          }];
+        }
+        return out;
+      },
+      report: (r) => ({
+        title: `Handover ${humanise(String(r.decision))}`,
+        message: r.conditions > 0
+          ? `${r.conditions} condition(s) recorded`
+          : r.manifestVerified === true ? 'Manifest verified against the live record' : 'Decision recorded',
+        tone: r.decision === 'REJECTED' ? 'warn' : 'ok',
+      }),
+    },
+    activateoperations: {
+      title: 'Activate operations',
+      intent:
+        'Raise maintenance and warranty obligations from the accepted asset register. No asset field is entered here — ' +
+        'every one is read from what was accepted, so the CAFM system cannot become a third place the asset list disagrees.',
+      path: (v) => `/v1/projects/${projectId}/handover-packs/${v.packId}/activate-operations`,
+      submitLabel: 'Activate',
+      // The pack is in the URL; the route takes only who and when.
+      transform: (v) => ({ activatedBy: v.activatedBy, maintenanceStartsOn: v.maintenanceStartsOn }),
+      fields: [
+        { name: 'packId', label: 'Accepted pack', type: 'select',
+          options: acceptedPacks.map((p) => ({ value: p.packId, label: packLabel(p) })) },
+        { name: 'activatedBy', label: 'Activated by', type: 'text', value: state.session.user.name },
+        { name: 'maintenanceStartsOn', label: 'Planned maintenance starts', type: 'date', value: todayIso() },
+      ],
+      report: (r) => ({ title: 'Operations activated', message: `${r.assets} asset(s) · ${r.withWarranty} under warranty`, tone: 'ok' }),
+    },
+    baselinehandover: {
+      title: 'Freeze the handover baseline',
+      intent:
+        'Freeze the handover set under a named retention policy, preserving any legal hold. Nothing is deleted — the ledger ' +
+        'is append-only — this records which records form the frozen set and how long they are kept.',
+      path: `/v1/projects/${projectId}/handover-baseline`,
+      submitLabel: 'Freeze baseline',
+      fields: [
+        { name: 'baselinedBy', label: 'Baselined by', type: 'text', value: state.session.user.name },
+        { name: 'retentionPolicy', label: 'Retention policy', type: 'textarea',
+          hint: 'At least a sentence. An archive with no policy is a folder.' },
+        { name: 'retainUntil', label: 'Retain until', type: 'date' },
+        { name: 'legalHold', label: 'Under legal hold', type: 'checkbox' },
+        { name: 'legalHoldReason', label: 'Reason for the legal hold', type: 'text', required: false,
+          hint: 'Required under a legal hold — a hold suspends the retention policy indefinitely, so record when it can be lifted.' },
+      ],
+      validate: (v) => (v.legalHold && !v.legalHoldReason
+        ? { field: 'legalHoldReason', message: 'A legal hold needs a reason, or nobody will know when it can be lifted.' }
+        : undefined),
+      report: (r) => ({ title: 'Handover baselined', message: `${r.entries} records frozen · ${shortHash(r.manifestHash ?? '')}`, tone: 'ok' }),
+    },
+    transferresiduals: {
+      title: 'Transfer residual obligations',
+      intent:
+        'Hand the residual obligations to their operations and aftercare owners. The list stays derived, so an obligation ' +
+        'closed the day after transfer stops appearing without anybody maintaining a second copy of it.',
+      path: `/v1/projects/${projectId}/residual-obligations/transfer`,
+      submitLabel: 'Transfer',
+      fields: [
+        { name: 'toOperations', label: 'To operations', type: 'text', placeholder: 'Estates manager' },
+        { name: 'toAftercare', label: 'To aftercare', type: 'text', placeholder: 'Main contractor aftercare lead' },
+        { name: 'note', label: 'Note', type: 'textarea' },
+      ],
+      report: (r) => ({
+        title: 'Residual obligations transferred',
+        message: `${r.transferred} obligation(s) to ${(r.owners ?? []).length} owner(s)`,
+        tone: 'ok',
+      }),
     },
   };
 

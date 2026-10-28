@@ -30163,3 +30163,14 @@ its end-to-end proof are added.
   id). `backend/tests/meetingclosejourney.test.ts` drives open → minute → record
   action → issue → close through the gateway and asserts the action leaves the
   open register, and that a closure with no note is refused.
+
+- **Handover acceptance spine (`handover.js`)** — the screen rendered ~20
+  read-only panels and printed the "permitted next command" with no button.
+  Added the six commands that drive H-WF-09: compile pack, compile manifest,
+  decide, activate operations, baseline, transfer residuals — each gated on
+  `HANDOVER_OM` at the right level with a state precondition, and the decide
+  selector excludes packs accepted through the older divergent path so it never
+  offers to re-decide one. `backend/tests/handoverjourney.test.ts` drives compile
+  → decide (accepted with conditions) → activate → baseline → transfer through
+  the gateway, and asserts a decision with no reasons is refused. The
+  requirements-matrix sub-workflow is deferred as its own vertical.
