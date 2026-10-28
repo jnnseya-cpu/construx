@@ -2518,11 +2518,44 @@ export async function bidon(root) {
           hint: 'Hashed in this browser. The record is filed first and the bytes follow it, so a dropped connection leaves a record naming a document rather than bytes nothing names.' },
         { name: 'validFrom', label: 'Valid from', type: 'date', required: false },
         { name: 'expiresOn', label: 'Current until', type: 'date', required: false,
-          hint: 'Required for a certificate or an insurance schedule. Everything else may genuinely not lapse.' },
+          hint: 'Required for a certificate or an insurance schedule — that date is what the hard rule reads. Everything else may genuinely not lapse.' },
         { name: 'consentSubject', label: 'Data subject', type: 'text', required: false,
-          hint: 'For a CV: whose data it is.' },
-        { name: 'consentBasis', label: 'How consent was obtained', type: 'text', required: false },
+          hint: 'Required for a CV: whose data it is. A CV is a named person’s data going to a buyer, so it is filed with their consent.' },
+        { name: 'consentBasis', label: 'How consent was obtained', type: 'text', required: false,
+          hint: 'Required for a CV. How and when the person agreed their CV could go to a buyer — captured now, because afterwards the file is already in the library and already citable.' },
       ],
+      /*
+       * The two rules the server keeps that the field list cannot show.
+       *
+       * A certificate or insurance schedule is refused without an expiry, and a
+       * CV without the data subject's consent — `MUST_EXPIRE` and `MUST_CONSENT`
+       * in `evidence.ts`. Both fields are optional in general, because most
+       * kinds genuinely do not need them, so they cannot be marked `required`
+       * on the field itself. Checked here, keyed to the kind, so the person is
+       * told before anything is sent rather than pressing File and reading a
+       * refusal about a form the console had just offered as complete. The
+       * server still enforces it; this only stops the round trip and names the
+       * field. The message mirrors the server's own `BID_ON_*` text.
+       */
+      validate: (v) => {
+        if ((v.type === 'CERTIFICATE' || v.type === 'INSURANCE') && !String(v.expiresOn ?? '').trim()) {
+          return {
+            field: 'expiresOn',
+            message:
+              'A certificate or insurance schedule is refused without the day it lapses — that date is what the hard ' +
+              'rule reads, and a missing one is a safety check switched off rather than a blank field.',
+          };
+        }
+        if (v.type === 'CV') {
+          if (!String(v.consentSubject ?? '').trim()) {
+            return { field: 'consentSubject', message: 'A CV is a named person’s data. File it with that person named as the data subject.' };
+          }
+          if (!String(v.consentBasis ?? '').trim()) {
+            return { field: 'consentBasis', message: 'Say how and when the person’s consent was obtained — it is captured now, not after the file is already citable.' };
+          }
+        }
+        return undefined;
+      },
       transform: ({ customerId: _c, consentSubject, consentBasis, ...rest }) => ({
         ...Object.fromEntries(Object.entries(rest).filter(([, value]) => String(value ?? '').trim())),
         ...(String(consentSubject ?? '').trim()

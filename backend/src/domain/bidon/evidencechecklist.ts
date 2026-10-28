@@ -204,10 +204,22 @@ export type ChecklistCoverage = {
   summary: string;
 };
 
-/** A fragment escaped and anchored on word boundaries, matched case-insensitively. */
+/**
+ * A fragment escaped and anchored on word boundaries, matched case-insensitively
+ * and tolerant of a plural — `cv` matches *CV* and *CVs*, `qualification`
+ * matches *qualification* and *qualifications*.
+ *
+ * The trailing `s?` is the difference between a title people actually write and
+ * one the checklist recognises: a CV filed as "Justin Nseya CVs & qualifications"
+ * matched neither `cv` (the title's *CVs* has no boundary before the plural s)
+ * nor `qualification` (same), so the document was on file and the row still read
+ * "not on file" — reported from exactly that. The boundary before the fragment
+ * still holds, so `pi` does not match *pipe* and `cv` does not match *cvx*; only
+ * a bare plural is admitted.
+ */
 function fragmentRegex(fragment: string): RegExp {
   const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\b${escaped}\\b`, 'i');
+  return new RegExp(`\\b${escaped}s?\\b`, 'i');
 }
 
 /**

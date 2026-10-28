@@ -92,6 +92,30 @@ describe('the evidence checklist', () => {
     assert.equal(c.items.find((i) => i.key === 'public-liability')!.status, 'CURRENT');
   });
 
+  it('matches a plural in the title — a CV filed as “CVs & qualifications” is recognised', () => {
+    // Reported from a real filing: a CV titled "Mr Justin Nseya CVs &
+    // qualifications" was on file and the Key staff CVs row still read "not on
+    // file", because the word-boundary match admitted "cv" but not "cvs". The
+    // document is there; the row must say so.
+    const c = checklistCoverage([
+      doc({ reference: 'EVD-0011', title: 'Mr Justin Nseya CVs & qualifications', type: 'CV', currentNow: true }),
+    ]);
+    const cvs = c.items.find((item) => item.key === 'key-staff-cvs')!;
+    assert.equal(cvs.status, 'CURRENT');
+    assert.equal(cvs.coveredBy?.reference, 'EVD-0011');
+  });
+
+  it('does not let a plural make an abbreviation leak into another word', () => {
+    // The plural is a bare trailing s, not a free-for-all: "CVs" matches, but
+    // "cvx" and "shipping" still must not. The boundary before the fragment is
+    // what holds the line.
+    const c = checklistCoverage([
+      doc({ reference: 'EVD-0012', title: 'cvx tooling and shipping manifest', type: 'OTHER', currentNow: true }),
+    ]);
+    assert.equal(c.items.find((item) => item.key === 'key-staff-cvs')!.status, 'MISSING');
+    assert.equal(c.items.find((item) => item.key === 'professional-indemnity')!.status, 'MISSING');
+  });
+
   it('does not false-match an abbreviation inside another word', () => {
     // "pi" must match the word PI, never "pipe" or "shipping". The whole reason
     // the match is on word boundaries.

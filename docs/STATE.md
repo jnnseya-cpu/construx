@@ -29940,3 +29940,43 @@ cover out in its body — which the platform has already read. One document
 legitimately satisfies two rows where it covers both; a third it does not
 mention stays missing. Tests cover the PI-and-PL case, the opening-line match,
 and the false-match guard.
+
+### The match tolerates a plural, so a CV filed as “CVs & qualifications” is seen
+
+Reported from a live filing: a CV titled "Mr Justin Nseya CVs & qualifications"
+was on file and the **Key staff CVs & qualifications** row still read "not on
+file". The word-boundary match from the PI/PL fix admitted `cv` but not the
+plural *CVs* — c-v-s are all word characters, so there is no boundary between
+the `v` and the `s` for `\bcv\b` to land on — and the same for `qualification`
+against *qualifications*. The document was there; the row denied it, which is
+exactly the thing the checklist exists not to do.
+
+`fragmentRegex` now appends an optional `s?` before the closing boundary, so a
+fragment matches its bare plural: `cv` → *CV* and *CVs*, `qualification` →
+*qualifications*. The boundary **before** the fragment is untouched, so the
+earlier guarantees hold — `pi` still does not match *pipe*, `cv` still does not
+match *cvx* — only a trailing plural s is admitted. Tests cover the CVs case and
+a widened false-match guard (`cvx`, `shipping`).
+
+### The filing form enforces consent and expiry before it sends
+
+Same live filing, the other half: the operator filed a CV, the form offered
+**Data subject** and **How consent was obtained** as *optional*, and the server
+refused the submission with `BID_ON_CONSENT_REQUIRED`. The console had offered a
+form as complete and the platform then refused it — the one shape a form may not
+take, the same fault the deletion cell and the questionnaire reader were already
+written to avoid.
+
+The server rule is real and stays: `MUST_CONSENT = ['CV']` and `MUST_EXPIRE =
+['CERTIFICATE', 'INSURANCE']` in `evidence.ts` — a CV is a named person's data
+going to a buyer and is refused without the data subject's consent; a certificate
+or insurance schedule is refused without the day it lapses, because that date is
+what a hard rule reads. These fields cannot be marked `required` on the field
+itself, because for most kinds they genuinely are optional. So the `file-evidence`
+command now carries a `validate` hook — the console's own pre-send rule, built
+for exactly the field a schema cannot describe — keyed to the selected kind: a
+CV with no data subject or no consent basis, or a certificate/insurance with no
+expiry, is refused **in the console, on the right field**, before anything is
+sent. The server still enforces it; this stops the round trip and the misleading
+"offered then refused". The field hints now say plainly when each is required,
+and the message mirrors the server's own `BID_ON_*` text.
