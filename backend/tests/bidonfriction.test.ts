@@ -1333,3 +1333,73 @@ describe('reading the marks a revision gives itself', () => {
     assert.deepEqual(bidEngine.selfScoreFrom(top), top);
   });
 });
+
+describe('the bid carries its own order of operations', () => {
+  /*
+   * The order — confirm the questions, work out what they need, fill the gaps,
+   * draft, clear any pass/fail wall, approve, return the documents, export — was
+   * tribal knowledge a person had to carry. `bidPosition` now publishes it as a
+   * phase list marked against the pack's real state, with exactly one "do now".
+   */
+  const freshBid = (questions: Parameters<typeof bids.confirmQuestions>[2]['questions']) => {
+    let made = bids.createBid(asDirector(), {
+      engagementId: engagement.id,
+      buyerName: 'Order Of Operations Test Authority',
+      scheme: 'ITT',
+      deadline: '2027-06-01',
+    });
+    made = bids.confirmQuestions(asDirector(), made.id, { questions });
+    return made;
+  };
+
+  it('marks confirm as done and points at working out what the pack needs', () => {
+    const made = freshBid([
+      { section: 'A', number: '1.1', text: 'Describe your approach', answerType: 'TEXT', mandatory: true },
+    ]);
+    const { nextSteps } = bids.bidPosition(asDirector(), made.id);
+
+    const confirm = nextSteps.find((step) => /Confirm the question list/.test(step.title))!;
+    assert.equal(confirm.state, 'DONE');
+
+    const now = nextSteps.filter((step) => step.state === 'NOW');
+    assert.equal(now.length, 1, 'exactly one step is the thing to do now');
+    assert.match(now[0]!.title, /Work out what the pack needs/);
+
+    const exportStep = nextSteps.find((step) => /Export and submit/.test(step.title))!;
+    assert.equal(exportStep.state, 'LATER');
+  });
+
+  it('adds a stand-down decision when a mandatory pass/fail is failed', () => {
+    const made = freshBid([
+      {
+        section: 'A',
+        number: '1.1',
+        text: 'Do you hold current DEA accreditation?',
+        answerType: 'YES_NO',
+        mandatory: true,
+        passFail: true,
+      },
+    ]);
+    bids.recordAnswer(asDirector(), made.id, { questionId: made.questions[0]!.id, body: [], yesNo: false });
+
+    const position = bids.bidPosition(asDirector(), made.id);
+    assert.equal(position.readiness.gate.requirementUnmet, true);
+
+    const wall = position.nextSteps.find((step) => /stand the bid down/i.test(step.title));
+    assert.ok(wall, 'the pass/fail wall appears as its own decision step');
+    assert.notEqual(wall!.state, 'DONE');
+    assert.match(wall!.detail, /not met/);
+  });
+
+  it('shows no stand-down step when there is no wall', () => {
+    const made = freshBid([
+      { section: 'A', number: '1.1', text: 'Describe your approach', answerType: 'TEXT', mandatory: true },
+    ]);
+    const { nextSteps } = bids.bidPosition(asDirector(), made.id);
+    assert.equal(
+      nextSteps.some((step) => /stand the bid down/i.test(step.title)),
+      false,
+      'a permanent decide-whether-to-bid step would be furniture',
+    );
+  });
+});

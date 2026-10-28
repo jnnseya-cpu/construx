@@ -15,8 +15,10 @@ import { liveDeclarations, requireVisibleCustomer, type CustomerAccount } from '
 import { requireOpenEngagement, engagementsOf, type Engagement } from './engagements.ts';
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
 import {
+  AMBER_FLOOR,
   DEFAULT_WEIGHTS,
   packReadiness,
+  REQUIREMENT_WALL_RULES,
   verdictFor,
   type CriterionScores,
   type PackReadiness,
@@ -2412,6 +2414,37 @@ export type BidPosition = {
   clarificationStanding: ClarificationStanding;
   openGaps: BidGap[];
   limits: string[];
+  /**
+   * The order of operations on this bid, as a phase list — so the sequence is
+   * read off the screen rather than carried in somebody's head. See `NextStep`.
+   */
+  nextSteps: NextStep[];
+};
+
+/**
+ * One phase of taking a bid from a parsed questionnaire to a submission.
+ *
+ * The lifecycle has an order — confirm the questions, work out what they need,
+ * fill the gaps, draft and score, clear any pass/fail wall, approve, return the
+ * documents, export — and getting it wrong is expensive: drafting before the
+ * question list is confirmed, or paying for a draft before anybody checked the
+ * library holds the evidence it needs. That order was tribal knowledge; this
+ * makes it a list, with each phase marked against this pack's real state.
+ *
+ * `state` is `DONE` for a finished phase, `NOW` for the single phase to do next,
+ * and `LATER` for one that waits on an earlier one. Exactly one phase is `NOW`
+ * unless the whole pack is done. A later phase can read `DONE` out of turn —
+ * every document returned before the answers are written is a true thing to
+ * show — but the `NOW` is always the earliest phase still to do.
+ */
+export type NextStep = {
+  /** 1-based position in the lifecycle. */
+  order: number;
+  /** The phase in a few words. */
+  title: string;
+  /** What it means for this pack right now, with counts from its own state. */
+  detail: string;
+  state: 'DONE' | 'NOW' | 'LATER';
 };
 
 /**
@@ -2496,29 +2529,159 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
     );
   }
 
+  const readiness = packReadiness(
+    scored.map((entry) => ({
+      ...(entry.question.weighting === undefined ? {} : { weighting: entry.question.weighting }),
+      reference: entry.question.number,
+      mandatory: entry.question.mandatory,
+      approved: entry.answer?.status === 'APPROVED',
+      verdict: entry.verdict,
+    })),
+    // The second half of a submission. Empty on a pack that is all questions,
+    // which is why this changed nothing for the bids that already existed.
+    returnableReadiness(bid, day),
+  );
+  const openGaps = bid.gaps.filter((entry) => !entry.resolvedAt);
+
   return {
     bid: header,
     judgementDay: day,
     customer: { id: customer.id, reference: customer.reference, legalName: customer.legalName },
     questions: scored,
-    readiness: packReadiness(
-      scored.map((entry) => ({
-        ...(entry.question.weighting === undefined ? {} : { weighting: entry.question.weighting }),
-        reference: entry.question.number,
-        mandatory: entry.question.mandatory,
-        approved: entry.answer?.status === 'APPROVED',
-        verdict: entry.verdict,
-      })),
-      // The second half of a submission. Empty on a pack that is all questions,
-      // which is why this changed nothing for the bids that already existed.
-      returnableReadiness(bid, day),
-    ),
+    readiness,
     returnables: bid.returnables,
     clarifications: bySeverity(bid.clarifications),
     clarificationStanding: clarificationStanding(bid, readOn),
-    openGaps: bid.gaps.filter((entry) => !entry.resolvedAt),
+    openGaps,
     limits,
+    nextSteps: buildNextSteps(bid, scored, readiness, openGaps),
   };
+}
+
+/**
+ * The order of operations, marked against this pack's state.
+ *
+ * Each phase is finished (`DONE`), the one to do next (`NOW`), or waiting on an
+ * earlier one (`LATER`). The `NOW` is always the earliest unfinished phase, so
+ * a person reading top-to-bottom reaches the thing to do without knowing the
+ * sequence in advance. The pass/fail-wall phase appears only when there is a
+ * wall: on most bids there is none, and a permanent "decide whether to bid"
+ * step would be furniture.
+ *
+ * Nothing here is a new rule. Every fact comes from the readiness gate, the
+ * scored answers, or the bid's own lifecycle flags; this orders them.
+ */
+function buildNextSteps(
+  bid: Bid,
+  scored: ScoredQuestion[],
+  readiness: PackReadiness,
+  openGaps: BidGap[],
+): NextStep[] {
+  const hasQuestions = scored.length > 0;
+  const proposedCount = bid.proposedQuestions?.length ?? 0;
+  const needsWorkedOut = bid.evidenceNeeds !== undefined;
+  const openGapCount = openGaps.length;
+
+  // Drafting: mandatory questions with no answer, or answered but still red for
+  // a reason that is not a pass/fail wall (a weak answer, or one not yet
+  // scored). The walls are a separate decision, counted on their own below.
+  const draftRemaining = scored.filter(
+    (entry) =>
+      entry.question.mandatory &&
+      (entry.answer === null ||
+        (entry.verdict.rag === 'RED' &&
+          !entry.verdict.hardRules.some((hit) => REQUIREMENT_WALL_RULES.includes(hit.rule)))),
+  ).length;
+  const draftDone = hasQuestions && draftRemaining === 0;
+
+  const wallCount = readiness.gate.blockers.filter((entry) => entry.requirementUnmet).length;
+
+  // Approving only makes sense once an answer is out of red; a mandatory answer
+  // that is out of red and not yet approved is the work this phase names.
+  const unapproved = scored.filter(
+    (entry) => entry.question.mandatory && entry.answer !== null && entry.verdict.rag !== 'RED' && entry.answer.status !== 'APPROVED',
+  ).length;
+  const approveDone = draftDone && unapproved === 0;
+
+  const returnablesOut = readiness.returnablesOutstanding.length;
+  const exported = ['EXPORTED', 'SUBMITTED', 'WON', 'LOST'].includes(bid.status) || bid.exportedAt !== undefined;
+
+  // Each phase with whether it is finished. Order is the lifecycle order.
+  const phases: Array<{ title: string; detail: string; done: boolean } | null> = [
+    {
+      title: 'Confirm the question list',
+      done: hasQuestions,
+      detail: hasQuestions
+        ? `${scored.length} question(s) confirmed against the source.`
+        : proposedCount > 0
+          ? `${proposedCount} question(s) were read out of the questionnaire. Check them against the source document and confirm the list — nothing can be drafted until it is confirmed, because a parser that missed one produces a pack that reads complete and is rejected.`
+          : 'Read the questionnaire in from the source file, then confirm the list against the source document.',
+    },
+    {
+      title: 'Work out what the pack needs',
+      done: needsWorkedOut,
+      detail: needsWorkedOut
+        ? 'The evidence each question needs has been worked out against the library.'
+        : 'List what each question needs and what the library already holds, in one pass, and raise one request for the rest — before paying for a draft that could not have been evidenced.',
+    },
+    {
+      title: 'Fill the evidence gaps',
+      done: needsWorkedOut && openGapCount === 0,
+      detail:
+        openGapCount > 0
+          ? `${openGapCount} gap(s) are open. Send the request to the customer and file what comes back — each open gap pauses its own question.`
+          : 'No evidence gap is open.',
+    },
+    {
+      title: 'Draft, score and strengthen every answer',
+      done: draftDone,
+      detail: draftDone
+        ? 'Every mandatory answer is out of red.'
+        : `${draftRemaining} mandatory question(s) are unanswered or red (not counting any pass/fail wall). Draft or redraft each, and score it, until it clears the amber floor of ${AMBER_FLOOR}.`,
+    },
+    wallCount > 0
+      ? {
+          title: 'Clear the pass/fail requirements — or stand the bid down',
+          done: false,
+          detail: `${wallCount} requirement(s) the buyer set are not met and no drafting clears them (see the verdict at the top). This is a decision to take deliberately: meet the requirement before the deadline, or stand the bid down — not discover it on the return date.`,
+        }
+      : null,
+    {
+      title: 'Approve every answer',
+      done: approveDone,
+      detail: approveDone
+        ? 'Every mandatory answer has a person’s name on it.'
+        : draftDone
+          ? `${unapproved} answer(s) are out of red but unapproved. A reviewer reads each and approves it — approval is what puts a person’s name to the answer, and nothing exports without it.`
+          : 'Once the answers are out of red, a reviewer approves each one — nothing exports without a person’s name on it.',
+    },
+    {
+      title: 'Return the required documents',
+      done: returnablesOut === 0,
+      detail:
+        returnablesOut === 0
+          ? 'Every mandatory document is accounted for.'
+          : `${returnablesOut} mandatory document(s) are outstanding. Supply and mark each done, or waive it with a reason — a submission missing one is rejected as completely as one missing an answer.`,
+    },
+    {
+      title: 'Export and submit',
+      done: exported,
+      detail: exported
+        ? 'The pack has been exported.'
+        : readiness.gate.canSubmit
+          ? 'Everything is in place. Export the pack in the questionnaire’s own structure and submit it before the deadline.'
+          : 'Once the steps above are clear, export the pack in the questionnaire’s own structure and submit it.',
+    },
+  ];
+
+  const present = phases.filter((phase): phase is { title: string; detail: string; done: boolean } => phase !== null);
+  const firstUndone = present.findIndex((phase) => !phase.done);
+  return present.map((phase, index) => ({
+    order: index + 1,
+    title: phase.title,
+    detail: phase.detail,
+    state: phase.done ? 'DONE' : index === firstUndone ? 'NOW' : 'LATER',
+  }));
 }
 
 /** Every question with its latest answer and the verdict on it. */

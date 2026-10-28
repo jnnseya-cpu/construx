@@ -1023,6 +1023,26 @@ remains the single source of the export decision (`exportable` is now
 `gate.canSubmit`); this adds the plain words around the same arithmetic, it does
 not add a second rule. Covered in `bidonrubric`.
 
+### The order of operations was tribal knowledge
+
+The same drive showed the sequence itself was unwritten: confirm the question
+list, work out what the pack needs, fill the gaps, draft and score, clear any
+pass/fail wall, approve, return the documents, export. Getting it wrong is
+expensive — drafting before the list is confirmed, or paying for a draft before
+anyone checked the library holds the evidence — and nothing on the screen said
+what to do next or in what order.
+
+`bidPosition` now publishes `nextSteps` (`bids.ts`, `buildNextSteps`): the
+lifecycle as a phase list, each phase marked `DONE`, `NOW` or `LATER` against
+the pack's real state, with exactly one `NOW` — always the earliest unfinished
+phase — so a person reading top-to-bottom reaches the thing to do without
+knowing the sequence in advance. The pass/fail-wall phase ("clear the
+requirements, or stand the bid down") appears only when there is a wall; on a
+clean bid it would be furniture. Nothing in it is a new rule: every fact comes
+from the readiness gate, the scored answers, or the bid's own lifecycle flags —
+it orders them. The Bid-On screen renders it under the gate verdict. Covered in
+`bidonfriction`.
+
 **A production deployment could not be administered at all.** Found on the live
 server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
 thing that created one was `seedDemoProject`; and that is reachable only through

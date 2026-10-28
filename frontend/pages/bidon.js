@@ -3410,6 +3410,40 @@ function bidDetail(position, estimate, source) {
         })()
       }
       ${
+        /*
+         * The order of operations, off the screen rather than carried in
+         * somebody's head. The gate above says whether the pack can go and why;
+         * this says what to work through to get there, in sequence. The one
+         * NOW step is the thing to do next; DONE steps are ticked so progress
+         * reads at a glance; LATER steps are dimmed so nobody jumps ahead to a
+         * step that waits on an earlier one.
+         */
+        (position.nextSteps ?? []).length > 0
+          ? html`<div style="margin:12px 17px 0">
+              <h2 style="margin:0 0 7px;font-size:14px">Do this next</h2>
+              <ol style="margin:0;padding:0;list-style:none">
+                ${position.nextSteps.map(
+                  (step) => html`<li style="display:flex;gap:9px;padding:7px 0;border-top:1px solid var(--line);${
+                    step.state === 'LATER' ? 'opacity:.55' : ''
+                  }">
+                    <span style="flex:none;width:76px">${
+                      step.state === 'DONE'
+                        ? badge('done', 'ok')
+                        : step.state === 'NOW'
+                          ? badge('do now', 'info')
+                          : badge('later', '')
+                    }</span>
+                    <div>
+                      <div style="font-weight:${raw(step.state === 'NOW' ? '600' : '400')};font-size:12.5px">${step.title}</div>
+                      <div style="color:var(--text-3);font-size:12px;margin-top:2px">${step.detail}</div>
+                    </div>
+                  </li>`,
+                )}
+              </ol>
+            </div>`
+          : ''
+      }
+      ${
         limits.length > 0
           ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
               ${limits.map((line) => html`<div>${line}</div>`)}
