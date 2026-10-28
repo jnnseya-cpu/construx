@@ -125,6 +125,28 @@ export const HARD_RULE = [
 ] as const;
 export type HardRule = (typeof HARD_RULE)[number];
 
+/**
+ * The hard rules that are a wall, not a to-do.
+ *
+ * A pass/fail answered "no", a certificate that lapses before the deadline, an
+ * unconfirmed declaration: each means a requirement the buyer set is not met,
+ * and no amount of writing or reviewing in this tool clears it — something has
+ * to change in the world (the accreditation is obtained, the certificate is
+ * renewed, the customer confirms the declaration). That is a different thing to
+ * say to a client than "an answer is weak" or "nobody has approved it yet", and
+ * the gate leads with it so a client reads the exclusion rather than inferring
+ * its severity from a count.
+ *
+ * The others are work still to do inside the pack — a mandatory question is
+ * answered, a weak answer is redrafted, an over-length one is trimmed — and
+ * those are reachable without leaving the tool, so they are not walls.
+ */
+export const REQUIREMENT_WALL_RULES: readonly HardRule[] = [
+  'PASS_FAIL_FAILED',
+  'EVIDENCE_LAPSES_BEFORE_DEADLINE',
+  'DECLARATION_UNCONFIRMED',
+];
+
 /** How far over a stated limit is tolerated before the rule fires. */
 export const WORD_LIMIT_TOLERANCE = 0.1;
 
@@ -385,6 +407,8 @@ export function verdictFor(input: ScoreInput, weights: Record<Criterion, number>
 export type ReadinessInput = Array<{
   /** The question's own weighting in the buyer's evaluation, where stated. */
   weighting?: number;
+  /** The buyer's own number for the question, e.g. "1.1", so a block can name it. */
+  reference?: string;
   mandatory: boolean;
   approved: boolean;
   verdict: Verdict;
@@ -415,8 +439,23 @@ export type PackReadiness = {
   red: number;
   amber: number;
   green: number;
-  /** Mandatory answers that are red or unapproved. Each one blocks the export. */
-  blocking: Array<{ index: number; reason: string }>;
+  /**
+   * Mandatory answers that are red or unapproved. Each one blocks the export.
+   *
+   * `reason` is why it is blocked; `remedy` is what to do about it — never
+   * absent, because a block with no way out is a dead end. `requirementUnmet`
+   * marks the ones that are a wall rather than a to-do (see
+   * `REQUIREMENT_WALL_RULES`): a client reads those as "this cannot be
+   * submitted", not "this needs more work".
+   */
+  blocking: Array<{
+    index: number;
+    reference?: string;
+    reason: string;
+    remedy: string;
+    requirementUnmet: boolean;
+    hardRule?: HardRule;
+  }>;
   /**
    * Mandatory returnables nobody has supplied. Each one blocks the export too.
    *
@@ -426,7 +465,41 @@ export type PackReadiness = {
    */
   returnablesOutstanding: Array<{ reference: string; title: string; reason: string }>;
   exportable: boolean;
+  /**
+   * The one thing a client should read first: can this be submitted, and if
+   * not, the plainest statement of why — leading with a requirement that is not
+   * met where there is one. See `SubmissionGate`.
+   */
+  gate: SubmissionGate;
   summary: string;
+};
+
+/**
+ * The submission verdict in plain words, so a client is told it rather than
+ * left to infer it from a readiness percentage and a severity count.
+ *
+ * `requirementUnmet` is the distinction that matters: a pack can be blocked
+ * because there is still work to do (answer a question, approve a draft, supply
+ * a document) or because a requirement the buyer set is simply not met (a
+ * pass/fail answered no, evidence that has lapsed, a declaration the customer
+ * has not confirmed). The first is a to-do list; the second is a wall, and a
+ * client needs to see which one they are facing before they spend a week
+ * polishing answers for a bid that will be excluded at the gate regardless.
+ */
+export type SubmissionGate = {
+  /** The same truth as `exportable`, named for what a client asks: can we send it? */
+  canSubmit: boolean;
+  /** A requirement the buyer set is not met, and no work in this tool clears it. */
+  requirementUnmet: boolean;
+  /** The sentence to put at the top of the screen. Always set. */
+  headline: string;
+  /**
+   * Everything standing between this pack and a submission, worst-first and in
+   * one list — answers and returnables together, because a client should not
+   * have to assemble the picture from two tables. Each carries what it is and
+   * what to do about it; `requirementUnmet` flags the walls.
+   */
+  blockers: Array<{ reference?: string; what: string; remedy: string; requirementUnmet: boolean }>;
 };
 
 /**
@@ -471,18 +544,34 @@ export function packReadiness(answers: ReadinessInput, returnables: ReturnableIn
   const blocking: PackReadiness['blocking'] = [];
   answers.forEach((entry, index) => {
     if (!entry.mandatory) return;
+    const reference = entry.reference;
     if (entry.verdict.rag === 'RED') {
+      const hardRules = entry.verdict.hardRules;
+      const wall = hardRules.find((hit) => REQUIREMENT_WALL_RULES.includes(hit.rule));
       blocking.push({
         index,
+        ...(reference ? { reference } : {}),
         reason:
-          entry.verdict.hardRules.length > 0
-            ? entry.verdict.hardRules.map((hit) => hit.detail).join(' ')
+          hardRules.length > 0
+            ? hardRules.map((hit) => hit.detail).join(' ')
             : `Scored ${entry.verdict.weightedScore}, below the amber floor of ${AMBER_FLOOR}.`,
+        remedy:
+          hardRules.length > 0
+            ? hardRules.map((hit) => hit.remedy).join(' ')
+            : `Redraft it and score it again until it clears the amber floor of ${AMBER_FLOOR}.`,
+        requirementUnmet: wall !== undefined,
+        ...(hardRules[0] ? { hardRule: (wall ?? hardRules[0]).rule } : {}),
       });
       return;
     }
     if (!entry.approved) {
-      blocking.push({ index, reason: 'Nobody has approved it, so no person has put their name to it.' });
+      blocking.push({
+        index,
+        ...(reference ? { reference } : {}),
+        reason: 'Nobody has approved it, so no person has put their name to it.',
+        remedy: 'A reviewer reads it and approves it — approval is what puts a person’s name to the answer.',
+        requirementUnmet: false,
+      });
     }
   });
 
@@ -503,6 +592,46 @@ export function packReadiness(answers: ReadinessInput, returnables: ReturnableIn
     }));
 
   const answersDone = total > 0 && blocking.length === 0;
+  const canSubmit = answersDone && returnablesOutstanding.length === 0;
+
+  // One list of everything in the way, walls first, answers and returnables
+  // together — so a client reads a single "what is stopping this" rather than
+  // reconciling two tables and a percentage.
+  const answerBlockers = blocking
+    .map((entry) => ({
+      ...(entry.reference ? { reference: entry.reference } : {}),
+      what: entry.reference ? `Question ${entry.reference}: ${entry.reason}` : entry.reason,
+      remedy: entry.remedy,
+      requirementUnmet: entry.requirementUnmet,
+    }))
+    .sort((left, right) => Number(right.requirementUnmet) - Number(left.requirementUnmet));
+  const returnableBlockers = returnablesOutstanding.map((entry) => ({
+    reference: entry.reference,
+    what: `${entry.title} — ${entry.reason}`,
+    remedy: 'Supply it and mark it done, or waive it with a reason that would stand if the submission came back.',
+    requirementUnmet: false,
+  }));
+  const blockers = [...answerBlockers, ...returnableBlockers];
+  const wall = answerBlockers.find((entry) => entry.requirementUnmet);
+  const requirementUnmet = wall !== undefined;
+  const wallCount = answerBlockers.filter((entry) => entry.requirementUnmet).length;
+
+  const headline =
+    total === 0
+      ? 'No questions have been confirmed for this pack yet, so there is nothing to submit.'
+      : canSubmit
+        ? 'This pack can be submitted: every mandatory answer is approved and out of red' +
+          (returnables.length > 0 ? ', and every mandatory document is accounted for.' : '.')
+        : requirementUnmet
+          ? 'This bid cannot be submitted as it stands: a requirement the buyer set is not met. ' +
+            `${wall?.what}` +
+            (wallCount > 1 ? ` (and ${wallCount - 1} other requirement(s) like it).` : '') +
+            ' No amount of work on the other answers clears this — it changes only if the requirement itself is ' +
+            'met before the deadline, or the deliberate decision is not to bid.'
+          : `This pack is not ready to submit yet: ${blockers.length} item(s) still to complete before it can go, ` +
+            'and until the last one is done the pack cannot be exported.';
+
+  const gate: SubmissionGate = { canSubmit, requirementUnmet, headline, blockers };
 
   return {
     readinessPercent,
@@ -514,7 +643,8 @@ export function packReadiness(answers: ReadinessInput, returnables: ReturnableIn
     green,
     blocking,
     returnablesOutstanding,
-    exportable: answersDone && returnablesOutstanding.length === 0,
+    exportable: canSubmit,
+    gate,
     summary:
       total === 0
         ? 'Nothing parsed yet.'

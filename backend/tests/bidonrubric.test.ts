@@ -342,3 +342,86 @@ describe('pack readiness and the export gate', () => {
     assert.equal(readiness.approved, 3);
   });
 });
+
+describe('the submission gate says in plain words whether a pack can go', () => {
+  const scored = (value: number) => verdictFor(input({ scores: scores(value) }));
+
+  it('calls a ready pack submittable and names no blocker', () => {
+    const { gate } = packReadiness([
+      { reference: '1.1', mandatory: true, approved: true, verdict: scored(90) },
+      { reference: '1.2', mandatory: true, approved: true, verdict: scored(85) },
+    ]);
+    assert.equal(gate.canSubmit, true);
+    assert.equal(gate.requirementUnmet, false);
+    assert.equal(gate.blockers.length, 0);
+    assert.match(gate.headline, /can be submitted/);
+  });
+
+  it('leads with the requirement wall when a mandatory pass/fail is answered no', () => {
+    // The drive that exposed this: question 1.1 was a pass/fail the bidder
+    // could not pass, and the screen left a person to infer that from a red.
+    const { gate } = packReadiness([
+      {
+        reference: '1.1',
+        mandatory: true,
+        approved: true,
+        verdict: verdictFor(input({ passFail: true, passFailAnswer: false })),
+      },
+      { reference: '2.1', mandatory: true, approved: true, verdict: scored(90) },
+    ]);
+    assert.equal(gate.canSubmit, false);
+    assert.equal(gate.requirementUnmet, true);
+    assert.match(gate.headline, /cannot be submitted as it stands/);
+    assert.match(gate.headline, /requirement the buyer set is not met/);
+    // The wall names the question and leads the blocker list.
+    assert.equal(gate.blockers[0]!.reference, '1.1');
+    assert.equal(gate.blockers[0]!.requirementUnmet, true);
+    assert.match(gate.blockers[0]!.what, /1\.1/);
+    assert.ok(gate.blockers[0]!.remedy.length > 0);
+  });
+
+  it('floats requirement walls above recoverable work in the one blocker list', () => {
+    const { gate } = packReadiness([
+      // A weak answer — recoverable by redrafting.
+      { reference: '1.1', mandatory: true, approved: true, verdict: scored(10) },
+      // A pass/fail failed — a wall.
+      {
+        reference: '1.2',
+        mandatory: true,
+        approved: true,
+        verdict: verdictFor(input({ passFail: true, passFailAnswer: false })),
+      },
+    ]);
+    assert.equal(gate.blockers.length, 2);
+    assert.equal(gate.blockers[0]!.reference, '1.2');
+    assert.equal(gate.blockers[0]!.requirementUnmet, true);
+    assert.equal(gate.blockers[1]!.reference, '1.1');
+    assert.equal(gate.blockers[1]!.requirementUnmet, false);
+  });
+
+  it('does not call recoverable work a wall', () => {
+    // An unapproved green and a below-floor answer are work to do, not
+    // exclusions — the headline must not say "cannot be submitted".
+    const { gate } = packReadiness([
+      { reference: '1.1', mandatory: true, approved: false, verdict: scored(90) },
+      { reference: '1.2', mandatory: true, approved: true, verdict: scored(20) },
+    ]);
+    assert.equal(gate.canSubmit, false);
+    assert.equal(gate.requirementUnmet, false);
+    assert.match(gate.headline, /not ready to submit yet/);
+    assert.equal(gate.blockers.every((entry) => !entry.requirementUnmet), true);
+  });
+
+  it('puts an outstanding mandatory returnable in the same blocker list', () => {
+    const { gate } = packReadiness(
+      [{ reference: '1.1', mandatory: true, approved: true, verdict: scored(90) }],
+      [{ reference: 'APP-5', title: 'Priced cost model', mandatory: true, outstanding: true }],
+    );
+    assert.equal(gate.canSubmit, false);
+    assert.equal(gate.requirementUnmet, false);
+    const returnable = gate.blockers.find((entry) => entry.reference === 'APP-5');
+    assert.ok(returnable, 'the returnable is a blocker in its own right');
+    assert.match(returnable!.what, /Priced cost model/);
+    assert.match(returnable!.remedy, /waive it with a reason/);
+  });
+});

@@ -997,6 +997,32 @@ mail server. The regression test runs the route with `NODE_ENV=production`,
 which is the condition that makes the defect reachable, and fails without the
 fix.
 
+### The gate's verdict was true but had to be interpreted
+
+Driving the live tender exposed a usability defect, not a correctness one: the
+pack knew it could not be submitted — question 1.1 was a pass/fail the bidder
+could not pass — but the screen said so only as a red light among other red
+lights and a readiness percentage. A person had to *interpret* the severity:
+work out that this particular red was a wall and not a weak answer. An unaided
+client would not, and would spend a week polishing answers for a bid excluded
+at the gate.
+
+`packReadiness` now publishes a `gate` (`rubric.ts`): `canSubmit`, a
+`requirementUnmet` flag, a plain-English `headline`, and `blockers` — one list,
+walls first, answers and returnables together, each with what it is and what to
+do. The distinction it draws is `REQUIREMENT_WALL_RULES`: a pass/fail answered
+no, evidence that lapses before the deadline, an unconfirmed declaration. Those
+are requirements the buyer set that are simply *not met*, and no work in the
+tool clears them — distinct from a mandatory question still to answer, a weak
+answer to redraft, or an answer nobody has approved, which are work to do. The
+headline leads with the wall where there is one ("This bid cannot be submitted
+as it stands: a requirement the buyer set is not met …"), reads "not ready to
+submit yet" for recoverable work, and "can be submitted" when clear. The Bid-On
+screen renders it as the first thing on the pack, red / amber / green. The gate
+remains the single source of the export decision (`exportable` is now
+`gate.canSubmit`); this adds the plain words around the same arithmetic, it does
+not add a second rule. Covered in `bidonrubric`.
+
 **A production deployment could not be administered at all.** Found on the live
 server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
 thing that created one was `seedDemoProject`; and that is reachable only through

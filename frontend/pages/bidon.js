@@ -3376,6 +3376,40 @@ function bidDetail(position, estimate, source) {
               buyer reads it.`}
       </p>
       ${
+        /*
+         * The one thing to read first: can this be submitted, and if not, why —
+         * in the API's own plain words, not inferred from a percentage and a
+         * severity count. A requirement wall (a pass/fail answered no, lapsed
+         * evidence, an unconfirmed declaration) is red and says "cannot be
+         * submitted"; work still to do is amber; a ready pack is green. The
+         * blockers are one list, walls first, each with what to do — so nobody
+         * has to reconcile the questions table and the returnables table in
+         * their head to find out what is actually stopping the bid.
+         */
+        (() => {
+          const gate = readiness.gate;
+          const tone = gate.canSubmit ? 'ok' : gate.requirementUnmet ? 'err' : 'warn';
+          return html`<div class="notice ${raw(tone)}" style="margin:11px 17px 0"><div>
+            <b style="font-size:13.5px">${gate.headline}</b>
+            ${
+              gate.blockers.length > 0
+                ? html`<ul style="margin:9px 0 0;padding-left:0;list-style:none">
+                    ${gate.blockers.map(
+                      (block) => html`<li style="margin-bottom:8px">
+                        <div>
+                          ${block.requirementUnmet ? badge('requirement not met', 'bad') : ''}
+                          ${block.what}
+                        </div>
+                        <div style="color:var(--text-3);font-size:12px;margin-top:2px">→ ${block.remedy}</div>
+                      </li>`,
+                    )}
+                  </ul>`
+                : ''
+            }
+          </div></div>`;
+        })()
+      }
+      ${
         limits.length > 0
           ? html`<div class="notice warn" style="margin:11px 17px 0"><div>
               ${limits.map((line) => html`<div>${line}</div>`)}

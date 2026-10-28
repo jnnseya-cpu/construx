@@ -2504,6 +2504,7 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
     readiness: packReadiness(
       scored.map((entry) => ({
         ...(entry.question.weighting === undefined ? {} : { weighting: entry.question.weighting }),
+        reference: entry.question.number,
         mandatory: entry.question.mandatory,
         approved: entry.answer?.status === 'APPROVED',
         verdict: entry.verdict,
