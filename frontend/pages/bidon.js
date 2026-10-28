@@ -3624,6 +3624,10 @@ function bidDetail(position, estimate, source) {
               <p style="margin:0 0 6px;font-size:12.5px;color:var(--text-3)">
                 Not answers. A submission missing a required document is rejected exactly as completely as one
                 missing an answer, and none of this is in the readiness figure above.
+                <b>Who</b> is who has to produce each one: the <b>bid team</b> (you) or
+                <b>${customer.legalName}</b>, the bidding company whose submission this is — never the buyer. A
+                document that is the bidding company's own, like a signed form or a priced cost model, cannot be
+                drafted here; it goes in the request to them.
               </p>
               ${table({
                 headers: ['Ref', 'What', 'Who', 'Format', 'Limit', 'Sign', 'We need it by', 'Standing', 'Next', 'id'],
@@ -3631,7 +3635,9 @@ function bidDetail(position, estimate, source) {
                 rows: position.returnables.map((item) => [
                   item.mandatory ? html`${item.reference} ${badge('must', 'warn')}` : item.reference,
                   item.title,
-                  item.owner === 'CUSTOMER' ? badge('customer', 'info') : 'us',
+                  item.owner === 'CUSTOMER'
+                    ? html`<span title="${customer.legalName} — the bidding company. Their own document to produce or sign; the bid team cannot do it for them.">${badge(customer.legalName, 'info')}</span>`
+                    : html`<span title="The bid team (you) — yours to produce.">bid team</span>`,
                   item.format ?? html`<span style="font-size:12px;color:var(--text-3)">not stated</span>`,
                   item.pageLimit ? `${item.pageLimit}pp` : item.fileSizeLimitMb ? `${item.fileSizeLimitMb}MB` : '—',
                   item.signatureRequired ? badge('signature', 'warn') : '—',

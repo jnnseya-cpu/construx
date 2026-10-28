@@ -1043,6 +1043,26 @@ from the readiness gate, the scored answers, or the bid's own lifecycle flags �
 it orders them. The Bid-On screen renders it under the gate verdict. Covered in
 `bidonfriction`.
 
+### "Waiting on the customer" read as a contradiction
+
+A returnable owned by `CUSTOMER` blocked an export, and the reason — "Waiting on
+the customer" — was unreadable even to someone close to the bid. "Owner" here is
+one of two parties and neither is the tender's buyer: `PROVIDER` is the bid team
+writing the submission, `CUSTOMER` is the bidding company whose submission it is
+(the bid team's own client). A reader outside that vocabulary took "customer"
+for the buyer and could not see why anyone outside the bid would be supplying
+part of it.
+
+`returnableReadiness` now takes the bidding company's name and says it plainly:
+"This is Thornhill Electrical Services Ltd's own document … only the bidding
+company can produce or sign it, not the bid team, so it goes in the request to
+them." The Bid-On screen's returnables table drops the bare "customer" / "us"
+badges for the bidding company's name and "bid team", with a line above the
+table naming all three parties (buyer, bidder, bid team) once. The export
+refusal, the gate blockers and the "do this next" guide all inherit the same
+wording, so the fact is met once and said one way. Covered in
+`bidonreturnables`.
+
 **A production deployment could not be administered at all.** Found on the live
 server, not in a test. Every admin route demands `PLATFORM_ADMIN`; the only
 thing that created one was `seedDemoProject`; and that is reachable only through

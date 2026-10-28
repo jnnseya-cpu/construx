@@ -2210,23 +2210,37 @@ export function waiveReturnable(
   return { bid: next, returnable: waived };
 }
 
-/** What readiness needs to know about the register. */
-export function returnableReadiness(bid: Bid, asAt?: string): ReturnableInput {
+/**
+ * What readiness needs to know about the register.
+ *
+ * `customerName` matters only to the words. "Owner" in this module is one of
+ * two parties, and neither is the tender's buyer: PROVIDER is the bid team
+ * writing the submission, CUSTOMER is the bidding company whose submission it
+ * is (the bid team's own client). "Waiting on the customer" read as a
+ * contradiction on a live tender — why would anyone outside the bid be
+ * supplying part of it — so the reason now names the bidding company and says
+ * plainly that the bid team cannot produce the document in its place.
+ */
+export function returnableReadiness(bid: Bid, asAt?: string, customerName?: string): ReturnableInput {
   const day = judgedOn(bid, asAt);
-  return bid.returnables.map((entry) => ({
-    reference: entry.reference,
-    title: entry.title,
-    mandatory: entry.mandatory,
-    outstanding: entry.status === 'OUTSTANDING',
-    reason:
-      entry.owner === 'CUSTOMER'
-        ? `Waiting on the customer${entry.internalDueBy ? `, due ${entry.internalDueBy}` : ''}.` +
-          (entry.internalDueBy && entry.internalDueBy < day ? ' That date has passed.' : '')
-        : `Nobody has supplied it${entry.signatureRequired ? ', and it needs a signature' : ''}` +
-          (entry.internalDueBy ? `, due ${entry.internalDueBy}` : '') +
-          '.' +
-          (entry.internalDueBy && entry.internalDueBy < day ? ' That date has passed.' : ''),
-  }));
+  const bidder = customerName ?? 'the bidding company';
+  return bid.returnables.map((entry) => {
+    const due = entry.internalDueBy ? ` We need it by ${entry.internalDueBy}.` : '';
+    const overdue = entry.internalDueBy && entry.internalDueBy < day ? ' That date has passed.' : '';
+    return {
+      reference: entry.reference,
+      title: entry.title,
+      mandatory: entry.mandatory,
+      outstanding: entry.status === 'OUTSTANDING',
+      reason:
+        entry.owner === 'CUSTOMER'
+          ? `This is ${bidder}'s own document${entry.signatureRequired ? ', and it needs their signature' : ''} — ` +
+            'only the bidding company can produce or sign it, not the bid team, so it goes in the request to them ' +
+            `rather than being drafted here.${due}${overdue}`
+          : `Nobody on the bid team has supplied it yet${entry.signatureRequired ? ', and it needs a signature' : ''}.` +
+            `${due}${overdue}`,
+    };
+  });
 }
 
 /**
@@ -2539,7 +2553,7 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
     })),
     // The second half of a submission. Empty on a pack that is all questions,
     // which is why this changed nothing for the bids that already existed.
-    returnableReadiness(bid, day),
+    returnableReadiness(bid, day, customer.legalName),
   );
   const openGaps = bid.gaps.filter((entry) => !entry.resolvedAt);
 
@@ -2950,7 +2964,7 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
           approved: entry.answer?.status === 'APPROVED',
           verdict: entry.verdict,
         })),
-        returnableReadiness(bid, day),
+        returnableReadiness(bid, day, customer.legalName),
       );
       return {
         id: bid.id,

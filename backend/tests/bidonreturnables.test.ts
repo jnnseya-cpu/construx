@@ -285,6 +285,25 @@ describe('an unsigned order form stops a pack that is 100% on answers', () => {
     assert.match(position.readiness.summary, /mandatory returnable\(s\) are outstanding/);
   });
 
+  it('names the bidding company on a customer-owned returnable, not "the customer"', () => {
+    // On a live tender "waiting on the customer" read as a contradiction: the
+    // reader took "customer" for the buyer and could not see why anyone outside
+    // the bid would be supplying part of it. The reason now names the bidding
+    // company and says plainly the bid team cannot produce it in their place.
+    const position = bids.bidPosition(asProviderAdmin(), bid.id);
+    const order = position.readiness.returnablesOutstanding.find((entry) => entry.reference === 'Appendix 2')!;
+    assert.match(order.reason, /Thornhill Electrical Services Ltd/);
+    assert.match(order.reason, /not the bid team/i);
+    assert.doesNotMatch(order.reason, /Waiting on the customer/);
+    // The same documents appear in the gate blockers, in the same plain words,
+    // so the client meets the fact once and said one way.
+    const blocker = position.readiness.gate.blockers.find((entry) => entry.reference === 'Appendix 2')!;
+    assert.match(blocker.what, /Thornhill Electrical Services Ltd/);
+    // And they are a step in the "do this next" guide (not yet reached here).
+    const returnableStep = position.nextSteps.find((step) => /Return the required documents/.test(step.title))!;
+    assert.notEqual(returnableStep.state, 'DONE');
+  });
+
   it('refuses the export naming the documents rather than the answers', () => {
     const refusal = throwsCode(() => bids.exportBid(asProviderAdmin(), bid.id), 'BID_ON_NOT_EXPORTABLE');
     const message = String(refusal.message);
