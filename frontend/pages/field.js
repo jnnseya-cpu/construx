@@ -798,9 +798,24 @@ export async function field(root) {
               // as the baseline is an approval — three different authorities on
               // one walk, which is the specification's own authority matrix.
               { id: 'capture', label: 'Start a 3-minute capture', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
-              { id: 'constraint', label: 'Record a constraint', permitted: can('LOOKAHEAD_CONSTRAINTS', 'C'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C') },
-              { id: 'capture-complete', label: 'Close the capture', permitted: can('FIELD_EXECUTION', 'U'), reason: blockedReason('FIELD_EXECUTION', 'U') },
-              { id: 'baseline', label: 'Set as site baseline', permitted: can('LOOKAHEAD_CONSTRAINTS', 'A'), reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'A') },
+              // These three act on the mission being walked — their path carries
+              // its id. Until a mission's brief is opened (which selects it),
+              // `openMission` is null and the path would POST to
+              // `/site-capture/undefined/…`, a 404 a person cannot diagnose. So
+              // they are locked with the way out — open a mission first — exactly
+              // as the site-visit panel below locks on its register.
+              { id: 'constraint', label: 'Record a constraint',
+                permitted: can('LOOKAHEAD_CONSTRAINTS', 'C') && openMission !== null,
+                reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'C')
+                  ?? 'Open a capture mission (press its brief below) first — a constraint is recorded against the mission being walked.' },
+              { id: 'capture-complete', label: 'Close the capture',
+                permitted: can('FIELD_EXECUTION', 'U') && openMission !== null,
+                reason: blockedReason('FIELD_EXECUTION', 'U')
+                  ?? 'Open the capture mission you want to close (press its brief below) first.' },
+              { id: 'baseline', label: 'Set as site baseline',
+                permitted: can('LOOKAHEAD_CONSTRAINTS', 'A') && openMission !== null,
+                reason: blockedReason('LOOKAHEAD_CONSTRAINTS', 'A')
+                  ?? 'Open the capture mission (press its brief below) first — the baseline is set from the mission being walked.' },
               { id: 'progress', label: 'Record progress', tone: '', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },
               { id: 'observation', label: 'Log safety observation', permitted: can('SAFETY_RAMS', 'C'), reason: blockedReason('SAFETY_RAMS', 'C') },
               { id: 'work-order', label: 'Raise work order', permitted: can('FIELD_EXECUTION', 'C'), reason: blockedReason('FIELD_EXECUTION', 'C') },

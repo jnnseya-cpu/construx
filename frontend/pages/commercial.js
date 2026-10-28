@@ -1369,7 +1369,10 @@ export async function commercial(root) {
     if (published) {
       toast('CVR published', 'Margin recalculated from the figures you entered.', 'ok');
       await refreshContext();
-      await commercial(root);
+      // draw(), not commercial(root): re-entering the page on the same element
+      // re-binds its delegated [data-command] listeners, so the next command
+      // opened two stacked dialogs. draw() hands the page a fresh element.
+      await draw();
     }
   });
 
@@ -1402,7 +1405,8 @@ export async function commercial(root) {
 
     if (taken) {
       toast('Snapshot taken', 'CPI and SPI recalculated.', 'ok');
-      await commercial(root);
+      // draw(), not commercial(root) — see the CVR handler above.
+      await draw();
     }
   });
 

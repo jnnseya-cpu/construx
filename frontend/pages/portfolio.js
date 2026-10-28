@@ -3,6 +3,7 @@ import { command } from '../lib/command.js';
 import { badge, html, humanise, money, pct, raw, render, table } from '../lib/ui.js';
 import { barChart, kpiCard, pieChart, proportionBar } from '../lib/charts.js';
 import { draw, navigate, openProject } from '../app.js';
+import { CONTINENT } from '../lib/enums.js';
 
 /**
  * Portfolio Dashboard.
@@ -51,19 +52,15 @@ const SCHEDULE_TONE = { ON_TRACK: 'ok', AT_RISK: 'warn', BEHIND: 'bad' };
 const COST_TONE = { GREEN: 'ok', AMBER: 'warn', RED: 'bad' };
 
 /** Continent codes to something a person reads. Region is a filter, not a code. */
-const REGION = {
-  EU: 'Europe',
-  NA: 'North America',
-  SA: 'South America',
-  AF: 'Africa',
-  AS: 'Asia',
-  OC: 'Oceania',
-  AN: 'Antarctica',
-};
+// The region label comes from the shared CONTINENT vocabulary, the same source
+// Enterprise & Portfolio uses, rather than a local map that was out of step: it
+// had NA/SA (two dead codes no project carries) and no `AM`, so every Americas
+// project showed the raw code "AM" and the filter offered two phantom options.
+const regionLabel = (code) => CONTINENT.find((option) => option.value === code)?.label ?? code;
 
 function regionOf(row) {
   const code = row.location?.continentCode;
-  return code ? (REGION[code] ?? code) : 'Region not set';
+  return code ? regionLabel(code) : 'Region not set';
 }
 
 /** The accountable manager's name, or the honest absence of one. */
@@ -347,7 +344,7 @@ export async function portfolio(root) {
             headers: ['Region', 'Countries', 'Portfolios', 'Projects', 'Contract value'],
             align: ['', '', 'num', 'num', 'num'],
             rows: (position.byRegion ?? []).map((region) => [
-              region.continentCode ? (REGION[region.continentCode] ?? region.continentCode) : 'Not set',
+              region.continentCode ? regionLabel(region.continentCode) : 'Not set',
               region.countryCodes.join(', ') || '—',
               region.portfolios,
               region.projects,

@@ -41,16 +41,21 @@ import { badge, html, humanise, raw, render, table } from '../lib/ui.js';
  * offering any command.
  */
 
-/** The letters, spelled out. A matrix of initials teaches nobody anything. */
+/*
+ * The letters, spelled out — kept in step with the server's own
+ * `PERMISSION_CODE_MEANING` (identity/roles.ts). These drifted: I/X/G read
+ * "Issue"/"Execute"/"Grant" and a non-existent "D: Delete" was listed, on the
+ * one screen whose job is explaining a refusal. The authoritative meanings are:
+ * I = Import / export, X = Run AI, G = Govern, and there is no D.
+ */
 const CODE_LABEL = {
   R: 'Read',
   C: 'Create',
   U: 'Update',
   A: 'Approve',
-  G: 'Grant',
-  I: 'Issue',
-  X: 'Execute',
-  D: 'Delete',
+  I: 'Import / export',
+  X: 'Run AI',
+  G: 'Govern',
 };
 
 const CODE_TONE = { R: 'info', C: 'ok', U: 'ok', A: 'warn', G: 'bad', I: 'warn', X: 'warn', D: 'bad' };

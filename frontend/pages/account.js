@@ -23,7 +23,16 @@ import { badge, date, html, humanise, initials, notice, positionReport, raw, ren
  */
 
 export async function account(root) {
-  const erasure = await api.get('/v1/me/erasure');
+  // This fetch had no catch, so any failure of it blanked the whole Account
+  // screen — the one that hosts irreversible account deletion — with no message
+  // and no recovery, unlike every sibling load. Surface the refusal instead.
+  let erasure;
+  try {
+    erasure = await api.get('/v1/me/erasure');
+  } catch (error) {
+    render(root, html`<div class="view"><div class="card">${notice(error.detail ?? error.message, 'err')}</div></div>`);
+    return;
+  }
   // Your own notifications, and which of them you may switch off. Both had
   // engines and no screen — a platform that sends notices nobody can read back
   // or turn off is one people learn to ignore.

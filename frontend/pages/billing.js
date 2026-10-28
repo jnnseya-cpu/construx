@@ -89,7 +89,7 @@ export async function billing(root) {
               ? html`<button class="btn quiet" id="buy-seat">Add a seat</button>`
               : ''
           }
-          ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="invoice">Issue invoice</button>` : ''}
+          ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="invoice">View statement</button>` : ''}
           ${can('BILLING_ACU', 'U') ? html`<button class="btn quiet" id="caps">Set spend caps</button>` : ''}
         </div>
       </div>

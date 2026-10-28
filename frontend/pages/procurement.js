@@ -620,7 +620,7 @@ export async function procurement(root) {
             // `answerClarification` authorises against — and it is phase-gated
             // there, so it closes when procurement does.
             { id: 'acknowledge', label: 'Acknowledge enquiry', permitted: enquiryParticipant, reason: enquiryParticipantReason },
-            { id: 'clarification', label: 'Raise clarification', permitted: enquiryParticipant, reason: enquiryParticipantReason },
+            { id: 'rfq-clarification', label: 'Raise an RFQ query (TQ)', permitted: enquiryParticipant, reason: enquiryParticipantReason },
             { id: 'answerclarification', label: 'Answer clarification', permitted: can('PROCUREMENT_AWARD', 'U'), reason: blockedReason('PROCUREMENT_AWARD', 'U') },
             { id: 'submission', label: 'Record submission', permitted: enquiryParticipant, reason: enquiryParticipantReason },
             { id: 'award', label: 'Award', permitted: can('PROCUREMENT_AWARD', 'A'), reason: blockedReason('PROCUREMENT_AWARD', 'A') },
@@ -2335,7 +2335,7 @@ export async function procurement(root) {
       ],
       transform: ({ rfqId, intendToBid, ...rest }) => ({ ...rest, intendToBid: intendToBid === 'true' }),
     },
-    clarification: {
+    'rfq-clarification': {
       title: 'Raise a clarification',
       intent:
         'A bidder’s question about the enquiry, raised as TQ-nnn against the RFQ. Ask it here rather than answering it by email — ' +

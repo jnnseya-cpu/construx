@@ -216,8 +216,12 @@ export async function economy(root) {
                   headers: ['Bundle', 'ACU', 'Price'],
                   align: ['', 'num', 'num'],
                   rows: (catalogue.bundles ?? []).map((bundle) => [
-                    bundle.label ?? bundle.id,
-                    (bundle.units ?? 0).toLocaleString('en-GB'),
+                    // The catalogue serves ACU_BUNDLES, whose fields are {bundle,
+                    // priceMinor, usableAcus, …}. The old `label`/`id`/`units`
+                    // keys do not exist on it, so the name rendered blank and the
+                    // ACU column a hardcoded-looking 0 on the published price list.
+                    bundle.bundle ?? bundle.label ?? '—',
+                    (bundle.usableAcus ?? 0).toLocaleString('en-GB'),
                     money(bundle.priceMinor ?? 0),
                   ]),
                   empty: 'No bundle is published.',

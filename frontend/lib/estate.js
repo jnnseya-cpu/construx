@@ -138,9 +138,14 @@ export function refusal(what, error) {
   // model working and is said quietly; a failure stays red. The same split
   // `positionReport` makes on the delivery screens.
   if (error?.status === 403) {
+    // A module gate is a company-licensing decision, not a per-person role, so
+    // it must not read as "outside your role" — that sends the person to an
+    // admin to change their role instead of to their company to license the
+    // module. The server's own message already explains it; the heading matches.
+    const moduleGate = error?.code === 'MODULE_NOT_GRANTED';
     return html`<div class="notice">
       <div>
-        <b>${what} is outside your role</b><br />
+        <b>${what} ${moduleGate ? 'needs a module your company does not hold' : 'is outside your role'}</b><br />
         ${error?.message ?? String(error)}
       </div>
     </div>`;
