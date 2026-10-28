@@ -30216,3 +30216,14 @@ workflows reviewed: submittals, design change/baseline, concept, construction
 progress/deliveries/dossier, handover, meeting actions, and project invitations
 — each with a gateway journey test. The handover requirements-matrix sub-workflow
 remains as a named follow-up vertical.
+
+- **Handover requirements matrix (`handover.js`)** — the deferred sub-workflow,
+  now wired: create requirement, assign, baseline matrix, submit (evidence),
+  decide (accept/reject, forParty read from the requirement so it can't be
+  mistyped), waive (PROJECT_SETUP A), and source-reissue.
+  `backend/tests/handovermatrixjourney.test.ts` drives record → assign →
+  baseline → submit → accept through the gateway (the accepted requirement
+  leaves `unmet`), proves waive is refused to an FM but allowed to an owner, and
+  that a decision for the wrong acceptance party is refused. `defineHandoverSection`
+  (sectional handover) remains a follow-up — it needs a multiselect over
+  requirement references the current field model does not cleanly provide.

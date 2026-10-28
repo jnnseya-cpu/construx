@@ -148,6 +148,7 @@ export async function handover(root) {
 
   const b = await entityBundle(projectId, [
     'HandoverPack',
+    'HandoverRequirement',
     'AssetRegisterItem',
     'Warranty',
     'Defect',
@@ -341,6 +342,27 @@ export async function handover(root) {
   const residualCount = (acceptance?.residual ?? []).length;
   const residualsTransferred = acceptance?.transferred === true;
   const packLabel = (p) => `${String(p.packId).slice(-6)} · ${humanise(p.decision ?? p.status ?? 'pack')}`;
+
+  // The H-WF-01 requirements matrix spine, read from the generic entity route
+  // (`b.HandoverRequirement`) rather than `/handover-readiness`, because the
+  // readiness position carries each requirement's *reference* and not the id
+  // these commands address. Every selector and every precondition is derived
+  // from that one read, so a shown control names an id the route accepts and a
+  // locked one says the one thing that unlocks it — it never 403s or
+  // dead-ends on a submission the route will refuse for a reason the person
+  // could have been told up front.
+  //
+  //   record requirement → assign deliverable → baseline matrix
+  //                      → submit → decide (accept), with waive as the exception
+  const matrixReqs = b.HandoverRequirement ?? [];
+  const liveWaiver = (r) => r.waiver && String(r.waiver.expiresOn ?? '').slice(0, 10) >= today;
+  const assignableReqs = matrixReqs.filter((r) => r.status !== 'ACCEPTED');
+  const unbaselinedReqs = matrixReqs.filter((r) => !r.baselined);
+  const submittableReqs = matrixReqs.filter((r) => r.assignment && r.status !== 'ACCEPTED');
+  const submittedReqs = matrixReqs.filter((r) => r.status === 'SUBMITTED');
+  const waivableReqs = matrixReqs.filter((r) => !r.statutory && r.status !== 'ACCEPTED' && !liveWaiver(r));
+  const reqById = new Map(matrixReqs.map((r) => [r._refId, r]));
+  const reqLabel = (r) => `${r.reference} · ${humanise(r.status ?? 'NOT_STARTED')}`;
 
   render(
     root,
@@ -640,6 +662,70 @@ export async function handover(root) {
       }
 
       ${raw(LOOKUPS.map((spec) => resolveHtml(lookupPanel(spec))).join(''))}
+
+      <section class="card" style="margin-bottom:14px" aria-labelledby="matrix-cmd-h">
+        <h2 id="matrix-cmd-h">Requirements matrix</h2>
+        <p class="metric-sub" style="margin-bottom:12px">
+          The obligations readiness above is the arithmetic over. Record each with the evidence that would actually
+          satisfy it, assign the producer, checker and approver, baseline the set, then submit and decide — by the
+          named acceptance party, never by a file being present.
+        </p>
+        <div class="actions cmd-bar">
+          ${raw(commandBar([
+            { id: 'createrequirement', label: 'Record requirement', permitted: can('HANDOVER_OM', 'C'), reason: blockedReason('HANDOVER_OM', 'C') },
+            {
+              id: 'assignrequirement',
+              label: 'Assign deliverable',
+              permitted: can('HANDOVER_OM', 'U') && assignableReqs.length > 0,
+              reason: can('HANDOVER_OM', 'U')
+                ? (assignableReqs.length > 0 ? '' : 'Record a requirement first — a deliverable is assigned against one.')
+                : blockedReason('HANDOVER_OM', 'U'),
+            },
+            {
+              id: 'baselinematrix',
+              label: 'Baseline matrix',
+              permitted: can('HANDOVER_OM', 'A') && unbaselinedReqs.length > 0,
+              reason: can('HANDOVER_OM', 'A')
+                ? (matrixReqs.length === 0
+                    ? 'Record at least one requirement before baselining the matrix.'
+                    : unbaselinedReqs.length > 0 ? '' : 'The requirements matrix is already baselined.')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
+            {
+              id: 'submitrequirement',
+              label: 'Submit requirement',
+              permitted: can('HANDOVER_OM', 'U') && submittableReqs.length > 0,
+              reason: can('HANDOVER_OM', 'U')
+                ? (submittableReqs.length > 0 ? '' : 'No assigned requirement is open for submission — assign one first.')
+                : blockedReason('HANDOVER_OM', 'U'),
+            },
+            {
+              id: 'deciderequirement',
+              label: 'Decide requirement',
+              permitted: can('HANDOVER_OM', 'A') && submittedReqs.length > 0,
+              reason: can('HANDOVER_OM', 'A')
+                ? (submittedReqs.length > 0 ? '' : 'No requirement is submitted and awaiting a decision.')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
+            {
+              id: 'waiverequirement',
+              label: 'Waive requirement',
+              permitted: can('PROJECT_SETUP', 'A') && waivableReqs.length > 0,
+              reason: can('PROJECT_SETUP', 'A')
+                ? (waivableReqs.length > 0 ? '' : 'No ordinary non-statutory requirement is open to waive.')
+                : blockedReason('PROJECT_SETUP', 'A'),
+            },
+            {
+              id: 'sourcereissue',
+              label: 'Record source reissue',
+              permitted: can('HANDOVER_OM', 'U') && matrixReqs.length > 0,
+              reason: can('HANDOVER_OM', 'U')
+                ? (matrixReqs.length > 0 ? '' : 'Record a requirement before flagging a source reissue.')
+                : blockedReason('HANDOVER_OM', 'U'),
+            },
+          ]))}
+        </div>
+      </section>
 
       ${positionReport({
         title: 'Handover readiness',
@@ -1115,6 +1201,178 @@ export async function handover(root) {
         title: 'Residual obligations transferred',
         message: `${r.transferred} obligation(s) to ${(r.owners ?? []).length} owner(s)`,
         tone: 'ok',
+      }),
+    },
+
+    // --- H-WF-01 requirements matrix ---------------------------------------
+    createrequirement: {
+      title: 'Record a handover requirement',
+      intent:
+        'One obligation with its source, clause and acceptance party, and the evidence rule that would actually ' +
+        'satisfy it — the witnessed act, the verified record, the confirmed transfer. Never "a document is attached".',
+      path: `/v1/projects/${projectId}/handover-requirements`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'reference', label: 'Reference', type: 'text', placeholder: 'REQ-OM-014' },
+        { name: 'source', label: 'Source document', type: 'text', placeholder: 'Employer information requirements (EIR)' },
+        { name: 'sourceVersion', label: 'Source version', type: 'text', placeholder: 'Rev C',
+          hint: 'What makes a later reissue detectable.' },
+        { name: 'sourceClause', label: 'Source clause', type: 'text', placeholder: 'Section 4.2' },
+        { name: 'description', label: 'Description', type: 'textarea' },
+        { name: 'acceptanceCriteria', label: 'Acceptance criteria', type: 'textarea',
+          hint: 'What satisfying this looks like. At least a sentence — without it the decision is a matter of taste.' },
+        { name: 'evidenceRule', label: 'Evidence rule', type: 'textarea',
+          hint: 'What would actually satisfy it. At least a sentence. Not "a PDF is attached".' },
+        { name: 'acceptanceParty', label: 'Acceptance party', type: 'text',
+          hint: 'Who accepts it. A requirement everybody can close is one nobody owns.' },
+        { name: 'dependency', label: 'Depends on', type: 'select', options: [
+          { value: 'PHYSICAL_COMPLETION', label: 'Physical completion' },
+          { value: 'TEST', label: 'Test' },
+          { value: 'AS_BUILT', label: 'As-built' },
+          { value: 'MANUAL', label: 'Manual' },
+          { value: 'ASSET_DATA', label: 'Asset data' },
+          { value: 'WARRANTY', label: 'Warranty' },
+          { value: 'TRAINING', label: 'Training' },
+          { value: 'STATUTORY', label: 'Statutory' },
+          { value: 'TRANSFER', label: 'Transfer' },
+        ] },
+        { name: 'weight', label: 'Weight', type: 'number', min: 1, hint: 'What readiness is computed over.' },
+        { name: 'mandatory', label: 'Mandatory', type: 'checkbox', value: true },
+        { name: 'statutory', label: 'Statutory', type: 'checkbox',
+          hint: 'A statutory requirement cannot be waived by any project authority.' },
+        { name: 'systemTag', label: 'System tag', type: 'text', required: false },
+        { name: 'area', label: 'Area', type: 'text', required: false },
+        { name: 'assetTag', label: 'Asset tag', type: 'text', required: false },
+      ],
+      report: (r) => ({ title: 'Requirement recorded', message: `${r.reference} added to the matrix`, tone: 'ok' }),
+    },
+    assignrequirement: {
+      title: 'Assign a deliverable',
+      intent:
+        'Map the requirement to a producer, a checker and an approver — three people, because a deliverable produced, ' +
+        'checked and approved by one person has been checked by nobody — and the date it is required by.',
+      path: (v) => `/v1/projects/${projectId}/handover-requirements/${v.requirementId}/assign`,
+      submitLabel: 'Assign',
+      // The requirement is the subject in the URL; the route takes only the names and the date.
+      transform: (v) => ({ producer: v.producer, checker: v.checker, approver: v.approver, requiredBy: v.requiredBy }),
+      fields: [
+        { name: 'requirementId', label: 'Requirement', type: 'select',
+          options: assignableReqs.map((r) => ({ value: r._refId, label: reqLabel(r) })) },
+        { name: 'producer', label: 'Producer', type: 'text' },
+        { name: 'checker', label: 'Checker', type: 'text' },
+        { name: 'approver', label: 'Approver', type: 'text' },
+        { name: 'requiredBy', label: 'Required by', type: 'date', hint: 'A deliverable with no date is never late.' },
+      ],
+      report: (r) => ({ title: 'Deliverable assigned', message: `${r.reference} assigned`, tone: 'ok' }),
+    },
+    baselinematrix: {
+      title: 'Baseline the requirements matrix',
+      intent:
+        'Freeze the matrix. After this a requirement is added by delta rather than quietly, and every row must already ' +
+        'carry a producer, a checker, an approver and a date.',
+      path: `/v1/projects/${projectId}/handover-matrices`,
+      submitLabel: 'Baseline',
+      fields: [
+        { name: 'baselinedBy', label: 'Baselined by', type: 'text', value: state.session.user.name },
+      ],
+      report: (r) => ({ title: 'Matrix baselined', message: `${r.requirements} requirement(s) baselined`, tone: 'ok' }),
+    },
+    submitrequirement: {
+      title: 'Submit a requirement',
+      intent:
+        'Submit the deliverable against a requirement for a decision. The submission is what a decision is made about, ' +
+        'never what makes one — a row does not go green because a file was attached.',
+      path: (v) => `/v1/projects/${projectId}/handover-requirements/${v.requirementId}/submit`,
+      submitLabel: 'Submit',
+      transform: (v) => ({ evidence: v.evidence, submittedBy: v.submittedBy }),
+      fields: [
+        { name: 'requirementId', label: 'Requirement', type: 'select',
+          options: submittableReqs.map((r) => ({ value: r._refId, label: reqLabel(r) })) },
+        { name: 'evidence', label: 'Evidence', type: 'textarea',
+          hint: 'What is being submitted — the witnessed act, the verified record, the reference to the document.' },
+        { name: 'submittedBy', label: 'Submitted by', type: 'text', value: state.session.user.name },
+      ],
+      report: () => ({ title: 'Requirement submitted', message: 'Submitted and awaiting a decision', tone: 'ok' }),
+    },
+    deciderequirement: {
+      title: 'Decide a requirement',
+      intent:
+        'Accept, accept with conditions, or reject — by the named acceptance party, against the evidence rule, with a ' +
+        'stated reason. A row turned green because a document was attached is the failure this rule exists to stop.',
+      path: (v) => `/v1/projects/${projectId}/handover-requirements/${v.requirementId}/decide`,
+      submitLabel: 'Record decision',
+      // `forParty` is the requirement's own acceptance party, read from the selected
+      // row rather than retyped — the route refuses a decision recorded for anyone
+      // else, so asking a person to key it in by hand is a guaranteed dead-end.
+      transform: (v) => {
+        const out = {
+          decision: v.decision,
+          acceptedBy: v.acceptedBy,
+          forParty: reqById.get(v.requirementId)?.acceptanceParty,
+          reason: v.reason,
+        };
+        if (v.decision === 'ACCEPTED_WITH_CONDITIONS') out.conditions = v.conditions;
+        return out;
+      },
+      validate: (v) => (v.decision === 'ACCEPTED_WITH_CONDITIONS' && !v.conditions
+        ? { field: 'conditions', message: 'An acceptance with conditions states the conditions.' }
+        : undefined),
+      fields: [
+        { name: 'requirementId', label: 'Requirement', type: 'select',
+          options: submittedReqs.map((r) => ({ value: r._refId, label: `${r.reference} · for ${r.acceptanceParty} · ${humanise(r.status ?? '')}` })) },
+        { name: 'decision', label: 'Decision', type: 'select', options: [
+          { value: 'ACCEPTED', label: 'Accept' },
+          { value: 'ACCEPTED_WITH_CONDITIONS', label: 'Accept with conditions' },
+          { value: 'REJECTED', label: 'Reject' },
+        ] },
+        { name: 'acceptedBy', label: 'Decided by', type: 'text', value: state.session.user.name },
+        { name: 'reason', label: 'Reason', type: 'textarea',
+          hint: 'How the requirement meets its evidence rule, or why it does not. At least a sentence — a decision with no stated basis is the one that gets disputed.' },
+        { name: 'conditions', label: 'Conditions', type: 'textarea', required: false,
+          hint: 'For an acceptance with conditions only.' },
+      ],
+      report: (r) => ({
+        title: `Requirement ${humanise(String(r.status ?? ''))}`,
+        message: 'Decision recorded',
+        tone: r.status === 'REJECTED' ? 'warn' : 'ok',
+      }),
+    },
+    waiverequirement: {
+      title: 'Waive a requirement',
+      intent:
+        'Set an ordinary requirement aside with a reason and an expiry. A statutory requirement is never waivable by ' +
+        'any project authority — the authority that could is not a project authority at all.',
+      path: (v) => `/v1/projects/${projectId}/handover-requirements/${v.requirementId}/waive`,
+      submitLabel: 'Waive',
+      transform: (v) => ({ reason: v.reason, approvedBy: v.approvedBy, expiresOn: v.expiresOn }),
+      fields: [
+        { name: 'requirementId', label: 'Requirement', type: 'select',
+          options: waivableReqs.map((r) => ({ value: r._refId, label: reqLabel(r) })) },
+        { name: 'reason', label: 'Reason', type: 'textarea',
+          hint: 'Why it is being set aside and what stands in its place. At least a sentence.' },
+        { name: 'approvedBy', label: 'Approved by', type: 'text', value: state.session.user.name },
+        { name: 'expiresOn', label: 'Waiver expires on', type: 'date',
+          hint: 'A waiver expires on a date. One with none is a deletion.' },
+      ],
+      report: (r) => ({ title: 'Requirement waived', message: `${r.reference} waived`, tone: 'warn' }),
+    },
+    sourcereissue: {
+      title: 'Record a source reissue',
+      intent:
+        'A contract or information requirement has been reissued. Every requirement drawn from the old version is ' +
+        'flagged for delta review rather than silently re-pointed — what changed is a question for a person.',
+      path: `/v1/projects/${projectId}/handover-requirements/source-reissue`,
+      submitLabel: 'Flag for delta review',
+      fields: [
+        { name: 'source', label: 'Source document', type: 'text', placeholder: 'Employer information requirements (EIR)' },
+        { name: 'fromVersion', label: 'From version', type: 'text', placeholder: 'Rev C' },
+        { name: 'toVersion', label: 'To version', type: 'text', placeholder: 'Rev D' },
+        { name: 'recordedBy', label: 'Recorded by', type: 'text', value: state.session.user.name },
+      ],
+      report: (r) => ({
+        title: 'Source reissue recorded',
+        message: `${(r.flagged ?? []).length} requirement(s) flagged for delta review`,
+        tone: (r.flagged ?? []).length > 0 ? 'warn' : 'ok',
       }),
     },
   };
