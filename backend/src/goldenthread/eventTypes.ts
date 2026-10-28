@@ -985,6 +985,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // a date and what the site did about it.
   def('UNCONFIRMED_DIRECTION_RECORDED', 'UnconfirmedDirection', 'CREATE', 'CONTRACTS_CLAIMS', { creates: true }),
   def('DIRECTION_CONFIRMED', 'UnconfirmedDirection', 'UPDATE', 'CONTRACTS_CLAIMS'),
+  // Withdrawal is the opposite resolution to confirmation and needs its own code:
+  // the audit narrator builds its sentence from the event type, so recording a
+  // withdrawal under DIRECTION_CONFIRMED made the Golden Thread timeline read
+  // "direction confirmed" for a direction that was withdrawn.
+  def('DIRECTION_WITHDRAWN', 'UnconfirmedDirection', 'UPDATE', 'CONTRACTS_CLAIMS'),
 
   // --- Programme & delivery -------------------------------------------------
   // CN-WF-01. Start is an authorisation rather than a date. The checklist is by

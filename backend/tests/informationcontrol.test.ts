@@ -68,6 +68,9 @@ describe('CN-WF-08 the register', () => {
       ['INSTRUCTION_IMPLEMENTED', 'Instruction'],
       ['UNCONFIRMED_DIRECTION_RECORDED', 'UnconfirmedDirection'],
       ['DIRECTION_CONFIRMED', 'UnconfirmedDirection'],
+      // A withdrawal is its own resolution: emitting it under DIRECTION_CONFIRMED
+      // made the audit timeline narrate "direction confirmed" for a withdrawal.
+      ['DIRECTION_WITHDRAWN', 'UnconfirmedDirection'],
     ] as const) {
       const definition = lookupEventType(code);
       assert.ok(definition, `${code} is not in the catalogue`);

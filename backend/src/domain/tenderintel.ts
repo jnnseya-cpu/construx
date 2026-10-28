@@ -397,7 +397,14 @@ export type ComparisonQuery = {
 
 function requireComparison(ctx: EngineContext, comparisonId: string): EntityRecord {
   const record = ctx.ledger.get({ refType: 'ReturnComparison', refId: comparisonId });
-  if (!record) throw new DomainError('COMPARISON_NOT_FOUND', `No return comparison ${comparisonId}`, 404);
+  // Scoped by tenant AND project. A ReturnComparison carries every bidder's raw,
+  // adjusted and evaluated prices — the most commercially sensitive record in the
+  // module. The ledger get is not itself scoped, so without this a caller on
+  // their own project who supplies another project's (or tenant's) comparison id
+  // would be handed that comparison's confidential competitor pricing.
+  if (!record || record.tenantId !== ctx.tenantId || record.projectId !== ctx.projectId) {
+    throw new DomainError('COMPARISON_NOT_FOUND', `No return comparison ${comparisonId}`, 404);
+  }
   return record;
 }
 

@@ -918,7 +918,11 @@ export function interiorPoint(ring: geo.Ring): geo.Point {
 
 function requireModel(ctx: EngineContext, modelId: string): { refId: string; state: ModelState } {
   const record = ctx.ledger.get({ refType: 'SiteModel', refId: modelId });
-  if (!record || record.tenantId !== ctx.tenantId) {
+  // Scoped by tenant AND project. The route is /v1/projects/:projectId/site-model/:modelId,
+  // so a model id from a sibling project in the same tenant must not resolve under
+  // another project's URL — otherwise one project's boundary, zones and conflict
+  // findings render on another's screen. Mirrors heldIfc in engines/bim.ts.
+  if (!record || record.tenantId !== ctx.tenantId || record.projectId !== ctx.projectId) {
     throw new DomainError('SITE_MODEL_NOT_FOUND', `No site model ${modelId}`, 404);
   }
   return { refId: record.refId, state: record.state as unknown as ModelState };

@@ -211,6 +211,22 @@ export function createPortfolio(
     );
   }
 
+  // The enterprise must exist and be this tenancy's own. The route schema only
+  // checks the id is a non-empty string, so without this a typo'd or foreign
+  // enterprise id writes a portfolio with a dangling parent link onto an
+  // append-only ledger (the console constrains the dropdown; a direct API call
+  // does not). createProject/createProgramme require their parent portfolio;
+  // this closes the one structural parent that was accepted unchecked.
+  const enterprise = ctx.ledger.get({ refType: 'Enterprise', refId: input.enterpriseId });
+  if (!enterprise || enterprise.state.tenantId !== ctx.tenantId) {
+    throw new DomainError(
+      'ENTERPRISE_NOT_FOUND',
+      `No enterprise ${input.enterpriseId} in this tenancy.`,
+      422,
+      [{ field: 'enterpriseId', message: 'Choose an enterprise that belongs to your organisation' }],
+    );
+  }
+
   const portfolioId = ulid();
   write(ctx, {
     // Structural entities live on a tenant-level pseudo-project so that
@@ -269,7 +285,13 @@ export function createProgramme(
 ): { programmeId: string } {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'C');
 
-  ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  // require() is global, not tenant-scoped, so assert the parent portfolio is
+  // this tenancy's own — otherwise a known foreign portfolio ULID lets a
+  // programme be filed against another tenant's portfolio.
+  const parent = ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  if (parent.state.tenantId !== ctx.tenantId) {
+    throw new DomainError('PORTFOLIO_NOT_FOUND', `No portfolio ${input.portfolioId} in this tenancy.`, 404);
+  }
 
   const programmeId = ulid();
   write(ctx, {
@@ -344,6 +366,12 @@ export function createProject(
   assertOrder(input.plannedStart, input.plannedCompletion, 'plannedStart', 'plannedCompletion');
 
   const portfolio = ctx.ledger.require({ refType: 'Portfolio', refId: input.portfolioId });
+  // The parent portfolio must be this tenancy's own: require() is global, and
+  // the region rule below validates the project's location against the
+  // portfolio, so a foreign portfolio must not even be readable here.
+  if (portfolio.state.tenantId !== ctx.tenantId) {
+    throw new DomainError('PORTFOLIO_NOT_FOUND', `No portfolio ${input.portfolioId} in this tenancy.`, 404);
+  }
   if (portfolio.state.status === 'DELETED') {
     throw new DomainError('PORTFOLIO_DELETED', `${String(portfolio.state.name)} was deleted on ${String(portfolio.state.deletedAt ?? '').slice(0, 10)}; file the project under a live portfolio.`, 409, [
       { field: 'portfolioId', message: 'That portfolio has been deleted' },

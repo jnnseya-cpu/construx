@@ -640,6 +640,13 @@ export function reconcileTenderResponses(
   authorise(ctx, 'PROCUREMENT_AWARD', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
   const rfq = ctx.ledger.require({ refType: 'RFQ', refId: rfqId });
+  // require() is not tenant/project-scoped, so confine the RFQ to the caller's
+  // own project here — otherwise a foreign RFQ's reference, status, deadline and
+  // invited-supplier list are returned across projects within (or beyond) the
+  // tenant, even though the submissions below are already project-filtered.
+  if (rfq.tenantId !== ctx.tenantId || rfq.projectId !== ctx.projectId) {
+    throw new DomainError('RFQ_NOT_FOUND', `No RFQ ${rfqId}`, 404);
+  }
   const invited = (rfq.state.invitedSupplierIds as string[]) ?? [];
   const acknowledgements = (rfq.state.acknowledgements as Array<Record<string, unknown>>) ?? [];
   const deadline = String(rfq.state.returnDeadline);

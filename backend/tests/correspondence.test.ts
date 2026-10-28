@@ -364,6 +364,12 @@ describe('who was asked, who answered, and who said nothing', () => {
           ...pm().ledger,
           require: () => ({
             refId: 'legacy-rfq',
+            // The real ledger stamps tenant and project on every record; the
+            // fixture carries them too so reconcile's project-scope guard sees
+            // the RFQ as this project's own (the point of the test is the
+            // supplier-join fallback, not a cross-project read).
+            tenantId: pm().tenantId,
+            projectId: pm().projectId,
             state: {
               reference: 'RFQ-LEGACY',
               status: 'ISSUED',

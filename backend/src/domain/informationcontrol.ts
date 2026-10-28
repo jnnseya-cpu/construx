@@ -495,7 +495,7 @@ export function withdrawDirection(
   }
 
   write(ctx, {
-    eventType: 'DIRECTION_CONFIRMED',
+    eventType: 'DIRECTION_WITHDRAWN',
     entity: { refType: 'UnconfirmedDirection', refId: directionId },
     nextState: {
       ...record.state,

@@ -13514,6 +13514,12 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/bid-on/customers',
     readOnly: true,
+    // A Bid-On customer is an external guest in the provider's tenancy; this is
+    // the first read their own screen makes to discover which workspace is
+    // theirs. The handler already confines the list to workspaces the caller may
+    // see, so it is safe for a guest — it simply was never classified, which left
+    // the gateway refusing the guest and dead-ending the whole customer side.
+    guest: 'OWN',
     description:
       'The customer workspaces this person is assigned to — never the tenancy’s whole list. A provider’s customers compete with each other, so the register says how many it is not showing rather than looking complete',
     handler: (platform, ctx) =>
@@ -13545,6 +13551,10 @@ export const ROUTES: Route[] = [
     method: 'GET',
     pattern: '/v1/bid-on/customers/:customerId',
     readOnly: true,
+    // The guest's own workspace — the page exists to confirm declarations here.
+    // customerWorkspace calls requireVisibleCustomer, so a guest can only reach
+    // their own; classified so the gateway stops refusing the guest.
+    guest: 'OWN',
     description: 'One customer workspace in full: profile, guests, live declarations and every engagement',
     handler: (platform, ctx) =>
       bidOnCustomers.customerWorkspace(
