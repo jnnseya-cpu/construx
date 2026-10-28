@@ -84,7 +84,14 @@ const SEVERITY = [
 export async function construction(root) {
   const projectId = state.session.projectId;
 
-  const b = await entityBundle(projectId, ['Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection', 'ToolboxTalk']);
+  const b = await entityBundle(projectId, [
+    'Permit', 'RAMS', 'Induction', 'Competency', 'NCR', 'InspectionPlan', 'QualityInspection', 'ToolboxTalk',
+    // The registers the three write doors below operate against. Read through
+    // the same classification as every other type — a role without read on the
+    // area gets an empty list and the door locks with the reason, rather than a
+    // modal onto nothing.
+    'Task', 'Delivery', 'ProgressSubmission', 'SystemNode',
+  ]);
 
   const [quality, cdm, requirements, safetyControl, qualityControl, holdPoints, safetyPosition, procurementItems, verification, dailyLogs, mobilisation, exceptions, testPacks] =
     await Promise.all([
@@ -170,6 +177,55 @@ export async function construction(root) {
       ? `${unagreedPlans.length} plan(s) are written and not yet agreed. Nothing can be inspected against a plan the other side has not approved.`
       : noOpenPlan;
   const noOpenNcr = 'No non-conformance is open.';
+
+  // --- CN-WF-04 progress claim and verification (the money path) -------------
+  //
+  // The register was read-only: the position below reported what was claimed
+  // and accepted and nothing could write to it. These three doors are the whole
+  // of it — a basis to measure against, a claim, and a certification by
+  // somebody else.
+  const measuredActivities = verification && !verification.error ? verification.activities ?? [] : [];
+  const awaitingClaims = b.ProgressSubmission.filter((s) => s.status === 'SUBMITTED');
+  // The two-person rule, surfaced at the door rather than discovered at it. The
+  // person who claimed the progress cannot certify it, so a verifier is never
+  // offered their own claims — the platform refuses it either way.
+  const verifiableClaims = awaitingClaims.filter((s) => String(s.submittedBy) !== String(state.session.user.id));
+  const noTask = 'No activity exists to measure. Tasks are created on the programme.';
+  const noMeasuredActivity =
+    'No activity has a measurement basis. Set one first — a claim needs the unit it is made in and the control total it is checked against.';
+  const noClaimToVerify =
+    awaitingClaims.length > 0
+      ? 'The only claims awaiting a verifier are ones you submitted, and the person who claims progress cannot be the person who certifies it.'
+      : 'No progress claim is awaiting a verifier.';
+
+  // --- CN-WF-05 deliveries / goods-in ----------------------------------------
+  //
+  // The page read `/procurement-items` and had no way to receive anything. The
+  // ladder is register → book → receive → (quarantine → release) → accept →
+  // install, and each door offers only the deliveries in the state its act
+  // applies to, so the sequence is the one the platform enforces.
+  const procItems = procurementItems && !procurementItems.error ? procurementItems.items ?? [] : [];
+  const bookedDeliveries = b.Delivery.filter((d) => d.state === 'BOOKED');
+  const receivedDeliveries = b.Delivery.filter((d) => d.state === 'RECEIVED');
+  const quarantinedDeliveries = b.Delivery.filter((d) => d.state === 'QUARANTINED');
+  const quarantinableDeliveries = b.Delivery.filter((d) => d.state === 'BOOKED' || d.state === 'RECEIVED');
+  const installableDeliveries = b.Delivery.filter(
+    (d) => d.state === 'ACCEPTED' && (d.units ?? []).some((u) => !u.installedAt),
+  );
+  const deliveryLabel = (d) => `${d.reference} · ${d.itemReference ?? d.itemId}`;
+  const noItem = 'No procurement item is registered. Register one first — a delivery is booked against an item.';
+  const noBooked = 'No delivery is booked and awaiting receipt.';
+  const noReceived = 'No delivery has been received and is waiting to be accepted into stock.';
+  const noQuarantined = 'Nothing is in quarantine.';
+  const noQuarantinable = 'No delivery is on site to quarantine.';
+  const noInstallable = 'No accepted delivery carries a serial still to be installed.';
+
+  // --- Commissioning dossier -------------------------------------------------
+  //
+  // `accept-system` dead-ended with NO_DOSSIER because there was no door to
+  // compile one. This is that door.
+  const systemTags = [...new Set(b.SystemNode.map((n) => String(n.tag)))];
+  const noSystem = 'No system is defined on this project. A dossier is compiled for a defined system.';
 
   render(
     root,
@@ -272,6 +328,52 @@ export async function construction(root) {
               reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noOpenException },
             { id: 'accept-system', label: 'Accept a system',
               permitted: can('QUALITY_COMMISSIONING', 'A'), reason: blockedReason('QUALITY_COMMISSIONING', 'A') },
+
+            // CN-WF-04. Setting the basis is a statement about scope, so it is
+            // WORKPACKAGES_TASKS U; the claim is a field act (C); the
+            // certification is an approval (A) the claimant may not make.
+            { id: 'set-measurement-basis', label: 'Set a measurement basis',
+              permitted: can('WORKPACKAGES_TASKS', 'U') && (b.Task ?? []).length > 0,
+              reason: !can('WORKPACKAGES_TASKS', 'U') ? blockedReason('WORKPACKAGES_TASKS', 'U') : noTask },
+            { id: 'submit-progress-claim', label: 'Claim progress',
+              permitted: can('FIELD_EXECUTION', 'C') && measuredActivities.length > 0,
+              reason: !can('FIELD_EXECUTION', 'C') ? blockedReason('FIELD_EXECUTION', 'C') : noMeasuredActivity },
+            { id: 'verify-claim', label: 'Verify a claim',
+              permitted: can('FIELD_EXECUTION', 'A') && verifiableClaims.length > 0,
+              reason: !can('FIELD_EXECUTION', 'A') ? blockedReason('FIELD_EXECUTION', 'A') : noClaimToVerify },
+
+            // CN-WF-05. Registering and tracking the item is the buyer's
+            // (PROCUREMENT_AWARD); booking, receiving, accepting and installing
+            // are the site's (FIELD_EXECUTION); quarantine and release are
+            // quality's (QUALITY_COMMISSIONING).
+            { id: 'register-item', label: 'Register a procurement item',
+              permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'advance-milestone', label: 'Advance a procurement milestone',
+              permitted: can('PROCUREMENT_AWARD', 'U') && procItems.length > 0,
+              reason: !can('PROCUREMENT_AWARD', 'U') ? blockedReason('PROCUREMENT_AWARD', 'U') : noItem },
+            { id: 'book-delivery', label: 'Book a delivery',
+              permitted: can('FIELD_EXECUTION', 'C') && procItems.length > 0,
+              reason: !can('FIELD_EXECUTION', 'C') ? blockedReason('FIELD_EXECUTION', 'C') : noItem },
+            { id: 'receive-delivery', label: 'Receive a delivery',
+              permitted: can('FIELD_EXECUTION', 'C') && bookedDeliveries.length > 0,
+              reason: !can('FIELD_EXECUTION', 'C') ? blockedReason('FIELD_EXECUTION', 'C') : noBooked },
+            { id: 'quarantine-delivery', label: 'Quarantine material',
+              permitted: can('QUALITY_COMMISSIONING', 'C') && quarantinableDeliveries.length > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'C') ? blockedReason('QUALITY_COMMISSIONING', 'C') : noQuarantinable },
+            { id: 'release-delivery', label: 'Release from quarantine',
+              permitted: can('QUALITY_COMMISSIONING', 'A') && quarantinedDeliveries.length > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'A') ? blockedReason('QUALITY_COMMISSIONING', 'A') : noQuarantined },
+            { id: 'accept-delivery', label: 'Accept a delivery',
+              permitted: can('FIELD_EXECUTION', 'A') && receivedDeliveries.length > 0,
+              reason: !can('FIELD_EXECUTION', 'A') ? blockedReason('FIELD_EXECUTION', 'A') : noReceived },
+            { id: 'install-unit', label: 'Install a serial',
+              permitted: can('FIELD_EXECUTION', 'U') && installableDeliveries.length > 0,
+              reason: !can('FIELD_EXECUTION', 'U') ? blockedReason('FIELD_EXECUTION', 'U') : noInstallable },
+
+            // The door that lets `accept-system` succeed.
+            { id: 'compile-dossier', label: 'Compile a dossier',
+              permitted: can('QUALITY_COMMISSIONING', 'C') && systemTags.length > 0,
+              reason: !can('QUALITY_COMMISSIONING', 'C') ? blockedReason('QUALITY_COMMISSIONING', 'C') : noSystem },
           ]))}
         </div>
       </div>
@@ -670,8 +772,14 @@ export async function construction(root) {
   // already been decided is not offered a second verdict.
   const openExceptionOptions = openExceptionList
     .map((entry) => ({ value: entry.exceptionId, label: `${entry.reference} · ${entry.systemTag}` }));
-  const systemOptions = [...new Set((exceptions?.exceptions ?? []).map((entry) => entry.systemTag))]
-    .map((tag) => ({ value: tag, label: tag }));
+  // Every defined system, not only the ones carrying an exception. A system
+  // can be compiled and accepted with no exception against it at all, so a list
+  // drawn from exceptions alone would offer `accept-system` nothing to act on
+  // for exactly the systems `compile-dossier` has just made ready.
+  const systemOptions = [...new Set([
+    ...(exceptions?.exceptions ?? []).map((entry) => entry.systemTag),
+    ...systemTags,
+  ])].map((tag) => ({ value: tag, label: tag }));
 
   const COMMANDS = {
     'exception-action': {
@@ -803,6 +911,347 @@ export async function construction(root) {
         ...(rest.decision === 'CONDITIONAL'
           ? { conditions: { operatingLimits, riskOwner, expiresOn, closurePlan } }
           : {}),
+      }),
+    },
+
+    // ---- CN-WF-04 progress claim and verification ----------------------------
+
+    'set-measurement-basis': {
+      title: 'Set a measurement basis',
+      intent:
+        'What the activity is measured in, how, and against what control total — with the drawing, model or bill item it ' +
+        'came from. Nothing cumulative may later exceed the control total, and a claim in another unit is refused.',
+      path: (v) => `/v1/projects/${projectId}/tasks/${v.taskId}/measurement-basis`,
+      submitLabel: 'Set the basis',
+      fields: [
+        { name: 'taskId', label: 'Activity', type: 'select',
+          options: (b.Task ?? []).map((t) => ({ value: t._refId, label: `${t.activityCode ? `${t.activityCode} · ` : ''}${t.name}` })) },
+        { name: 'unit', label: 'Unit', type: 'text', placeholder: 'm3',
+          hint: 'What it is measured in. A claim made in a different unit is refused, because two units against one activity cannot be added.' },
+        { name: 'controlTotal', label: 'Control total', type: 'number', min: 0, step: 'any',
+          hint: 'The quantity that exists. More accepted than this is either a measurement error or an unraised change.' },
+        { name: 'measurementRule', label: 'How it is measured', type: 'textarea', rows: 3,
+          hint: 'The rule, not a number — net excavated volume to formation, structural steel by the schedule, and so on.' },
+        { name: 'source', label: 'Where the control total came from', type: 'text', placeholder: 'C-2101 rev P05, bill item 2.4.1',
+          hint: 'A control total nobody can trace is one nobody can argue with when a claim exceeds it.' },
+      ],
+      transform: ({ taskId: _taskId, controlTotal, ...rest }) => ({ ...rest, controlTotal: Number(controlTotal) }),
+    },
+    'submit-progress-claim': {
+      title: 'Claim installed progress',
+      intent:
+        'Installed quantity against an activity, a location and a period, with the evidence it rests on. The same three ' +
+        'again is refused — the same pour claimed twice is paid for twice. Rework is recorded and earns nothing.',
+      path: (v) => `/v1/projects/${projectId}/tasks/${v.taskId}/progress-claims`,
+      submitLabel: 'Submit the claim',
+      fields: [
+        // The claim is made in the activity's own basis unit — looked up from
+        // the selected activity in the transform rather than retyped, so a
+        // UNIT_MISMATCH is impossible by construction.
+        { name: 'taskId', label: 'Activity', type: 'select',
+          options: measuredActivities.map((a) => ({ value: a.taskId, label: `${a.name} · measured in ${a.unit}` })) },
+        { name: 'quantity', label: 'Quantity installed', type: 'number', min: 0, step: 'any' },
+        { name: 'location', label: 'Where', type: 'text', placeholder: 'Grid A4, pour 3',
+          hint: 'A claim with no location cannot be checked against last week’s, which is how the same work gets claimed twice.' },
+        { name: 'periodFrom', label: 'Period from', type: 'date' },
+        { name: 'periodTo', label: 'Period to', type: 'date' },
+        { name: 'costCode', label: 'Cost code', type: 'text', required: false },
+        { name: 'rework', label: 'This is rework (redone work — earns nothing)', type: 'checkbox' },
+        { name: 'evidenceDescription', label: 'What the evidence shows', type: 'textarea', rows: 2 },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file',
+          hint: 'A progress claim carries the evidence it rests on — this is the record a valuation is built from.' },
+      ],
+      transform: ({ taskId, quantity, rework, costCode, ...rest }) => {
+        const basis = measuredActivities.find((a) => a.taskId === taskId);
+        return {
+          ...rest,
+          quantity: Number(quantity),
+          unit: basis ? basis.unit : '',
+          rework: rework === true,
+          ...(String(costCode ?? '').trim() ? { costCode: String(costCode).trim() } : {}),
+        };
+      },
+    },
+    'verify-claim': {
+      title: 'Verify a progress claim',
+      intent:
+        'Accept, adjust or reject what was claimed. The submitted quantity is never overwritten — the gap between claimed ' +
+        'and accepted is the finding. An adjustment carries a quantity and the evidence behind it, and the person who ' +
+        'submitted the claim cannot be the person who certifies it.',
+      path: (v) => `/v1/projects/${projectId}/progress-claims/${v.submissionId}/verify`,
+      submitLabel: 'Record the decision',
+      fields: [
+        { name: 'submissionId', label: 'Claim', type: 'select',
+          options: verifiableClaims.map((s) => ({
+            value: s._refId,
+            label: `${s.reference} · ${s.submittedQuantity}${s.unit} at ${s.location}`,
+          })) },
+        { name: 'decision', label: 'Decision', type: 'select', options: [
+          { value: 'ACCEPTED', label: 'Accepted — the claim as submitted' },
+          { value: 'ADJUSTED', label: 'Adjusted — accept a different quantity, with evidence' },
+          { value: 'REJECTED', label: 'Rejected — nothing is accepted' },
+        ] },
+        { name: 'acceptedQuantity', label: 'Accepted quantity', type: 'number', min: 0, step: 'any', required: false,
+          hint: 'An adjustment only. It must differ from what was claimed, or there is nothing to adjust.' },
+        { name: 'rationale', label: 'What the decision rests on', type: 'textarea', rows: 3 },
+        { name: 'evidenceDescription', label: 'What the verifier saw', type: 'textarea', rows: 2, required: false,
+          hint: 'Required on an adjustment — what the claim did not show.' },
+        { name: 'evidenceHash', label: 'Evidence', type: 'file', required: false },
+      ],
+      transform: ({ submissionId: _submissionId, ...rest }) => rest,
+      report: (response) =>
+        response.acceptedQuantity !== response.submittedQuantity
+          ? {
+              title: 'Claim verified',
+              message: `Claimed ${response.submittedQuantity}, accepted ${response.acceptedQuantity} — the gap is kept on the record.`,
+              tone: 'warn',
+            }
+          : null,
+    },
+
+    // ---- CN-WF-05 deliveries / goods-in --------------------------------------
+
+    'register-item': {
+      title: 'Register a procurement item',
+      intent:
+        'A purchased item with the date the programme needs it and the lead time it takes. The platform works out the date ' +
+        'it must be ordered by, and says — before anybody has done anything wrong — if it cannot arrive in time.',
+      path: `/v1/projects/${projectId}/procurement-items`,
+      submitLabel: 'Register',
+      fields: [
+        { name: 'reference', label: 'Reference', type: 'text', placeholder: 'PI-014' },
+        { name: 'description', label: 'Description', type: 'textarea', rows: 2, placeholder: 'DN300 penstock valve, flanged, manual gearbox' },
+        { name: 'quantity', label: 'Quantity', type: 'number', min: 0, step: 'any' },
+        { name: 'unit', label: 'Unit', type: 'text', placeholder: 'nr' },
+        { name: 'requiredOnSiteBy', label: 'Required on site by', type: 'date' },
+        { name: 'leadTimeDays', label: 'Lead time in days', type: 'number', min: 0 },
+        { name: 'safetyCritical', label: 'Safety-critical (needs a certificate or it is quarantined)', type: 'checkbox' },
+        { name: 'unitRateMinor', label: 'Unit rate', type: 'number', min: 0, step: 'any', money: true, required: false,
+          hint: 'Used to accrue on acceptance. Optional.' },
+        { name: 'substitutionSubmittalRef', label: 'Substitution submittal', type: 'text', required: false,
+          hint: 'Only where the product differs from what was specified.' },
+      ],
+      transform: ({ quantity, leadTimeDays, safetyCritical, unitRateMinor, substitutionSubmittalRef, ...rest }) => ({
+        ...rest,
+        quantity: Number(quantity),
+        leadTimeDays: Number(leadTimeDays),
+        safetyCritical: safetyCritical === true,
+        ...(unitRateMinor === undefined || String(unitRateMinor) === '' ? {} : { unitRateMinor: Number(unitRateMinor) }),
+        ...(String(substitutionSubmittalRef ?? '').trim() ? { substitutionSubmittalRef: String(substitutionSubmittalRef).trim() } : {}),
+      }),
+    },
+    'advance-milestone': {
+      title: 'Advance a procurement milestone',
+      intent:
+        'Move an item along its ladder. Every step names the evidence it rests on — the order number, the approved ' +
+        'submittal, the FAT certificate, the bill of lading. Delivery and acceptance are recorded by receiving, not declared.',
+      path: (v) => `/v1/projects/${projectId}/procurement-items/${v.itemId}/milestones`,
+      submitLabel: 'Record the step',
+      fields: [
+        { name: 'itemId', label: 'Item', type: 'select',
+          options: procItems.map((i) => ({ value: i.itemId, label: `${i.reference} · ${String(i.description).slice(0, 40)}` })) },
+        { name: 'step', label: 'Step reached', type: 'select', options: [
+          { value: 'REQUISITION', label: 'Requisition' },
+          { value: 'RFQ', label: 'RFQ' },
+          { value: 'ORDER', label: 'Order' },
+          { value: 'DESIGN_APPROVAL', label: 'Design approval' },
+          { value: 'MANUFACTURE', label: 'Manufacture' },
+          { value: 'FAT', label: 'Factory acceptance test' },
+          { value: 'SHIPMENT', label: 'Shipment' },
+          { value: 'CUSTOMS', label: 'Customs' },
+        ] },
+        { name: 'evidence', label: 'Evidence', type: 'text', placeholder: 'PO-9001',
+          hint: '“In manufacture” from a supplier who has not started is the commonest overstatement on any project; a document is the only defence.' },
+        { name: 'note', label: 'Note', type: 'text', required: false },
+      ],
+      transform: ({ itemId: _itemId, note, ...rest }) => ({ ...rest, ...(String(note ?? '').trim() ? { note: String(note).trim() } : {}) }),
+    },
+    'book-delivery': {
+      title: 'Book a delivery',
+      intent:
+        'Into a date and a slot. Two lifts in one slot is refused rather than discovered on the day — a wasted morning for ' +
+        'one of them and sometimes a damaged load.',
+      path: (v) => `/v1/projects/${projectId}/procurement-items/${v.itemId}/deliveries`,
+      submitLabel: 'Book',
+      fields: [
+        { name: 'itemId', label: 'Item', type: 'select',
+          options: procItems.map((i) => ({ value: i.itemId, label: `${i.reference} · ${String(i.description).slice(0, 40)}` })) },
+        { name: 'bookedFor', label: 'Booked for', type: 'date' },
+        { name: 'slot', label: 'Slot', type: 'text', placeholder: '09:00-10:00' },
+        { name: 'craneRequired', label: 'Needs the crane', type: 'checkbox' },
+      ],
+      transform: ({ itemId: _itemId, craneRequired, ...rest }) => ({ ...rest, craneRequired: craneRequired === true }),
+    },
+    'receive-delivery': {
+      title: 'Receive a delivery',
+      intent:
+        'What actually turned up. Safety-critical material with no certificate against a traceable unit is quarantined on ' +
+        'arrival — while the lorry is still on site, which is the one moment it is cheap to catch.',
+      path: (v) => `/v1/projects/${projectId}/deliveries/${v.deliveryId}/receive`,
+      submitLabel: 'Record receipt',
+      fields: [
+        { name: 'deliveryId', label: 'Delivery', type: 'select',
+          options: bookedDeliveries.map((d) => ({ value: d._refId, label: deliveryLabel(d) })) },
+        { name: 'deliveryNote', label: 'Delivery note number', type: 'text',
+          hint: 'What the invoice will be matched against. The argument three months later is always about which load it was.' },
+        { name: 'dispatchedQuantity', label: 'Dispatched quantity', type: 'number', min: 0, step: 'any' },
+        { name: 'receivedQuantity', label: 'Received quantity', type: 'number', min: 0, step: 'any' },
+        { name: 'condition', label: 'Condition on arrival', type: 'text', placeholder: 'Sound, no visible damage' },
+        { name: 'damaged', label: 'Arrived damaged', type: 'checkbox' },
+        { name: 'units', label: 'Traceable units', type: 'textarea', rows: 4, required: false,
+          hint: 'One per line: identifier, then its certificate. Safety-critical material needs a certificate against every unit or it is quarantined.',
+          placeholder: 'VLV-0001, MillCert-AI-88213\nVLV-0002, MillCert-AI-88214' },
+        { name: 'evidenceHash', label: 'Delivery note and photographs', type: 'file' },
+      ],
+      transform: ({ deliveryId: _deliveryId, dispatchedQuantity, receivedQuantity, damaged, units, ...rest }) => {
+        const parsed = String(units ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({ identifier: parts[0], ...(parts[1] ? { certificate: parts.slice(1).join(', ') } : {}) }));
+        return {
+          ...rest,
+          dispatchedQuantity: Number(dispatchedQuantity),
+          receivedQuantity: Number(receivedQuantity),
+          damaged: damaged === true,
+          ...(parsed.length > 0 ? { units: parsed } : {}),
+        };
+      },
+      report: (response) =>
+        response.quarantined
+          ? { title: 'Quarantined on arrival', message: `${response.reference} is quarantined — it cannot be accepted or installed until it is released.`, tone: 'warn' }
+          : null,
+    },
+    'quarantine-delivery': {
+      title: 'Quarantine material',
+      intent:
+        'Hold material nobody may use, with what is wrong with it. Quarantine is a state the material cannot leave without ' +
+        'somebody with quality authority saying why.',
+      path: (v) => `/v1/projects/${projectId}/deliveries/${v.deliveryId}/quarantine`,
+      submitLabel: 'Quarantine',
+      fields: [
+        { name: 'deliveryId', label: 'Delivery', type: 'select',
+          options: quarantinableDeliveries.map((d) => ({ value: d._refId, label: `${deliveryLabel(d)} · ${humanise(d.state)}` })) },
+        { name: 'why', label: 'What is wrong with it', type: 'textarea', rows: 3,
+          hint: 'Somebody has to be able to clear it, so say what would.' },
+      ],
+      transform: ({ deliveryId: _deliveryId, ...rest }) => rest,
+    },
+    'release-delivery': {
+      title: 'Release from quarantine',
+      intent:
+        'On quality authority, naming what resolved it — the certificate that arrived, the test that passed, the batch that ' +
+        'was traced. Safety-critical material is not released while a certificate is still missing.',
+      path: (v) => `/v1/projects/${projectId}/deliveries/${v.deliveryId}/release`,
+      submitLabel: 'Release',
+      fields: [
+        { name: 'deliveryId', label: 'Delivery', type: 'select',
+          options: quarantinedDeliveries.map((d) => ({ value: d._refId, label: deliveryLabel(d) })) },
+        { name: 'reason', label: 'What resolved it', type: 'textarea', rows: 3 },
+        { name: 'units', label: 'Traceable units now certified', type: 'textarea', rows: 3, required: false,
+          hint: 'One per line: identifier, then its certificate. Supply the certificate that was missing, or the release is refused.',
+          placeholder: 'VLV-0001, MillCert-AI-88213' },
+      ],
+      transform: ({ deliveryId: _deliveryId, units, ...rest }) => {
+        const parsed = String(units ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({ identifier: parts[0], ...(parts[1] ? { certificate: parts.slice(1).join(', ') } : {}) }));
+        return { ...rest, ...(parsed.length > 0 ? { units: parsed } : {}) };
+      },
+    },
+    'accept-delivery': {
+      title: 'Accept a delivery into stock',
+      intent:
+        'Once, and never over an unreconciled difference or a quarantine. What was ordered, dispatched and received are ' +
+        'three numbers, and a mismatch is accepted only with a reconciliation naming which it is and who is chasing it.',
+      path: (v) => `/v1/projects/${projectId}/deliveries/${v.deliveryId}/accept`,
+      submitLabel: 'Accept',
+      fields: [
+        { name: 'deliveryId', label: 'Delivery', type: 'select',
+          options: receivedDeliveries.map((d) => ({ value: d._refId, label: deliveryLabel(d) })) },
+        { name: 'note', label: 'What was checked', type: 'textarea', rows: 2 },
+        { name: 'reconciliationKind', label: 'Reconciliation', type: 'select', required: false, placeholder: 'No difference',
+          options: [
+            { value: 'SHORT', label: 'Short — less arrived than was ordered' },
+            { value: 'OVER', label: 'Over — more arrived than was ordered' },
+            { value: 'DAMAGED', label: 'Damaged' },
+          ],
+          hint: 'Required where what arrived is not what was ordered, or it arrived damaged.' },
+        { name: 'reconciliationWhat', label: 'What happened', type: 'textarea', rows: 2, required: false },
+        { name: 'reconciliationChasedBy', label: 'Who is chasing it', type: 'text', required: false },
+      ],
+      transform: ({ deliveryId: _deliveryId, reconciliationKind, reconciliationWhat, reconciliationChasedBy, ...rest }) => ({
+        ...rest,
+        ...(reconciliationKind
+          ? { reconciliation: { kind: reconciliationKind, what: String(reconciliationWhat ?? ''), chasedBy: String(reconciliationChasedBy ?? '') } }
+          : {}),
+      }),
+    },
+    'install-unit': {
+      title: 'Install a serial into the works',
+      intent:
+        'A serial, where it went and the test that proves it works there. Those two facts turn a delivery note into an ' +
+        'as-built record. Only an accepted delivery can be installed, and one serial cannot be in two places.',
+      path: (v) => `/v1/projects/${projectId}/deliveries/${v.deliveryId}/install`,
+      submitLabel: 'Record the installation',
+      fields: [
+        { name: 'deliveryId', label: 'Delivery', type: 'select',
+          options: installableDeliveries.map((d) => ({
+            value: d._refId,
+            label: `${deliveryLabel(d)} · ${(d.units ?? []).filter((u) => !u.installedAt).length} to install`,
+          })) },
+        { name: 'identifier', label: 'Serial', type: 'text',
+          hint: 'A batch, heat number or serial received under this delivery.' },
+        { name: 'location', label: 'Where it went', type: 'text', placeholder: 'Inlet chamber, grid E4' },
+        { name: 'testEvidence', label: 'The test that proves it works there', type: 'text' },
+      ],
+      transform: ({ deliveryId: _deliveryId, ...rest }) => rest,
+    },
+
+    // ---- Commissioning dossier -----------------------------------------------
+
+    'compile-dossier': {
+      title: 'Compile a commissioning dossier',
+      intent:
+        'Compile the dossier for one system. Completeness is counted over the required records, not the file count, and a ' +
+        'second copy of one record raises nothing. A system is accepted into operation only once the records an operator ' +
+        'cannot start without are all present.',
+      path: `/v1/projects/${projectId}/commissioning-dossiers`,
+      submitLabel: 'Compile',
+      fields: [
+        { name: 'systemTag', label: 'System', type: 'select',
+          options: systemTags.map((tag) => ({ value: tag, label: tag })) },
+        { name: 'compiledBy', label: 'Compiled by', type: 'text', value: state.session.user.name },
+        { name: 'entries', label: 'Records', type: 'textarea', rows: 8,
+          hint:
+            'One per line: key, reference, revision, evidence. Keys — AS_BUILT, OM_MANUAL, TEST_RECORDS, CERTIFICATES, ' +
+            'FIRE_SAFETY_INFORMATION, ASSET_DATA, TRAINING_RECORDS, SETTINGS (critical); WARRANTY, SPARES, MAINTENANCE, ' +
+            'ACCESS (advisory). The critical ones are the records an operator cannot start without.',
+          placeholder:
+            'AS_BUILT, DOC-ASB-VENT, C, EV-ASB\nOM_MANUAL, OM-VENT, C, EV-OM\nTEST_RECORDS, TR-VENT, C, EV-TR' },
+      ],
+      transform: ({ systemTag, compiledBy, entries }) => ({
+        systemTag,
+        compiledBy,
+        entries: String(entries ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({
+            key: (parts[0] ?? '').toUpperCase(),
+            reference: parts[1] ?? '',
+            revision: parts[2] ?? '',
+            evidenceRef: parts[3] ?? '',
+          })),
+      }),
+      report: (response) => ({
+        title: 'Dossier compiled',
+        message:
+          `${response.completenessPercent}% complete over the required records.` +
+          ((response.missing ?? []).length > 0 ? ` Missing: ${response.missing.join(', ')}.` : ' Nothing is missing — the system can be accepted.'),
+        tone: (response.missing ?? []).length > 0 ? 'warn' : 'ok',
       }),
     },
 

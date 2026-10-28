@@ -30184,3 +30184,16 @@ its end-to-end proof are added.
   two-person rule (proposer cannot decide), that approve is refused while a
   domain is unassessed, close is refused while an affected item is unconfirmed,
   and a cost snapshot with no source is refused.
+
+- **Construction progress, deliveries & commissioning dossier (`construction.js`)** —
+  three read-only panels became drivable. CN-WF-04: set-measurement-basis,
+  submit-progress-claim, verify-claim (the verify select excludes the viewer's
+  own claims, surfacing the self-verification bar at the door). CN-WF-05
+  goods-in: register/advance/book/receive/quarantine/release/accept/install,
+  each offering only deliveries in the state its act applies to. And
+  compile-dossier — the missing door that left accept-system dead-ending on
+  NO_DOSSIER. Proven by `backend/tests/progressjourney.test.ts` (claim ≠
+  acceptance; self-verification refused), `deliveryjourney.test.ts`
+  (safety-critical auto-quarantine → release → accept), and
+  `commissioningdossierjourney.test.ts` (NO_DOSSIER → compile → accept; incomplete
+  dossier refused) — 8 gateway tests.
