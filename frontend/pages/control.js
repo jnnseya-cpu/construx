@@ -491,6 +491,18 @@ export async function control(root) {
   // amended, so offering them in the dropdown would offer a refusal.
   const draftMeetings = (meetings.meetings ?? []).filter((m) => m.status === 'DRAFT');
 
+  // Any open action can be closed — the register is live before and after the
+  // minutes are issued (closing it is deliberately not frozen by issue). An open
+  // action carries its meeting's *reference*; the close route needs the meeting's
+  // *id* in the path, so every meeting is indexed by reference to resolve it.
+  // Without this the "worst first" chase list only ever grows.
+  const meetingIdByRef = new Map((meetings.meetings ?? []).map((m) => [m.reference, m.meetingId]));
+  const closableActions = meetings.openActions ?? [];
+  // The select option packs the meeting id and the action reference together;
+  // the separator is a variable so the `path:` template that unpacks it carries
+  // no quote literal (the console-forms path check reads those literally).
+  const ACTION_SEP = '::';
+
   // The snapshots themselves, for the reconcile chooser. Read as entities
   // rather than from `/completion`, because the completion position publishes a
   // snapshot's reference and not the identifier the reconcile route needs — and
@@ -730,6 +742,14 @@ export async function control(root) {
               label: 'Issue minutes',
               permitted: can('LOOKAHEAD_CONSTRAINTS', 'A') && draftMeetings.length > 0,
               reason: draftReason('A'),
+            },
+            {
+              id: 'close-action',
+              label: 'Close an action',
+              permitted: can('LOOKAHEAD_CONSTRAINTS', 'U') && closableActions.length > 0,
+              reason: !can('LOOKAHEAD_CONSTRAINTS', 'U')
+                ? blockedReason('LOOKAHEAD_CONSTRAINTS', 'U')
+                : 'No action is open. Record one out of a meeting first.',
             },
           ]))}
         </div>
@@ -1884,6 +1904,27 @@ export async function control(root) {
         ...(raisedAtMeeting ? { raisedAtMeeting } : {}),
         ...(originallyDue ? { originallyDue } : {}),
       }),
+    },
+    'close-action': {
+      title: 'Close a meeting action',
+      intent:
+        'Records what actually discharged it. Permitted once the minutes that carry it have been issued — before that ' +
+        'the action can still change, so there is nothing settled to close.',
+      // The selected option carries the issued meeting's id and the action's
+      // reference as "<meetingId>::<actionReference>": the id goes in the path,
+      // the reference in the body.
+      path: (v) => `/v1/projects/${projectId}/meetings/${String(v.target).split(ACTION_SEP)[0]}/actions/close`,
+      submitLabel: 'Close the action',
+      fields: [
+        { name: 'target', label: 'Action', type: 'select',
+          options: closableActions.map((a) => ({
+            value: `${meetingIdByRef.get(a.meeting)}${ACTION_SEP}${a.reference}`,
+            label: `${a.reference} — ${String(a.what).slice(0, 60)}`,
+          })) },
+        { name: 'closureNote', label: 'What discharged it', type: 'textarea', rows: 2,
+          hint: 'The evidence it is actually done — what closed it, not merely that it is closed.' },
+      ],
+      transform: (v) => ({ reference: String(v.target).split(ACTION_SEP)[1], closureNote: v.closureNote }),
     },
   };
 

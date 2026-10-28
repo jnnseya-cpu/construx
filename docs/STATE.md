@@ -30155,3 +30155,11 @@ its end-to-end proof are added.
   drives invite → accept through the gateway and asserts the identity is created,
   and that a VIEWER who does not work on the project is refused while a proper
   host still succeeds.
+
+- **Meeting actions (`control.js`)** — actions could be recorded but never closed
+  from the product, so the "worst first" open-actions register only grew. Added a
+  **Close an action** command resolving each open action's meeting id from the
+  register (the action carries the meeting reference; the close route needs the
+  id). `backend/tests/meetingclosejourney.test.ts` drives open → minute → record
+  action → issue → close through the gateway and asserts the action leaves the
+  open register, and that a closure with no note is refused.
