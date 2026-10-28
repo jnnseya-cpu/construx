@@ -192,6 +192,14 @@ export async function design(root) {
   // reference error survived in a page that looked fine to most people.
   const openReviews = (reviews?.cycles ?? []).filter((cycle) => cycle.status === 'IN_REVIEW');
   const underReview = (submittals.submittals ?? []).filter((sub) => sub.status === 'UNDER_REVIEW');
+  // The rest of the submittal lifecycle, so a raised submittal does not sit in
+  // DRAFT forever: a draft is sent for review, a returned one is resubmitted as
+  // the next revision, and an order is recorded against any of them.
+  const draftSubmittals = (submittals.submittals ?? []).filter((sub) => sub.status === 'DRAFT');
+  const revisableSubmittals = (submittals.submittals ?? []).filter(
+    (sub) => sub.status === 'REVISE_AND_RESUBMIT' || sub.status === 'REJECTED',
+  );
+  const orderableSubmittals = submittals.submittals ?? [];
 
   render(
     root,
@@ -245,12 +253,36 @@ export async function design(root) {
                 : 'No specification clause has been read on this project. A submittal answers a clause, and one citing a clause that does not exist cannot be reviewed against anything.',
             },
             {
+              id: 'submit-submittal',
+              label: 'Submit a submittal for review',
+              permitted: can('DESIGN_INFORMATION', 'U') && draftSubmittals.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'No submittal is in draft. Raise one, then send it for review.',
+            },
+            {
               id: 'decide-submittal',
               label: 'Decide a submittal',
               permitted: can('DESIGN_INFORMATION', 'A') && underReview.length > 0,
               reason: !can('DESIGN_INFORMATION', 'A')
                 ? blockedReason('DESIGN_INFORMATION', 'A')
                 : 'Nothing is with the reviewer.',
+            },
+            {
+              id: 'resubmit-submittal',
+              label: 'Resubmit a submittal',
+              permitted: can('DESIGN_INFORMATION', 'U') && revisableSubmittals.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'Nothing has come back to revise and resubmit.',
+            },
+            {
+              id: 'order-submittal',
+              label: 'Record an order',
+              permitted: can('DESIGN_INFORMATION', 'U') && orderableSubmittals.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'There is no submittal to record an order against.',
             },
             {
               id: 'decide-inheritance',
@@ -1220,6 +1252,83 @@ export async function design(root) {
           hint: 'Required for anything but a clean approval. A rejection with nothing beside it sends the contractor back to guess.' },
       ],
       transform: ({ submittalId: _submittalId, ...rest }) => rest,
+    },
+    'submit-submittal': {
+      title: 'Submit a submittal for review',
+      intent:
+        'Sends it to the reviewer, which starts the contractual review clock and fixes the review due date. The ' +
+        'person who submits it cannot be the person who approves it.',
+      path: ({ submittalId }) => `/v1/projects/${projectId}/submittals/${submittalId}/submit`,
+      submitLabel: 'Submit for review',
+      fields: [
+        { name: 'submittalId', label: 'Submittal', type: 'select',
+          options: draftSubmittals.map((sub) => ({ value: sub.submittalId, label: `${sub.reference} rev ${sub.revision} — ${sub.title}` })) },
+      ],
+      // The route takes no body — it refuses one carrying fields — so the
+      // selected id travels in the path and nothing else is sent.
+      transform: () => ({}),
+    },
+    'resubmit-submittal': {
+      title: 'Resubmit a submittal',
+      intent:
+        'Resubmits as the next revision on the same record after a revise-and-resubmit or a rejection, saying what ' +
+        'changed. It stays one record so the product’s history reads in one place.',
+      path: ({ submittalId }) => `/v1/projects/${projectId}/submittals/${submittalId}/resubmit`,
+      submitLabel: 'Resubmit',
+      fields: [
+        { name: 'submittalId', label: 'Submittal', type: 'select',
+          options: revisableSubmittals.map((sub) => ({ value: sub.submittalId, label: `${sub.reference} rev ${sub.revision} — ${sub.title}` })) },
+        { name: 'manufacturer', label: 'Manufacturer', type: 'text', required: false },
+        { name: 'productReference', label: 'Product reference', type: 'text', required: false },
+        { name: 'claims', label: 'What is specified, and what is offered', type: 'textarea', rows: 6,
+          hint: 'One per line: requirement, specified, offered, and — where it does not comply — the reason it is offered anyway.' },
+        { name: 'whatChanged', label: 'What changed since the last revision', type: 'textarea', rows: 2 },
+        { name: 'differsFrom', label: 'It is offered instead of', type: 'text', required: false,
+          placeholder: 'Only if this is a substitution' },
+        { name: 'whyProposed', label: 'Why the substitution', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: ({ submittalId: _submittalId, claims, differsFrom, whyProposed, ...rest }) => ({
+        ...rest,
+        ...(String(differsFrom ?? '').trim()
+          ? { substitution: { differsFrom: String(differsFrom), whyProposed: String(whyProposed ?? '') } }
+          : {}),
+        claims: String(claims ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0])
+          .map((parts) => ({
+            requirement: parts[0],
+            specified: parts[1] ?? '',
+            offered: parts[2] ?? '',
+            compliant: parts.length < 4 || !parts[3],
+            ...(parts[3] ? { justification: parts.slice(3).join(', ') } : {}),
+          })),
+      }),
+    },
+    'order-submittal': {
+      title: 'Record an order',
+      intent:
+        'Records the purchase order against the submittal. Placed before approval it is recorded as at risk, with ' +
+        'the reason it was worth taking.',
+      path: ({ submittalId }) => `/v1/projects/${projectId}/submittals/${submittalId}/ordered`,
+      submitLabel: 'Record the order',
+      fields: [
+        { name: 'submittalId', label: 'Submittal', type: 'select',
+          options: orderableSubmittals.map((sub) => ({ value: sub.submittalId, label: `${sub.reference} rev ${sub.revision} — ${sub.title}` })) },
+        { name: 'orderReference', label: 'Order reference', type: 'text', placeholder: 'PO-00421' },
+        { name: 'atRisk', label: 'Ordered before approval?', type: 'select', required: false, options: [
+          { value: '', label: 'No — it is approved' },
+          { value: 'yes', label: 'Yes — placed at risk' },
+        ] },
+        { name: 'justification', label: 'Why it was worth the risk', type: 'textarea', rows: 2, required: false,
+          hint: 'Needed where the order is placed before approval.' },
+      ],
+      transform: ({ submittalId: _submittalId, atRisk, justification, ...rest }) => ({
+        ...rest,
+        ...(atRisk === 'yes'
+          ? { atRisk: true, ...(String(justification ?? '').trim() ? { justification: String(justification) } : {}) }
+          : {}),
+      }),
     },
     'decide-inheritance': {
       title: 'Decide what an inherited item may be used for',

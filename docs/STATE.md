@@ -30125,3 +30125,22 @@ expiry, is refused **in the console, on the right field**, before anything is
 sent. The server still enforces it; this stops the round trip and the misleading
 "offered then refused". The field hints now say plainly when each is required,
 and the message mirrors the server's own `BID_ON_*` text.
+
+## 2026-10 whole-platform audit — stage write-UI completions
+
+The October 2026 audit (`docs/AUDIT-2026-10.md`) found the backends strong and
+honest but surfaced one systemic defect: across stage workflows the screens were
+rich **read** surfaces over complete backends, with the **write** commands that
+move a workflow forward never wired into the UI — so a client could watch state
+but not drive a project to completion. These are the verticals being completed,
+each with a gateway journey test that drives the exact payloads the new console
+commands send and asserts the flow completes (not merely that the buttons
+exist). Backends and routes were already in place; only the console wiring and
+its end-to-end proof are added.
+
+- **Submittals (`design.js`)** — a raised submittal could never leave DRAFT. Added
+  **submit-for-review**, **resubmit** (next revision on the same record) and
+  **record-order** commands. `backend/tests/submittalsjourney.test.ts` drives
+  raise → submit → revise-and-resubmit → resubmit → submit → approve → order
+  through the real gateway and asserts each status transition, and that the
+  submitter still cannot approve their own submittal.
