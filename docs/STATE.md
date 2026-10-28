@@ -958,6 +958,35 @@ error — so the one export failure that has a next step now offers it. The stri
 refusal stands; what changed is that a tenancy can now satisfy it.
 `consoleforms` covers the new command against the route schema.
 
+### The submission export leaked internal citation machinery
+
+Reading the exported pack the way the buyer would, after the branding door was in
+place: the submission carried the drafter's internal provenance into the buyer's
+copy. Inline "(EVD-0017, chunkId 01M6…)" citations sat in the prose, an
+"Evidence: EVD-0022, EVD-0023" line was appended to every answer, and a
+gap-drafted answer told the evaluator its own weakness in so many words — "the
+specific evidences requested are not attached here and are **listed as
+unsupported below**", pointing at a review section the buyer's copy does not have.
+An EVD id and a chunk id mean nothing to an evaluator; they read as leaked
+plumbing, and the gap note reads as a confession.
+
+`renderPack` now cleans the buyer-facing pack. A `forBuyer` pass strips the
+inline evidence-id parentheticals, loose chunk ids and bare `EVD-…` tokens, drops
+paragraphs that are internal meta ("unsupported below", "not attached here"), and
+tidies the punctuation the removals leave. The appended `Evidence:` reference
+line and the raw body are kept only on the **review copy** — which exists solely
+for the bid team, and only for a pack that is not yet exportable — so provenance
+stays traceable internally while the submission goes out clean. Applied to all
+three formats (DOCX, XLSX, copy-ready TEXT). `bidonbid` covers it: an answer
+drafted with an inline EVD/chunk citation and an "unsupported below" note renders
+to a submission that contains none of them and still reads as prose.
+
+This cleans the leak, not the gap behind it: an answer with no real evidence is
+still a weak answer. The `forBuyer` pass removes the *admission*, not the
+*absence* — which is why a bid resting on evidence it does not hold is a decision
+to take at the gate (see 1.1's accreditation requirement), not something a
+renderer can paper over.
+
 It survived every test because the login route only sends mail in production —
 outside it the code comes back in the response so local development needs no
 mail server. The regression test runs the route with `NODE_ENV=production`,

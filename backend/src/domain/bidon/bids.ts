@@ -3160,6 +3160,42 @@ export function renderPack(
         ].join('\n\n')
       : '';
 
+  /*
+   * The answer as the buyer should read it, with the internal machinery removed.
+   *
+   * The drafter embeds provenance inline — "(EVD-0017, chunkId 01M6…)" — and the
+   * retrieval sometimes leaves a meta-note that points "below" to a review
+   * section the buyer's copy does not have. Both are ours, for tracing a claim
+   * and chasing a gap, and neither means anything to an evaluator: an EVD id or
+   * a chunk id in a submission reads as leaked plumbing, and "listed as
+   * unsupported below" reads as a confession attached to nothing. The review
+   * copy keeps all of it (that is who it is for); the submission is cleaned.
+   */
+  const forBuyer = (text: string): string =>
+    text
+      .split('\n\n')
+      .filter((paragraph) => !/listed as unsupported|unsupported below|not attached here/i.test(paragraph))
+      .map((paragraph) =>
+        paragraph
+          // parenthetical citations naming an internal evidence id, whatever
+          // else (chunk ids, clause refs, semicolons) sits inside them
+          .replace(/\s*\((?:[^()]*\bEVD-\d+\b[^()]*)\)/g, '')
+          // a chunk id left loose outside a parenthesis
+          .replace(/,?\s*chunk\s?id\s+[0-9A-Za-z]{16,}/gi, '')
+          // a bare trailing evidence id
+          .replace(/\s*\bEVD-\d+\b/g, '')
+          // tidy what the removals leave: empty brackets, doubled spaces,
+          // spaces before punctuation
+          .replace(/\(\s*[;,]?\s*\)/g, '')
+          .replace(/[ \t]{2,}/g, ' ')
+          .replace(/\s+([.,;:)])/g, '$1')
+          .trim(),
+      )
+      .filter(Boolean)
+      .join('\n\n');
+  const shownAnswer = (entry: (typeof position.questions)[number]): string =>
+    review ? answerOf(entry) : forBuyer(answerOf(entry));
+
   if (format === 'TEXT') {
     // One block per question, with the buyer's number as the only heading, and
     // a rule between them. Somebody pasting into a portal copies from the
@@ -3170,8 +3206,10 @@ export function renderPack(
         return [
           `${entry.question.number} ${entry.question.text}`,
           '',
-          answerOf(entry),
-          ...(citations.length > 0
+          shownAnswer(entry),
+          // Internal evidence references trace a claim for the bid team; they are
+          // meaningless to the buyer, so they ride on the review copy only.
+          ...(review && citations.length > 0
             ? ['', `Evidence: ${citations.map((citation) => citation.reference).join(', ')}`]
             : []),
           '',
@@ -3218,10 +3256,11 @@ export function renderPack(
         .map((entry) => [
           entry.question.number,
           entry.question.text,
-          answerOf(entry),
+          shownAnswer(entry),
           entry.answer?.words ?? 0,
           entry.question.wordLimit ?? null,
-          (entry.answer?.citations ?? []).map((citation) => citation.reference).join(', '),
+          // Evidence ids on the review copy only; the submission carries none.
+          review ? (entry.answer?.citations ?? []).map((citation) => citation.reference).join(', ') : '',
         ] as Array<string | number | null>),
     })));
 
@@ -3276,12 +3315,14 @@ export function renderPack(
     blocks.push({ kind: 'HEADING', level: 2, text: section });
     for (const entry of position.questions.filter((row) => row.question.section === section)) {
       blocks.push({ kind: 'HEADING', level: 3, text: `${entry.question.number} ${entry.question.text}` });
-      const answer = answerOf(entry);
+      const answer = shownAnswer(entry);
       for (const paragraph of answer.split('\n\n').filter(Boolean)) {
         blocks.push({ kind: 'PARAGRAPH', text: paragraph });
       }
+      // Evidence references are internal provenance, not for the buyer, so the
+      // submission omits them; the review copy keeps them for the bid team.
       const citations = entry.answer?.citations ?? [];
-      if (citations.length > 0) {
+      if (review && citations.length > 0) {
         blocks.push({
           kind: 'PARAGRAPH',
           text: `Evidence: ${citations

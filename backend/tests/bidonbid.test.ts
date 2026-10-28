@@ -1021,6 +1021,31 @@ describe('the pack comes out in the questionnaire’s own structure', () => {
     assert.ok(!/\*\*|^#/m.test(pack.content), 'the portal text carries markdown');
   });
 
+  it('strips internal evidence ids, chunk ids and gap notes from the submission, keeping them on the review copy', () => {
+    // An answer carrying the internal machinery the drafter embeds: an inline
+    // "(EVD-…, chunkId …)" citation and a meta-note that points "below" to a
+    // review section the buyer's copy does not have. A buyer must see neither.
+    const question = ready.questions.find((entry) => entry.number === '9.1')!;
+    const written = bids.recordAnswer(asBidWriter(), ready.id, {
+      questionId: question.id,
+      body: [
+        'We confirm our approach (EVD-0099, chunkId 01ABCDEFGHJKMNPQRSTVWXYZ00).',
+        'The membership certificate is not attached here and is listed as unsupported below.',
+      ],
+    });
+    bids.scoreAnswer(asProviderAdmin(), ready.id, written.answer.id, { scores: FULL, reasons: REASONS });
+    bids.approveAnswer(asReviewer(), ready.id, written.answer.id, { note: 'Checked the 9.1 answer against the record' });
+    const bid = bids.requireBid(asProviderAdmin(), ready.id);
+
+    // This bid is exportable, so this is the real submission — it must be clean.
+    const submission = bids.renderPack(asProviderAdmin(), bid.id, 'TEXT', branding()).content;
+    assert.ok(!submission.includes('EVD-0099'), 'the submission leaks an internal evidence id');
+    assert.ok(!/chunk\s?id/i.test(submission), 'the submission leaks a chunk id');
+    assert.ok(!/unsupported below|not attached here/i.test(submission), 'the submission leaks an internal gap note');
+    assert.ok(!/\nEvidence:/.test(submission), 'the submission leaks the internal evidence-reference line');
+    assert.ok(submission.includes('We confirm our approach'), 'the sanitiser destroyed the real prose');
+  });
+
   it('writes a real spreadsheet with a sheet per section, in source order', () => {
     const pack = bids.renderPack(asProviderAdmin(), ready.id, 'XLSX', branding());
     assert.match(pack.filename, /\.xlsx$/);
