@@ -30227,3 +30227,23 @@ remains as a named follow-up vertical.
   that a decision for the wrong acceptance party is refused. `defineHandoverSection`
   (sectional handover) remains a follow-up — it needs a multiselect over
   requirement references the current field model does not cleanly provide.
+
+### Two award/handover correctness fixes from the audit
+
+- **Award departures were blind (`award.ts`, `recordSubmission`).** The award
+  departure check compared awarded terms to `pack.state.submittedTerms`, but
+  nothing ever wrote that field, so a moved completion date or a changed LD rate
+  at award went undetected into the budget. `recordSubmission` now captures the
+  commercial terms the bid was submitted on (optional `submittedTerms` on the
+  receipt, mirrored in the route schema); `recordAward`'s existing comparison
+  then works. A term the bid did not state stays absent, so silence is still
+  reported as silence, not a false change. `award.test.ts` awards a moved
+  completion date and asserts the CRITICAL departure is now found.
+- **Conditional handover acceptance never lapsed (`handoveracceptance.ts`).** A
+  condition's `expiresOn` ("when the acceptance lapses if not met") was validated
+  at decision time and never enforced after, so an ACCEPTED_WITH_CONDITIONS pack
+  whose condition passed its expiry stayed a live acceptance and operations could
+  be activated off it. `lapsedConditions` derives the lapse on read, and
+  `activateOperations` refuses with `ACCEPTANCE_CONDITIONS_LAPSED` (naming the
+  expired conditions and saying to re-decide) rather than raising maintenance
+  obligations off a lapsed acceptance. Covered in `handoveracceptance.test.ts`.

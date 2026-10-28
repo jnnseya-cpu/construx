@@ -40,6 +40,15 @@ const receipt = (over: Partial<award.SubmissionReceipt> = {}): award.SubmissionR
   channel: 'PORTAL',
   receivedAt: '2027-03-12T11:52:00.000Z',
   evidenceHash: RECEIPT,
+  // The commercial terms the bid was submitted on, captured so the award can be
+  // compared to them. Before this was captured, a moved completion date or a
+  // changed LD rate at award went undetected (submittedTerms was never written).
+  submittedTerms: {
+    completionDate: '2028-11-17',
+    liquidatedDamagesPerDayMinor: 5_000_00,
+    ldCapPercent: 7.5,
+    retentionPercent: 3,
+  },
   ...over,
 });
 
@@ -235,16 +244,24 @@ describe('award · submission, award and conversion, in order', () => {
       evidenceHash: LETTER,
       terms: {
         contractSumMinor: estimateTotalMinor - 40_000_00,
+        // The award moves the completion date three weeks later than bid. Before
+        // submittedTerms was captured this went undetected; now it is a
+        // CRITICAL departure read off the terms the submission recorded.
+        completionDate: '2028-12-08',
         acceptedQualifications: bid.slice(0, -1),
       },
     });
 
-    assert.equal(departures.length, 2, 'the sum and the struck-out qualification should both be found');
+    assert.equal(departures.length, 3, 'the sum, the moved completion date and the struck-out qualification');
     assert.ok(departures.some((d) => d.field === 'Contract sum' && d.differenceMinor === -40_000_00));
+    assert.ok(
+      departures.some((d) => d.field === 'Completion date' && d.severity === 'CRITICAL'),
+      'the moved completion date is detected from the captured submitted terms',
+    );
     assert.ok(departures.some((d) => d.field === 'Qualification struck out'));
 
     const position = award.awardPosition(asQS());
-    assert.equal(position.packs.find((p) => p.packId === packId)!.departuresOutstanding, 2);
+    assert.equal(position.packs.find((p) => p.packId === packId)!.departuresOutstanding, 3);
     assert.match(position.summary, /award departures still open/);
   });
 
@@ -284,20 +301,29 @@ describe('award · submission, award and conversion, in order', () => {
       'DEP-01',
       'The £40,000 is the provisional sum for the substation, which the client has removed from our scope entirely',
     );
-    assert.equal(first.outstanding, 1);
+    assert.equal(first.outstanding, 2);
 
     throwsCode(
       () => award.acceptDeparture(asPM(), packId, 'DEP-01', 'Accepting it a second time for no reason at all'),
       'DEPARTURE_NOT_OPEN',
     );
 
+    // DEP-02 is the moved completion date, read off the captured submitted terms.
     const second = award.acceptDeparture(
       asPM(),
       packId,
       'DEP-02',
+      'The three-week shift in completion is accepted; the programme float carries it and prelims are unaffected',
+    );
+    assert.equal(second.outstanding, 1);
+
+    const third = award.acceptDeparture(
+      asPM(),
+      packId,
+      'DEP-03',
       'The substation qualification is moot now that the substation is outside our scope',
     );
-    assert.equal(second.outstanding, 0);
+    assert.equal(third.outstanding, 0);
 
     // And the record says who agreed, which is the question a year later.
     const stored = platform.ledger.get({ refType: 'BidSubmissionPack', refId: packId })!;

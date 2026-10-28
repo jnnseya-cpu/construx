@@ -64,6 +64,23 @@ export type SubmissionReceipt = {
   receivedAt: string;
   /** The acknowledgement itself. */
   evidenceHash: string;
+  /**
+   * The commercial terms the bid was submitted on, recorded here so a later
+   * award can be compared to them. Without this the departure check at award
+   * had nothing to compare against — the dates, LDs, cap, retention and defects
+   * period all read as "not stated" and a moved completion date or a doubled
+   * liquidated-damages rate went undetected into the budget. Optional: a bid
+   * that recorded no terms is reported as silent, which is honest, not a
+   * departure invented from nothing.
+   */
+  submittedTerms?: {
+    commencementDate?: string;
+    completionDate?: string;
+    liquidatedDamagesPerDayMinor?: number;
+    ldCapPercent?: number;
+    retentionPercent?: number;
+    defectsLiabilityMonths?: number;
+  };
 };
 
 /**
@@ -126,6 +143,10 @@ export function recordSubmission(
       ...pack.state,
       status: 'SUBMITTED',
       submission: { ...receipt, submittedPackHash: contentHash },
+      // The commercial terms bid, kept where recordAward's departure check reads
+      // them (pack.state.submittedTerms). A term the bid did not state stays
+      // absent, so the award reports silence on it rather than a false change.
+      ...(receipt.submittedTerms ? { submittedTerms: receipt.submittedTerms } : {}),
       submittedAt: new Date().toISOString(),
       submittedBy: ctx.auth.actorId,
     },

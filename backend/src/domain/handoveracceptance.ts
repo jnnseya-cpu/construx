@@ -337,6 +337,24 @@ export type AcceptanceCondition = {
 };
 
 /**
+ * The conditions of a conditional acceptance that have passed their expiry.
+ *
+ * There is no "mark this condition met" act, so an unmet condition is simply one
+ * that is still on the pack: once its `expiresOn` is behind us the acceptance it
+ * rode on has lapsed. Derived on read against today, like every other expiry in
+ * this module, so a pack that was fine yesterday reads as lapsed the day a
+ * condition's date passes — which is the honest behaviour the module exists to
+ * enforce.
+ */
+export function lapsedConditions(
+  conditions: AcceptanceCondition[] | undefined,
+  asAt: string = new Date().toISOString().slice(0, 10),
+): AcceptanceCondition[] {
+  const today = asAt.slice(0, 10);
+  return (conditions ?? []).filter((condition) => condition.expiresOn.slice(0, 10) < today);
+}
+
+/**
  * Why the handover cannot be accepted, or null.
  *
  * Wired into `engines/handover.acceptHandover`, so the existing command gains
@@ -521,6 +539,24 @@ export function activateOperations(
         ? 'The pack was rejected. Operations are activated from accepted data, not from a rejected submission.'
         : 'Nothing has been accepted yet. Operational records derive from the accepted register, so there is nothing to ' +
           'derive them from.',
+    );
+  }
+
+  // A conditional acceptance is not a permanent one. Each condition carries an
+  // expiry — "when the acceptance lapses if it is not met" — and the module's
+  // whole reason for existing is that conditions must not quietly become
+  // permanent. Nothing enforced that after the decision: an
+  // ACCEPTED_WITH_CONDITIONS pack whose conditions passed their expiry stayed a
+  // live acceptance and operations could still be activated off it. Enforced
+  // here, on the read, at the gate that raises the maintenance obligations.
+  const lapsed = lapsedConditions(pack.state.acceptanceConditions as AcceptanceCondition[] | undefined);
+  if (lapsed.length > 0) {
+    throw new DomainError(
+      'ACCEPTANCE_CONDITIONS_LAPSED',
+      `The conditional acceptance has lapsed: ${lapsed.length} condition(s) passed their expiry unmet — ` +
+        `${lapsed.map((condition) => `${condition.description} (expired ${condition.expiresOn.slice(0, 10)})`).join('; ')}. ` +
+        'Operations cannot be activated off a lapsed acceptance; re-decide the handover against current evidence first.',
+      409,
     );
   }
   if (!input.activatedBy.trim()) throw new DomainError('ACTIVATOR_REQUIRED', 'Name who activated the operational records.');

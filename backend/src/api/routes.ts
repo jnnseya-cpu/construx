@@ -24595,6 +24595,19 @@ export const ROUTES: Route[] = [
         channel: { type: 'string', enum: [...award.SUBMISSION_CHANNEL] },
         receivedAt: stringField,
         evidenceHash: stringField,
+        // The commercial terms bid, so a later award can be compared to them.
+        submittedTerms: {
+          type: 'object',
+          properties: {
+            commencementDate: { type: 'string' },
+            completionDate: { type: 'string' },
+            liquidatedDamagesPerDayMinor: { type: 'integer', minimum: 0 },
+            ldCapPercent: { type: 'number', minimum: 0 },
+            retentionPercent: { type: 'number', minimum: 0 },
+            defectsLiabilityMonths: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },

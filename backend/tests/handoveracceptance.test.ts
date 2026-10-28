@@ -404,6 +404,24 @@ describe('H-WF-09 operational activation', () => {
     });
     assert.ok(result.assets > 0);
   });
+
+  it('refuses to activate once a condition has passed its expiry — a conditional acceptance is not permanent', () => {
+    // The failure the module warns against: conditions that quietly become
+    // permanent. A condition whose expiry is already behind us means the
+    // acceptance it rode on has lapsed, so operations cannot be raised off it.
+    const packId = pack();
+    handoveracceptance.decideHandover(asFM(), packId, {
+      ...DECISION,
+      decision: 'ACCEPTED_WITH_CONDITIONS',
+      conditions: [{ ...CONDITION, dueDate: iso(-120), expiresOn: iso(-30) }],
+    });
+    const lapsed = throwsCode(
+      () => handoveracceptance.activateOperations(asFM(), packId, { activatedBy: 'A', maintenanceStartsOn: iso(1) }),
+      'ACCEPTANCE_CONDITIONS_LAPSED',
+    );
+    assert.match(String(lapsed.message), /lapsed/);
+    assert.match(String(lapsed.message), /re-decide the handover/);
+  });
 });
 
 describe('H-WF-09 baseline and archive', () => {
