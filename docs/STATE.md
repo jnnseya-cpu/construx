@@ -937,6 +937,27 @@ stays strict and must: an unbranded *document* reaching a client is worse than
 no document, and that refusal is the thing preventing it. Different question,
 different answer.
 
+### The strict branding refusal needed a door, and had none
+
+Found driving a live Bid-On tender to export. The pack's Word and spreadsheet
+exports call `exports.branding(tenantId)` — correctly strict, because a tender
+submission going to a buyer under nobody's identity is worse than none. But the
+only console door to *set* a tenancy's branding was the **project-level** one on
+the documents screen, and a Bid-On customer is not a project. So the export
+demanded branding, there was no screen to configure it, and all three export
+formats (DOCX, XLSX and even copy-ready TEXT — branding is resolved before the
+format) walled off with `BRANDING_NOT_CONFIGURED` and no way forward. A doorless
+capability: the `PUT /v1/branding` route had existed and been authorised
+(`ENTERPRISE_STRUCTURE` `U`), but nothing in the console called it.
+
+The fix is the missing door, not a weakening of the gate. The Bid-On screen now
+carries a **Company identity** command (clientName, primaryColour,
+documentReferencePrefix, legalFooter → `PUT /v1/branding`), and the export's
+`BRANDING_NOT_CONFIGURED` failure opens it inline rather than only naming the
+error — so the one export failure that has a next step now offers it. The strict
+refusal stands; what changed is that a tenancy can now satisfy it.
+`consoleforms` covers the new command against the route schema.
+
 It survived every test because the login route only sends mail in production —
 outside it the code comes back in the response so local development needs no
 mail server. The regression test runs the route with `NODE_ENV=production`,

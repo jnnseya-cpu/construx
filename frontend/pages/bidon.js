@@ -1014,7 +1014,21 @@ export async function bidon(root) {
         );
       }
     } catch (error) {
-      toast('Not rendered', error.detail ?? error.message ?? 'The pack could not be taken out.', 'err');
+      // The one export failure with a next step rather than a dead end: the pack
+      // is branded and no tenancy identity is set yet. Open the door to set it
+      // instead of only naming the error.
+      if (error.code === 'BRANDING_NOT_CONFIGURED') {
+        const saved = await command(COMMANDS['set-branding']);
+        toast(
+          saved ? 'Identity saved' : 'Set your company identity first',
+          saved
+            ? 'Your company identity is set. Press the export button again to produce the pack.'
+            : 'Exports carry your company name, colour and legal footer. Set it once, then export again.',
+          saved ? 'ok' : 'warn',
+        );
+      } else {
+        toast('Not rendered', error.detail ?? error.message ?? 'The pack could not be taken out.', 'err');
+      }
     } finally {
       button.disabled = false;
     }
@@ -2963,6 +2977,33 @@ export async function bidon(root) {
       ],
       transform: ({ engagementId: _e, ...rest }) => rest,
     },
+
+    /*
+     * The company identity the exported pack carries.
+     *
+     * The Word and spreadsheet exports are branded documents and the platform
+     * refuses to render one until a tenancy identity is set — an unbranded
+     * submission going to a buyer under nobody's name is worse than none. The
+     * route to set it has always existed (`PUT /v1/branding`); what was missing
+     * was a door to it, so the export walled off with no way forward. This is
+     * that door. One identity for the tenancy, applied to every export.
+     */
+    'set-branding': {
+      title: 'Set your company identity',
+      intent:
+        'The name, colour and legal footer your exported tender pack goes out under. A submission carries your own ' +
+        'identity, so the Word and spreadsheet exports are held until this is set. Set it once — it applies to every export.',
+      method: 'PUT',
+      path: '/v1/branding',
+      submitLabel: 'Save identity',
+      fields: [
+        { name: 'clientName', label: 'Company name', type: 'text', hint: 'As it should appear on the document — e.g. JNseya Construction.' },
+        { name: 'primaryColour', label: 'Brand colour', type: 'text', hint: 'A hex colour for headings, e.g. #1F4FD0.' },
+        { name: 'documentReferencePrefix', label: 'Document reference prefix', type: 'text', hint: 'A short code that numbers your documents, e.g. JNSEYA.' },
+        { name: 'legalFooter', label: 'Legal footer', type: 'textarea', rows: 2,
+          hint: 'The registered line at the foot of each page — company name, number and registered address.' },
+      ],
+    },
   };
 
   root.addEventListener('click', async (event) => {
@@ -3822,6 +3863,8 @@ function bidDetail(position, estimate, source) {
             ${raw(readiness.exportable ? '' : 'data-render-review="1"')}>
             ${readiness.exportable ? 'Copy-ready text' : 'Copy-ready text — review copy'}
           </button>
+          <button class="btn sm quiet" data-command="set-branding"
+            title="The name, colour and footer the Word and spreadsheet exports carry. Set once per company.">Company identity</button>
         </div>`
       }
       ${
