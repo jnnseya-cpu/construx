@@ -330,7 +330,11 @@ export async function team(root) {
             ...(admin
               ? [
                   invitation.status === 'PENDING'
-                    ? html`<button class="btn quiet sm" data-invitation-withdraw="${invitation.id}" data-project="${invitation.projectId}" data-name="${invitation.name}">Withdraw</button>`
+                    ? html`<div class="row-acts">
+                        <button class="btn sm" data-invitation-accept="${invitation.id}" data-project="${invitation.projectId}" data-name="${invitation.name}">Accept</button>
+                        <button class="btn quiet sm" data-invitation-decline="${invitation.id}" data-project="${invitation.projectId}" data-name="${invitation.name}">Decline</button>
+                        <button class="btn quiet sm" data-invitation-withdraw="${invitation.id}" data-project="${invitation.projectId}" data-name="${invitation.name}">Withdraw</button>
+                      </div>`
                     : '',
                 ]
               : []),
@@ -1020,19 +1024,45 @@ export async function team(root) {
   });
 
   root.querySelector('[data-invitations]')?.addEventListener('click', async (event) => {
-    const button = event.target.closest('[data-invitation-withdraw]');
-    if (!button) return;
+    const withdraw = event.target.closest('[data-invitation-withdraw]');
+    const accept = event.target.closest('[data-invitation-accept]');
+    const decline = event.target.closest('[data-invitation-decline]');
     try {
-      const done = await command({
-        title: `Withdraw the invitation to ${button.dataset.name}`,
-        intent: 'The seat it was holding is given back. They can be invited again.',
-        path: `/v1/projects/${button.dataset.project}/invitations/${button.dataset.invitationWithdraw}/withdraw`,
-        submitLabel: 'Withdraw',
-        fields: [reason('At least five characters.')],
-      });
-      if (done) await refresh();
+      if (accept) {
+        // Host-side acceptance: the invitee has no identity to sign in with
+        // until this is done, so whoever manages the project accepts on their
+        // behalf. This is the act that creates their identity and goes live.
+        const done = await command({
+          title: `Accept the invitation for ${accept.dataset.name}`,
+          intent:
+            'Creates their identity and makes the membership live, so they can sign in with the invited email. A seat ' +
+            'is taken only where they are one of this organisation’s own Controllers.',
+          path: `/v1/projects/${accept.dataset.project}/invitations/${accept.dataset.invitationAccept}/accept`,
+          submitLabel: 'Accept and create the identity',
+          fields: [],
+        });
+        if (done) await refresh();
+      } else if (decline) {
+        const done = await command({
+          title: `Decline the invitation for ${decline.dataset.name}`,
+          intent: 'Records a refusal rather than a withdrawal. Nothing was charged; any seat it held is released.',
+          path: `/v1/projects/${decline.dataset.project}/invitations/${decline.dataset.invitationDecline}/decline`,
+          submitLabel: 'Decline',
+          fields: [{ name: 'reason', label: 'Reason', type: 'textarea', rows: 2, required: false }],
+        });
+        if (done) await refresh();
+      } else if (withdraw) {
+        const done = await command({
+          title: `Withdraw the invitation to ${withdraw.dataset.name}`,
+          intent: 'The seat it was holding is given back. They can be invited again.',
+          path: `/v1/projects/${withdraw.dataset.project}/invitations/${withdraw.dataset.invitationWithdraw}/withdraw`,
+          submitLabel: 'Withdraw',
+          fields: [reason('At least five characters.')],
+        });
+        if (done) await refresh();
+      }
     } catch (error) {
-      toast('Could not withdraw', error.message, 'err');
+      toast('Could not update the invitation', error.message, 'err');
     }
   });
 

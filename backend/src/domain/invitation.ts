@@ -444,6 +444,15 @@ export function declineInvitation(
   input: { invitationId: string; reason?: string },
   now = new Date(),
 ): { invitationId: string } {
+  // Declining is host-side, like inviting and withdrawing: the invitee has no
+  // identity yet, so a project member resolves it. The same door as invite.
+  authorise(ctx, 'PROJECT_SETUP', 'R', { lifecyclePhase: currentPhase(ctx) });
+  if (!worksOnProject(ctx.auth.roles)) {
+    throw new ForbiddenError(
+      'Only somebody working on this project may resolve an invitation onto it.',
+      'NOT_WORKING_ON_PROJECT',
+    );
+  }
   const record = ctx.ledger.require({ refType: 'ProjectInvitation', refId: input.invitationId });
   if (record.state.status !== 'PENDING') {
     throw new DomainError('INVITATION_NOT_PENDING', `That invitation is ${String(record.state.status).toLowerCase()}`, 409);
@@ -479,6 +488,18 @@ export function acceptInvitation(
   input: { invitationId: string },
   now = new Date(),
 ): { userId: string; email: string; roles: Role[] } {
+  // Acceptance is the act that actually mints an identity and activates the
+  // membership, so it must be at least as guarded as inviting was — not the
+  // open door `projectContext` alone left it. Host-side: a project member
+  // accepts on the invitee's behalf (the invitee has no identity to sign in
+  // with yet), the same capability invite and withdraw require.
+  authorise(ctx, 'PROJECT_SETUP', 'R', { lifecyclePhase: currentPhase(ctx) });
+  if (!worksOnProject(ctx.auth.roles)) {
+    throw new ForbiddenError(
+      'Only somebody working on this project may accept an invitation onto it.',
+      'NOT_WORKING_ON_PROJECT',
+    );
+  }
   const record = ctx.ledger.require({ refType: 'ProjectInvitation', refId: input.invitationId });
 
   if (record.state.status !== 'PENDING') {

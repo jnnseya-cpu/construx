@@ -30144,3 +30144,14 @@ its end-to-end proof are added.
   raise → submit → revise-and-resubmit → resubmit → submit → approve → order
   through the real gateway and asserts each status transition, and that the
   submitter still cannot approve their own submittal.
+
+- **Project invitations (`team.js`, `invitation.ts`)** — an invitation could be
+  sent but never accepted from the product: no screen called the accept route,
+  and the invitee has no identity to sign in and self-accept. Added host-side
+  **Accept** and **Decline** actions on each pending invitation row, and guarded
+  `acceptInvitation`/`declineInvitation` with the same `PROJECT_SETUP:R` +
+  `worksOnProject` door that invite and withdraw use (acceptance mints an
+  identity, so it must be at least as guarded). `backend/tests/invitationjourney.test.ts`
+  drives invite → accept through the gateway and asserts the identity is created,
+  and that a VIEWER who does not work on the project is refused while a proper
+  host still succeeds.
