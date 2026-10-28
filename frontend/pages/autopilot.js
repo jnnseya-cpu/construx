@@ -3,6 +3,7 @@ import { barChart, flowChart, pieChart, treemap } from '../lib/charts.js';
 import { badge, ellipsis, html, humanise, positionReport, raw, reference, render, resolveHtml, table, time, toast } from '../lib/ui.js';
 import { aiModeNotice } from '../lib/insight.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
+import { confirmCost } from '../lib/command.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -20,6 +21,26 @@ import { blockedReason, can, draw, state } from '../app.js';
  */
 
 const TONE = { URGENT: 'bad', ATTENTION: 'warn', INFO: 'info' };
+
+/**
+ * Approving a proposal runs its command as the approver. Four of the dispatchable
+ * commands reach an AI provider and spend from the prepaid wallet; the route that
+ * carries each one is itself the AI route, so the same `/v1/ai/quote` that prices
+ * a manual run prices the approval. Before the approver commits, show them the
+ * estimated charge and the §16.1 data-transmission disclosure that any other AI
+ * action shows — an approval must not be the one path that spends money and sends
+ * project data to a third party without saying so first.
+ *
+ * `safety:assessContingency` is dispatchable but runs synchronously with no
+ * provider call, so it is deliberately absent: there is nothing to quote and
+ * nothing transmitted.
+ */
+const AI_COMMAND_PATHS = {
+  'planning:forecastDelay': (projectId) => `/v1/projects/${projectId}/programme/delay-forecast`,
+  'cost:publishCVR': (projectId) => `/v1/projects/${projectId}/cost/cvr`,
+  'claims:assessDelayClaim': (projectId) => `/v1/projects/${projectId}/claims`,
+  'handover:forecastMaintenance': (projectId) => `/v1/projects/${projectId}/om/maintenance-forecast`,
+};
 
 export async function autopilot(root) {
   const projectId = state.session.projectId;
@@ -290,6 +311,22 @@ export async function autopilot(root) {
     }
 
     const note = card.querySelector('[name="note"]')?.value.trim();
+
+    // A proposal whose command reaches a provider spends from the wallet and
+    // sends project data out. Price it and disclose it before the approval
+    // commits, exactly as a manual run of the same command would — and if the
+    // person cancels at the cost screen, the approval does not happen.
+    const buildPath = AI_COMMAND_PATHS[card.dataset.command];
+    if (buildPath) {
+      const ok = await confirmCost({
+        title: 'Approve and run',
+        intent: 'Approving runs this command as you. It calls an AI provider, so it spends from the project wallet and transmits project data — see below before you commit.',
+        path: buildPath(projectId),
+        runLabel: 'Approve and run',
+      });
+      if (!ok) return;
+    }
+
     await send(() => api.post(`/v1/projects/${projectId}/proposals/${proposal}/approve`, note ? { note } : {}), 'Approved');
 
     async function send(request, verb) {
@@ -415,7 +452,7 @@ function proposalCard(proposal) {
   const { finding, command } = proposal;
   const tone = TONE[finding.severity] ?? 'info';
 
-  return html`<div class="card proposal" data-proposal="${proposal.id}" style="margin-bottom:12px">
+  return html`<div class="card proposal" data-proposal="${proposal.id}" data-command="${command?.command ?? ''}" style="margin-bottom:12px">
     <div style="display:flex;gap:11px;align-items:flex-start;margin-bottom:11px">
       ${badge(finding.severity, tone)}
       ${badge(humanise(proposal.agent), 'neutral')}

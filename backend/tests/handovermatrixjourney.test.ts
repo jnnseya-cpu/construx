@@ -275,4 +275,44 @@ describe('the requirements-matrix vertical completes through the gateway', () =>
     });
     assert.ok(refused.status >= 400, 'a requirement closed by anybody other than its acceptance party must be refused');
   });
+
+  it('defines a sectional handover over a subset of the matrix, and refuses a reference not in it', async () => {
+    // A requirement to scope the section to.
+    const created = await call('POST', `/v1/projects/${project()}/handover-requirements`, 'fm', {
+      reference: 'REQ-OM-400',
+      source: 'Client fit-out brief',
+      sourceVersion: 'Rev B',
+      sourceClause: 'Level 3',
+      description: 'Level 3 east-wing small-power commissioning certificates',
+      acceptanceCriteria: 'Every distribution board on Level 3 east carries a witnessed commissioning certificate',
+      evidenceRule: 'The witnessed certificate per board, verified against the asset register',
+      acceptanceParty: 'Client estates director',
+      dependency: 'TEST',
+      weight: 5,
+      mandatory: true,
+      statutory: false,
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+
+    // The `define-section` command body: the requirement references the section
+    // covers are one-per-line in the form; the transform sends them as an array.
+    const section = await call('POST', `/v1/projects/${project()}/handover-sections`, 'fm', {
+      reference: 'SEC-L3-EAST',
+      boundary: 'Level 3 east wing from grid 5 to the stair core; the MEP risers and the roof plant are excluded.',
+      requirementRefs: ['REQ-OM-400'],
+      definedBy: 'Client estates director',
+    });
+    assert.equal(section.status, 201, JSON.stringify(section.json));
+    assert.equal(Number(section.json.requirements), 1, 'the section names exactly the one requirement it covers');
+
+    // A reference not in the matrix is refused — the section cannot be scoped to
+    // a requirement that does not exist.
+    const bad = await call('POST', `/v1/projects/${project()}/handover-sections`, 'fm', {
+      reference: 'SEC-GHOST',
+      boundary: 'A boundary described in more than the twenty characters the route requires.',
+      requirementRefs: ['REQ-DOES-NOT-EXIST'],
+      definedBy: 'Client estates director',
+    });
+    assert.ok(bad.status >= 400, 'a section scoped to an unknown requirement reference is refused');
+  });
 });

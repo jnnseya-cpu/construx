@@ -1010,6 +1010,18 @@ const AGENT_COMMANDS: Record<string, (ctx: ReturnType<typeof projectContext>, in
   'safety:assessContingency': (ctx) => Promise.resolve(safety.assessContingency(ctx)),
   'claims:assessDelayClaim': (ctx, input) => claims.assessDelayClaim(ctx, input as never),
   'handover:forecastMaintenance': (ctx, input) => handover.forecastMaintenance(ctx, input as never),
+  // Two commands the fleet raises as human-approvable proposals and that this
+  // table omitted, so approving one reached `No dispatcher` and returned a 500
+  // after the approval was already written — the proposal left APPROVED and
+  // never run, the approver shown a server error for pressing a button the
+  // platform offered them. Both have a domain function and run as the approver
+  // through the same engine path a manual call takes; neither reaches an AI
+  // provider, so neither is quoted.
+  'cdm:draftToolboxTalk': (ctx, input) => Promise.resolve(cdm.draftToolboxTalk(ctx, input as never)),
+  'tenderintake:extractRequirements': (ctx, input) =>
+    Promise.resolve(
+      tenderintake.extractRequirements(ctx, String(input.invitationId ?? ''), { deliverables: input.deliverables as never }),
+    ),
 };
 
 /**

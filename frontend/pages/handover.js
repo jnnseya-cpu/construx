@@ -723,6 +723,14 @@ export async function handover(root) {
                 ? (matrixReqs.length > 0 ? '' : 'Record a requirement before flagging a source reissue.')
                 : blockedReason('HANDOVER_OM', 'U'),
             },
+            {
+              id: 'define-section',
+              label: 'Define a sectional handover',
+              permitted: can('HANDOVER_OM', 'A') && matrixReqs.length > 0,
+              reason: can('HANDOVER_OM', 'A')
+                ? (matrixReqs.length > 0 ? '' : 'Record the requirements first — a section is a subset of the matrix.')
+                : blockedReason('HANDOVER_OM', 'A'),
+            },
           ]))}
         </div>
       </section>
@@ -1374,6 +1382,35 @@ export async function handover(root) {
         message: `${(r.flagged ?? []).length} requirement(s) flagged for delta review`,
         tone: (r.flagged ?? []).length > 0 ? 'warn' : 'ok',
       }),
+    },
+    'define-section': {
+      title: 'Define a sectional handover',
+      intent:
+        'An independent boundary handed over on its own — a floor, a wing, a system — accepted against its own subset ' +
+        'of the matrix rather than the whole. Name the requirements that apply to it.',
+      path: `/v1/projects/${projectId}/handover-sections`,
+      submitLabel: 'Define the section',
+      fields: [
+        { name: 'reference', label: 'Section reference', type: 'text', placeholder: 'Level 3 — east wing' },
+        { name: 'boundary', label: 'Boundary', type: 'textarea', rows: 3,
+          hint: 'What is inside it, what is not, and where responsibility changes — at least a sentence. A partial handover with no boundary is the whole project handed over one floor at a time.' },
+        { name: 'requirementRefs', label: 'Requirements that apply', type: 'textarea', rows: 4,
+          hint: `One requirement reference per line. In the matrix: ${matrixReqs.map((r) => r.reference).join(', ') || 'none recorded yet'}.` },
+        { name: 'definedBy', label: 'Defined by', type: 'text', value: state.session.user.name },
+      ],
+      // One reference per line — split on the newline only, so the subset is a
+      // clean array the route accepts and nothing trips the console array-hole
+      // check. The server refuses any reference not in the matrix.
+      transform: (v) => ({
+        reference: v.reference,
+        boundary: v.boundary,
+        definedBy: v.definedBy,
+        requirementRefs: String(v.requirementRefs ?? '')
+          .split(/\n/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      }),
+      report: (r) => ({ title: 'Section defined', message: `${r.requirements} requirement(s) in the section`, tone: 'ok' }),
     },
   };
 

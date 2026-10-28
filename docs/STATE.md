@@ -7531,6 +7531,28 @@ one a customer's commercial record reaches on the day the primary is unhealthy.
 Five tests. Nothing here changes what the platform *sends* — clearance routing
 already decided that — it changes what it tells the person pressing the button.
 
+**And the same disclosure now fronts the one AI path that had slipped past it:
+approving an agent proposal.** The autopilot queue runs a proposal's command as
+the approver, and four of the dispatchable commands
+(`planning:forecastDelay`, `cost:publishCVR`, `claims:assessDelayClaim`,
+`handover:forecastMaintenance`) reach a provider and spend from the wallet — yet
+the queue committed the approval with no cost shown and no transmission notice,
+the exact gap this section closed everywhere else. The approve handler in
+`autopilot.js` now quotes the engine route through the same `confirmCost` /
+`/v1/ai/quote` path a manual AI action uses, shows the cost and the §16.1
+disclosure, and only posts the approval if the person accepts. The route each
+command maps to is itself the AI route, so no new backend wiring was needed —
+`safety:assessContingency` is dispatchable but synchronous with no provider call,
+so it is deliberately not in the map. Fixing this surfaced a second defect in the
+same handler: `AGENT_COMMANDS` was missing dispatchers for two commands the fleet
+actually raises (`cdm:draftToolboxTalk`, `tenderintake:extractRequirements`), so
+approving one wrote the approval and then returned a 500 — the proposal left
+APPROVED and never run. Both dispatchers added, running as the approver through
+the same engine path a manual call takes. `backend/tests/autopilotapproval.test.ts`
+approves the toolbox-talk proposal over HTTP in the CONSTRUCTION-phase seed project
+and asserts it executes, and quotes all four AI paths asserting the disclosure
+reaches the screen and that quoting spends nothing.
+
 ---
 
 ### Gate 1: the restore rehearsed, the runbook walked, the public pages checked
@@ -30225,8 +30247,14 @@ remains as a named follow-up vertical.
   baseline → submit → accept through the gateway (the accepted requirement
   leaves `unmet`), proves waive is refused to an FM but allowed to an owner, and
   that a decision for the wrong acceptance party is refused. `defineHandoverSection`
-  (sectional handover) remains a follow-up — it needs a multiselect over
-  requirement references the current field model does not cleanly provide.
+  (sectional handover) is now wired too: the "multiselect over requirement
+  references" the field model does not cleanly provide is handled the way every
+  other reference list in the console is — a textarea, one reference per line,
+  split on the newline into the array the route accepts, with the server refusing
+  any reference not in the matrix. The same journey test defines a section over a
+  one-requirement subset (201, `requirements` = 1) and asserts a reference not in
+  the matrix is refused. The audit's systemic write-UI finding is now closed with
+  no handover sub-workflow left as a follow-up.
 
 ### Two award/handover correctness fixes from the audit
 
