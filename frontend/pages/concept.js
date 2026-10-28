@@ -61,7 +61,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const lines = (text) => String(text ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
 
 /** A comma- or newline-separated list, trimmed and emptied of blanks. */
-const list = (text) => String(text ?? '').split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+const list = (text) => String(text ?? '').split(/\n|,/).map((item) => item.trim()).filter(Boolean);
 
 /** `KEY:value` pairs, comma- or newline-separated, into an object. */
 const pairs = (text, cast = (value) => value) => {

@@ -125,7 +125,7 @@ export const NAV = [
       // read because that is the area the permit and the method statement live
       // in and the one a site manager is judged on; the quality half of the
       // screen authorises itself separately, panel by panel.
-      { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION'], icon: 'shield' },
+      { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION', 'PROCUREMENT_AWARD'], icon: 'shield' },
       // Gated on the model alone until the common data environment landed on
       // this screen. The CDE, the review cycle, the RFI register, submittals
       // and the drawing register are all DESIGN_INFORMATION — so the architect
