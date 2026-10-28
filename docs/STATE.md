@@ -30197,3 +30197,22 @@ its end-to-end proof are added.
   (safety-critical auto-quarantine → release → accept), and
   `commissioningdossierjourney.test.ts` (NO_DOSSIER → compile → accept; incomplete
   dossier refused) — 8 gateway tests.
+
+- **Concept stage (`concept.js`)** — the command bar offered 7 create commands
+  while ~16 further 6.4-gate steps had no affordance, so "Freeze concept baseline"
+  was a permanent dead-end. Wired all 16 (authority matrix, brief baseline,
+  constraint assess, due-diligence review, analyse/select/reject option, cost
+  plan, programme, cashflow, approve controls, the three strategies, compliance
+  screen, risk review) and tightened the pre-existing "add cost line" to require
+  an open cost plan. Option/constraint ids for the per-target selects come from
+  the generic entity route (both classified under PROJECT_SETUP).
+  `backend/tests/conceptjourney.test.ts` drives the whole spine on a fresh
+  CONCEPT project through the gateway until `POST /concept/baseline` SUCCEEDS
+  (the gate opens, 201 baselineId), with a negative control project refused
+  GATE_NOT_MET — proving the success is the gate opening, not a rubber stamp.
+
+The audit's systemic "missing write-UI" finding is now closed across the stage
+workflows reviewed: submittals, design change/baseline, concept, construction
+progress/deliveries/dossier, handover, meeting actions, and project invitations
+— each with a gateway journey test. The handover requirements-matrix sub-workflow
+remains as a named follow-up vertical.

@@ -1,4 +1,4 @@
-import { api } from '../lib/api.js';
+import { api, entities } from '../lib/api.js';
 import { command, commandBar } from '../lib/command.js';
 import { badge, html, humanise, money, pct, positionReport, raw, render, table, toast } from '../lib/ui.js';
 import { insightPanel } from '../lib/insight.js';
@@ -32,11 +32,51 @@ import { blockedReason, can, draw, state } from '../app.js';
  * a clause changed.
  */
 
+// Enum display lists, inline as the create commands above already do for
+// requirement categories, survey coverage and cost categories. The API remains
+// the validator — these only populate the chooser and an unknown value is
+// refused server-side exactly as a typed one would be.
+const RANGE_METHOD = ['PERT', 'TRIANGULAR'];
+const PROCUREMENT_ROUTE = [
+  'TRADITIONAL', 'DESIGN_AND_BUILD', 'CONSTRUCTION_MANAGEMENT', 'MANAGEMENT_CONTRACTING',
+  'FRAMEWORK_CALL_OFF', 'ALLIANCE', 'SINGLE_SOURCE',
+];
+
 const CLAUSE_TONE = { PASS: 'ok', FAIL: 'bad', NOT_ASSESSABLE: 'warn' };
 const STATUS_TONE = { ACCEPTED: 'ok', DRAFT: '', NEEDS_REVIEW: 'warn', SUPERSEDED: '' };
 const SEVERITY_TONE = { CRITICAL: 'bad', MAJOR: 'warn', MINOR: '' };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+
+// --- form parsers -----------------------------------------------------------
+//
+// Several concept commands carry a repeating structure — a weighted set of
+// criteria, a list of packages, a programme of milestones — that a flat field
+// list cannot express. Rather than inventing a second schema in the browser,
+// each such field is a delimited textarea and these turn what was typed into
+// exactly the array or object the route's schema asks for. The server remains
+// the one validator: a malformed line produces the refusal it always would.
+
+/** Non-empty, trimmed lines of a textarea. */
+const lines = (text) => String(text ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+
+/** A comma- or newline-separated list, trimmed and emptied of blanks. */
+const list = (text) => String(text ?? '').split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+
+/** `KEY:value` pairs, comma- or newline-separated, into an object. */
+const pairs = (text, cast = (value) => value) => {
+  const out = {};
+  for (const part of list(text)) {
+    const index = part.indexOf(':');
+    if (index === -1) continue;
+    const key = part.slice(0, index).trim();
+    if (key) out[key] = cast(part.slice(index + 1).trim());
+  }
+  return out;
+};
+
+/** Yes/true/1 → true; anything else → false. */
+const truthy = (value) => /^(y|yes|true|1)$/i.test(String(value ?? '').trim());
 
 export async function concept(root) {
   const projectId = state.session.projectId;
@@ -64,6 +104,33 @@ export async function concept(root) {
     .get(`/v1/projects/${projectId}/concept/requirements`)
     .catch(() => ({ requirements: [] }));
 
+  // The option and constraint registers carry the ids the analyse/select/reject
+  // and assess commands put in the URL. The position reads above report counts
+  // and comparisons, not ids — so the console cannot drive a command *at* a
+  // particular option or constraint from them. The generic entity read is the
+  // one place those ids are published, gated on the same PROJECT_SETUP area and
+  // sensitivity the typed reads apply, so a role not cleared for it is refused
+  // here exactly as it would be anywhere and the chooser is simply empty.
+  const [optionRecords, constraintRecords] = await Promise.all([
+    entities(projectId, 'FeasibilityOption').catch(() => []),
+    entities(projectId, 'SiteConstraint').catch(() => []),
+  ]);
+
+  // Status-filtered so a command is offered only where there is something for
+  // it to act on, and the chooser lists only valid targets.
+  const analysableOptions = optionRecords.filter((o) => o.status === 'DRAFT' || o.status === 'ANALYSED');
+  const selectableOptions = optionRecords.filter((o) => o.status === 'ANALYSED');
+  const rejectableOptions = optionRecords.filter((o) => o.status !== 'SELECTED' && o.status !== 'REJECTED');
+  const unassessedConstraints = constraintRecords.filter((c) => c.status !== 'ASSESSED');
+
+  const selectedOption = options?.selected;
+  const costPlan = controls?.costPlan;
+  const programme = controls?.programme;
+  const cashflow = controls?.cashflow;
+  const controlsApproved = controls?.approved;
+  const optionLabel = (o) => `${o.reference} — ${o.name}`;
+  const constraintLabel = (c) => `${c.reference} — ${humanise(c.severity)} (${c.status ? humanise(c.status) : 'open'})`;
+
   render(
     root,
     html`<div class="view">
@@ -85,10 +152,26 @@ export async function concept(root) {
                 reason: blockedReason('PROJECT_SETUP', 'C'),
               },
               {
+                id: 'authority-matrix',
+                label: 'Approve authority matrix',
+                permitted: can('PROJECT_SETUP', 'A'),
+                reason: blockedReason('PROJECT_SETUP', 'A'),
+              },
+              {
                 id: 'requirement',
                 label: 'Add requirement',
                 permitted: can('PROJECT_SETUP', 'C'),
                 reason: blockedReason('PROJECT_SETUP', 'C'),
+              },
+              {
+                id: 'baseline-brief',
+                label: 'Baseline the brief',
+                permitted: can('PROJECT_SETUP', 'A') && Boolean(brief) && !brief?.baseline,
+                reason: !can('PROJECT_SETUP', 'A')
+                  ? blockedReason('PROJECT_SETUP', 'A')
+                  : brief?.baseline
+                    ? 'The brief is already baselined. Supersede a requirement to re-open it.'
+                    : 'No brief to baseline yet. Add and accept the requirements first.',
               },
               {
                 id: 'survey',
@@ -103,16 +186,137 @@ export async function concept(root) {
                 reason: blockedReason('PROJECT_SETUP', 'C'),
               },
               {
+                id: 'assess-constraint',
+                label: 'Assess constraint',
+                permitted: can('PROJECT_SETUP', 'A') && unassessedConstraints.length > 0,
+                reason: !can('PROJECT_SETUP', 'A')
+                  ? blockedReason('PROJECT_SETUP', 'A')
+                  : 'Every constraint on the register is assessed. Identify one first.',
+              },
+              {
+                id: 'review-diligence',
+                label: 'Review due diligence',
+                permitted: can('PROJECT_SETUP', 'A') && (diligence?.surveys ?? 0) > 0,
+                reason: !can('PROJECT_SETUP', 'A')
+                  ? blockedReason('PROJECT_SETUP', 'A')
+                  : 'Nothing has been surveyed, so there is nothing to review.',
+              },
+              {
                 id: 'option',
                 label: 'Create option',
                 permitted: can('PROJECT_SETUP', 'C'),
                 reason: blockedReason('PROJECT_SETUP', 'C'),
               },
               {
+                id: 'analyse-option',
+                label: 'Score an option',
+                permitted: can('PROJECT_SETUP', 'U') && analysableOptions.length > 0,
+                reason: !can('PROJECT_SETUP', 'U')
+                  ? blockedReason('PROJECT_SETUP', 'U')
+                  : 'No option is waiting to be scored. Create one first.',
+              },
+              {
+                id: 'select-option',
+                label: 'Select an option',
+                permitted: can('PROJECT_SETUP', 'A') && selectableOptions.length > 0 && !selectedOption,
+                reason: !can('PROJECT_SETUP', 'A')
+                  ? blockedReason('PROJECT_SETUP', 'A')
+                  : selectedOption
+                    ? 'An option is already selected.'
+                    : 'No scored option is waiting for a decision. Score one first.',
+              },
+              {
+                id: 'reject-option',
+                label: 'Reject an option',
+                permitted: can('PROJECT_SETUP', 'A') && rejectableOptions.length > 0,
+                reason: !can('PROJECT_SETUP', 'A')
+                  ? blockedReason('PROJECT_SETUP', 'A')
+                  : 'There is no option left to rule out.',
+              },
+              {
+                id: 'cost-plan',
+                label: 'Open cost plan',
+                permitted: can('BUDGET_COST', 'C') && Boolean(selectedOption) && !costPlan,
+                reason: !can('BUDGET_COST', 'C')
+                  ? blockedReason('BUDGET_COST', 'C')
+                  : !selectedOption
+                    ? 'Select the option first — the cost plan is opened against it.'
+                    : 'A cost plan is already open.',
+              },
+              {
                 id: 'costline',
                 label: 'Add cost line',
-                permitted: can('BUDGET_COST', 'U'),
-                reason: blockedReason('BUDGET_COST', 'U'),
+                permitted: can('BUDGET_COST', 'U') && Boolean(costPlan),
+                reason: !can('BUDGET_COST', 'U')
+                  ? blockedReason('BUDGET_COST', 'U')
+                  : 'Open the cost plan first — a line has nowhere to go without one.',
+              },
+              {
+                id: 'programme',
+                label: 'Create programme',
+                permitted: can('PROGRAMME_BASELINES', 'C') && !programme,
+                reason: !can('PROGRAMME_BASELINES', 'C')
+                  ? blockedReason('PROGRAMME_BASELINES', 'C')
+                  : 'A milestone programme already exists.',
+              },
+              {
+                id: 'cashflow',
+                label: 'Generate cashflow',
+                permitted: can('BUDGET_COST', 'C') && Boolean(costPlan),
+                reason: !can('BUDGET_COST', 'C')
+                  ? blockedReason('BUDGET_COST', 'C')
+                  : 'Open the cost plan first — a cashflow phases it.',
+              },
+              {
+                id: 'approve-controls',
+                label: 'Approve controls',
+                permitted:
+                  can('BUDGET_COST', 'A') && Boolean(costPlan) && Boolean(programme) && Boolean(cashflow) && !controlsApproved,
+                reason: !can('BUDGET_COST', 'A')
+                  ? blockedReason('BUDGET_COST', 'A')
+                  : controlsApproved
+                    ? 'Cost, programme and cashflow are already approved under a cut-off.'
+                    : 'Cost plan, programme and cashflow must all exist before they can be approved together.',
+              },
+              {
+                id: 'procurement-strategy',
+                label: 'Choose procurement route',
+                permitted: can('PROCUREMENT_AWARD', 'A') && !strategy?.procurement,
+                reason: !can('PROCUREMENT_AWARD', 'A')
+                  ? blockedReason('PROCUREMENT_AWARD', 'A')
+                  : 'A procurement route is already chosen.',
+              },
+              {
+                id: 'package-strategy',
+                label: 'Approve packages',
+                permitted: can('PROCUREMENT_AWARD', 'A') && (strategy?.packages?.packages?.length ?? 0) === 0,
+                reason: !can('PROCUREMENT_AWARD', 'A')
+                  ? blockedReason('PROCUREMENT_AWARD', 'A')
+                  : 'The packages are already approved.',
+              },
+              {
+                id: 'contract-strategy',
+                label: 'Select contract form',
+                permitted: can('CONTRACTS_CLAIMS', 'A') && !strategy?.contract,
+                reason: !can('CONTRACTS_CLAIMS', 'A')
+                  ? blockedReason('CONTRACTS_CLAIMS', 'A')
+                  : 'A contract form is already selected.',
+              },
+              {
+                id: 'compliance-screen',
+                label: 'Screen statutory regimes',
+                permitted: can('SAFETY_RAMS', 'A') && !compliance?.screening,
+                reason: !can('SAFETY_RAMS', 'A')
+                  ? blockedReason('SAFETY_RAMS', 'A')
+                  : 'The statutory screening is already confirmed.',
+              },
+              {
+                id: 'risk-review',
+                label: 'Approve risk review',
+                permitted: can('RISK_REGISTER', 'A') && !compliance?.review,
+                reason: !can('RISK_REGISTER', 'A')
+                  ? blockedReason('RISK_REGISTER', 'A')
+                  : 'The concept risk review is already approved.',
               },
               {
                 id: 'baseline',
@@ -481,6 +685,495 @@ export async function concept(root) {
         { name: 'lowMinor', label: 'Low', type: 'number', money: true, required: false },
         { name: 'highMinor', label: 'High', type: 'number', money: true, required: false },
       ],
+    },
+
+    'authority-matrix': {
+      title: 'Approve the delegated authority matrix',
+      intent:
+        'Who may decide what, and to what value. Bound to the configuration version it is approved under, so a ' +
+        'reconfiguration leaves it for re-approval rather than silently carrying authority under changed rules.',
+      path: `/v1/projects/${projectId}/concept/authority-matrix`,
+      submitLabel: 'Approve',
+      fields: [
+        {
+          name: 'delegations',
+          label: 'Delegations',
+          type: 'textarea',
+          rows: 5,
+          hint:
+            'One per line: decision | holderId | limit (optional, in minor units) | escalates-to id (required where a ' +
+            'limit is set). e.g. Commit expenditure | user-123 | 5000000 | user-456',
+        },
+      ],
+      transform: (values) => ({
+        delegations: lines(values.delegations).map((line) => {
+          const [decision, holderId, limitMinor, escalatesToId] = line.split('|').map((part) => part.trim());
+          return {
+            decision,
+            holderId,
+            ...(limitMinor ? { limitMinor: Number(limitMinor) } : {}),
+            ...(escalatesToId ? { escalatesToId } : {}),
+          };
+        }),
+      }),
+    },
+
+    'baseline-brief': {
+      title: 'Baseline the brief',
+      intent:
+        'Freezes the hash of every accepted requirement at this moment, so a later edit shows as drift against what ' +
+        'the option was chosen for. Refused while a requirement is neither accepted nor superseded.',
+      path: `/v1/projects/${projectId}/concept/brief/baseline`,
+      submitLabel: 'Baseline',
+      fields: [{ name: 'evidenceHash', label: 'Brief pack', type: 'file' }],
+    },
+
+    'assess-constraint': {
+      title: 'Assess a constraint',
+      intent:
+        'Records how the constraint is dealt with. An assumption leaves here with an allowance or a named acceptance; ' +
+        'a critical constraint left unassessed blocks the option recommendation and the gate.',
+      path: ({ constraintId }) => `/v1/projects/${projectId}/concept/constraints/${constraintId}/assess`,
+      submitLabel: 'Assess',
+      fields: [
+        {
+          name: 'constraintId',
+          label: 'Constraint',
+          type: 'select',
+          emptyHint: 'Every constraint is assessed.',
+          options: unassessedConstraints.map((c) => ({ value: c.constraintId, label: constraintLabel(c) })),
+        },
+        { name: 'assessment', label: 'Assessment', type: 'textarea' },
+        {
+          name: 'allowanceMinor',
+          label: 'Allowance',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'For an assumption carried as a provisional sum.',
+        },
+        {
+          name: 'acceptedUnknownBy',
+          label: 'Accepted as an unknown by',
+          type: 'text',
+          required: false,
+          hint: 'Who owns the residual unknown, where it is accepted rather than priced.',
+        },
+      ],
+      transform: ({ constraintId: _constraintId, ...rest }) => rest,
+    },
+
+    'review-diligence': {
+      title: 'Review due diligence',
+      intent:
+        'Records a review of survey coverage and the constraint register. The readiness figure is stored as it stood ' +
+        'at the review, not recomputed later, so a review means what it said at the time.',
+      path: `/v1/projects/${projectId}/concept/due-diligence/review`,
+      submitLabel: 'Record review',
+      fields: [{ name: 'note', label: 'Note', type: 'textarea' }],
+    },
+
+    'analyse-option': {
+      title: 'Score an option',
+      intent:
+        'Scores the option against the appraisal criteria. The raw value is preserved beside the weighted total, and ' +
+        'the weights must sum to one — scoring two options on different criteria is comparing two different measurements.',
+      path: ({ optionId }) => `/v1/projects/${projectId}/concept/options/${optionId}/analyse`,
+      submitLabel: 'Score',
+      fields: [
+        {
+          name: 'optionId',
+          label: 'Option',
+          type: 'select',
+          emptyHint: 'No option is waiting to be scored.',
+          options: analysableOptions.map((o) => ({ value: o.optionId, label: optionLabel(o) })),
+        },
+        {
+          name: 'scores',
+          label: 'Scores',
+          type: 'textarea',
+          rows: 5,
+          hint:
+            'One criterion per line: CRITERION | rawValue | weight | basis. The weights across all lines must sum to 1. ' +
+            'e.g. CAPITAL_COST | 7 | 0.4 | Benchmark from three comparable schemes',
+        },
+      ],
+      transform: ({ scores }) => ({
+        scores: lines(scores).map((line) => {
+          const [criterion, rawValue, weight, ...basis] = line.split('|').map((part) => part.trim());
+          return { criterion, rawValue: Number(rawValue), weight: Number(weight), basis: basis.join(' | ') };
+        }),
+      }),
+    },
+
+    'select-option': {
+      title: 'Select an option',
+      intent:
+        'Freezes the brief-baseline hash the option was chosen against, so a later change to the brief shows the ' +
+        'decision was taken for a different brief. A rationale is required — a selection with none is a preference.',
+      path: ({ optionId }) => `/v1/projects/${projectId}/concept/options/${optionId}/select`,
+      submitLabel: 'Select',
+      fields: [
+        {
+          name: 'optionId',
+          label: 'Option',
+          type: 'select',
+          emptyHint: 'No scored option is waiting for a decision.',
+          options: selectableOptions.map((o) => ({ value: o.optionId, label: optionLabel(o) })),
+        },
+        { name: 'rationale', label: 'Why this option', type: 'textarea' },
+        { name: 'decisionRecordId', label: 'Decision record', type: 'text', required: false },
+        { name: 'evidenceHash', label: 'Decision pack', type: 'file' },
+      ],
+      transform: ({ optionId: _optionId, ...rest }) => rest,
+    },
+
+    'reject-option': {
+      title: 'Reject an option',
+      intent:
+        'Rules the option out, with its reason. A rejection with no reason is the option somebody proposes again next ' +
+        'year — the rationale is the record that the decision was deliberate.',
+      path: ({ optionId }) => `/v1/projects/${projectId}/concept/options/${optionId}/reject`,
+      submitLabel: 'Reject',
+      fields: [
+        {
+          name: 'optionId',
+          label: 'Option',
+          type: 'select',
+          emptyHint: 'There is no option left to rule out.',
+          options: rejectableOptions.map((o) => ({ value: o.optionId, label: optionLabel(o) })),
+        },
+        { name: 'rationale', label: 'Why it was rejected', type: 'textarea' },
+      ],
+      transform: ({ optionId: _optionId, ...rest }) => rest,
+    },
+
+    'cost-plan': {
+      title: 'Open the concept cost plan',
+      intent:
+        'Opens a cost plan against the selected option, in the project reporting currency. Cost lines are added to it, ' +
+        'and a rate with no source and base date is provisional and excluded from the high-confidence total.',
+      path: `/v1/projects/${projectId}/concept/cost-plan`,
+      submitLabel: 'Open',
+      fields: [
+        { name: 'baseDate', label: 'Price base date', type: 'date', value: todayIso() },
+        {
+          name: 'rangeMethod',
+          label: 'Range method',
+          type: 'select',
+          required: false,
+          placeholder: 'Platform default',
+          options: RANGE_METHOD.map((value) => ({ value, label: humanise(value) })),
+        },
+        { name: 'budgetCapMinor', label: 'Budget cap', type: 'number', money: true, required: false },
+        { name: 'tolerancePercent', label: 'Tolerance (%)', type: 'number', required: false },
+      ],
+    },
+
+    programme: {
+      title: 'Create the milestone programme',
+      intent:
+        'The milestones design works to. An undeclared open start or finish is refused — a date with no predecessor and ' +
+        'no stated reason is a date nobody owns.',
+      path: `/v1/projects/${projectId}/concept/programme`,
+      submitLabel: 'Create',
+      fields: [
+        { name: 'dataDate', label: 'Data date', type: 'date', value: todayIso() },
+        {
+          name: 'milestones',
+          label: 'Milestones',
+          type: 'textarea',
+          rows: 6,
+          hint:
+            'One per line: reference | name | plannedDate | predecessors (comma-separated) | openStartReason | ' +
+            'openFinishReason | statutory (yes/no) | leadTimeDays. Leave a field empty to omit it. ' +
+            'e.g. M-GW2 | Gateway 2 | 2027-05-01 | M-START |  |  | yes',
+        },
+      ],
+      transform: (values) => ({
+        dataDate: values.dataDate,
+        milestones: lines(values.milestones).map((line) => {
+          const [reference, name, plannedDate, predecessors, openStartReason, openFinishReason, statutory, leadTimeDays] =
+            line.split('|').map((part) => part.trim());
+          return {
+            reference,
+            name,
+            plannedDate,
+            ...(predecessors ? { predecessors: list(predecessors) } : {}),
+            ...(openStartReason ? { openStartReason } : {}),
+            ...(openFinishReason ? { openFinishReason } : {}),
+            ...(statutory ? { statutory: truthy(statutory) } : {}),
+            ...(leadTimeDays ? { leadTimeDays: Number(leadTimeDays) } : {}),
+          };
+        }),
+      }),
+    },
+
+    cashflow: {
+      title: 'Generate the cashflow',
+      intent:
+        'Time-phases the cost plan. A cashflow that does not reconcile to its own cost plan total is refused — the two ' +
+        'numbers are the same money said two ways.',
+      path: `/v1/projects/${projectId}/concept/cashflow`,
+      submitLabel: 'Generate',
+      fields: [
+        {
+          name: 'periods',
+          label: 'Periods',
+          type: 'textarea',
+          rows: 5,
+          hint:
+            'One per line: period | spend (minor units) | funding (minor units, optional). The spend must total the ' +
+            'cost plan. e.g. 2026-Q1 | 42000000 | 42000000',
+        },
+      ],
+      transform: (values) => ({
+        periods: lines(values.periods).map((line) => {
+          const [period, spendMinor, fundingMinor] = line.split('|').map((part) => part.trim());
+          return {
+            period,
+            spendMinor: Number(spendMinor),
+            ...(fundingMinor ? { fundingMinor: Number(fundingMinor) } : {}),
+          };
+        }),
+      }),
+    },
+
+    'approve-controls': {
+      title: 'Approve cost, programme and cashflow',
+      intent:
+        'Approves the three together under one declared cut-off, so they cannot drift apart afterwards. The gate reads ' +
+        'this as the single moment the controls were agreed.',
+      path: `/v1/projects/${projectId}/concept/controls/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'cutOffDate', label: 'Cut-off date', type: 'date', value: todayIso() },
+        {
+          name: 'affordabilityActions',
+          label: 'Affordability actions',
+          type: 'textarea',
+          required: false,
+          rows: 3,
+          hint: 'One per line, where the estimate is over the budget cap.',
+        },
+        { name: 'evidenceHash', label: 'Controls pack', type: 'file' },
+      ],
+      transform: ({ affordabilityActions, ...rest }) => ({
+        ...rest,
+        ...(String(affordabilityActions ?? '').trim() ? { affordabilityActions: lines(affordabilityActions) } : {}),
+      }),
+    },
+
+    'procurement-strategy': {
+      title: 'Choose the procurement route',
+      intent:
+        'Scores the candidate routes against weighted criteria and records the chosen one with its rationale. A ' +
+        'single-source route needs an authorised justification.',
+      path: `/v1/projects/${projectId}/concept/procurement-strategy`,
+      submitLabel: 'Choose',
+      fields: [
+        {
+          name: 'weights',
+          label: 'Criteria weights',
+          type: 'textarea',
+          rows: 3,
+          hint: 'CRITERION:weight, comma- or newline-separated. Must sum to 1. e.g. SCOPE_CERTAINTY:0.3, TIME:0.3, PRICE_CERTAINTY:0.4',
+        },
+        {
+          name: 'assessments',
+          label: 'Route assessments',
+          type: 'textarea',
+          rows: 5,
+          hint:
+            'One route per line: ROUTE | CRITERION:score,CRITERION:score | note. ' +
+            'e.g. DESIGN_AND_BUILD | SCOPE_CERTAINTY:5,TIME:8,PRICE_CERTAINTY:8 | Faster, less control',
+        },
+        {
+          name: 'selectedRoute',
+          label: 'Selected route',
+          type: 'select',
+          options: PROCUREMENT_ROUTE.map((value) => ({ value, label: humanise(value) })),
+        },
+        { name: 'rationale', label: 'Rationale', type: 'textarea' },
+        { name: 'designResponsibility', label: 'Design responsibility', type: 'text' },
+        { name: 'riskAppetite', label: 'Risk appetite', type: 'text' },
+        {
+          name: 'singleSourceJustification',
+          label: 'Single-source justification',
+          type: 'textarea',
+          required: false,
+          hint: 'Required only where the selected route is single-source.',
+        },
+        { name: 'singleSourceApprovedBy', label: 'Single-source approved by', type: 'text', required: false },
+      ],
+      transform: (values) => ({
+        weights: pairs(values.weights, Number),
+        assessments: lines(values.assessments).map((line) => {
+          const [route, scores, ...note] = line.split('|').map((part) => part.trim());
+          return { route, scores: pairs(scores, Number), note: note.join(' | ') };
+        }),
+        selectedRoute: values.selectedRoute,
+        rationale: values.rationale,
+        designResponsibility: values.designResponsibility,
+        riskAppetite: values.riskAppetite,
+        ...(String(values.singleSourceJustification ?? '').trim()
+          ? { singleSourceJustification: values.singleSourceJustification }
+          : {}),
+        ...(String(values.singleSourceApprovedBy ?? '').trim()
+          ? { singleSourceApprovedBy: values.singleSourceApprovedBy }
+          : {}),
+      }),
+    },
+
+    'package-strategy': {
+      title: 'Approve the package strategy',
+      intent:
+        'The work split into packages, each with its enquiry and award dates and the milestone it is required on site ' +
+        'for. A scope element in two packages, or in none, refuses the approval.',
+      path: `/v1/projects/${projectId}/concept/package-strategy`,
+      submitLabel: 'Approve',
+      fields: [
+        {
+          name: 'worksScopeElements',
+          label: 'Works scope elements',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Comma- or newline-separated. Every element must appear in exactly one package. e.g. CIVILS, MECHANICAL, ELECTRICAL',
+        },
+        {
+          name: 'packages',
+          label: 'Packages',
+          type: 'textarea',
+          rows: 6,
+          hint:
+            'One per line: reference | name | scopeElements (comma) | interfaces (comma) | ownerId | ' +
+            'requiredOnSiteMilestoneRef | enquiryDate | awardDate | leadTimeWeeks. ' +
+            'e.g. PKG-CIV | Civils | CIVILS | Hands slab to MEP | user-1 | M-SITE | 2026-06-01 | 2026-09-01 | 20',
+        },
+      ],
+      transform: (values) => ({
+        worksScopeElements: list(values.worksScopeElements),
+        packages: lines(values.packages).map((line) => {
+          const [
+            reference, name, scopeElements, interfaces, ownerId,
+            requiredOnSiteMilestoneRef, enquiryDate, awardDate, leadTimeWeeks,
+          ] = line.split('|').map((part) => part.trim());
+          return {
+            reference,
+            name,
+            scopeElements: list(scopeElements),
+            interfaces: list(interfaces),
+            ownerId,
+            requiredOnSiteMilestoneRef,
+            enquiryDate,
+            awardDate,
+            leadTimeWeeks: Number(leadTimeWeeks),
+          };
+        }),
+      }),
+    },
+
+    'contract-strategy': {
+      title: 'Select the contract-form family',
+      intent:
+        'The contract family and option, its payment terms, insurances, bonds and the notices it turns on. Provisional ' +
+        'until the executed contract is ingested and validated.',
+      path: `/v1/projects/${projectId}/concept/contract-strategy`,
+      submitLabel: 'Select',
+      fields: [
+        { name: 'contractFamily', label: 'Contract family', type: 'text', placeholder: 'NEC4' },
+        { name: 'contractOption', label: 'Contract option', type: 'text', placeholder: 'Option C — target contract' },
+        { name: 'paymentTerms', label: 'Payment terms', type: 'textarea' },
+        {
+          name: 'insuranceRequirements',
+          label: 'Insurance requirements',
+          type: 'textarea',
+          rows: 2,
+          hint: 'One per line.',
+        },
+        { name: 'bondsAndGuarantees', label: 'Bonds and guarantees', type: 'textarea', rows: 2, hint: 'One per line.' },
+        { name: 'provisionalNotices', label: 'Provisional notices', type: 'textarea', rows: 2, hint: 'One per line.' },
+      ],
+      transform: (values) => ({
+        contractFamily: values.contractFamily,
+        contractOption: values.contractOption,
+        paymentTerms: values.paymentTerms,
+        insuranceRequirements: lines(values.insuranceRequirements),
+        bondsAndGuarantees: lines(values.bondsAndGuarantees),
+        provisionalNotices: lines(values.provisionalNotices),
+      }),
+    },
+
+    'compliance-screen': {
+      title: 'Screen the statutory regimes',
+      intent:
+        'Confirms which statutory regimes bind the project, by a named competent person and on a stated basis. An ' +
+        'applicable regime must land on a non-bypassable milestone in the programme.',
+      path: `/v1/projects/${projectId}/concept/compliance-screen`,
+      submitLabel: 'Confirm',
+      fields: [
+        {
+          name: 'regimes',
+          label: 'Regimes',
+          type: 'textarea',
+          rows: 5,
+          hint:
+            'One per line: REGIME | applicable (yes/no) | basis | milestoneRef (for an applicable one). ' +
+            'e.g. CDM_2015 | yes | Notifiable construction project | M-GW2',
+        },
+        { name: 'confirmedByName', label: 'Confirmed by', type: 'text' },
+        { name: 'confirmedByRole', label: 'Their role', type: 'text' },
+        { name: 'competenceBasis', label: 'Competence basis', type: 'textarea' },
+        { name: 'evidenceHash', label: 'Screening pack', type: 'file' },
+      ],
+      transform: (values) => ({
+        regimes: lines(values.regimes).map((line) => {
+          const [regime, applicable, basis, milestoneRef] = line.split('|').map((part) => part.trim());
+          return {
+            regime,
+            applicable: truthy(applicable),
+            basis: basis ?? '',
+            ...(milestoneRef ? { milestoneRef } : {}),
+          };
+        }),
+        confirmedByName: values.confirmedByName,
+        confirmedByRole: values.confirmedByRole,
+        competenceBasis: values.competenceBasis,
+        evidenceHash: values.evidenceHash,
+      }),
+    },
+
+    'risk-review': {
+      title: 'Approve the concept risk review',
+      intent:
+        'Approves the risk register for concept, reconciling the declared allowance against the RISK_ALLOWANCE in the ' +
+        'cost plan. Two numbers for the same money is how a contingency gets counted twice, and it is refused.',
+      path: `/v1/projects/${projectId}/concept/risk-review`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'declaredAllowanceMinor', label: 'Declared allowance', type: 'number', money: true },
+        { name: 'retainedExposureNote', label: 'Retained exposure', type: 'textarea', hint: 'What the project is carrying.' },
+        {
+          name: 'escalated',
+          label: 'Escalated risks',
+          type: 'textarea',
+          required: false,
+          rows: 2,
+          hint: 'One per line, where a risk is escalated above the project.',
+        },
+        {
+          name: 'reconciliationToleranceMinor',
+          label: 'Reconciliation tolerance',
+          type: 'number',
+          money: true,
+          required: false,
+        },
+        { name: 'evidenceHash', label: 'Risk review pack', type: 'file' },
+      ],
+      transform: ({ escalated, ...rest }) => ({
+        ...rest,
+        ...(String(escalated ?? '').trim() ? { escalated: lines(escalated) } : {}),
+      }),
     },
 
     baseline: {
