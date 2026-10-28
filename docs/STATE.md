@@ -30174,3 +30174,13 @@ its end-to-end proof are added.
   → decide (accepted with conditions) → activate → baseline → transfer through
   the gateway, and asserts a decision with no reasons is refused. The
   requirements-matrix sub-workflow is deferred as its own vertical.
+
+- **Design change & baseline (`design.js`)** — both were read-only registers. Added
+  the design-change spine (propose → assess six domains → decide → record
+  implemented → confirm affected → close) and the baseline spine (freeze package,
+  approve baseline, approve MIDP). `backend/tests/designchangejourney.test.ts`
+  drives a change PROPOSED → ASSESSED → APPROVED → IMPLEMENTED → CLOSED and a
+  package through freeze → MIDP → baseline through the gateway, asserting the
+  two-person rule (proposer cannot decide), that approve is refused while a
+  domain is unassessed, close is refused while an affected item is unconfirmed,
+  and a cost snapshot with no source is refused.

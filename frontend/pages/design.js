@@ -34,6 +34,12 @@ export async function design(root) {
     // reviewed against anything, so the form offers real clauses rather than a
     // text box called clauseId.
     'SpecClause',
+    // The design-change records themselves, not only the position over them.
+    // The register read (`changes`, below) counts affected items but does not
+    // carry their references, and confirming one at closure needs the exact
+    // reference the change named — so the commands read the entity the register
+    // is a projection of, which is the one place that list actually lives.
+    'DesignChange',
   ]);
 
   const clauses = b.SpecClause;
@@ -201,6 +207,60 @@ export async function design(root) {
   );
   const orderableSubmittals = submittals.submittals ?? [];
 
+  // Design-change lifecycle. The register read dead-ended at the first screen —
+  // a change could be proposed by the engine, assessed, decided, implemented
+  // and closed, and none of it could be driven from the product. Each list
+  // below is the set a command may legitimately act on, so a shown button never
+  // opens onto nothing and never posts a body the route will refuse.
+  const designChangeRecords = b.DesignChange ?? [];
+  // Assessable while it is anything but closed; a domain can always be revised
+  // up to the decision, and reassessing one already recorded replaces it.
+  const assessableChanges = designChangeRecords.filter((c) => c.status !== 'CLOSED');
+  // Decidable only before a decision exists — PROPOSED or fully ASSESSED. Once
+  // decided (approved, rejected or returned for more) the route refuses a
+  // second decision, so the button would 409.
+  const decidableChanges = designChangeRecords.filter((c) => c.status === 'PROPOSED' || c.status === 'ASSESSED');
+  // Implementable once approved, or at any live point on the emergency path —
+  // the one route that records the change made before its approval, as an
+  // emergency that still owes it.
+  const implementableChanges = designChangeRecords.filter(
+    (c) => c.status === 'APPROVED' || (c.emergency && !['REJECTED', 'IMPLEMENTED', 'CLOSED'].includes(c.status)),
+  );
+  // confirm-affected packs the change id and the affected reference into one
+  // option value. These pull each back out — and are named functions rather
+  // than inline string methods so the path template that calls them carries no
+  // quote characters, which the console form-checker reads literally.
+  const affectedTargetChange = (target) => String(target).split('|')[0];
+  const affectedTargetRef = (target) => String(target).split('|').slice(1).join('|');
+  // Every affected item the change named that nobody has confirmed yet, each
+  // tagged with the change it belongs to so one select can span them all.
+  const unconfirmedAffected = designChangeRecords.flatMap((c) =>
+    (c.affects ?? [])
+      .filter((item) => item.outcome === undefined)
+      .map((item) => ({ changeId: c.id, changeRef: c.reference, reference: item.reference, kind: item.kind })),
+  );
+  // Closable: a rejection closes on the rejection, and an implemented change
+  // closes once every affected item is confirmed and any emergency approval it
+  // owed has been given.
+  const closableChanges = designChangeRecords.filter((c) => {
+    if (c.status === 'REJECTED') return true;
+    if (c.status !== 'IMPLEMENTED') return false;
+    const allConfirmed = (c.affects ?? []).every((item) => item.outcome !== undefined);
+    const owesApproval = Boolean(c.emergency && !c.emergency.retrospectivelyApprovedAt);
+    return allConfirmed && !owesApproval;
+  });
+
+  // Design baseline. The gate says which packages may freeze (and which only
+  // partially); the baseline register says which freezes are current and unstale
+  // and so may be baselined; the plan says whether the MIDP reconciles to itself.
+  const gatePackages = Array.isArray(gate?.packages) ? gate.packages : [];
+  const freezablePackages = gatePackages.filter((p) => p.mayFreeze || p.mayFreezePartially);
+  const approvableFreezes = (Array.isArray(baselines?.freezes) ? baselines.freezes : []).filter(
+    (f) => f.ready && !f.supersededBy,
+  );
+  const planPackages = Array.isArray(packages?.packages) ? packages.packages : [];
+  const midpReconciles = Boolean(packages?.midp?.ready);
+
   render(
     root,
     html`
@@ -293,6 +353,78 @@ export async function design(root) {
                 : inheritedRecords.length === 0
                   ? 'This project did not come through a contract award, so nothing was inherited from a tender.'
                   : 'Every inherited item has been decided.',
+            },
+            {
+              id: 'propose-change',
+              label: 'Raise a design change',
+              permitted: can('DESIGN_INFORMATION', 'C'),
+              reason: blockedReason('DESIGN_INFORMATION', 'C'),
+            },
+            {
+              id: 'assess-impact',
+              label: 'Assess a change impact',
+              permitted: can('DESIGN_INFORMATION', 'U') && assessableChanges.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'No open design change. Raise one before assessing an impact against it.',
+            },
+            {
+              id: 'decide-change',
+              label: 'Decide a design change',
+              permitted: can('DESIGN_INFORMATION', 'A') && decidableChanges.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing is awaiting a decision. A change is decided once, before it is approved, rejected or returned.',
+            },
+            {
+              id: 'record-change-implemented',
+              label: 'Record a change implemented',
+              permitted: can('DESIGN_INFORMATION', 'U') && implementableChanges.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'No approved or emergency change is waiting to be recorded as made in the design.',
+            },
+            {
+              id: 'confirm-affected',
+              label: 'Confirm an affected item',
+              permitted: can('DESIGN_INFORMATION', 'U') && unconfirmedAffected.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'U')
+                ? blockedReason('DESIGN_INFORMATION', 'U')
+                : 'Every item a change named has been confirmed, revised or established as unaffected.',
+            },
+            {
+              id: 'close-change',
+              label: 'Close a design change',
+              permitted: can('DESIGN_INFORMATION', 'A') && closableChanges.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing is ready to close. A change closes once it is implemented and every affected item is confirmed.',
+            },
+            {
+              id: 'freeze-package',
+              label: 'Freeze a design package',
+              permitted: can('DESIGN_INFORMATION', 'A') && freezablePackages.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'No package may be frozen yet. A package freezes once its deliverables are published and nothing critical is open against it.',
+            },
+            {
+              id: 'approve-baseline',
+              label: 'Approve a design baseline',
+              permitted: can('DESIGN_INFORMATION', 'A') && approvableFreezes.length > 0,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : 'Nothing current is frozen to baseline. Freeze a package first, or an earlier freeze has been superseded.',
+            },
+            {
+              id: 'approve-midp',
+              label: 'Approve the MIDP',
+              permitted: can('DESIGN_INFORMATION', 'A') && planPackages.length > 0 && midpReconciles,
+              reason: !can('DESIGN_INFORMATION', 'A')
+                ? blockedReason('DESIGN_INFORMATION', 'A')
+                : planPackages.length === 0
+                  ? 'There is no design package on this project, so there is no plan to approve.'
+                  : 'The plan does not reconcile to itself yet — the register above shows the contradiction to resolve first.',
             },
           ]))}
         </div>
@@ -1329,6 +1461,260 @@ export async function design(root) {
           ? { atRisk: true, ...(String(justification ?? '').trim() ? { justification: String(justification) } : {}) }
           : {}),
       }),
+    },
+    'propose-change': {
+      title: 'Raise a design change',
+      intent:
+        'A change to approved design — the thing between a design being accepted and a package being frozen. Not a ' +
+        'contractual variation: where it has entitlement behind it, name the change request rather than becoming one. ' +
+        'The approval route is derived from the change’s share of the project and whether it touches safety or a ' +
+        'statutory approval, and is shown before anybody submits.',
+      path: `/v1/projects/${projectId}/design-changes`,
+      submitLabel: 'Raise the change',
+      fields: [
+        { name: 'title', label: 'What is changing', type: 'text', placeholder: 'Raise the inlet weir crest by 150mm' },
+        { name: 'classification', label: 'Classification', type: 'select', options: [
+          { value: 'CORRECTION', label: 'Correction — putting our own work right' },
+          { value: 'CLIENT_CHANGE', label: 'Client change' },
+          { value: 'VALUE_ENGINEERING', label: 'Value engineering' },
+          { value: 'COMPLIANCE', label: 'Compliance — forced by a code, standard or consent' },
+          { value: 'SITE_CONDITION', label: 'Site condition' },
+        ] },
+        { name: 'origin', label: 'Where it came from', type: 'text',
+          hint: 'The instruction, the RFI answer, the site query, the clash. A change with no origin cannot be traced back to whoever asked for it.' },
+        { name: 'reason', label: 'Why', type: 'textarea', rows: 3 },
+        { name: 'currentRevision', label: 'Current revision', type: 'text', placeholder: 'C-101 Rev B' },
+        { name: 'proposedRevision', label: 'Proposed revision', type: 'text', placeholder: 'C-101 Rev C' },
+        { name: 'affects', label: 'What it affects', type: 'textarea', rows: 4,
+          hint: 'One per line: kind, reference — e.g. “Drawing, C-101” or “Package, PKG-CIVILS”. This list is what closure is checked against, so it cannot be shortened at the end.',
+          placeholder: 'Drawing, C-101\nPackage, PKG-CIVILS' },
+        { name: 'estimatedCostMinor', label: 'Estimated cost', type: 'number', min: 0, money: true,
+          hint: 'The best estimate of its value. The route is a proportion of the project, never this figure on its own.' },
+        { name: 'touchesSafety', label: 'Touches safety?', type: 'select', options: [
+          { value: '', label: 'No' },
+          { value: 'yes', label: 'Yes — material at any value' },
+        ] },
+        { name: 'touchesStatutoryApproval', label: 'Touches a statutory approval?', type: 'select', options: [
+          { value: '', label: 'No' },
+          { value: 'yes', label: 'Yes — the consent was granted on what was submitted' },
+        ] },
+        { name: 'emergencyWhy', label: 'Emergency — why it could not wait', type: 'textarea', rows: 2, required: false,
+          hint: 'Only for a safety correction made ahead of the approval route. It is recorded as an emergency and still owes its retrospective approval.' },
+      ],
+      transform: ({ affects, touchesSafety, touchesStatutoryApproval, estimatedCostMinor, emergencyWhy, ...rest }) => ({
+        ...rest,
+        // `money` already turned the entered figure into minor units; `Number`
+        // is the same defensiveness the submittal form keeps.
+        estimatedCostMinor: Number(estimatedCostMinor),
+        touchesSafety: touchesSafety === true || touchesSafety === 'yes',
+        touchesStatutoryApproval: touchesStatutoryApproval === true || touchesStatutoryApproval === 'yes',
+        affects: String(affects ?? '')
+          .split('\n')
+          .map((line) => line.split(',').map((part) => part.trim()))
+          .filter((parts) => parts[0] && parts[1])
+          .map((parts) => ({ kind: parts[0], reference: parts.slice(1).join(', ') })),
+        ...(String(emergencyWhy ?? '').trim() ? { emergency: { why: String(emergencyWhy) } } : {}),
+      }),
+    },
+    'assess-impact': {
+      title: 'Assess a change impact',
+      intent:
+        'One of the six domains, or a reasoned record that it does not apply. Silence is not an assessment: a change ' +
+        'approved on cost alone is a change whose programme consequence somebody discovers on site. Approval is refused ' +
+        'while any domain is unassessed.',
+      path: ({ changeId }) => `/v1/projects/${projectId}/design-changes/${changeId}/impacts`,
+      submitLabel: 'Record the assessment',
+      fields: [
+        { name: 'changeId', label: 'Change', type: 'select',
+          options: assessableChanges.map((c) => ({ value: c.id, label: `${c.reference} — ${c.title}` })) },
+        { name: 'domain', label: 'Domain', type: 'select', options: [
+          { value: 'DESIGN', label: 'Design' },
+          { value: 'COMMERCIAL', label: 'Commercial' },
+          { value: 'PLANNING', label: 'Planning' },
+          { value: 'SAFETY', label: 'Safety' },
+          { value: 'PROCUREMENT', label: 'Procurement' },
+          { value: 'INFORMATION', label: 'Information' },
+        ] },
+        { name: 'applicable', label: 'Does this domain apply?', type: 'select', options: [
+          { value: 'yes', label: 'Yes — it is affected' },
+          { value: 'no', label: 'No — not affected, reason below' },
+        ] },
+        { name: 'assessment', label: 'The impact, or why there is none', type: 'textarea', rows: 3 },
+        { name: 'assessedBy', label: 'Assessed by', type: 'text',
+          hint: 'Name who looked. An assessment with no name is one nobody will stand behind when it turns out to have missed something.' },
+        { name: 'costMinor', label: 'Cost impact', type: 'number', money: true, required: false },
+        { name: 'days', label: 'Programme impact (days)', type: 'number', required: false },
+      ],
+      transform: ({ changeId: _changeId, applicable, costMinor, days, ...rest }) => ({
+        ...rest,
+        applicable: applicable === true || applicable === 'yes',
+        ...(costMinor === undefined || String(costMinor) === '' ? {} : { costMinor: Number(costMinor) }),
+        ...(days === undefined || String(days) === '' ? {} : { days: Number(days) }),
+      }),
+    },
+    'decide-change': {
+      title: 'Decide a design change',
+      intent:
+        'Approve, reject, or ask for more. Approval is refused while any of the six domains is unassessed, and the ' +
+        'person who proposed the change cannot be the person who decides it.',
+      path: ({ changeId }) => `/v1/projects/${projectId}/design-changes/${changeId}/decision`,
+      submitLabel: 'Record the decision',
+      fields: [
+        { name: 'changeId', label: 'Change', type: 'select',
+          options: decidableChanges.map((c) => ({ value: c.id, label: `${c.reference} — ${c.title}` })) },
+        { name: 'decision', label: 'Decision', type: 'select', options: [
+          { value: 'APPROVE', label: 'Approve' },
+          { value: 'REJECT', label: 'Reject' },
+          { value: 'MORE_INFORMATION', label: 'More information needed' },
+        ] },
+        { name: 'rationale', label: 'What the decision rests on', type: 'textarea', rows: 3 },
+      ],
+      transform: ({ changeId: _changeId, ...rest }) => rest,
+    },
+    'record-change-implemented': {
+      title: 'Record a change implemented',
+      intent:
+        'Records the change as made in the design. Refused before approval unless it was raised as an emergency — a ' +
+        'revision issued while a change is still being assessed is a decision taken by whoever drew it.',
+      path: ({ changeId }) => `/v1/projects/${projectId}/design-changes/${changeId}/implemented`,
+      submitLabel: 'Record it implemented',
+      fields: [
+        { name: 'changeId', label: 'Change', type: 'select',
+          options: implementableChanges.map((c) => ({ value: c.id, label: `${c.reference} — ${c.title}` })) },
+        { name: 'note', label: 'What was actually changed in the design', type: 'textarea', rows: 3 },
+        { name: 'changeRequestRef', label: 'Change request reference', type: 'text', required: false,
+          hint: 'Where this change has contractual consequence, name the change request it feeds. Two registers, one link — it does not become one.' },
+      ],
+      transform: ({ changeId: _changeId, changeRequestRef, ...rest }) => ({
+        ...rest,
+        ...(String(changeRequestRef ?? '').trim() ? { changeRequestRef: String(changeRequestRef) } : {}),
+      }),
+    },
+    'confirm-affected': {
+      title: 'Confirm an affected item',
+      intent:
+        'Confirm one thing the change named was revised, or that it turned out not to be affected after all — with the ' +
+        'reason either way. The list comes from what the change itself said it affects, so it cannot be quietly shortened.',
+      path: ({ target }) => `/v1/projects/${projectId}/design-changes/${affectedTargetChange(target)}/affected`,
+      submitLabel: 'Confirm it',
+      fields: [
+        { name: 'target', label: 'Affected item', type: 'select',
+          options: unconfirmedAffected.map((item) => ({
+            value: `${item.changeId}|${item.reference}`,
+            label: `${item.changeRef} · ${item.kind} ${item.reference}`,
+          })) },
+        { name: 'outcome', label: 'Outcome', type: 'select', options: [
+          { value: 'REVISED', label: 'Revised — name the revision below' },
+          { value: 'UNAFFECTED', label: 'Unaffected after all — say why below' },
+        ] },
+        { name: 'note', label: 'The revision it went to, or why it was not affected', type: 'textarea', rows: 3 },
+      ],
+      // The change id rides in the path; the reference is the rest of the value,
+      // rejoined so a reference that itself contains the separator survives.
+      transform: ({ target, ...rest }) => ({ ...rest, reference: affectedTargetRef(target) }),
+    },
+    'close-change': {
+      title: 'Close a design change',
+      intent:
+        'Closes the change. Refused while anything it named is unconfirmed, or while an emergency approval is still owed ' +
+        '— closing without it would turn a deferral into a bypass.',
+      path: ({ changeId }) => `/v1/projects/${projectId}/design-changes/${changeId}/close`,
+      submitLabel: 'Close it',
+      fields: [
+        { name: 'changeId', label: 'Change', type: 'select',
+          options: closableChanges.map((c) => ({ value: c.id, label: `${c.reference} — ${c.title}` })) },
+        { name: 'note', label: 'Closing note', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ changeId: _changeId, ...rest }) => rest,
+    },
+    'freeze-package': {
+      title: 'Freeze a design package',
+      intent:
+        'The moment design stops moving and everything downstream is built on it. A freeze copies the exact published ' +
+        'revisions onto itself, so it stays readable whatever the model does since. A partial freeze needs a stated ' +
+        'boundary and the interfaces across it checked by name.',
+      path: ({ packageId }) => `/v1/projects/${projectId}/design-packages/${packageId}/freeze`,
+      submitLabel: 'Freeze it',
+      fields: [
+        { name: 'packageId', label: 'Package', type: 'select',
+          options: freezablePackages.map((p) => ({ value: p.packageId, label: `${p.reference}${p.mayFreeze ? '' : ' — partial only (something unpublished)'}` })) },
+        { name: 'scope', label: 'Scope', type: 'select', options: [
+          { value: 'FULL', label: 'Full — every deliverable is published' },
+          { value: 'PARTIAL', label: 'Partial — freeze the settled part' },
+        ] },
+        { name: 'boundary', label: 'Boundary', type: 'textarea', rows: 2, required: false,
+          hint: 'Required for a partial freeze: what is inside it. Without one, two halves of a package carry the same reference.' },
+        { name: 'interfaceChecks', label: 'Interface checks', type: 'textarea', rows: 3, required: false,
+          hint: 'Only for a partial freeze with interfaces still open. One per line: interface reference, other package, finding, who checked.',
+          placeholder: 'PKG-A-INT-1, PKG-MEP, Duct penetration coordinated at grid C4, D. Whyte' },
+        { name: 'deliverableRefs', label: 'Deliverables to freeze', type: 'text', required: false,
+          hint: 'Leave blank to freeze the whole package. Comma-separated references to freeze only some.' },
+        { name: 'note', label: 'What the freeze rests on', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ packageId: _packageId, boundary, interfaceChecks, deliverableRefs, ...rest }) => ({
+        ...rest,
+        ...(String(boundary ?? '').trim() ? { boundary: String(boundary) } : {}),
+        ...(String(deliverableRefs ?? '').trim()
+          ? { deliverableRefs: String(deliverableRefs).split(',').map((part) => part.trim()).filter(Boolean) }
+          : {}),
+        ...(String(interfaceChecks ?? '').trim()
+          ? {
+              interfaceChecks: String(interfaceChecks)
+                .split('\n')
+                .map((line) => line.split(',').map((part) => part.trim()))
+                .filter((parts) => parts[0])
+                .map((parts) => ({
+                  reference: parts[0],
+                  withPackage: parts[1] ?? '',
+                  finding: parts[2] ?? '',
+                  checkedBy: parts.slice(3).join(', '),
+                })),
+            }
+          : {}),
+      }),
+    },
+    'approve-baseline': {
+      title: 'Approve a design baseline',
+      intent:
+        'A position at a moment, over the frozen packages. The cost snapshot states the revisions it was measured from ' +
+        '— a figure with no source is the one the tender is built on. A superseded or stale freeze cannot be baselined.',
+      path: `/v1/projects/${projectId}/design-baselines`,
+      submitLabel: 'Approve the baseline',
+      fields: [
+        { name: 'reference', label: 'Baseline reference', type: 'text', placeholder: 'DB-2026-01' },
+        { name: 'cutOff', label: 'Cut-off date', type: 'date' },
+        { name: 'freezeIds', label: 'Frozen packages in this baseline', type: 'multiselect',
+          options: approvableFreezes.map((f) => ({ value: f.freezeId, label: `${f.reference} (${f.packageReference})` })) },
+        { name: 'costMinor', label: 'Cost snapshot', type: 'number', money: true, required: false },
+        { name: 'costSource', label: 'Cost source', type: 'text', required: false,
+          hint: 'The model or drawing revisions the cost was measured from. Required where a cost is given.' },
+        { name: 'programmeRef', label: 'Programme reference', type: 'text', required: false },
+        { name: 'riskRef', label: 'Risk reference', type: 'text', required: false },
+        { name: 'note', label: 'What the baseline rests on', type: 'textarea', rows: 2 },
+      ],
+      transform: ({ freezeIds, costMinor, costSource, programmeRef, riskRef, ...rest }) => ({
+        ...rest,
+        freezeIds: Array.isArray(freezeIds) ? freezeIds : [freezeIds].filter(Boolean),
+        snapshots: {
+          ...(costMinor === undefined || String(costMinor) === '' ? {} : { costMinor: Number(costMinor) }),
+          ...(String(costSource ?? '').trim() ? { costSource: String(costSource) } : {}),
+          ...(String(programmeRef ?? '').trim() ? { programmeRef: String(programmeRef) } : {}),
+          ...(String(riskRef ?? '').trim() ? { riskRef: String(riskRef) } : {}),
+        },
+      }),
+    },
+    'approve-midp': {
+      title: 'Approve the MIDP',
+      intent:
+        'Approve the master information delivery plan at a cut-off. Refused while the reconciliation shows a ' +
+        'contradiction — a reference produced twice, an interface naming a package not on the project, or a deliverable ' +
+        'late for the thing waiting on it.',
+      path: `/v1/projects/${projectId}/midp`,
+      submitLabel: 'Approve the plan',
+      fields: [
+        { name: 'cutOff', label: 'Cut-off date', type: 'date' },
+        { name: 'note', label: 'What the approved plan rests on', type: 'textarea', rows: 2 },
+      ],
     },
     'decide-inheritance': {
       title: 'Decide what an inherited item may be used for',
