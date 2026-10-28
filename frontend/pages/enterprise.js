@@ -568,6 +568,12 @@ export async function enterprise(root) {
              * agreed to. Somebody has and it *was* you: confirming would be
              * refused, so the only move offered is to withdraw it. A button
              * that will refuse the person pressing it is the thing this avoids.
+             *
+             * The one exception is a sole-owner company — a sole trader, a
+             * one-director consultancy — where the owner who asked is the only
+             * person who can ever confirm. The server tells us so with
+             * `youMaySoleConfirm`, and we show them the Confirm control that
+             * `you` alone would have hidden, since here it is the only door.
              */
             can('PROJECT_SETUP', 'A')
               ? p.deletionRequest
@@ -575,9 +581,12 @@ export async function enterprise(root) {
                       Deletion requested${p.deletionRequest.requestedByName ? html` by ${p.deletionRequest.requestedByName}` : ''}
                       on ${p.deletionRequest.requestedAt.slice(0, 10)}: “${p.deletionRequest.reason}”
                     </div>
-                    ${p.deletionRequest.you
+                    ${p.deletionRequest.you && !p.deletionRequest.youMaySoleConfirm
                       ? html`<span class="metric-sub">Yours to withdraw; somebody else confirms it.</span>`
-                      : html`<button class="btn quiet danger" data-confirm-delete="${p.projectId}" data-name="${p.name}"
+                      : html`${p.deletionRequest.you
+                            ? html`<div class="metric-sub" style="margin-bottom:4px">You are the company’s only owner, so you confirm this yourself. Both halves of the record will carry your name.</div>`
+                            : ''}
+                          <button class="btn quiet danger" data-confirm-delete="${p.projectId}" data-name="${p.name}"
                             data-reason="${p.deletionRequest.reason}">Confirm deletion</button>`}
                     <button class="btn quiet sm" data-withdraw-delete="${p.projectId}" data-name="${p.name}">Withdraw</button>`
                 : html`<button class="btn quiet danger" data-delete-project="${p.projectId}" data-name="${p.name}">Request deletion</button>`

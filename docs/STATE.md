@@ -24355,12 +24355,32 @@ The refusals are re-run at the confirmation as well as the request, because the
 two are separated by however long somebody takes to answer and the project does
 not stop in the meantime: a contract executed in between has to stop it.
 
+**The one company the two-person rule cannot cover is the one with one owner.**
+Reported from exactly that situation: a sole trader, or a one-director
+consultancy, has a single `OWNER`, so the same-person refusal becomes a wall
+with no door — the owner asks, nobody else can ever confirm, and the project is
+trapped for the life of the tenancy. The same-person refusal now lifts in, and
+only in, that case: where the confirming actor is the company's **only active
+owner**, they confirm their own request. It is not a weakening of the check —
+there is no second person it could protect against, because the company's whole
+authority is that one owner — and the record stays honest: a sole-owner deletion
+carries one name on both halves and is marked `soleOwnerDeletion`, rather than
+looking like a two-person act it was not. "Active owner" is the roster's own
+definition (not suspended, not being erased), and whether the actor is the sole
+one is computed by `isSoleActiveOwner` in `structure.ts` — the single source
+both the `/delete` gate and the console's Confirm control read, so they cannot
+disagree about whether the button should appear. The moment a second owner
+exists, the safeguard is real again and the requester is back to withdraw-only.
+
 The estate row carries the standing request and **whether the reader is the one
 who asked**, decided server-side from the request context rather than by the
 console comparing identifiers — getting that comparison wrong offers the
 requester a Confirm button the server will refuse them, which is what the first
-cut of the screen did. The cell has three states: request it, confirm it with
-who asked and why beside it, or — for the requester — withdraw only.
+cut of the screen did. It also carries `youMaySoleConfirm`, set only for a sole
+owner, so the console can show that one requester the Confirm control `you`
+alone would hide. The cell has three states: request it, confirm it with who
+asked and why beside it, or — for the requester — withdraw only, except the sole
+owner, who confirms their own.
 
 Driven end to end in a browser: a request on a project carrying three payment
 certificates refused at the asking; a request on a clean one accepted, the

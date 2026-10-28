@@ -9920,7 +9920,16 @@ export const ROUTES: Route[] = [
     // reasons on one act leave the record unable to say which it was deleted
     // for.
     schema: { type: 'object', properties: {}, additionalProperties: false },
-    handler: (platform, ctx) => structure.deleteProject(projectContext(platform, ctx)),
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      // The engine enforces the two-person rule but cannot see the user roster,
+      // so whether the confirming actor is the company's *only* active owner is
+      // decided here, where the roster is. A sole owner — a sole trader, a
+      // one-director consultancy — is the single case where asking and
+      // confirming are necessarily the same person; see `deleteProject`.
+      const soleOwner = structure.isSoleActiveOwner(platform.users(actor.tenantId), actor.actorId);
+      return structure.deleteProject(projectContext(platform, ctx), { soleOwner });
+    },
   },
   {
     method: 'GET',

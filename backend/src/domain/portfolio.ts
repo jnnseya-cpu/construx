@@ -5,7 +5,7 @@ import { evaluateAccess } from '../identity/abac.ts';
 import { AUTHZ_OPTIONS } from '../engines/context.ts';
 import type { LifecyclePhase } from '../lifecycle/phases.ts';
 import { holdsContractValue, type LifecycleState } from '../lifecycle/state.ts';
-import { currentLifecycleState, livePortfolios, liveProjects } from './structure.ts';
+import { currentLifecycleState, isSoleActiveOwner, livePortfolios, liveProjects } from './structure.ts';
 
 /**
  * The enterprise position, computed rather than assembled in a browser.
@@ -86,6 +86,19 @@ export type ProjectRow = {
      * is the only place that cannot be wrong about it.
      */
     you: boolean;
+    /**
+     * Whether the reader is the company's only active owner, and so may confirm
+     * their own request.
+     *
+     * Present and true only in the one case the two-person rule cannot cover: a
+     * sole-owner company, where the owner who asked is the only person who can
+     * ever confirm. The console shows them the Confirm control that `you` alone
+     * would have hidden. Absent otherwise — a requester with a second owner to
+     * appeal to still sees "yours to withdraw", because the server would refuse
+     * them, and a button that refuses the person pressing it is the thing this
+     * avoids.
+     */
+    youMaySoleConfirm?: boolean;
   };
   /**
    * The portfolio this project is filed under, and where in the world it is.
@@ -476,7 +489,7 @@ export function enterpriseCommand(
    * ledger and does not own the identity store. Defaulted to empty so every
    * existing caller keeps working and simply reports the manager as unresolved.
    */
-  identities: ReadonlyArray<{ id: string; name: string; roles: readonly string[] }> = [],
+  identities: ReadonlyArray<{ id: string; name: string; roles: readonly string[]; status?: string; erasedAt?: string }> = [],
 ): EnterpriseCommand {
   authorise(ctx, 'ENTERPRISE_STRUCTURE', 'R');
 
@@ -562,12 +575,14 @@ export function enterpriseCommand(
     if (requestedAt !== '' && !(withdrawnAt !== '' && withdrawnAt >= requestedAt)) {
       const requestedBy = String(state.deletionRequestedBy ?? '');
       const asker = identities.find((entry) => entry.id === requestedBy);
+      const soleOwner = isSoleActiveOwner(identities, ctx.auth.actorId);
       row.deletionRequest = {
         requestedBy,
         ...(asker ? { requestedByName: asker.name } : {}),
         reason: String(state.deletionReason ?? ''),
         requestedAt,
         you: requestedBy === ctx.auth.actorId,
+        ...(soleOwner ? { youMaySoleConfirm: true } : {}),
       };
     }
 

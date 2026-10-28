@@ -2054,6 +2054,31 @@ export function withdrawProjectDeletion(ctx: EngineContext, input: { reason: str
 }
 
 /**
+ * Whether `actorId` is the company's *only* active owner.
+ *
+ * The single condition under which the two-person deletion rule cannot apply,
+ * because there is no second person to apply it with: a sole trader or a
+ * one-director consultancy has exactly one owner, and without this the
+ * same-person safeguard traps every project it ever creates. The engine context
+ * does not carry the user roster, so the caller computes this from the roster
+ * and passes it to `deleteProject`.
+ *
+ * "Active" is the roster's own definition — an owner who is suspended or being
+ * erased is not a second person you can appeal to. Exported and used by both the
+ * `/delete` gate and the console's Confirm control, so the two cannot disagree
+ * about whether a sole owner may press the button the server will accept.
+ */
+export function isSoleActiveOwner(
+  users: ReadonlyArray<{ id: string; roles: readonly string[]; status?: string; erasedAt?: string }>,
+  actorId: string,
+): boolean {
+  const owners = users.filter(
+    (user) => user.roles.includes('OWNER') && (user.status ?? 'ACTIVE') === 'ACTIVE' && user.erasedAt === undefined,
+  );
+  return owners.length === 1 && owners[0]!.id === actorId;
+}
+
+/**
  * Confirm a standing request, which is what actually deletes the project.
  *
  * **The second person is the point, so the two rules that make it two people
@@ -2068,7 +2093,16 @@ export function withdrawProjectDeletion(ctx: EngineContext, input: { reason: str
  * reasons on one act would leave the record unable to say which one the project
  * was deleted for.
  */
-export function deleteProject(ctx: EngineContext, input: { reason?: string } = {}): { projectId: string; deletedAt: string } {
+/**
+ * @param soleOwner Whether the confirming actor is the company's *only* active
+ *   owner — computed by the caller, which has the user roster the engine context
+ *   does not. It is the one thing that lets a one-person business delete a
+ *   project at all; see the same-person check below.
+ */
+export function deleteProject(
+  ctx: EngineContext,
+  options: { soleOwner?: boolean } = {},
+): { projectId: string; deletedAt: string } {
   authorise(ctx, 'PROJECT_SETUP', 'A');
 
   const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
@@ -2083,7 +2117,25 @@ export function deleteProject(ctx: EngineContext, input: { reason?: string } = {
       409,
     );
   }
-  if (standing.requestedBy === ctx.auth.actorId) {
+  /*
+   * The two-person rule, and the one business it cannot apply to.
+   *
+   * Asking and confirming are meant to be two people, so one person cannot
+   * destroy a project alone. But "a second person" assumes a second person
+   * exists. A sole trader or a one-director consultancy has exactly one owner,
+   * and on that company the rule is not a safeguard — it is a wall with no door:
+   * the owner asks, nobody else can ever confirm, and the project is trapped for
+   * the life of the tenancy. Reported from exactly that situation.
+   *
+   * So the same-person refusal stands wherever a second owner exists to appeal
+   * to, and lifts only where the confirming actor is the company's *only* active
+   * owner. That does not weaken the check — there is no second person it could
+   * protect against, because the company has one owner and that owner is the
+   * whole of its authority. The record stays honest about which it was: a
+   * sole-owner deletion carries one name on both halves and says so.
+   */
+  const samePerson = standing.requestedBy === ctx.auth.actorId;
+  if (samePerson && options.soleOwner !== true) {
     throw new DomainError(
       'PROJECT_DELETION_SAME_PERSON',
       'You requested this deletion, so you cannot also confirm it. It takes two people, and one person holding both ' +
@@ -2111,11 +2163,14 @@ export function deleteProject(ctx: EngineContext, input: { reason?: string } = {
       deletedAt,
       // Both names on the record, which is the whole value of asking twice: a
       // year later "who deleted this" has two answers and the pair is the
-      // authority, not either one of them.
+      // authority, not either one of them. On a sole-owner deletion the two are
+      // one person, and `soleOwnerDeletion` says so rather than leaving the
+      // record looking like a two-person act that it was not.
       deletedBy: ctx.auth.actorId,
       deletionRequestedBy: standing.requestedBy,
       deletionRequestedAt: standing.requestedAt,
       deletionReason: reason,
+      ...(samePerson ? { soleOwnerDeletion: true } : {}),
     },
   });
   return { projectId: ctx.projectId, deletedAt };

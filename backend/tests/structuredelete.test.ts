@@ -185,6 +185,83 @@ describe('deleting a project', () => {
   });
 });
 
+describe('a sole owner deleting their own project', () => {
+  // The two-person rule assumes a second person exists. A sole trader or a
+  // one-director consultancy has exactly one owner: the rule becomes a wall
+  // with no door — the owner asks, nobody else can ever confirm, and the
+  // project is trapped. The seed tenancy has exactly one OWNER (Priya), so it
+  // is a genuine sole-owner company and these run against the real path, not a
+  // contrivance.
+  let portfolioId = '';
+
+  before(() => {
+    portfolioId = scratchPortfolio('Sole-owner Europe', 'EU');
+  });
+
+  it('lets the one owner confirm their own request, and records it as a sole-owner deletion', async () => {
+    const projectId = scratchProject(portfolioId, 'Project a one-person company must be able to remove');
+
+    const asked = await send('POST', `/v1/projects/${projectId}/delete-request`, ownerToken, {
+      reason: 'The only owner of the company is removing a project they created',
+    });
+    assert.equal(asked.status, 201, JSON.stringify(asked.body));
+
+    // The same person confirms — which is refused for anyone else, and is the
+    // only thing a sole owner can do.
+    const confirmed = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken);
+    assert.equal(confirmed.status, 201, JSON.stringify(confirmed.body));
+    assert.equal(confirmed.body.projectId, projectId);
+
+    const listed = await send('GET', '/v1/projects', ownerToken);
+    assert.equal((listed.body.projects as Array<{ id: string }>).some((project) => project.id === projectId), false, 'off the list');
+
+    const record = platform.ledger.require({ refType: 'Project', refId: projectId }).state;
+    assert.equal(record.status, 'DELETED');
+    // Both halves name the one owner, and the record says plainly that it was a
+    // sole-owner deletion rather than looking like a two-person act it was not.
+    assert.equal(record.deletedBy, seed.users.owner!.id, 'the confirmer');
+    assert.equal(record.deletionRequestedBy, seed.users.owner!.id, 'the requester');
+    assert.equal(record.soleOwnerDeletion, true, 'the record is honest that one person held both halves');
+  });
+
+  it('restores the same-person rule the moment a second owner exists, and opens the proper two-person door', async () => {
+    // Promote a second person to OWNER. Now the company is no longer sole-owner,
+    // so the safeguard is real again: the owner who asked may not also confirm,
+    // but the second owner can.
+    const second = platform.createUser({
+      tenantId: seed.tenantId,
+      name: 'Second Owner',
+      email: 'second-owner@meridian.example',
+      roles: ['OWNER'],
+      demonstration: true,
+    });
+    const secondOwnerToken = issueTokens({
+      actorId: second.id,
+      tenantId: second.tenantId,
+      partyId: second.partyId,
+      roles: second.roles,
+      mfaSatisfied: true,
+    }).accessToken;
+
+    const projectId = scratchProject(portfolioId, 'Project the sole-owner door must now refuse');
+    assert.equal(
+      (await send('POST', `/v1/projects/${projectId}/delete-request`, ownerToken, { reason: 'The first owner asks, with a second owner now present' })).status,
+      201,
+    );
+
+    const alone = await send('POST', `/v1/projects/${projectId}/delete`, ownerToken);
+    assert.equal(alone.status, 409, JSON.stringify(alone.body));
+    assert.equal(alone.body.title, 'PROJECT_DELETION_SAME_PERSON', 'a second owner exists, so one person cannot hold both halves');
+
+    const together = await send('POST', `/v1/projects/${projectId}/delete`, secondOwnerToken);
+    assert.equal(together.status, 201, JSON.stringify(together.body));
+    const record = platform.ledger.require({ refType: 'Project', refId: projectId }).state;
+    assert.equal(record.deletedBy, second.id, 'the second owner confirmed');
+    assert.equal(record.deletionRequestedBy, seed.users.owner!.id, 'the first owner asked');
+    assert.notEqual(record.soleOwnerDeletion, true, 'a genuine two-person deletion is not marked sole-owner');
+  });
+});
+
 describe('deleting a portfolio', () => {
   let portfolioId = '';
   let projectId = '';
