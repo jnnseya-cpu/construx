@@ -3171,28 +3171,44 @@ export function renderPack(
    * unsupported below" reads as a confession attached to nothing. The review
    * copy keeps all of it (that is who it is for); the submission is cleaned.
    */
-  const forBuyer = (text: string): string =>
-    text
+  const forBuyer = (text: string): string => {
+    // A ULID — the shape of every evidence and chunk id. Twenty-six Crockford
+    // base-32 characters, which never occur as a run in real prose, so matching
+    // the id itself catches every way the drafter labels it — "(chunkId: …)",
+    // "(chunkIds: …; …)", "(citation …)", a bare id — in one rule, rather than
+    // chasing each phrasing.
+    const ULID = '[0-9A-Z]{26}';
+    const internalParen = new RegExp(
+      `\\s*\\([^()]*(?:EVD-\\d+|chunk\\s?ids?|citation|unsupported|${ULID})[^()]*\\)`,
+      'gi',
+    );
+    const bareId = new RegExp(`\\s*${ULID}`, 'g');
+    return text
       .split('\n\n')
-      .filter((paragraph) => !/listed as unsupported|unsupported below|not attached here/i.test(paragraph))
+      // Whole paragraphs that are internal gap notes, not answer prose: they
+      // point the buyer at a "review" section their copy does not have.
+      .filter(
+        (paragraph) =>
+          !/listed as unsupported|unsupported below|not attached here|cannot be reproduced here/i.test(paragraph),
+      )
       .map((paragraph) =>
         paragraph
-          // parenthetical citations naming an internal evidence id, whatever
-          // else (chunk ids, clause refs, semicolons) sits inside them
-          .replace(/\s*\((?:[^()]*\bEVD-\d+\b[^()]*)\)/g, '')
-          // a chunk id left loose outside a parenthesis
-          .replace(/,?\s*chunk\s?id\s+[0-9A-Za-z]{16,}/gi, '')
-          // a bare trailing evidence id
+          // a whole parenthetical whose job is an internal reference
+          .replace(internalParen, '')
+          // any id left loose outside a bracket, and the label in front of it
+          .replace(bareId, '')
+          .replace(/\s*\(?\s*chunk\s?ids?\s*:?\s*\)?/gi, '')
           .replace(/\s*\bEVD-\d+\b/g, '')
-          // tidy what the removals leave: empty brackets, doubled spaces,
-          // spaces before punctuation
-          .replace(/\(\s*[;,]?\s*\)/g, '')
+          // tidy the debris: emptied brackets, doubled spaces, spaces before
+          // punctuation, a stray "( ; )" or "( )"
+          .replace(/\(\s*[;,:]*\s*\)/g, '')
           .replace(/[ \t]{2,}/g, ' ')
           .replace(/\s+([.,;:)])/g, '$1')
           .trim(),
       )
       .filter(Boolean)
       .join('\n\n');
+  };
   const shownAnswer = (entry: (typeof position.questions)[number]): string =>
     review ? answerOf(entry) : forBuyer(answerOf(entry));
 

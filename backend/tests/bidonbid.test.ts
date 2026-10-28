@@ -1030,6 +1030,10 @@ describe('the pack comes out in the questionnaire’s own structure', () => {
       questionId: question.id,
       body: [
         'We confirm our approach (EVD-0099, chunkId 01ABCDEFGHJKMNPQRSTVWXYZ00).',
+        'Each Lot is evaluated independently (chunkId: 01M612P1S3MYW00XVCVCSTT3NF).',
+        'Pricing is assessed via Appendix 5 (chunkIds: 01M6130XYY7WB8BAT02NPCXJ3D; 01M6130XYY7WB8BAT02NPCXJ3S).',
+        'Signatory details are held in our records (citation 01M612P1S3MYW00XVCVCSTT3NV).',
+        'The required warranties cannot be reproduced here (see unsupported).',
         'The membership certificate is not attached here and is listed as unsupported below.',
       ],
     });
@@ -1037,13 +1041,22 @@ describe('the pack comes out in the questionnaire’s own structure', () => {
     bids.approveAnswer(asReviewer(), ready.id, written.answer.id, { note: 'Checked the 9.1 answer against the record' });
     const bid = bids.requireBid(asProviderAdmin(), ready.id);
 
-    // This bid is exportable, so this is the real submission — it must be clean.
+    // This bid is exportable, so this is the real submission — it must be clean,
+    // whatever label the drafter hung the internal reference on.
     const submission = bids.renderPack(asProviderAdmin(), bid.id, 'TEXT', branding()).content;
     assert.ok(!submission.includes('EVD-0099'), 'the submission leaks an internal evidence id');
-    assert.ok(!/chunk\s?id/i.test(submission), 'the submission leaks a chunk id');
-    assert.ok(!/unsupported below|not attached here/i.test(submission), 'the submission leaks an internal gap note');
+    assert.ok(!/chunk\s?ids?/i.test(submission), 'the submission leaks a chunk id label');
+    assert.ok(!/[0-9A-Z]{26}/.test(submission), 'the submission leaks a raw id');
+    assert.ok(
+      !/unsupported|cannot be reproduced here|not attached here/i.test(submission),
+      'the submission leaks an internal gap note',
+    );
     assert.ok(!/\nEvidence:/.test(submission), 'the submission leaks the internal evidence-reference line');
+    // The real prose, with the machinery removed, survives on each line.
     assert.ok(submission.includes('We confirm our approach'), 'the sanitiser destroyed the real prose');
+    assert.ok(submission.includes('Each Lot is evaluated independently'), 'lost prose on the chunkId line');
+    assert.ok(submission.includes('Pricing is assessed via Appendix 5'), 'lost prose on the chunkIds-list line');
+    assert.ok(submission.includes('Signatory details are held in our records'), 'lost prose on the citation line');
   });
 
   it('writes a real spreadsheet with a sheet per section, in source order', () => {

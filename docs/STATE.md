@@ -970,9 +970,13 @@ unsupported below**", pointing at a review section the buyer's copy does not hav
 An EVD id and a chunk id mean nothing to an evaluator; they read as leaked
 plumbing, and the gap note reads as a confession.
 
-`renderPack` now cleans the buyer-facing pack. A `forBuyer` pass strips the
-inline evidence-id parentheticals, loose chunk ids and bare `EVD-…` tokens, drops
-paragraphs that are internal meta ("unsupported below", "not attached here"), and
+`renderPack` now cleans the buyer-facing pack. A `forBuyer` pass matches the
+**id shape** — a ULID, twenty-six Crockford base-32 characters, which never occurs
+as a run in real prose — so one rule catches every way the drafter labels a
+reference: `(EVD-0017, chunkId 01M6…)`, `(chunkId: 01M6…)`, `(chunkIds: 01M6…;
+01M6…)`, `(citation 01M6…)` and a bare id alike. It strips those parentheticals,
+loose chunk ids and bare `EVD-…` tokens, drops paragraphs that are internal meta
+("unsupported below", "not attached here", "cannot be reproduced here"), and
 tidies the punctuation the removals leave. The appended `Evidence:` reference
 line and the raw body are kept only on the **review copy** — which exists solely
 for the bid team, and only for a pack that is not yet exportable — so provenance
