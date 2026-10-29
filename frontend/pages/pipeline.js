@@ -314,8 +314,19 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                  * offered at all. Every quantity in a tender pack sat behind a
                  * button that did not exist on the screen holding the drawings.
                  */
+                /*
+                 * A held file nobody has looked at yet has no `file` at all —
+                 * `heldTenderFiles` returns the UNREAD road with the entry
+                 * alone, because there is no ingestion record to read a kind
+                 * off. Reading `file.kind` before the road is known crashed the
+                 * whole screen on any tender project carrying an uploaded pack
+                 * document that had not been ingested. The guard lets UNREAD
+                 * fall through to its own branch below, which the file-less row
+                 * was always meant to reach; every `file.*` read past here is
+                 * on a road (DRAWING/TEXT/LOOK) that carries one.
+                 */
                 html`${
-                  String(file.kind ?? '') === 'DRAWING'
+                  file && String(file.kind ?? '') === 'DRAWING'
                   ? html`<button class="btn sm" data-take-off="${entry.hash}">Measure quantities</button>
                       <button class="btn quiet sm" data-read-itt-text="${file.ingestionId}"
                         title="A drawing states no tender requirements. This will run and will almost certainly find none.">

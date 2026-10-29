@@ -2749,6 +2749,19 @@ read as saying one has. What *has* been run end to end, in the suite, is
 extraction → draft → correction → confirmation → registered drawing, and in a
 browser, the honest refusal that a local deployment gives instead.
 
+**A held file nobody has read yet is a first-class state, and the screen now
+survives it.** Pipeline & Bid Decisions listed each held tender file with the
+action its classification `kind` earns — measure a drawing, read an invitation.
+A file that has never been ingested carries no classification and no ingestion
+record, so `heldTenderFiles` returns it on the UNREAD "look at the file first"
+road with the evidence entry alone and no `file`. The render read `file.kind`
+before it checked the road, so any tender project carrying an uploaded-but-not-
+yet-read pack document crashed the whole page with `Cannot read properties of
+undefined (reading 'kind')`. The read is now guarded (`file && …`) so the
+file-less row falls through to the UNREAD branch it was always meant to reach;
+`ingestion.test.ts` locks the contract this depends on — a held file is on the
+evidence register and off the ingestion list until somebody reads it.
+
 ---
 
 ### Signing — a witnessed signature, and it says so

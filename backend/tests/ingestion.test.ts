@@ -17,6 +17,7 @@ import {
   VECTOR_DIMENSIONS,
 } from '../src/evidence/ingest.ts';
 import { ingestFile, ingestedFiles, ingestionPosition, measureFromTable, similarFiles, specificationFromFile } from '../src/evidence/pipeline.ts';
+import { projectRegister } from '../src/evidence/registry.ts';
 import * as measurement from '../src/domain/measurement.ts';
 import * as structure from '../src/domain/structure.ts';
 import { registerEvidence, type EngineContext } from '../src/engines/context.ts';
@@ -371,6 +372,32 @@ describe('ingestion under authorisation, with the finding on the record', () => 
     assert.equal(file.classification.method, 'RULES');
     assert.equal(file.inspection.antivirusScanned, false);
     assert.equal(file.lexicalVector?.length, VECTOR_DIMENSIONS);
+  });
+
+  it('reports a held file nobody has looked at yet: on the register, off the ingestion list', async () => {
+    // The pipeline screen reads each held file's classification `kind` to decide
+    // what to offer against it. A held file that has never been through
+    // ingestion carries no ingestion record and therefore no kind — the "look
+    // at the file first" road. Reading a kind off it crashed the whole screen
+    // (`Cannot read properties of undefined (reading 'kind')`), so this locks
+    // the data contract the render now guards against: held in the register,
+    // absent from the ingestion list.
+    const hash = hold(
+      Buffer.from('An invitation document uploaded against the tender but not yet read.'),
+      'application/pdf',
+      'Tender document, not yet read',
+    );
+
+    const register = await projectRegister(platform.ledger, store, seed.tenantId, seed.projectId);
+    const entry = register.find((candidate) => candidate.hash === hash);
+    assert.ok(entry, 'the uploaded file is not on the evidence register');
+    assert.equal(entry!.held, true, 'the bytes are in the store, so the register must report it held');
+
+    assert.equal(
+      ingestedFiles(ctxFor('pm')).some((file) => file.hash === hash),
+      false,
+      'a file nobody has ingested must not appear on the ingestion list — the render relies on this to show it as unread',
+    );
   });
 
   it('quarantines a renamed executable and keeps the bytes', async () => {
