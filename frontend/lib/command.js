@@ -168,6 +168,17 @@ function control(field) {
       placeholder="${esc(field.placeholder ?? '')}">${esc(field.value ?? '')}</textarea>`;
   }
 
+  if (field.type === 'textfile') {
+    // A file the browser reads as TEXT into another field, entirely on the
+    // device — it is never uploaded, hashed or filed. It exists to fill a paste
+    // box from a chosen file (a CSV price list) so the same parse, on-screen
+    // preview and import path handles a file and a paste identically. The
+    // reading is wired below `data-textfile-into`, and an optional `parse` on
+    // the field reshapes the text first (CSV columns → the paste box's lines).
+    const accept = field.accept ? ` accept="${esc(field.accept)}"` : '';
+    return `<input id="${id}" name="${esc(field.name)}" type="file"${accept} data-textfile-into="${esc(field.into ?? '')}">`;
+  }
+
   if (field.type === 'file') {
     // A dictate button beside the file input rather than instead of it. The
     // specification wants voice across every field module, and a note is
@@ -255,6 +266,8 @@ async function collect(host, fields, files = [], say) {
   const body = {};
   const repeats = [];
   for (const field of fields) {
+    // Read on the device into another field, never sent as a value of its own.
+    if (field.type === 'textfile') continue;
     if (field.type === 'file') {
       const el = host.querySelector(`[name="${CSS.escape(field.name)}"]`);
       // A dictated recording is held on the element rather than in `files`,
@@ -747,6 +760,42 @@ export function command({
         submit.textContent = submitLabel;
       }
     });
+
+    // A `textfile` field reads the chosen file as text, on the device, into the
+    // field named by `into` — reshaped first by the field's own `parse` where it
+    // has one. Nothing is uploaded; the target box then goes through the same
+    // validate/transform/import path a paste does, and the person can read and
+    // edit the loaded lines before submitting.
+    for (const input of host.querySelectorAll('input[type="file"][data-textfile-into]')) {
+      input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const field = fields.find((f) => f.name === input.name);
+        const target = input.dataset.textfileInto
+          ? host.querySelector(`[name="${CSS.escape(input.dataset.textfileInto)}"]`)
+          : null;
+        const box = host.querySelector(`[data-field="${CSS.escape(input.name)}"] .field-error`);
+        try {
+          const raw = await file.text();
+          const text = field?.parse ? field.parse(raw, file.name) : raw;
+          if (target) {
+            target.value = text;
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+            target.focus();
+          }
+          if (box) {
+            box.hidden = true;
+            box.textContent = '';
+          }
+        } catch (error) {
+          // A file that cannot be read is told, not swallowed.
+          if (box) {
+            box.textContent = `Could not read ${file.name}: ${error?.message ?? String(error)}`;
+            box.hidden = false;
+          }
+        }
+      });
+    }
 
     document.addEventListener('keydown', onKey);
     document.body.append(host);

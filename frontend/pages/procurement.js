@@ -10,6 +10,106 @@ import { supplierPaymentCard } from '../lib/siteportal.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
+ * Read a CSV price list, on the device, into the lines the rate-card paste box
+ * reads. No upload and no dependency — the platform carries none.
+ *
+ * A real exported sheet is comma-separated with quoted fields (a description
+ * carries its own commas), has many columns in the firm's own order, and a
+ * header row. `csvRateCardToLines` maps the five columns it needs by their
+ * header names where there is a header — code, description, unit, the adopted
+ * (or only) rate, and a note/inclusions column — or by position when there is
+ * not, and emits one tab-joined `code<TAB>description<TAB>unit<TAB>rate<TAB>note`
+ * line per row. Tab, so a description keeps its own commas; the person sees the
+ * result in the box and can edit it before importing.
+ */
+function parseCsv(text) {
+  // RFC 4180-ish: fields split on commas, records on newlines, a double quote
+  // escapes both, and "" inside a quoted field is one literal quote.
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const s = String(text ?? '').replace(/\r\n?/g, '\n');
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') {
+          field += '"';
+          i += 1;
+        } else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field);
+      field = '';
+    } else if (ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else field += ch;
+  }
+  if (field !== '' || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** One CSV record (a single pasted line) into its fields, quotes respected. */
+function splitCsvLine(line) {
+  const rows = parseCsv(line);
+  return rows.length > 0 ? rows[0] : [line];
+}
+
+function csvRateCardToLines(text) {
+  const rows = parseCsv(text).filter((row) => row.some((cell) => String(cell ?? '').trim() !== ''));
+  if (rows.length === 0) return '';
+
+  const header = rows[0].map((cell) => String(cell ?? '').trim().toLowerCase());
+  const looksHeader = header.some((h) => /code|ref|descr|item|resource|unit|rate|price|note|inclusion|exclusion|scope|head/.test(h));
+
+  let idx = { code: 0, description: 1, unit: 2, rate: 3, note: 4 };
+  let dataRows = rows;
+  if (looksHeader) {
+    const find = (re) => header.findIndex((h) => re.test(h));
+    // The rate is the column that prices a unit — never an extended amount or a
+    // total — and the adopted/used column wins over a low/high band.
+    const rateCols = header
+      .map((h, i) => ({ h, i }))
+      .filter(({ h }) => /rate|price|cost/.test(h) && !/amount|total|unit|per /.test(h));
+    const rateIdx = (rateCols.find(({ h }) => /adopt|used|chosen|unit rate/.test(h)) ?? rateCols[0])?.i ?? -1;
+    idx = {
+      code: find(/code|ref|head/),
+      description: find(/descr|item|work|resource|service/),
+      unit: find(/unit|uom/),
+      rate: rateIdx,
+      note: find(/note|inclusion|exclusion|scope|comment|remark/),
+    };
+    dataRows = rows.slice(1);
+  }
+
+  const cell = (row, i) => (i >= 0 && i < row.length ? String(row[i] ?? '').trim() : '');
+  const lines = [];
+  for (const row of dataRows) {
+    const code = cell(row, idx.code);
+    const description = cell(row, idx.description);
+    const unit = cell(row, idx.unit);
+    const rate = cell(row, idx.rate);
+    const note = cell(row, idx.note);
+    // Nothing to price: skipped here rather than sent as a blank. A half-row is
+    // still sent, so the import names what it could not read.
+    if (!description && !rate) continue;
+    const cols = [code, description, unit, rate];
+    if (note) cols.push(note);
+    lines.push(cols.join('\t'));
+  }
+  return lines.join('\n');
+}
+
+/**
  * Tender & Procurement.
  *
  * The screen where an award has to be defensible. Bid scores are deterministic,
@@ -1678,6 +1778,20 @@ export async function procurement(root) {
       submitLabel: 'Import the rates',
       fields: [
         {
+          name: 'cardFile',
+          label: 'Choose a CSV file',
+          type: 'textfile',
+          into: 'card',
+          accept: '.csv,.tsv,.txt',
+          required: false,
+          parse: csvRateCardToLines,
+          hint:
+            'Export your price list from a spreadsheet as CSV (Save As → CSV) and choose it here — its columns are ' +
+            'read into the box below for you to check before importing. It finds the code, description, unit, rate ' +
+            'and a note/inclusions column by their headers; the adopted rate wins over a low/high band. Or skip this ' +
+            'and paste into the box instead.',
+        },
+        {
           name: 'card',
           label: 'The rate card, one rate per line',
           type: 'textarea',
@@ -1711,15 +1825,20 @@ export async function procurement(root) {
       transform: (v) => ({
         entries: String(v.card ?? '')
           .split('\n')
-          .map((raw, index) => ({ raw: raw.trim(), line: index + 1 }))
-          .filter((row) => row.raw.length > 0)
+          .map((original, index) => ({ original, line: index + 1 }))
+          .filter((row) => row.original.trim().length > 0)
           .map((row) => {
-            // A tab means the line was copied from a spreadsheet column, where a
-            // description can itself hold commas; split on the tab then and the
-            // commas stay part of the text. Otherwise it is the hand-typed comma
-            // form. (A tab never occurs inside a pasted cell value.)
-            const delimiter = row.raw.includes('\t') ? '\t' : ',';
-            const parts = row.raw.split(delimiter).map((part) => part.trim());
+            // A tab means spreadsheet columns (a paste of columns, or the CSV
+            // file read into tab lines): split on the tab, so a description keeps
+            // its own commas AND a leading empty code column survives — the line
+            // is split before any trim, so `\tdesc\tunit\trate` is five fields,
+            // not four. Otherwise it is the comma form, read as CSV so a quoted
+            // description with commas stays whole. Parts are trimmed after the
+            // split, never the line before it.
+            const parts = (row.original.includes('\t') ? row.original.split('\t') : splitCsvLine(row.original)).map((part) =>
+              String(part ?? '').trim(),
+            );
+            const raw = row.original.trim();
             // Four or more fields means a code is present; exactly three is the
             // code-less form. Fewer than three is a malformed line, sent as it
             // stands so the server names it rather than the browser hiding it.
@@ -1733,7 +1852,7 @@ export async function procurement(root) {
             const rateMinor = Number.isFinite(rate) && rate > 0 ? Math.round(rate * 100) : undefined;
             return {
               line: row.line,
-              raw: row.raw,
+              raw,
               ...(code ? { code } : {}),
               ...(description ? { description } : {}),
               ...(unit ? { unit } : {}),

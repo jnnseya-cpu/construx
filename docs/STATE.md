@@ -3159,8 +3159,24 @@ an empty box is caught in the browser with a plain message (the grey example is
 a format guide, not content) rather than returning a bare `VALIDATION_FAILED`,
 and on success the toast reports what landed — how many imported, how many
 replaced an existing rate, and any line skipped with the reason — instead of a
-generic "Recorded". A note needs a code in front of it, since a code-less line
-with a trailing note is read as having a code.
+generic "Recorded". A line is split before it is trimmed, so a blank leading
+code column (a resource line with no code but a trailing note) survives rather
+than collapsing the columns leftward.
+
+**A price list can also be loaded as a CSV file**, not only pasted. A generic
+`textfile` field in `frontend/lib/command.js` reads a chosen file as text *on
+the device* — it is never uploaded, hashed or filed — and writes it, reshaped by
+the field's own `parse`, into the paste box, where the same validate/transform/
+report path handles it and the person can read and edit the loaded lines before
+importing. The import's `parse` (`csvRateCardToLines` in `procurement.js`) is a
+dependency-free CSV reader (the zero-runtime-dependency decision stands; a native
+`.xlsx` is a zip needing a parser the platform does not carry, so CSV export is
+the bridge) that maps the five columns it needs by their header names where there
+is a header — code, description, unit, the adopted/used rate (never an extended
+amount or a low/high band), and a note/inclusions column — or by position when
+there is not, and emits tab-joined lines. Proven on the firm's own two sheets
+exported as real CSV: measured bill 37 imported, cost heads 33 imported, the
+footer and no-rate rows reported as skipped rather than dropped.
 
 **It is the firm's own number, not a bought index, and it cannot buy
 confidence.** Imported entries join the unit-rate feed as `IMPORTED`
