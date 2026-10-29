@@ -13540,6 +13540,52 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/rate-card/import',
+    description:
+      'Import a rate card for one tender. The rates are held against this bid to price it and are deliberately NOT ' +
+      'saved to the firm’s permanent library — a one-off external customer’s rates do not become house rates. Same ' +
+      'parse and honest skip-reporting as the library import; a malformed line is reported, not dropped.',
+    schema: {
+      type: 'object',
+      required: ['entries'],
+      properties: {
+        entries: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            // As with the library import: a malformed line must reach the domain
+            // to be named, not be refused at the door with a bare schema error.
+            properties: {
+              line: { type: 'number' },
+              code: { type: 'string', maxLength: 60 },
+              description: { type: 'string', maxLength: 300 },
+              unit: { type: 'string', maxLength: 30 },
+              rateMinor: { type: 'number' },
+              note: { type: 'string', maxLength: 300 },
+              raw: { type: 'string', maxLength: 600 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnCostModel.importTenderRateCard(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/bid-on/bids/:bidId/rate-card',
+    readOnly: true,
+    description:
+      'The rates held for this tender — imported for this bid, available to price it, never in the permanent library. Each is a THIN starting point the client brought.',
+    handler: (platform, ctx) =>
+      bidOnCostModel.tenderRateCard(tenantContext(platform, ctx), ctx.params.bidId as string),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/bid-on/offerings',
     description:
       'Define a service the provider sells, so an engagement is priced from the catalogue rather than typed again each time',

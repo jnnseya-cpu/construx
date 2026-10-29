@@ -259,3 +259,67 @@ describe('importing a rate card is an authorised, human act', () => {
     assert.equal(classification!.sensitivity, 'COMMERCIAL_L3');
   });
 });
+
+describe('a per-tender rate is held for its bid and kept out of the permanent library', () => {
+  /*
+   * Bid-On prices one-off external customers whose rates are not the firm's own.
+   * A per-tender import is scoped to one bid: available to price that bid, and
+   * never harvested into the cross-tender library, so a one-off job's rates
+   * cannot become a house rate. Re-importing the tender replaces its own rates
+   * and never touches the permanent ones; two bids hold the same key apart.
+   */
+  const BID = 'bid-tender-scope-1';
+  const OTHER = 'bid-tender-scope-2';
+
+  it('imports against a bid, reads back per bid, and never enters the firm library', () => {
+    // A permanent library rate, the control: it IS in the library.
+    costintel.importRateCard(asQS(), {
+      entries: [{ line: 1, description: 'Permanent library item', unit: 'm2', rateMinor: 5000 }],
+    });
+    assert.ok(rateFor('Permanent library item', 'm2'), 'the firm’s own imported rate should be in the library');
+
+    // A per-tender rate for one bid.
+    const result = costintel.runRateCardImport(
+      asQS(),
+      [{ line: 1, description: 'One-off customer rate', unit: 'nr', rateMinor: 42000 }],
+      { bidId: BID },
+    );
+    assert.equal(result.totals.imported, 1);
+    assert.match(result.note, /held for this tender only/);
+
+    // Readable as this bid's own set.
+    const held = costintel.tenderRateEntries(asQS(), BID);
+    assert.equal(held.length, 1);
+    assert.equal(held[0]!.description, 'One-off customer rate');
+    assert.equal(held[0]!.bidId, BID);
+
+    // But NOT in the permanent library, by any of its reads.
+    assert.equal(rateFor('One-off customer rate', 'nr'), undefined, 'a per-tender rate leaked into the permanent library');
+    const harvested = costintel.harvestRates(asQS());
+    assert.equal(
+      harvested.filter((o) => o.description === 'One-off customer rate').length,
+      0,
+      'a per-tender rate was harvested into the firm’s own rate history',
+    );
+  });
+
+  it('keeps each bid’s rates apart and replaces only within a bid on re-import', () => {
+    costintel.runRateCardImport(asQS(), [{ line: 1, description: 'Shared key item', unit: 'nr', rateMinor: 10000 }], { bidId: BID });
+    costintel.runRateCardImport(asQS(), [{ line: 1, description: 'Shared key item', unit: 'nr', rateMinor: 20000 }], { bidId: OTHER });
+
+    // Same key, two bids, two independent rates.
+    assert.equal(costintel.tenderRateEntries(asQS(), BID).find((e) => e.description === 'Shared key item')?.rateMinor, 10000);
+    assert.equal(costintel.tenderRateEntries(asQS(), OTHER).find((e) => e.description === 'Shared key item')?.rateMinor, 20000);
+
+    // Re-importing one bid replaces that bid's rate and leaves the other's alone.
+    costintel.runRateCardImport(asQS(), [{ line: 1, description: 'Shared key item', unit: 'nr', rateMinor: 15000 }], { bidId: BID });
+    assert.equal(costintel.tenderRateEntries(asQS(), BID).find((e) => e.description === 'Shared key item')?.rateMinor, 15000);
+    assert.equal(costintel.tenderRateEntries(asQS(), OTHER).find((e) => e.description === 'Shared key item')?.rateMinor, 20000);
+    // And neither is in the permanent library.
+    assert.equal(rateFor('Shared key item', 'nr'), undefined);
+  });
+
+  it('an empty per-tender import is refused like any other', () => {
+    throwsCode(() => costintel.runRateCardImport(asQS(), [], { bidId: BID }), 'RATE_CARD_EMPTY');
+  });
+});

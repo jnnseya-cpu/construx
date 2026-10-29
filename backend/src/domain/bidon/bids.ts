@@ -616,7 +616,7 @@ export function requireBid(ctx: EngineContext, bidId: string): Bid {
  * engagement freezes everything under it without each command having to
  * remember.
  */
-function requireWorkableBid(ctx: EngineContext, bidId: string): { bid: Bid; engagement: Engagement } {
+export function requireWorkableBid(ctx: EngineContext, bidId: string): { bid: Bid; engagement: Engagement } {
   const bid = requireBid(ctx, bidId);
   if (['EXPORTED', 'SUBMITTED', 'WON', 'LOST'].includes(bid.status)) {
     throw new DomainError(

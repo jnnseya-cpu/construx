@@ -227,6 +227,15 @@ export type RateCardEntry = {
   /** The firm's own reference, optional. */
   code?: string;
   note?: string;
+  /**
+   * The bid this rate belongs to, when it is a per-tender rate rather than one
+   * of the firm's own. Present only on a Bid-On tender-scoped import: a one-off
+   * external customer's rates are held for that tender and no longer, so they
+   * are keyed to the bid and are *never* harvested into the permanent library
+   * (`harvestImportedRates` skips them). Absent on an ordinary tenant-wide
+   * rate-card entry, which is the firm's own and does feed the library.
+   */
+  bidId?: string;
   importedAt: string;
   importedBy: string;
 };
@@ -245,6 +254,11 @@ export function harvestImportedRates(ctx: EngineContext): RateObservation[] {
   for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'RateCardEntry')) {
     const entry = record.state as unknown as RateCardEntry;
     if (!entry.description || !entry.unit || !(Number(entry.rateMinor) > 0)) continue;
+    // A per-tender rate belongs to one bid and no longer. It never joins the
+    // firm's permanent library, so the one-off external job it was imported for
+    // cannot quietly become a house rate. Kept out here, at the one place the
+    // imported feed is built.
+    if (entry.bidId) continue;
     observations.push({
       key: entry.key ?? rateKey(entry.description, entry.unit),
       description: entry.description,
@@ -737,8 +751,43 @@ const RATE_CARD_DESCRIPTION_MIN = 3;
  */
 export function importRateCard(ctx: EngineContext, input: { entries: RateCardImportEntry[] }): RateCardImportResult {
   authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+  return runRateCardImport(ctx, input.entries, {});
+}
 
-  const entries = Array.isArray(input.entries) ? input.entries : [];
+/**
+ * Read a bid's own per-tender rate entries, newest write per key.
+ *
+ * The temporary rate set a Bid-On tender holds: imported for that bid, keyed to
+ * it, and never in the permanent library. A pure read — the caller (Bid-On)
+ * authorises it and confirms the bid is theirs.
+ */
+export function tenderRateEntries(ctx: EngineContext, bidId: string): RateCardEntry[] {
+  const byKey = new Map<string, RateCardEntry>();
+  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'RateCardEntry')) {
+    const entry = record.state as unknown as RateCardEntry;
+    if (entry.bidId !== bidId) continue;
+    if (!entry.description || !entry.unit || !(Number(entry.rateMinor) > 0)) continue;
+    byKey.set(entry.key ?? rateKey(entry.description, entry.unit), entry);
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * The shared rate-card import, with the scope decided by the caller and the
+ * authorisation already done.
+ *
+ * Tenant scope (`{}`) is the firm's own library; a bid scope (`{ bidId }`) is a
+ * per-tender set that lives and dies with one external bid. The only difference
+ * is which existing entries a re-import replaces — its own scope's, never the
+ * other's — and that a bid-scoped entry carries its `bidId` and is kept out of
+ * the permanent library by `harvestImportedRates`.
+ */
+export function runRateCardImport(
+  ctx: EngineContext,
+  rawEntries: RateCardImportEntry[],
+  scope: { bidId?: string },
+): RateCardImportResult {
+  const entries = Array.isArray(rawEntries) ? rawEntries : [];
   if (entries.length === 0) {
     throw new DomainError('RATE_CARD_EMPTY', 'No rate lines were supplied to import.', 400);
   }
@@ -783,11 +832,14 @@ export function importRateCard(ctx: EngineContext, input: { entries: RateCardImp
     valid.set(key, { entry, description, unit, rateMinor });
   }
 
-  // Existing entries, so a re-import replaces its key rather than stacking.
+  // Existing entries in THIS scope, so a re-import replaces its key rather than
+  // stacking — and a bid's rates never collide with the permanent library or
+  // another bid's, because a key is only matched within the same scope.
   const existingByKey = new Map<string, EntityRecord>();
   for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'RateCardEntry')) {
     const state = record.state as unknown as RateCardEntry;
-    if (state.key) existingByKey.set(state.key, record);
+    const sameScope = scope.bidId ? state.bidId === scope.bidId : !state.bidId;
+    if (sameScope && state.key) existingByKey.set(state.key, record);
   }
 
   const imported: RateCardImportResult['imported'] = [];
@@ -805,6 +857,7 @@ export function importRateCard(ctx: EngineContext, input: { entries: RateCardImp
       rateMinor,
       ...(code ? { code } : {}),
       ...(note ? { note } : {}),
+      ...(scope.bidId ? { bidId: scope.bidId } : {}),
       importedAt: new Date().toISOString(),
       importedBy: ctx.auth.actorId,
     };
@@ -831,9 +884,12 @@ export function importRateCard(ctx: EngineContext, input: { entries: RateCardImp
     imported,
     skipped,
     totals: { imported: imported.length, replaced, skipped: skipped.length },
-    note:
-      'These are your own rate card figures, not a bought index. Each enters the library as a THIN, imported ' +
-      'starting rate and stays there until a committed bid proves the item — importing the same rate again does ' +
-      'not make it any more certain.',
+    note: scope.bidId
+      ? 'These rates are held for this tender only. They are available to price this bid and are not saved to your ' +
+        'permanent rate library — a one-off customer’s rates do not become your house rates. Import them again on ' +
+        'any future tender that needs them.'
+      : 'These are your own rate card figures, not a bought index. Each enters the library as a THIN, imported ' +
+        'starting rate and stays there until a committed bid proves the item — importing the same rate again does ' +
+        'not make it any more certain.',
   };
 }

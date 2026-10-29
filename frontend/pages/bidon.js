@@ -1,5 +1,6 @@
 import { api } from '../lib/api.js';
 import { command, commandBar, quoteAction } from '../lib/command.js';
+import { csvRateCardToLines, parseRateCardEntries, rateCardReport } from '../lib/ratecard.js';
 import { badge, date, html, humanise, money, notice, pct, raw, render, table, toast } from '../lib/ui.js';
 import { blockedReason, can, draw } from '../app.js';
 
@@ -898,7 +899,7 @@ export async function bidon(root) {
       render(panel, html``);
     } else {
       panel.dataset.open = '1';
-      render(panel, costPanel());
+      render(panel, costPanel(bidList));
     }
   });
 
@@ -936,6 +937,58 @@ export async function bidon(root) {
       render(slot, notice(error.detail ?? error.message, 'err'));
     } finally {
       calc.disabled = false;
+    }
+  });
+
+  // The tender rate picker in the cost calculator: pick a tender, its rates load
+  // into the second box, and picking one fills "what one unit costs you". Built
+  // with DOM Option nodes so a description sets textContent and cannot inject.
+  root.addEventListener('change', async (event) => {
+    const bidSel = event.target.closest('#cost-bid');
+    if (bidSel) {
+      const rateSel = root.querySelector('#cost-rate');
+      const note = root.querySelector('#cost-rate-note');
+      if (!rateSel) return;
+      const setRateNote = (text) => {
+        if (note) note.textContent = text;
+      };
+      rateSel.replaceChildren();
+      if (!bidSel.value) {
+        rateSel.add(new Option('choose a tender first', ''));
+        rateSel.disabled = true;
+        setRateNote('Rates imported for that tender only.');
+        return;
+      }
+      rateSel.add(new Option('loading…', ''));
+      rateSel.disabled = true;
+      try {
+        const card = await api.read(`/v1/bid-on/bids/${bidSel.value}/rate-card`, 'BID_SERVICES', 'COMMERCIAL_L3');
+        const rates = Array.isArray(card?.rates) ? card.rates : [];
+        rateSel.replaceChildren();
+        if (rates.length === 0) {
+          rateSel.add(new Option('no rates imported for this tender', ''));
+          rateSel.disabled = true;
+          setRateNote('No rates yet — use “Import a rate card for a tender” first.');
+          return;
+        }
+        rateSel.add(new Option('— choose a rate —', ''));
+        for (const rate of rates) {
+          rateSel.add(new Option(`${rate.description} · ${money(rate.rateMinor)}/${rate.unit}`, String(rate.rateMinor)));
+        }
+        rateSel.disabled = false;
+        setRateNote(`${rates.length} rate${rates.length === 1 ? '' : 's'} held for this tender.`);
+      } catch (error) {
+        rateSel.replaceChildren();
+        rateSel.add(new Option('could not load rates', ''));
+        rateSel.disabled = true;
+        setRateNote(error.detail ?? error.message ?? 'Could not load the tender’s rates.');
+      }
+      return;
+    }
+    const rateSel = event.target.closest('#cost-rate');
+    if (rateSel && rateSel.value) {
+      const unit = root.querySelector('#cost-unit');
+      if (unit) unit.value = (Number(rateSel.value) / 100).toString();
     }
   });
 
@@ -1474,6 +1527,64 @@ export async function bidon(root) {
   });
 
   const COMMANDS = {
+    'import-tender-rate-card': {
+      title: 'Import a rate card for this tender',
+      intent:
+        'Load your rates for one bid in a paste or a CSV file. They are held for this tender only — available to ' +
+        'price this bid and never saved to your permanent rate library, because a one-off customer’s rates are not ' +
+        'your house rates. Import them again on any future tender that needs them. A line it cannot read is reported.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/rate-card/import`,
+      submitLabel: 'Import for this tender',
+      fields: [
+        {
+          name: 'bidId',
+          label: 'Bid',
+          type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName} · ${humanise(bid.status)}` })),
+          hint: 'The tender these rates are for. They stay with this bid and no other.',
+        },
+        {
+          name: 'cardFile',
+          label: 'Choose a CSV file',
+          type: 'textfile',
+          into: 'card',
+          accept: '.csv,.tsv,.txt',
+          required: false,
+          parse: csvRateCardToLines,
+          hint:
+            'Export your price list as CSV (Save As → CSV) and choose it — its columns are read into the box below ' +
+            'for you to check before importing. Or skip this and paste into the box.',
+        },
+        {
+          name: 'card',
+          label: 'The rate card, one rate per line',
+          type: 'textarea',
+          rows: 10,
+          placeholder:
+            'E20.007, Facing-brick outer leaf, m2, 145\nF10.001, Blockwork inner leaf 100mm, m2, 62\nR10.004, Readymix GEN3, m3, 148, supply and place',
+          hint:
+            'code, description, unit, rate — and an optional note at the end. The code may be left off. Rate is £ per ' +
+            'unit. Or paste spreadsheet columns (tab-separated), which keeps a description’s own commas whole. Blank ' +
+            'lines are skipped; a line missing a description, unit or rate is reported back.',
+        },
+      ],
+      validate: (v) => {
+        const lines = String(v.card ?? '').split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+        if (lines.length === 0) {
+          return {
+            field: 'card',
+            message: 'Paste at least one rate line, or choose a CSV file. The grey example is a format guide, not content.',
+          };
+        }
+        return undefined;
+      },
+      transform: (v) => ({ entries: parseRateCardEntries(v.card) }),
+      report: (res) =>
+        rateCardReport(
+          res,
+          'Held for this tender only — available to price this bid, and not saved to your permanent rate library.',
+        ),
+    },
     'open-customer': {
       title: 'Open a customer workspace',
       intent:
@@ -3135,7 +3246,24 @@ export async function bidon(root) {
  * words is what it is not: a tool for the client's own cost and margin, never a
  * source of a market price.
  */
-function costPanel() {
+function costPanel(bidList = []) {
+  // The rates a tender holds, to fill "what one unit costs you" by selection
+  // rather than retyping. Only shown when there is a bid to pick — the rates
+  // belong to a tender, so the bid is chosen first and its rates load into the
+  // second box. Pulling one is a convenience; the build-up still prices from it.
+  const picker = bidList.length
+    ? html`
+      <div class="grid g3" style="gap:0 14px;margin:0 0 6px">
+        <div class="field"><label>Pull a unit cost from a tender’s rate card <span class="opt">(optional)</span></label>
+          <select id="cost-bid">
+            <option value="">— choose a tender —</option>
+            ${bidList.map((bid) => html`<option value="${bid.id}">${bid.reference} — ${bid.buyerName}</option>`)}
+          </select></div>
+        <div class="field"><label>Its rate</label>
+          <select id="cost-rate" disabled><option value="">choose a tender first</option></select></div>
+        <div class="field" style="align-self:end"><div class="metric-sub" id="cost-rate-note">Rates imported for that tender only.</div></div>
+      </div>`
+    : raw('');
   return html`
     <div class="card" style="margin-top:10px">
       <p style="margin:0 0 11px;font-size:12.5px;color:var(--text-3)">
@@ -3143,6 +3271,7 @@ function costPanel() {
         profit on cost and on price so "20% margin" is not two different numbers. It holds no market price — what the
         market pays is yours to bring.
       </p>
+      ${picker}
       <div class="grid g3" style="gap:0 14px">
         <div class="field"><label>What one unit costs you (all-in)</label>
           <input id="cost-unit" type="number" step="any" min="0" placeholder="e.g. 68.00"></div>
@@ -3867,6 +3996,7 @@ function bidDetail(position, estimate, source) {
          */
         html`<div style="padding:11px 17px 0">
           <button class="btn sm quiet" data-cost-open>Price a cost line (cost + margin)</button>
+          ${bidList.length > 0 ? html`<button class="btn sm quiet" data-command="import-tender-rate-card">Import a rate card for a tender</button>` : raw('')}
           <div id="cost-detail" style="margin-top:0"></div>
         </div>`
       }

@@ -3178,6 +3178,23 @@ there is not, and emits tab-joined lines. Proven on the firm's own two sheets
 exported as real CSV: measured bill 37 imported, cost heads 33 imported, the
 footer and no-rate rows reported as skipped rather than dropped.
 
+**Bid-On imports a rate card for one tender, and only that tender.** External
+customers are often a one-off, and their rates are not the firm's own house
+rates. So a Bid-On import is scoped to a single bid: the same paste/CSV
+convenience (the shared reader in `frontend/lib/ratecard.js`, used by both the
+permanent-library import and this one, so they cannot drift), but the entry
+carries a `bidId` and `harvestImportedRates` skips any entry that has one — a
+per-tender rate is never harvested into the cross-tender library, so a one-off
+job's rates cannot quietly become a house rate. The core import is shared
+(`runRateCardImport` with a scope), with authorisation at the edges: the tenant
+import keeps `ESTIMATE_TENDER`, the Bid-On import (`importTenderRateCard`,
+`bidon/costmodel.ts`) takes `BID_ON` + `BID_SERVICES` and a workable bid. A
+re-import replaces only that bid's rates; two bids hold the same key apart; the
+read (`tenderRateCard`, `GET /v1/bid-on/bids/:bidId/rate-card`) is each a THIN
+starting point. The cost-model calculator offers these rates by selection to
+fill a unit cost; the build-up still prices from the figure. Routes:
+`POST /v1/bid-on/bids/:bidId/rate-card/import` and the read above.
+
 **It is the firm's own number, not a bought index, and it cannot buy
 confidence.** Imported entries join the unit-rate feed as `IMPORTED`
 observations, tagged so every reader can tell a seeded starting rate from one

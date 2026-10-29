@@ -1,6 +1,13 @@
 import { DomainError } from '../../core/errors.ts';
 import { authorise, type EngineContext } from '../../engines/context.ts';
 import { requireModuleReadable } from '../../identity/modules.ts';
+import {
+  runRateCardImport,
+  tenderRateEntries,
+  type RateCardImportEntry,
+  type RateCardImportResult,
+} from '../costintel.ts';
+import { requireBid, requireWorkableBid } from './bids.ts';
 
 /**
  * A cost-model build-up: the arithmetic that turns what a job costs into a
@@ -226,4 +233,54 @@ export function costModelBuildUp(ctx: EngineContext, input: CostBuildUpInput): C
   requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
   authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
   return costBuildUp(input);
+}
+
+/**
+ * Import a rate card for one tender, held for that bid and no longer.
+ *
+ * The same paste or CSV a firm loads into its permanent library, but scoped to a
+ * single Bid-On bid. External customers are often a one-off, and their rates are
+ * not the firm's own house rates — so they are kept against the bid, used to
+ * price it (the cost-model build-up can pull a unit cost from them), and never
+ * harvested into the cross-tender library. A future tender that needs them
+ * imports them again. The parsing, de-duplication and honest skip-reporting are
+ * exactly the library import's, via the shared core; only the scope differs.
+ */
+export function importTenderRateCard(
+  ctx: EngineContext,
+  bidId: string,
+  input: { entries: RateCardImportEntry[] },
+): RateCardImportResult {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+  // A sent bid, or one under a paused engagement, is not priced further.
+  const { bid } = requireWorkableBid(ctx, bidId);
+  return runRateCardImport(ctx, input.entries, { bidId: bid.id });
+}
+
+/**
+ * The rates held for one tender, to price its bid.
+ *
+ * Each is a THIN starting point by construction: a per-tender rate is a copy the
+ * client brought, never corroborated by a committed bid, so it carries no
+ * confidence beyond "this is the number you imported".
+ */
+export function tenderRateCard(
+  ctx: EngineContext,
+  bidId: string,
+): { bidId: string; rates: Array<{ code?: string; description: string; unit: string; rateMinor: number; note?: string; confidence: 'THIN' }> } {
+  requireModuleReadable(ctx.grantedModules, ctx.heldModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+  const bid = requireBid(ctx, bidId);
+  const rates = tenderRateEntries(ctx, bid.id)
+    .map((entry) => ({
+      ...(entry.code ? { code: entry.code } : {}),
+      description: entry.description,
+      unit: entry.unit,
+      rateMinor: Number(entry.rateMinor),
+      ...(entry.note ? { note: entry.note } : {}),
+      confidence: 'THIN' as const,
+    }))
+    .sort((a, b) => a.description.localeCompare(b.description, 'en', { numeric: true }));
+  return { bidId: bid.id, rates };
 }
