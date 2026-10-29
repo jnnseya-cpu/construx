@@ -1686,17 +1686,40 @@ export async function procurement(root) {
             'E20.007, Facing-brick outer leaf, m2, 145\nF10.001, Blockwork inner leaf 100mm, m2, 62\nR10.004, Readymix GEN3 to foundations, m3, 148, supply and place',
           hint:
             'code, description, unit, rate — and an optional note at the end. The code is your own reference and may ' +
-            'be left off (just description, unit, rate). Rate is £ per unit. Blank lines are skipped; a line ' +
-            'missing a description, unit or rate is reported back.',
+            'be left off (just description, unit, rate). Rate is £ per unit. Or copy the Code, Description, Unit and ' +
+            'rate columns straight from a spreadsheet and paste — tab-separated columns are read as they stand, so a ' +
+            'description with its own commas (e.g. "Trench, max 2m deep") stays whole. Blank lines are skipped; a ' +
+            'line missing a description, unit or rate is reported back. The grey example is a format guide, not ' +
+            'content — type or paste your own rows over it.',
         },
       ],
+      // Stop the round trip when the box is empty rather than letting it return
+      // a bare VALIDATION_FAILED: the grey placeholder reads like content, so a
+      // person can click Import over an empty box and get an opaque refusal.
+      validate: (v) => {
+        const lines = String(v.card ?? '').split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+        if (lines.length === 0) {
+          return {
+            field: 'card',
+            message:
+              'Paste at least one rate line. The grey example is a format guide, not content — type or paste your ' +
+              'own rows over it.',
+          };
+        }
+        return undefined;
+      },
       transform: (v) => ({
         entries: String(v.card ?? '')
           .split('\n')
           .map((raw, index) => ({ raw: raw.trim(), line: index + 1 }))
           .filter((row) => row.raw.length > 0)
           .map((row) => {
-            const parts = row.raw.split(',').map((part) => part.trim());
+            // A tab means the line was copied from a spreadsheet column, where a
+            // description can itself hold commas; split on the tab then and the
+            // commas stay part of the text. Otherwise it is the hand-typed comma
+            // form. (A tab never occurs inside a pasted cell value.)
+            const delimiter = row.raw.includes('\t') ? '\t' : ',';
+            const parts = row.raw.split(delimiter).map((part) => part.trim());
             // Four or more fields means a code is present; exactly three is the
             // code-less form. Fewer than three is a malformed line, sent as it
             // stands so the server names it rather than the browser hiding it.
@@ -1719,6 +1742,39 @@ export async function procurement(root) {
             };
           }),
       }),
+      // Say what actually landed. The server returns which lines imported, which
+      // replaced an existing key and which it could not read and why; without
+      // this the console showed only a generic "Recorded" and a person could not
+      // tell a 37-line import from a 3-line one, nor see a skipped line.
+      report: (res) => {
+        const totals = res?.totals ?? {};
+        const imported = Number(totals.imported ?? 0);
+        const replaced = Number(totals.replaced ?? 0);
+        const skipped = Array.isArray(res?.skipped) ? res.skipped : [];
+        const reasons = skipped
+          .slice(0, 3)
+          .map((row) => `line ${row.line ?? '?'}: ${row.reason}`)
+          .join('; ');
+        const tail = skipped.length > 3 ? ` (+${skipped.length - 3} more)` : '';
+        if (imported === 0) {
+          return {
+            title: 'Nothing imported',
+            message: skipped.length
+              ? `No line could be read. ${reasons}${tail}`
+              : 'No valid rate lines were found.',
+            tone: 'warn',
+          };
+        }
+        const head = `${imported} rate${imported === 1 ? '' : 's'} imported${replaced ? ` (${replaced} replaced an existing rate)` : ''}`;
+        if (skipped.length) {
+          return { title: head, message: `${skipped.length} line(s) skipped — ${reasons}${tail}`, tone: 'warn' };
+        }
+        return {
+          title: head,
+          message: 'Added to the library as THIN, imported starting rates — they hold at THIN until a committed bid proves the item.',
+          tone: 'ok',
+        };
+      },
     },
     'supersede-measure': {
       title: 'Retire a package’s measure',

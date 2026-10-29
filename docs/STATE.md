@@ -3147,6 +3147,21 @@ own rates are is a person's statement, not a model's); the route is the
 tenant-scoped `POST /v1/rate-card/import`, and the console surfaces it as "Import
 a rate card" on Tender & Procurement beside the cost-intelligence panel.
 
+The paste reads two forms: the comma form above, and **tab-separated columns
+copied straight from a spreadsheet** — a description with its own commas
+("Trench, max 2m deep") stays whole because the line splits on the tab, not the
+comma. A spreadsheet whose descriptions carry commas is the usual real rate
+card, so a comma-only parse would mis-shift the unit and rate columns on exactly
+those lines; the tab path is how a full card (measured work rates and the firm's
+resource/charge rates alike) goes in on one paste, each rate carrying its
+inclusions/exclusions as its note. Two console guards make the outcome legible:
+an empty box is caught in the browser with a plain message (the grey example is
+a format guide, not content) rather than returning a bare `VALIDATION_FAILED`,
+and on success the toast reports what landed — how many imported, how many
+replaced an existing rate, and any line skipped with the reason — instead of a
+generic "Recorded". A note needs a code in front of it, since a code-less line
+with a trailing note is read as having a code.
+
 **It is the firm's own number, not a bought index, and it cannot buy
 confidence.** Imported entries join the unit-rate feed as `IMPORTED`
 observations, tagged so every reader can tell a seeded starting rate from one
