@@ -67,6 +67,35 @@ export function findByHash(
 }
 
 /**
+ * The evidence record a hash belongs to *within one project*.
+ *
+ * The project-scoped counterpart to `findByHash`, and a deliberately narrower
+ * question. `findByHash` answers "does this tenancy already own this file" —
+ * right for a company fact like an insurance certificate or a test result, which
+ * is filed once and true across every project of the firm. This answers "is this
+ * file already on *this* project's register".
+ *
+ * They diverge for a document that is project-scoped rather than a tenancy fact.
+ * A tender pack legitimately arrives for more than one project of the same
+ * tenancy — the same drawings go out on two lots — and each project keeps its own
+ * `EvidenceItem` over the single set of bytes the store holds by hash. A
+ * tenant-wide duplicate check there refuses the pack's second project the record
+ * it must have, and leaves that project with no evidence and no route to supply
+ * the file. The duplicate guard for project-scoped documents asks this instead,
+ * so the protection that matters — no two records at one address on one project —
+ * survives without the one that does harm.
+ */
+export function findByHashInProject(
+  ledger: GoldenThreadLedger,
+  projectId: string,
+  hash: string,
+): EntityRecord | undefined {
+  return ledger
+    .list(projectId, 'EvidenceItem')
+    .find((record) => (record.state as EvidenceState).hash === hash);
+}
+
+/**
  * Every evidence record in a project, and whether the file behind it exists.
  *
  * `held: false` is the honest answer and the reason this endpoint is worth

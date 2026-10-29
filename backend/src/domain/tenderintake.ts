@@ -1,7 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
-import { findByHash } from '../evidence/registry.ts';
+import { findByHashInProject } from '../evidence/registry.ts';
 import {
   addBusinessDays,
   businessDayOnOrBefore,
@@ -466,13 +466,20 @@ export function recordTenderDocument(
   // exist is worse than no link, because it reads as an answer.
   if (input.invitationId) requireInvitation(ctx, input.invitationId);
 
-  // The same file filed twice would put two register entries at one address,
-  // and the second says nothing the first did not.
-  const existing = findByHash(ctx.ledger, ctx.tenantId, hash);
+  // Scoped to *this project*, not to the tenancy. A tender pack is project
+  // evidence, not a company fact: the same drawings legitimately go out on two
+  // lots, and the store addresses bytes by hash at the tenant level, so each
+  // project keeps its own record over the one shared blob. A tenant-wide check
+  // here refused the pack's second project any record at all — EVIDENCE_ALREADY_FILED
+  // against a project whose register was empty, with no way to attach the file —
+  // which is the dead-end this fixes. The protection that matters is unchanged:
+  // the same file filed twice *on the same project* would put two entries at one
+  // address, and the second says nothing the first did not, so it is still refused.
+  const existing = findByHashInProject(ctx.ledger, ctx.projectId, hash);
   if (existing) {
     throw new DomainError(
       'EVIDENCE_ALREADY_FILED',
-      `This file is already on the record as "${String(existing.state.description)}". Upload it again and there would be two records at one address.`,
+      `This file is already on this project's record as "${String(existing.state.description)}". Upload it again and there would be two records at one address.`,
       409,
     );
   }

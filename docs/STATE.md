@@ -20272,8 +20272,22 @@ route was to dress an ITT as a design deliverable on the Design screen.
 
 `tenderintake.recordTenderDocument` is that missing record and nothing more: it
 asserts that a file with this hash arrived as part of this tender. It reads
-nothing and unlocks nothing, and it refuses the same hash twice rather than
-putting two register entries at one address.
+nothing and unlocks nothing, and it refuses the same hash twice *on one project*
+rather than putting two register entries at one address.
+
+That duplicate check is **project-scoped**, and that is a correctness fix, not a
+loosening (audit P1, Oct 2026). It used the tenant-wide `findByHash`, but
+`EvidenceItem` records are project-scoped and the store keys bytes by hash at the
+tenant level, so one blob is legitimately shared by many project records. The
+same drawings going out on two lots therefore hit `EVIDENCE_ALREADY_FILED` on the
+second project, which then showed "0 drawings filed" while every upload was
+refused as "already filed" — a dead-end with no recovery path for an unaided
+user. `recordTenderDocument` now asks `findByHashInProject` ("is this file already
+on *this* project's register"), so each project gets its own record over the one
+shared blob. The tenant-wide `findByHash` is unchanged and still guards genuine
+company facts — an insurance certificate is a company fact, filed once and true
+everywhere — along with evidence claims, signing, the BIM/perception readers, the
+orphan-discard refusal and the byte-upload target.
 
 It now also takes an optional `invitationId` and carries it as a linked entity on
 the registry record, which says *which* tender the file arrived with. Optional

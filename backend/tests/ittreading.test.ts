@@ -590,7 +590,7 @@ describe('the document the tender arrived as, filed so its bytes may follow', ()
     assert.equal(after.find((item) => item.hash === hash)!.held, true);
   });
 
-  it('refuses the same file twice rather than putting two records at one address', () => {
+  it('refuses the same file twice on one project rather than putting two records at one address', () => {
     const hash = hashBytes(docxOf(paragraph('A second copy of the same pack')));
     tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'pack.docx' });
     assert.throws(
@@ -600,6 +600,61 @@ describe('the document the tender arrived as, filed so its bytes may follow', ()
         return true;
       },
     );
+  });
+
+  it('files the same pack against a second project of the tenancy, each with its own record over one shared blob', async () => {
+    // The same drawings legitimately go out on two lots. The duplicate check
+    // used to be tenant-wide, so filing the pack on a second project threw
+    // EVIDENCE_ALREADY_FILED and left that project with no evidence record and
+    // no route to supply the file — the live dead-end. It is project-scoped now.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const secondProjectId = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'Second lot, same drawings',
+      sectorType: 'UTILITIES',
+      assetType: 'Impounding reservoir',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Halifax' },
+      contractValueMinor: 500_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-01-11',
+      plannedCompletion: '2029-06-29',
+    }).projectId;
+
+    // Built once: the zip is content-addressed, so the bytes hashed must be the
+    // same bytes stored, or the upload would be refused for a hash mismatch.
+    const pack = docxOf(paragraph('One pack, two lots'));
+    const hash = hashBytes(pack);
+
+    // Filed against the first project.
+    tenderintake.recordTenderDocument(ctx('qs'), { hash, filename: 'drawings.docx' });
+
+    // The same bytes filed against the second project — the call that used to fail.
+    const onSecond = platform.context(seed.users.qs!.auth, secondProjectId, { correlationId: 'itt-test' });
+    const filed = tenderintake.recordTenderDocument(onSecond, { hash, filename: 'drawings.docx' });
+    assert.ok(filed.evidenceId, 'the second project got no evidence record');
+
+    // The second project's register now includes it. Before the fix it was empty.
+    const registerSecond = await projectRegister(platform.ledger, store, seed.tenantId, secondProjectId);
+    assert.ok(registerSecond.some((item) => item.hash === hash), 'the second project register does not include the pack');
+
+    // Filing it a second time *on the second project* is still refused — the
+    // genuine protection, unchanged.
+    assert.throws(
+      () => tenderintake.recordTenderDocument(onSecond, { hash, filename: 'drawings-again.docx' }),
+      (error: Error & { code?: string }) => {
+        assert.equal(error.code, 'EVIDENCE_ALREADY_FILED');
+        return true;
+      },
+    );
+
+    // One upload of the shared bytes satisfies both projects: the store keys the
+    // blob by hash at the tenant level, and each project-scoped record points at it.
+    await store.put(seed.tenantId, hash, pack, 'application/zip');
+    const registerFirst = await projectRegister(platform.ledger, store, seed.tenantId, projectId);
+    const registerSecondHeld = await projectRegister(platform.ledger, store, seed.tenantId, secondProjectId);
+    assert.equal(registerFirst.find((item) => item.hash === hash)!.held, true);
+    assert.equal(registerSecondHeld.find((item) => item.hash === hash)!.held, true);
   });
 });
 
