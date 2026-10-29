@@ -16,6 +16,7 @@ import { requireOpenEngagement, engagementsOf, type Engagement } from './engagem
 import { evidenceOf, type BidOnEvidence } from './evidence.ts';
 import {
   AMBER_FLOOR,
+  DEFAULT_QUALITY_FLOOR,
   DEFAULT_WEIGHTS,
   packReadiness,
   REQUIREMENT_WALL_RULES,
@@ -146,6 +147,18 @@ export type BidAnswerVersion = {
   /** A reviewer's score override, with the reason that justifies it. */
   overrideScore?: number;
   overrideReason?: string;
+  /**
+   * A named person's recorded decision to submit this answer below the quality
+   * floor, with the reason that justifies it.
+   *
+   * Distinct from `overrideScore`, which says the scorer was wrong about the
+   * mark: this says the mark is right and the answer goes out below the floor
+   * anyway, because a genuinely unreachable 4/5 must not trap a legitimate bid.
+   * The soft half of the floor, the mirror of a disposed HIGH finding on the
+   * standard tender side. It never clears a red, and it is set against one
+   * version only — a later draft is judged afresh and carries no override.
+   */
+  floorOverride?: { by: string; at: string; reason: string; floorPercent: number };
   /**
    * The earlier approved answer this one was written from.
    *
@@ -441,6 +454,15 @@ export type Bid = {
   status: BidStatus;
   /** The rubric weights in force for this bid, copied at creation. */
   weights: Record<string, number>;
+  /**
+   * The quality floor this bid's export is held to, as a percentage.
+   *
+   * The default is the green-band threshold, set explicitly at creation so the
+   * bar is on the record rather than inferred. A bid may carry its own — higher
+   * for a flagship account, lower where a mark is genuinely out of reach.
+   * Absent on bids created before the floor existed, which read as the default.
+   */
+  qualityFloorPercent?: number;
   questions: BidQuestion[];
   /**
    * What the parser proposed, awaiting a person.
@@ -540,6 +562,18 @@ function requireText(value: string, min: number, code: string, what: string): st
 const wordsOf = (body: string[]): number => body.join(' ').split(/\s+/).filter(Boolean).length;
 
 /**
+ * A quality floor, validated. A percentage, 0–100: 0 turns the floor off, 100
+ * demands a findable full mark. Refused rather than clamped, because a floor
+ * silently moved to the nearest legal value is not the floor anybody set.
+ */
+function requireFloorPercent(value: number): number {
+  if (typeof value !== 'number' || Number.isNaN(value) || value < 0 || value > 100) {
+    throw new DomainError('BID_ON_FLOOR_RANGE', 'A quality floor is a percentage between 0 and 100', 400);
+  }
+  return value;
+}
+
+/**
  * The day this pack's expiries and declarations are judged against.
  *
  * One function, because the alternative is each caller deciding — and a screen
@@ -628,6 +662,8 @@ export function createBid(
     buyerReference?: string;
     sourceTenderId?: string;
     weights?: Record<string, number>;
+    /** The quality floor this bid's export is held to. Defaults to the green floor. */
+    qualityFloorPercent?: number;
   },
 ): Bid {
   requireModule(ctx.grantedModules, 'BID_ON');
@@ -735,6 +771,9 @@ export function createBid(
     );
   }
 
+  const qualityFloorPercent =
+    input.qualityFloorPercent === undefined ? DEFAULT_QUALITY_FLOOR : requireFloorPercent(input.qualityFloorPercent);
+
   const id = ulid();
   const bid: Bid = {
     id,
@@ -754,6 +793,7 @@ export function createBid(
     // Copied, not referenced. A rubric reversioned next month must not restate
     // what a submission already sent was scored against.
     weights,
+    qualityFloorPercent,
     questions: [],
     answers: [],
     gaps: [],
@@ -1296,6 +1336,132 @@ export function rejectAnswer(
   });
 
   return { bid: next, answer: rejected };
+}
+
+/**
+ * Set the quality floor this bid's export is held to. `U` on `BID_SERVICES`.
+ *
+ * A per-bid setting, so a flagship account can be held higher and a bid against
+ * a requirement no honest answer reaches 4/5 on can be set lower rather than
+ * trapped. It is configuration, not a decision about one answer — the decision
+ * to submit a particular answer below the floor is `overrideQualityFloor`,
+ * which carries a reason. Lowering the floor weakens the gate for the whole
+ * pack, so it is a deliberate act with its own event and its own author.
+ */
+export function setBidQualityFloor(ctx: EngineContext, bidId: string, input: { floorPercent: number }): Bid {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const qualityFloorPercent = requireFloorPercent(input.floorPercent);
+
+  const next: Bid = { ...bid, qualityFloorPercent };
+
+  write(ctx, {
+    eventType: 'BID_ON_QUALITY_FLOOR_SET',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+    reason: `Quality floor set to ${qualityFloorPercent}%`,
+  });
+
+  return next;
+}
+
+/**
+ * Record a decision to submit one answer below the quality floor. `A`.
+ *
+ * The soft half of the floor, and the mirror of disposing a HIGH red-team
+ * finding on the standard-tender side: a scored answer that reads below the bar
+ * refuses the export, and a named reviewer may record why it goes out anyway. A
+ * reason is required and persisted on the answer with who recorded it, so the
+ * question three weeks later — what did they conclude, and on what basis — has
+ * an answer.
+ *
+ * Two things it may not do. It may not clear a `RED`: a sub-amber score or a
+ * hard rule is not a matter of opinion, and the way past those is a redraft or
+ * a change in the world, not a note. And it may not be recorded against an
+ * answer that already meets the floor, because there is then nothing to
+ * override — the gate would pass it regardless.
+ *
+ * Set against the version that is current now. A later draft is a new answer,
+ * judged afresh, and carries no override — which is why this refuses a
+ * superseded version rather than letting a reviewer sign off text the pack will
+ * not send.
+ */
+export function overrideQualityFloor(
+  ctx: EngineContext,
+  bidId: string,
+  answerId: string,
+  input: { reason: string },
+): { bid: Bid; answer: BidAnswerVersion } {
+  requireModule(ctx.grantedModules, 'BID_ON');
+  authorise(ctx, 'BID_SERVICES', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const { bid } = requireWorkableBid(ctx, bidId);
+  const customer = requireVisibleCustomer(ctx, bid.customerAccountId);
+  const answer = bid.answers.find((entry) => entry.id === answerId);
+  if (!answer) {
+    throw new DomainError('BID_ON_ANSWER_NOT_FOUND', `${bid.reference} has no answer ${answerId}`, 404);
+  }
+  const current = latestAnswer(bid, answer.questionId);
+  if (current && current.id !== answer.id) {
+    throw new DomainError(
+      'BID_ON_ANSWER_SUPERSEDED',
+      `Version ${answer.version} has been replaced by version ${current.version}. An override on the older one would ` +
+        'wave through text the pack is not going to send.',
+      409,
+    );
+  }
+  if (answer.floorOverride) {
+    throw new DomainError(
+      'BID_ON_FLOOR_OVERRIDDEN',
+      `${answer.floorOverride.by} already recorded a reason to submit this below the floor on ` +
+        `${answer.floorOverride.at.slice(0, 10)}.`,
+      409,
+    );
+  }
+
+  const floor = bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR;
+  const verdict = scoreBid(ctx, bid, customer, judgedOn(bid)).find(
+    (entry) => entry.question.id === answer.questionId,
+  )?.verdict;
+  if (verdict && verdict.rag === 'RED') {
+    throw new DomainError(
+      'BID_ON_FLOOR_RED',
+      'This answer is red, not merely below the floor — a sub-amber score or a hard rule the buyer set. An override ' +
+        'cannot clear that: strengthen the answer past the amber floor, or resolve the requirement. The floor ' +
+        'override is for an answer that reads above amber and below the bar.',
+      409,
+    );
+  }
+  if (verdict && verdict.weightedScore >= floor) {
+    throw new DomainError(
+      'BID_ON_FLOOR_NOT_BELOW',
+      `This answer scores ${verdict.weightedScore}, at or above the ${floor}% floor, so there is nothing to override. ` +
+        'The gate would pass it as it stands.',
+      409,
+    );
+  }
+
+  const reason = requireText(input.reason, REASON_MIN, 'BID_ON_FLOOR_REASON_REQUIRED', 'A reason');
+  const overridden: BidAnswerVersion = {
+    ...answer,
+    floorOverride: { by: ctx.auth.actorId, at: new Date().toISOString(), reason, floorPercent: floor },
+  };
+
+  const next: Bid = {
+    ...bid,
+    answers: bid.answers.map((entry) => (entry.id === answerId ? overridden : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_ON_ANSWER_FLOOR_OVERRIDDEN',
+    entity: { refType: 'BidOnBid', refId: bidId },
+    nextState: { ...next },
+    reason: `Below the ${floor}% quality floor: ${reason}`,
+  });
+
+  return { bid: next, answer: overridden };
 }
 
 /**
@@ -2550,10 +2716,12 @@ export function bidPosition(ctx: EngineContext, bidId: string, asAt?: string): B
       mandatory: entry.question.mandatory,
       approved: entry.answer?.status === 'APPROVED',
       verdict: entry.verdict,
+      ...(entry.answer?.floorOverride ? { floorOverride: entry.answer.floorOverride } : {}),
     })),
     // The second half of a submission. Empty on a pack that is all questions,
     // which is why this changed nothing for the bids that already existed.
     returnableReadiness(bid, day, customer.legalName),
+    bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR,
   );
   const openGaps = bid.gaps.filter((entry) => !entry.resolvedAt);
 
@@ -2805,7 +2973,9 @@ export function exportBid(ctx: EngineContext, bidId: string): { bid: Bid; readin
       'BID_ON_NOT_EXPORTABLE',
       `${bid.reference} cannot be exported. ` +
         (position.readiness.blocking.length > 0
-          ? `${position.readiness.blocking.length} mandatory answer(s) are red or unapproved: ${named}. `
+          ? `${position.readiness.blocking.length} mandatory answer(s) are red, unapproved or below the ` +
+            `${bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR}% quality floor: ${named}. A below-floor answer can be ` +
+            'strengthened and re-scored, or a named reviewer can record a reason to submit it as it stands. '
           : '') +
         (position.readiness.returnablesOutstanding.length > 0
           ? `${position.readiness.returnablesOutstanding.length} mandatory returnable(s) are outstanding: ` +
@@ -2920,6 +3090,8 @@ export type BidRegister = {
     /** Whether a schedule of amendments has been read on this bid. */
     amendmentsReviewed: boolean;
     readinessPercent: number | null;
+    /** The quality floor this bid's export is held to, as a percentage. */
+    qualityFloorPercent: number;
     exportable: boolean;
     /** Null where there is no deadline to count down to. */
     daysLeft: number | null;
@@ -2963,8 +3135,10 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
           mandatory: entry.question.mandatory,
           approved: entry.answer?.status === 'APPROVED',
           verdict: entry.verdict,
+          ...(entry.answer?.floorOverride ? { floorOverride: entry.answer.floorOverride } : {}),
         })),
         returnableReadiness(bid, day, customer.legalName),
+        bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR,
       );
       return {
         id: bid.id,
@@ -3002,6 +3176,7 @@ export function bidRegister(ctx: EngineContext, asAt?: string): BidRegister {
         // bid is a list nobody can scan.
         amendmentsReviewed: bid.amendmentsReview !== undefined,
         readinessPercent: readiness.readinessPercent,
+        qualityFloorPercent: bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR,
         exportable: readiness.exportable,
         // Null on a rolling bid, not zero and not a large number: there is no
         // day to count down to, and a countdown of 0 would read as "due today"

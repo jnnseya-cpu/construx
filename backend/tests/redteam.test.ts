@@ -733,3 +733,168 @@ describe('the measurable-commitment lens', () => {
     assert.equal(unmeasurable(findings), undefined, 'the lens fired on a requirement nobody scores on quantities');
   });
 });
+
+/**
+ * The quality floor.
+ *
+ * A scored requirement that is answered but whose findable marks fall below the
+ * pack's floor is raised as a HIGH finding — so it blocks the issue the same
+ * way any high finding does, and clears the moment a named person disposes of
+ * it. That reuse is the point: the floor is a soft block with override-by-reason,
+ * which is exactly what a high finding already is. The default is 80% (4/5),
+ * settable per pack, and the gate enforces the findable mark this review can
+ * measure, not the buyer's own mark.
+ */
+describe('the quality floor', () => {
+  const OFF_TOPIC = [
+    'Our business has operated across the north of England for thirty years and we take our responsibilities to the ' +
+      'communities we build in seriously, working closely with the bodies that represent them.',
+    'We are proud of the relationships we have built and intend to carry that record into this scheme.',
+  ];
+  const ON_TOPIC = [
+    'Our methodology for deep drainage installation beneath a live carriageway begins with a phased carriageway ' +
+      'possession agreed with the highway authority, so the drainage installation proceeds beneath one lane at a time.',
+    'The methodology sets out the carriageway excavation, the drainage installation sequence and the reinstatement, ' +
+      'each beneath a temporary traffic management layout so the carriageway stays open throughout.',
+  ];
+
+  /** Plan a fresh single-requirement pack, so the floor is the only thing in play. */
+  const freshPack = (reference: string): string => {
+    const id = itt.analyseITT(asQS(), {
+      reference,
+      clientName: 'Hyndburn Borough Council',
+      returnBy: '2027-09-01',
+      estimatedValueMinor: 70_000_000,
+      durationWeeks: 32,
+      requirements: [
+        {
+          reference: 'Q-01',
+          category: 'TECHNICAL',
+          requirement: 'Describe your methodology for deep drainage installation beneath a live carriageway',
+          mandatory: true,
+          weightingPercent: 100,
+          // Deliberately empty: the evidence lens is not what this is testing,
+          // and a required certificate would add a finding of its own.
+          evidenceRequired: '',
+        },
+      ],
+      terms: { contractForm: 'NEC4 Option A' },
+    }).analysisId;
+    return bidresponse.planBidResponse(asQS(), { analysisId: id }).pack.id;
+  };
+
+  /** Draft one section straight onto the ledger, as the file's own helper does. */
+  const draftInto = (pid: string, key: string, body: string[]): void => {
+    const pack = bidresponse.bidResponsePack(asQS(), pid);
+    const next = {
+      ...pack,
+      passes: pack.passes + 1,
+      sections: pack.sections.map((section: (typeof pack.sections)[number]) =>
+        section.key === key
+          ? {
+              ...section,
+              status: 'DRAFTED' as const,
+              body,
+              words: body.join(' ').split(/\s+/).filter(Boolean).length,
+              authorship: 'HUMAN' as const,
+              writtenAt: new Date().toISOString(),
+            }
+          : section,
+      ),
+    };
+    platform.ledger.commit({
+      tenantId: seed.tenantId,
+      projectId: `${seed.tenantId}-governance`,
+      actor: { refType: 'User', refId: seed.users.qs!.auth.actorId },
+      source: 'WEB',
+      correlationId: pid,
+      eventType: 'BID_RESPONSE_SECTION_WRITTEN',
+      entity: { refType: 'BidResponsePack', refId: pid },
+      nextState: next as unknown as Record<string, unknown>,
+    });
+  };
+
+  it('defaults a planned pack to the 80% floor, on the record', () => {
+    const pid = freshPack('ITT-FLOOR-01');
+    assert.equal(bidresponse.bidResponsePack(asQS(), pid).qualityFloorPercent, 80);
+  });
+
+  it('raises a scored answer below the floor as a high finding and refuses the issue, naming it', async () => {
+    const pid = freshPack('ITT-FLOOR-02');
+    // Answered, but about something else — a scorer can find three-quarters of
+    // the marks at best, which is below the 80% floor.
+    draftInto(pid, 'Q-01', OFF_TOPIC);
+
+    const { review } = await redteam.challengeSubmission(asQS(), { packId: pid });
+    assert.equal(review.qualityFloorPercent, 80);
+    const floor = review.findings.find((entry) => entry.title.includes('quality floor'));
+    assert.ok(floor, 'a below-floor answer raised no floor finding');
+    assert.equal(floor.severity, 'HIGH');
+    assert.equal(floor.reference, 'Q-01');
+    assert.match(floor.detail, /80%/);
+
+    // Completeness is satisfied — one section answered, the return date dated —
+    // so the refusal is the assurance gate, and it names the floor.
+    const error = throwsCode(() => bidresponse.issueBidResponse(asOwner(), { packId: pid }), 'ASSURANCE_NOT_CLEAR');
+    assert.match(String(error.message), /quality floor/);
+  });
+
+  it('issues once the floor finding is disposed with a reason', async () => {
+    const pid = freshPack('ITT-FLOOR-03');
+    draftInto(pid, 'Q-01', OFF_TOPIC);
+    const { review } = await redteam.challengeSubmission(asQS(), { packId: pid });
+    const floor = review.findings.find((entry) => entry.title.includes('quality floor'))!;
+
+    // The override is the disposition — the same mechanism a HIGH finding
+    // already carries, not a second one.
+    redteam.disposeFinding(asOwner(), review.id, floor.id, {
+      decision: 'ACCEPTED',
+      note: 'A 4/5 is unreachable on this question for us; the answer is as strong as the evidence supports.',
+    });
+
+    const issued = bidresponse.issueBidResponse(asOwner(), { packId: pid });
+    assert.equal(issued.pack.status, 'ISSUED');
+  });
+
+  it('issues clean when the answer reaches the floor, with no floor finding', async () => {
+    const pid = freshPack('ITT-FLOOR-04');
+    draftInto(pid, 'Q-01', ON_TOPIC);
+
+    const { review } = await redteam.challengeSubmission(asQS(), { packId: pid });
+    assert.equal(review.findableScorePercent, 100);
+    assert.equal(review.findings.filter((entry) => entry.title.includes('quality floor')).length, 0);
+
+    const issued = bidresponse.issueBidResponse(asOwner(), { packId: pid });
+    assert.equal(issued.pack.status, 'ISSUED');
+  });
+
+  it('respects a per-pack floor, and refuses a review run under a floor that has since moved', async () => {
+    const pid = freshPack('ITT-FLOOR-05');
+    draftInto(pid, 'Q-01', OFF_TOPIC);
+
+    // Set lower than the findable 75%, so the same answer now clears it.
+    bidresponse.setBidResponseQualityFloor(asQS(), { packId: pid, floorPercent: 60 });
+    const { review } = await redteam.challengeSubmission(asQS(), { packId: pid });
+    assert.equal(review.qualityFloorPercent, 60);
+    assert.equal(review.findings.filter((entry) => entry.title.includes('quality floor')).length, 0);
+
+    // Move the floor after the review was run: it is now a review of a
+    // different question, and the gate refuses it until it is run again.
+    bidresponse.setBidResponseQualityFloor(asQS(), { packId: pid, floorPercent: 90 });
+    const stale = throwsCode(() => bidresponse.issueBidResponse(asOwner(), { packId: pid }), 'ASSURANCE_NOT_CLEAR');
+    assert.match(String(stale.message), /quality floor/);
+
+    // Put it back and run it again, and the 75% answer is below 90 and blocks.
+    const { review: again } = await redteam.challengeSubmission(asQS(), { packId: pid });
+    assert.equal(again.qualityFloorPercent, 90);
+    assert.ok(again.findings.some((entry) => entry.title.includes('90% quality floor')));
+  });
+
+  it('refuses a floor outside 0–100', () => {
+    const pid = freshPack('ITT-FLOOR-06');
+    throwsCode(
+      () => bidresponse.setBidResponseQualityFloor(asQS(), { packId: pid, floorPercent: 150 }),
+      'BID_RESPONSE_FLOOR_RANGE',
+    );
+  });
+});

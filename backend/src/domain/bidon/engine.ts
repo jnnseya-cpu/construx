@@ -40,6 +40,7 @@ import {
 import {
   CRITERION,
   CRITERION_QUESTION,
+  DEFAULT_QUALITY_FLOOR,
   DEFAULT_WEIGHTS,
   GREEN_FLOOR,
   weightedScore,
@@ -1876,6 +1877,19 @@ export async function draftAnswer(
           'ten working days, by the nominated assessor, lodged on the central register" beats "promptly, by ' +
           'qualified staff". **Buyer relevance**: the buyer’s own words for their own scheme. **Clarity**: short ' +
           'paragraphs, no preamble, no restating the question, no sales language.',
+        /*
+         * The bar the submission is held to, stated to the writer so it aims at
+         * it. Best-effort and honest about its limits: this is the mark the
+         * platform's own rubric can find in the prose, not the buyer's actual
+         * mark, which no drafter can guarantee. Aiming at it is what a drafter
+         * can do; the gate enforces the findable mark, and the buyer's scorer
+         * may still read it differently.
+         */
+        qualityFloorTarget:
+          `Write to be marked at least ${bid.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR} out of 100 on the five ` +
+          'criteria above — that is the bar this submission is held to. Reach it by using the evidence better, never ' +
+          'by claiming more than the passages support: a higher mark bought with an uncited fact loses the bid rather ' +
+          'than wins it.',
         lengthInstruction:
           question.wordLimit === undefined
             ? 'No word limit is stated. Write what the evidence supports in full — several paragraphs where there ' +

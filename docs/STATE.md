@@ -1043,6 +1043,27 @@ from the readiness gate, the scored answers, or the bid's own lifecycle flags �
 it orders them. The Bid-On screen renders it under the gate verdict. Covered in
 `bidonfriction`.
 
+### The quality floor
+
+The same soft-block-with-override as the standard tender's red team, on the
+Bid-On gate. A bid carries a `qualityFloorPercent` — 80 by default, where 80 is
+the green band, copied at creation like the weights and settable per bid
+(`setBidQualityFloor`, `BID_ON_QUALITY_FLOOR_SET`, `U`, never an agent's).
+`packReadiness` now blocks the export on a mandatory answer that is approved and
+out of red but scores below the floor — the amber band that `exportBid` used to
+let through. It is a **soft** block: `overrideQualityFloor`
+(`BID_ON_ANSWER_FLOOR_OVERRIDDEN`, `A`, the mirror of disposing a HIGH red-team
+finding) records a named reviewer's reason on the answer and lets it through,
+because a genuinely unreachable mark must not trap a legitimate bid. The
+override cannot clear a red (a sub-amber score or a hard rule — a redraft, not a
+note) and is refused on an answer that already meets the floor; it is set
+against one version only, so a later draft is judged afresh and carries no
+override. The floor and the override surface on the bid's gate blockers and in
+the header; the drafter is given the floor as a target (`draftAnswer`,
+best-effort). The honest note is the same: the gate enforces the mark this
+rubric can find, which a buyer's own scorer may still read differently. Covered
+in `bidonfloor`.
+
 ### "Waiting on the customer" read as a contradiction
 
 A returnable owned by `CUSTOMER` blocked an export, and the reason — "Waiting on
@@ -21114,6 +21135,27 @@ has attacked, one whose review is of an earlier pass count, and one with an open
 critical or an undisposed high finding. A review that was never run and a review
 that found nothing must not look the same. Four routes, a panel on Pipeline &
 Bids with two doors, and twenty-three tests.
+
+**The quality floor.** A pack carries a `qualityFloorPercent` — 80% ("4/5") by
+default, set at planning and settable per pack (`setBidResponseQualityFloor`,
+`BID_RESPONSE_QUALITY_FLOOR_SET`, `U` on `ESTIMATE_TENDER`, never an agent's).
+When the red team runs, a scored requirement that is *answered* and whose
+findable proportion (`scoreBasis.awardedFraction`) sits below the floor is
+raised as a `HIGH` finding — so it blocks the issue until a named person
+disposes of it with a reason, and clears the moment they do. **This reuses the
+finding-and-disposition mechanism rather than inventing a second override
+system**: the floor is a soft block with override-by-reason, which is exactly
+what a high finding already is (`disposeFinding` is the override). A blank
+requirement is left alone — it already carries its own "no response" finding and
+a floor finding on a page nobody has written would be noise. The review stores
+the floor it ran against, and `assuranceStanding` refuses a review whose floor
+has since moved, the same staleness rule as the pass count. The drafting prompt
+is given the floor as a stated target so it writes toward it (`writeNextSection`,
+best-effort). Honest limit, stated on every review and in the console: the gate
+enforces the *findable* mark this review can measure, not the buyer's own mark,
+which no check guarantees — a below-floor finding says the marks are not yet
+findable in the prose, not that the bid will score below it. Covered in
+`redteam` ("the quality floor").
 
 ## The loop closing on the bid
 

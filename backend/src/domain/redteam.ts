@@ -173,11 +173,31 @@ export type AssuranceReview = {
   findings: AssuranceFinding[];
   findableScorePercent: number;
   scoreBasis: ScoreBasisLine[];
+  /**
+   * The quality floor this review was run against, as a percentage.
+   *
+   * Carried so the issue gate can tell a review run under one floor from the
+   * floor the pack carries now — the same staleness rule as `packPasses`. A
+   * floor changed after the review was run is a review of a different question,
+   * and `assuranceStanding` refuses it rather than treating it as current.
+   */
+  qualityFloorPercent: number;
   modelChallenge: ModelChallenge;
   /** What this review cannot tell you. Stated on the record, not in a footnote. */
   limits: string[];
   summary: string;
 };
+
+/**
+ * The quality floor a submission is held to, as a percentage of a scored
+ * requirement's available marks — the product's "4/5".
+ *
+ * A **default**, not a constant: a pack may carry its own. The gate enforces
+ * the proportion of a requirement's marks this red team can *find* in the prose
+ * (`scoreBasis.awardedFraction`), which is the controllable part — not the
+ * buyer's actual mark, which no check can guarantee.
+ */
+export const DEFAULT_QUALITY_FLOOR_PERCENT = 80;
 
 /** The most a model challenge may raise. No agent mandate exceeds propose. */
 const MODEL_SEVERITY_CEILING: FindingSeverity = 'HIGH';
@@ -718,9 +738,53 @@ export async function challengeSubmission(
   const answered = new Set(analysis.matrix.map((line) => line.reference).filter((reference) => !blank.has(reference)));
   const { percent, basis } = scoreFrom(analysis.matrix, findings, answered);
 
+  /*
+   * The quality floor, surfaced as findings the same severity the drafting
+   * aims at.
+   *
+   * A scored requirement that is answered and whose findable proportion sits
+   * below the pack's floor becomes a `HIGH` finding — which blocks the issue
+   * until a named person records a reason, and clears the moment they do,
+   * exactly as any other high finding does. Reusing the finding-and-disposition
+   * mechanism rather than a parallel override is the point: the floor is a soft
+   * block with override-by-reason, and that is what a high finding already is.
+   *
+   * Only an *answered* requirement: a blank one already carries a critical or a
+   * medium "no response" finding and scores nothing, and a second finding
+   * saying it is below the floor would be noise on a page nobody has written.
+   * Computed from the basis above, so it reflects the same arithmetic the score
+   * does, and appended after the score is taken so these meta-findings do not
+   * feed back into the number they describe.
+   */
+  const floorPercent = pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT;
+  for (const line of basis) {
+    if (!answered.has(line.reference)) continue;
+    if (line.awardedFraction * 100 >= floorPercent) continue;
+    findings.push(
+      finding({
+        lens: 'EVALUATOR',
+        severity: 'HIGH',
+        sectionKey: line.reference,
+        reference: line.reference,
+        title: `${line.reference} is below the ${floorPercent}% quality floor`,
+        detail:
+          `A scorer can find and award ${Math.round(line.awardedFraction * 100)}% of this requirement's marks as it ` +
+          `stands, against a floor of ${floorPercent}%. ${line.why} The floor is the findable mark this review can ` +
+          'measure, not the buyer’s own mark, which no check can guarantee.',
+        remedy:
+          `Strengthen the response against the findings above until ${floorPercent}% of its marks are findable, or a ` +
+          'named person records a decision to issue it below the floor — a genuinely unreachable mark must not trap a ' +
+          'legitimate bid, and the decision is theirs to record rather than the platform’s to make.',
+      }),
+    );
+  }
+
   const limits = [
     'This is the weighted proportion of marks an evaluator can find and award, not a predicted mark. Nothing here is ' +
       'calibrated against real feedback, because the learning loop that would calibrate it is not built.',
+    `The quality floor of ${floorPercent}% is enforced against that findable proportion, which is the part this ` +
+      'review can measure and the drafting can aim at. It is not the buyer’s actual mark, which no check guarantees — ' +
+      'a below-floor finding says the marks are not yet findable in the prose, not that the bid will score below it.',
     ...(challenge.ran
       ? []
       : [`The judgement lens did not run: ${challenge.reason ?? 'no reasoning provider answered'}. Only the ` +
@@ -744,6 +808,7 @@ export async function challengeSubmission(
     findings,
     findableScorePercent: percent,
     scoreBasis: basis,
+    qualityFloorPercent: floorPercent,
     modelChallenge: challenge,
     limits,
     summary:
@@ -1020,6 +1085,24 @@ export function assuranceStanding(
     };
   }
 
+  // The floor the review was run against, versus the one the pack carries now.
+  // Lowering or raising the floor changes which requirements are below it, so a
+  // review run under the old floor is a review of a different question — the
+  // same staleness rule as the pass count above, so the gate cannot pass a pack
+  // whose floor moved after it was last attacked.
+  const reviewFloor = review.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT;
+  const packFloor = pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT;
+  if (reviewFloor !== packFloor) {
+    return {
+      clear: false,
+      blocking: [],
+      current: false,
+      reason:
+        `${review.reference} was run against a ${reviewFloor}% quality floor and the pack now carries ${packFloor}%. ` +
+        'Which requirements sit below the floor has changed, so run the review again against the floor in force.',
+    };
+  }
+
   const blocking = review.findings.filter(
     (entry) => entry.severity === 'CRITICAL' || (entry.severity === 'HIGH' && !entry.disposition),
   );
@@ -1044,6 +1127,9 @@ export type AssuranceRegister = {
     packId: string;
     runAt: string;
     findableScorePercent: number;
+    qualityFloorPercent: number;
+    /** Scored requirements answered below the floor and not yet decided. */
+    belowFloor: number;
     critical: number;
     high: number;
     openHigh: number;
@@ -1082,6 +1168,10 @@ export function assuranceRegister(ctx: EngineContext): AssuranceRegister {
         packId: review.packId,
         runAt: review.runAt,
         findableScorePercent: review.findableScorePercent,
+        qualityFloorPercent: review.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT,
+        belowFloor: review.findings.filter(
+          (entry) => entry.title.includes('quality floor') && !entry.disposition,
+        ).length,
         critical: count('CRITICAL'),
         high: count('HIGH'),
         openHigh: review.findings.filter((entry) => entry.severity === 'HIGH' && !entry.disposition).length,

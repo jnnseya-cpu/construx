@@ -14,7 +14,7 @@ import { openImpacts, type AddendumImpact } from './addendum.ts';
 // One direction only. The red team reads the pack out of the ledger itself
 // rather than importing this module's readers, so the dependency between the
 // two does not become a cycle.
-import { assuranceStanding, latestReview } from './redteam.ts';
+import { assuranceStanding, DEFAULT_QUALITY_FLOOR_PERCENT, latestReview } from './redteam.ts';
 
 /**
  * The bid response pack: the half of a tender the platform could read but not
@@ -122,6 +122,18 @@ export type BidResponsePack = {
   status: 'DRAFTING' | 'ISSUED';
   /** How many passes have run. Reported so a stall is visible as a number. */
   passes: number;
+  /**
+   * The quality floor this pack's issue is held to, as a percentage of a scored
+   * requirement's findable marks — the product's "4/5".
+   *
+   * Set at planning so the bar is on the record, and settable per pack. Absent
+   * on packs planned before the floor existed, which read as the default. The
+   * gate enforces it through the red team: a scored requirement answered below
+   * the floor becomes a high finding, which blocks the issue until a named
+   * person records a reason — a soft block, because a genuinely unreachable
+   * mark must not trap a legitimate bid.
+   */
+  qualityFloorPercent?: number;
   plannedAt: string;
   plannedBy: string;
   issuedAt?: string;
@@ -230,6 +242,7 @@ export function planBidResponse(
     deadlines,
     status: 'DRAFTING',
     passes: 0,
+    qualityFloorPercent: DEFAULT_QUALITY_FLOOR_PERCENT,
     plannedAt: new Date().toISOString(),
     plannedBy: ctx.auth.actorId,
   };
@@ -309,6 +322,15 @@ export async function writeNextSection(
         // pays for and then has to cut by hand, and the cut is where the
         // answer loses the thing it was scoring on.
         ...(next.limit ? { limit: next.limit } : {}),
+        // The bar the red team will hold this to, stated so the draft aims at
+        // it. Best-effort and honest: this is the findable mark the platform's
+        // own evaluator can measure in the prose, not the buyer's actual mark,
+        // which no drafter can guarantee. Aiming at it is what a drafter can do.
+        qualityTarget:
+          `Write so a scorer can find and award at least ${pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT}% ` +
+          'of this requirement’s marks without inferring anything: answer every element it names, in the buyer’s own ' +
+          'words, with the method and the measurable commitments it asks for. That bar is the findable mark, not a ' +
+          'promise of the buyer’s own mark.',
         constraint:
           'Answer the requirement and nothing else. State no figure, no completion percentage, no customer name and no ' +
           'past project you have not been given — an invented reference in a submission is a false statement to a buyer ' +
@@ -838,9 +860,57 @@ export function issueBidResponse(
   return { pack: issued, completeness };
 }
 
+/**
+ * Set the quality floor this pack's issue is held to. `U` on `ESTIMATE_TENDER`.
+ *
+ * A per-pack bar, so a flagship tender can be held higher and one whose
+ * requirement no honest answer reaches 4/5 on can be set lower rather than
+ * trapped. The floor is enforced through the red team — a review run under the
+ * old floor is stale once it moves — so changing it is a reason to run the
+ * review again, which the issue gate insists on rather than passing a pack
+ * attacked under a floor that no longer applies.
+ */
+export function setBidResponseQualityFloor(
+  ctx: EngineContext,
+  input: { packId: string; floorPercent: number },
+): BidResponsePack {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. The bar it was judged against must stay what it was judged against.`,
+      409,
+    );
+  }
+  if (
+    typeof input.floorPercent !== 'number' ||
+    Number.isNaN(input.floorPercent) ||
+    input.floorPercent < 0 ||
+    input.floorPercent > 100
+  ) {
+    throw new DomainError('BID_RESPONSE_FLOOR_RANGE', 'A quality floor is a percentage between 0 and 100', 400);
+  }
+
+  const next: BidResponsePack = { ...pack, qualityFloorPercent: input.floorPercent };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_QUALITY_FLOOR_SET',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next as unknown as Record<string, unknown>,
+    reason: `Quality floor set to ${input.floorPercent}%`,
+  });
+
+  return next;
+}
+
 export type BidResponsePosition = {
   packs: Array<
-    Pick<BidResponsePack, 'id' | 'reference' | 'analysisId' | 'clientName' | 'returnBy' | 'status' | 'passes'> & {
+    Pick<
+      BidResponsePack,
+      'id' | 'reference' | 'analysisId' | 'clientName' | 'returnBy' | 'status' | 'passes' | 'qualityFloorPercent'
+    > & {
       completeness: BidCompleteness;
     }
   >;
@@ -863,6 +933,7 @@ export function bidResponsePosition(ctx: EngineContext): BidResponsePosition {
       returnBy: pack.returnBy,
       status: pack.status,
       passes: pack.passes,
+      qualityFloorPercent: pack.qualityFloorPercent ?? DEFAULT_QUALITY_FLOOR_PERCENT,
       completeness: bidCompleteness(
       pack,
       liveWaivers(ctx, pack.analysisId),

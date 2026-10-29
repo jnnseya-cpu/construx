@@ -453,6 +453,8 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
           { id: 'reject-answer', label: 'Reject with instructions', tone: 'quiet',
             permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
+          { id: 'floor-override', label: 'Submit an answer below the floor', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
           { id: 'evidence-needs', label: 'Work out what this pack needs',
             permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
           { id: 'raise-gap', label: 'Raise a gap', tone: 'quiet',
@@ -477,6 +479,8 @@ export async function bidon(root) {
             permitted: can('BID_SERVICES', 'A'), reason: blockedReason('BID_SERVICES', 'A') },
           { id: 'review-amendments', label: 'Read the schedule of amendments',
             permitted: can('BID_SERVICES', 'X'), reason: blockedReason('BID_SERVICES', 'X') },
+          { id: 'set-bid-floor', label: 'Set the quality floor', tone: 'quiet',
+            permitted: can('BID_SERVICES', 'U'), reason: blockedReason('BID_SERVICES', 'U') },
           { id: 'export-bid', label: 'Export the pack',
             permitted: can('BID_SERVICES', 'I'), reason: blockedReason('BID_SERVICES', 'I') },
           { id: 'record-bid-outcome', label: 'Record the outcome', tone: 'quiet',
@@ -1703,12 +1707,21 @@ export async function bidon(root) {
             'registration is maintained rather than returned. Neither has a return date, so a rolling bid is judged ' +
             'against the day it is read — which means its readiness moves on its own as certificates age.' },
         { name: 'buyerReference', label: 'Buyer’s reference', type: 'text', required: false },
+        { name: 'qualityFloorPercent', label: 'Quality floor (%)', type: 'number', required: false, min: 0, max: 100,
+          hint:
+            'The score a mandatory answer must reach to export. Leave blank for 80, the green band. The gate enforces ' +
+            'the mark this rubric can find, not the buyer’s own mark.' },
       ],
       transform: (v) => ({
         ...Object.fromEntries(
-          Object.entries(v).filter(([key, value]) => key !== 'rolling' && String(value ?? '').trim()),
+          Object.entries(v).filter(
+            ([key, value]) => key !== 'rolling' && key !== 'qualityFloorPercent' && String(value ?? '').trim(),
+          ),
         ),
         ...(v.rolling === 'true' ? { rolling: true } : {}),
+        ...(String(v.qualityFloorPercent ?? '').trim() === ''
+          ? {}
+          : { qualityFloorPercent: Number(v.qualityFloorPercent) }),
       }),
     },
     'import-bid': {
@@ -2511,6 +2524,41 @@ export async function bidon(root) {
         ...rest,
         ...(String(evidenceId ?? '').trim() ? { evidenceId: String(evidenceId).trim() } : {}),
       }),
+    },
+    'set-bid-floor': {
+      title: 'Set the quality floor',
+      intent:
+        'The score a mandatory answer must reach before the pack may export — 80 by default, where 80 is the green ' +
+        'band; settable per bid. A below-floor answer blocks the export until it is strengthened and re-scored, or a ' +
+        'named reviewer records a reason to submit it as it stands. The gate enforces the mark this rubric can find, ' +
+        'which a buyer’s own scorer may still read differently.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/quality-floor`,
+      submitLabel: 'Set',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — floor ${bid.qualityFloorPercent ?? 80}%` })) },
+        { name: 'floorPercent', label: 'Quality floor (%)', type: 'number', min: 0, max: 100,
+          hint: '80 is the green band. Raise it for a flagship account, lower it where a mark is genuinely out of reach.' },
+      ],
+      transform: ({ bidId: _b, floorPercent }) => ({ floorPercent: Number(floorPercent) }),
+    },
+    'floor-override': {
+      title: 'Submit an answer below the floor',
+      intent:
+        'A named reviewer’s decision to export an answer that scores below the quality floor, with the reason that ' +
+        'justifies it — a genuinely unreachable mark must not trap a legitimate bid. It cannot clear a red (a ' +
+        'sub-amber score or a hard rule), and it is refused on an answer that already meets the floor. Recorded on ' +
+        'the answer and kept, so three weeks later the record says what was concluded and on what basis.',
+      path: (v) => `/v1/bid-on/bids/${v.bidId}/answers/${v.answerId}/floor-override`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'bidId', label: 'Bid', type: 'select',
+          options: bidList.map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.buyerName}` })) },
+        { name: 'answerId', label: 'Answer id', type: 'text', hint: 'From the opened pack above — the answer that is below the floor.' },
+        { name: 'reason', label: 'Why it goes out below the floor', type: 'textarea', rows: 2,
+          hint: 'At least 12 characters. What you concluded, not that you looked.' },
+      ],
+      transform: ({ bidId: _b, answerId: _a, ...rest }) => rest,
     },
     'export-bid': {
       title: 'Export the pack',
@@ -3502,7 +3550,7 @@ function bidDetail(position, estimate, source) {
         } ·
         ${bid.rolling ? html`no return date` : html`due ${date(bid.deadline)}`}${
           bid.clarificationDeadline ? html` · questions close ${date(bid.clarificationDeadline)}` : ''
-        }.
+        } · quality floor ${bid.qualityFloorPercent ?? 80}%.
         ${readiness.summary}
         ${bid.rolling
           ? html`Every verdict is judged against <b>${date(position.judgementDay)}</b>, the day this was read, and is

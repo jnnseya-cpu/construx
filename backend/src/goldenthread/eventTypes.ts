@@ -723,6 +723,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // either.
   def('BID_RESPONSE_PLANNED', 'BidResponsePack', 'CREATE', 'PROCUREMENT'),
   def('BID_RESPONSE_SECTION_WRITTEN', 'BidResponsePack', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
+  // The quality floor a pack's issue is held to. A human setting on the pack,
+  // never an agent's: lowering the bar the submission is judged against is a
+  // commercial decision, so `aiAllowed` stays false by the catalogue's default.
+  def('BID_RESPONSE_QUALITY_FLOOR_SET', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
   def('BID_RESPONSE_ISSUED', 'BidResponsePack', 'UPDATE', 'PROCUREMENT'),
 
   /*
@@ -2561,6 +2565,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('BID_ON_ANSWER_SCORED', 'BidOnBid', 'UPDATE', 'PROCUREMENT', { aiAllowed: true }),
   def('BID_ON_ANSWER_APPROVED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
   def('BID_ON_ANSWER_REJECTED', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
+  // The quality floor this bid's export is held to, and a named reviewer's
+  // decision to submit one answer below it. The floor is a per-bid setting; the
+  // override is the soft half of the gate — a reason recorded on the answer, the
+  // mirror of disposing a HIGH red-team finding. Both are human by construction:
+  // lowering a bar and accepting a below-floor answer are commercial decisions,
+  // so `aiAllowed` stays false on both by the catalogue's default.
+  def('BID_ON_QUALITY_FLOOR_SET', 'BidOnBid', 'UPDATE', 'PROCUREMENT'),
+  def('BID_ON_ANSWER_FLOOR_OVERRIDDEN', 'BidOnBid', 'APPROVE', 'PROCUREMENT'),
   // The other half of a submission: what has to be returned rather than
   // answered. Human-only, all three. Recording the register is a person reading
   // nine documents; saying a signed order form exists is a statement somebody

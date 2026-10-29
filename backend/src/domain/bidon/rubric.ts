@@ -51,6 +51,21 @@ export type Rag = (typeof RAG)[number];
 export const AMBER_FLOOR = 50;
 export const GREEN_FLOOR = 80;
 
+/**
+ * The quality floor a submission must clear, as a percentage.
+ *
+ * The default is the green-band threshold — the product's "4/5". A bid may set
+ * its own, higher for a flagship account or lower where a genuinely
+ * unreachable mark would otherwise trap a legitimate submission, so this is a
+ * **default** rather than a constant, the same way the weights are.
+ *
+ * It is deliberately the same number as `GREEN_FLOOR`: "80% maps to green" is
+ * the design, so the floor and the band coincide until a bid moves the floor.
+ * They stay two names because they answer two questions — the band is how an
+ * answer reads on the screen, the floor is the bar the export gate holds it to.
+ */
+export const DEFAULT_QUALITY_FLOOR = GREEN_FLOOR;
+
 export function bandFor(score: number): Rag {
   if (score >= GREEN_FLOOR) return 'GREEN';
   if (score >= AMBER_FLOOR) return 'AMBER';
@@ -412,6 +427,17 @@ export type ReadinessInput = Array<{
   mandatory: boolean;
   approved: boolean;
   verdict: Verdict;
+  /**
+   * A named person's recorded decision to submit this answer below the quality
+   * floor, with the reason that justifies it.
+   *
+   * The soft half of the floor: a scored answer that reads below the bar is
+   * refused at the gate, but a genuinely unreachable mark must not trap a
+   * legitimate submission, so a reviewer may record why it goes out as it
+   * stands. It never clears a `RED` — a hard rule or a sub-amber score is not a
+   * matter of opinion — only the floor block above amber.
+   */
+  floorOverride?: { by: string; reason: string; at: string };
 }>;
 
 /**
@@ -455,6 +481,13 @@ export type PackReadiness = {
     remedy: string;
     requirementUnmet: boolean;
     hardRule?: HardRule;
+    /**
+     * This answer is blocked for scoring below the quality floor, not for being
+     * red or unapproved. A soft block: a named reviewer can record a reason and
+     * let it through, which `requirementUnmet` (always false here) and this flag
+     * together tell the screen so it offers the override rather than a redraft.
+     */
+    belowFloor?: boolean;
   }>;
   /**
    * Mandatory returnables nobody has supplied. Each one blocks the export too.
@@ -528,7 +561,17 @@ export type SubmissionGate = {
  * unchanged. A pack that has them cannot go while a mandatory one is
  * outstanding.
  */
-export function packReadiness(answers: ReadinessInput, returnables: ReturnableInput = []): PackReadiness {
+export function packReadiness(
+  answers: ReadinessInput,
+  returnables: ReturnableInput = [],
+  /**
+   * The bar a scored answer must clear to export, as a percentage. The default
+   * is the green floor; a bid may set its own. Enforced only above `RED` — a
+   * sub-amber answer or one a hard rule holds red is already blocked, and a
+   * floor override cannot clear either of those.
+   */
+  qualityFloorPercent: number = DEFAULT_QUALITY_FLOOR,
+): PackReadiness {
   const total = answers.length;
   const weighted = answers.filter((entry) => (entry.weighting ?? 0) > 0);
   const basis = weighted.length > 0 ? weighted : answers.map((entry) => ({ ...entry, weighting: 1 }));
@@ -571,6 +614,27 @@ export function packReadiness(answers: ReadinessInput, returnables: ReturnableIn
         reason: 'Nobody has approved it, so no person has put their name to it.',
         remedy: 'A reviewer reads it and approves it — approval is what puts a person’s name to the answer.',
         requirementUnmet: false,
+      });
+      return;
+    }
+    // The quality floor. The answer is approved and out of red, and still scores
+    // below the bar this bid holds submissions to. A soft block: a named
+    // reviewer can record a reason and let it through, because a genuinely
+    // unreachable mark must not trap a legitimate submission — but until they
+    // do, or the answer is strengthened, the export is refused and this one is
+    // named. An override that was recorded against an earlier version does not
+    // carry: a new draft is a new answer and is judged afresh.
+    if (entry.verdict.weightedScore < qualityFloorPercent && !entry.floorOverride) {
+      blocking.push({
+        index,
+        ...(reference ? { reference } : {}),
+        reason: `Scored ${entry.verdict.weightedScore}, below the quality floor of ${qualityFloorPercent}%.`,
+        remedy:
+          `Strengthen and re-score it to at least ${qualityFloorPercent}%, or a named reviewer records a reason to ` +
+          'submit it below the floor — the gate enforces the mark this rubric can find, which a buyer’s own scorer ' +
+          'may still read differently.',
+        requirementUnmet: false,
+        belowFloor: true,
       });
     }
   });
@@ -651,8 +715,9 @@ export function packReadiness(answers: ReadinessInput, returnables: ReturnableIn
         : `${green} green, ${amber} amber, ${red} red of ${total}; ${approved} approved` +
           (readinessPercent === null ? '' : `, readiness ${readinessPercent}%`) +
           (blocking.length > 0
-            ? `. ${blocking.length} mandatory answer(s) are red or unapproved, so the pack cannot be exported.`
-            : '. Every mandatory answer is approved and out of red.') +
+            ? `. ${blocking.length} mandatory answer(s) are red, unapproved or below the quality floor, so the pack ` +
+              'cannot be exported.'
+            : '. Every mandatory answer is approved, out of red and at or above the quality floor.') +
           (returnablesOutstanding.length > 0
             ? ` ${returnablesOutstanding.length} mandatory returnable(s) are outstanding — ` +
               `${returnablesOutstanding.map((entry) => entry.reference).join(', ')} — and a submission missing one ` +

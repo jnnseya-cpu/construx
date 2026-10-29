@@ -1357,13 +1357,19 @@ export async function pipeline(root) {
               dated. This one runs against it. A pack that passes every completeness rule can still score nothing,
               because completeness is not the question a scorer asks — they ask whether they can find the answer and
               award the mark without inferring anything. A critical finding is a hard block nobody can wave through; a
-              high one blocks until somebody records what they decided.
+              high one blocks until somebody records what they decided. A scored requirement whose findable marks fall
+              below the pack's <b>quality floor</b> (80% by default, settable per pack) is raised as a high finding for
+              exactly that reason — it blocks the issue until the answer reaches the floor or a named person records a
+              reason to go out below it. The floor is the findable mark this review can measure, not the buyer's own
+              mark, which no check can promise.
             </p>
             <div class="actions cmd-bar" style="margin:10px 0">
               ${raw(
                 commandBar([
                   { id: 'bid-challenge', label: 'Attack the pack',
                     permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+                  { id: 'bid-floor', label: 'Set the quality floor', tone: 'quiet',
+                    permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                   { id: 'finding-dispose', label: 'Record a decision on a finding',
                     permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
                 ]),
@@ -1371,11 +1377,13 @@ export async function pipeline(root) {
             </div>
             <p class="metric-sub">${assurance?.summary ?? ''}</p>
             ${table({
-              headers: ['Review', 'Findable marks', 'Critical', 'High', 'Undecided', 'Judgement lens', 'Ran'],
-              align: ['', 'num', 'num', 'num', 'num', '', ''],
+              headers: ['Review', 'Findable marks', 'Floor', 'Below floor', 'Critical', 'High', 'Undecided', 'Judgement lens', 'Ran'],
+              align: ['', 'num', 'num', 'num', 'num', 'num', 'num', '', ''],
               rows: (assurance?.reviews ?? []).map((review) => [
                 review.reference,
                 `${review.findableScorePercent}%`,
+                review.qualityFloorPercent === undefined ? '—' : `${review.qualityFloorPercent}%`,
+                (review.belowFloor ?? 0) > 0 ? badge(`${review.belowFloor} open`, 'warn') : badge('none', 'good'),
                 review.critical > 0 ? badge(String(review.critical), 'bad') : '0',
                 String(review.high),
                 review.openHigh > 0 ? badge(`${review.openHigh} open`, 'warn') : badge('none', 'good'),
@@ -2119,6 +2127,25 @@ export async function pipeline(root) {
           hint: 'At least 12 characters. What you concluded, not that you looked.' },
       ],
       transform: ({ findingId: _findingId, ...rest }) => rest,
+    },
+    'bid-floor': {
+      title: 'Set the quality floor',
+      intent:
+        'The proportion of a scored requirement’s marks a scorer must be able to find before the pack may issue — ' +
+        '80% (4/5) by default, settable per pack. A requirement answered below it is raised as a high finding and ' +
+        'blocks the issue until the answer reaches the floor or a named person records a reason to go out below it. ' +
+        'Changing the floor means the red team must be run again, because which requirements sit below it has moved.',
+      path: (v) => `/v1/projects/${projectId}/bid-responses/${v.packId}/quality-floor`,
+      submitLabel: 'Set',
+      fields: [
+        { name: 'packId', label: 'Pack', type: 'select',
+          options: (bidPacks?.packs ?? [])
+            .filter((pack) => pack.status !== 'ISSUED')
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — floor ${pack.qualityFloorPercent ?? 80}%` })) },
+        { name: 'floorPercent', label: 'Quality floor (%)', type: 'number', min: 0, max: 100,
+          hint: 'The findable mark this review can measure, not the buyer’s own mark. 80 is the product’s 4/5.' },
+      ],
+      transform: ({ packId: _packId, floorPercent }) => ({ floorPercent: Number(floorPercent) }),
     },
     /*
      * The tender portal port — §4.8.1.

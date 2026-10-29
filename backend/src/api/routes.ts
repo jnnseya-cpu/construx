@@ -4478,6 +4478,25 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) =>
       bidresponse.issueBidResponse(projectContext(platform, ctx), { packId: ctx.params.packId as string }),
   },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/quality-floor',
+    description:
+      'Set the quality floor this pack is held to — the proportion of a scored requirement’s marks a scorer must be ' +
+      'able to find before it may issue. Default 80 (4/5), settable per pack. The red team enforces it, so changing ' +
+      'it means the review must be run again against the floor in force',
+    schema: {
+      type: 'object',
+      required: ['floorPercent'],
+      properties: { floorPercent: { type: 'number', minimum: 0, maximum: 100 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.setBidResponseQualityFloor(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        ...body<{ floorPercent: number }>(ctx),
+      }),
+  },
   /*
    * The red team — L7.3, §16.
    *
@@ -14033,6 +14052,7 @@ export const ROUTES: Route[] = [
         rolling: { type: 'boolean' },
         buyerReference: { type: 'string', maxLength: 120 },
         sourceTenderId: stringField,
+        qualityFloorPercent: { type: 'number', minimum: 0, maximum: 100 },
       },
       additionalProperties: false,
     },
@@ -14269,6 +14289,43 @@ export const ROUTES: Route[] = [
         ctx.params.answerId as string,
         body(ctx),
       ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/answers/:answerId/floor-override',
+    description:
+      'Record a named reviewer’s decision to submit an answer that scores below the quality floor, with the reason ' +
+      'that justifies it. The soft half of the floor — a genuinely unreachable mark must not trap a legitimate bid. ' +
+      'It cannot clear a red, and it is refused on an answer that already meets the floor',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: { type: 'string', minLength: 12, maxLength: 600 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.overrideQualityFloor(
+        tenantContext(platform, ctx),
+        ctx.params.bidId as string,
+        ctx.params.answerId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/bid-on/bids/:bidId/quality-floor',
+    description:
+      'Set the quality floor this bid’s export is held to — the score a mandatory answer must reach. Default 80, ' +
+      'where 80 is the green band; settable per bid. A below-floor answer blocks the export until it is strengthened ' +
+      'or a reviewer records a reason to submit it as it stands',
+    schema: {
+      type: 'object',
+      required: ['floorPercent'],
+      properties: { floorPercent: { type: 'number', minimum: 0, maximum: 100 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidOnBids.setBidQualityFloor(tenantContext(platform, ctx), ctx.params.bidId as string, body(ctx)),
   },
   {
     method: 'POST',
