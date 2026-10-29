@@ -682,6 +682,22 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SCHEDULE_ROUTE_ASSIGNED', 'PricingSchedule', 'UPDATE', 'PROCUREMENT'),
   def('ESTIMATE_CREATED', 'Estimate', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),
   def('ESTIMATE_FROZEN', 'Estimate', 'FREEZE', 'PROCUREMENT', { requiresEvidence: true }),
+  /*
+   * The firm's own rate card, loaded to seed the cost-intelligence library.
+   *
+   * IMPORT, because that is exactly what it is: the business's own unit rates,
+   * typed by the business, brought in so a one-person firm can price its first
+   * bid against something rather than a blank box. It is not a bought index and
+   * never becomes one — `costintel.importRateCard` files one entry per item and
+   * `confidenceCap` holds an imported rate at a THIN starting point until a
+   * committed bid proves it, so no amount of re-importing can make it read as
+   * history.
+   *
+   * `aiAllowed: false`, by the catalogue's default and on purpose: what a firm
+   * states its own rates are is a person's statement under the company's name,
+   * not a figure a model may assert.
+   */
+  def('RATE_CARD_IMPORTED', 'RateCardEntry', 'IMPORT', 'PROCUREMENT'),
   // The response to a client enquiry. The model drafts the words; the price on
   // it comes from the estimate, which was committed first.
   def('TENDER_RESPONSE_DRAFTED', 'TenderResponse', 'CREATE', 'PROCUREMENT', { aiAllowed: true }),

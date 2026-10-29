@@ -1,5 +1,7 @@
 import { DomainError } from '../core/errors.ts';
-import { authorise, type EngineContext } from '../engines/context.ts';
+import { ulid } from '../core/ids.ts';
+import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { liveProjects } from './structure.ts';
 
 /**
@@ -52,7 +54,26 @@ export type RateObservation = {
   /** The estimate this rate came from, so a benchmark can exclude itself. */
   estimateId: string;
   observedOn: string;
-  source: 'ESTIMATE';
+  /**
+   * Where the observation came from, and the one thing a reader must be able to
+   * tell about a rate:
+   *
+   *   - `ESTIMATE` — a rate the business committed on a frozen estimate, priced
+   *     by somebody and approved by somebody else. The only defensible evidence
+   *     of what this contractor actually charges.
+   *   - `IMPORTED` — a figure the firm typed into its own rate card and loaded
+   *     here to seed the library. It is the firm's *own* number — consistent
+   *     with this platform's "own committed records, not a bought index"
+   *     principle — but it is a starting point, not a rate proven on a bid, and
+   *     it is kept distinct for exactly that reason. See `confidenceCap` and
+   *     `harvestImportedRates` for the honesty guard that stops an imported rate
+   *     ever manufacturing confidence beyond a single THIN data point.
+   */
+  source: 'ESTIMATE' | 'IMPORTED';
+  /** The firm's own reference for an imported rate, carried through untouched. */
+  code?: string;
+  /** A free note attached to an imported rate card line. */
+  note?: string;
 };
 
 export type PackageOutturn = {
@@ -82,11 +103,56 @@ export function confidenceFor(observations: number): Confidence {
   return 'STRONG';
 }
 
+/**
+ * Confidence for a bucket of observations, with the imported-rate honesty guard.
+ *
+ * **The rule imported rates must never break.** A figure the firm typed into
+ * its own rate card is a starting point, not a rate proven on a committed bid.
+ * So confidence is governed by the **committed** observations alone — an
+ * imported rate never adds to it. The one thing it may do is establish a THIN
+ * floor where there is no committed history at all, so a one-person firm's
+ * first bid prices against a stated starting point rather than a blank box.
+ *
+ *   - 0 committed, any imported  → THIN (a starting point, said so plainly)
+ *   - N committed, any imported  → `confidenceFor(N)` — the imported entry is
+ *     shown as provenance and changes the number not at all
+ *
+ * Re-importing the same key replaces its prior imported entry rather than
+ * stacking (see `harvestImportedRates`), so a key holds at most one imported
+ * observation however many times it is pasted — and because imported
+ * observations are excluded from the count here, even that one cannot move the
+ * figure past THIN. Only committed bids do.
+ *
+ * For a bucket with no imported observations this is exactly `confidenceFor`:
+ * `committed === total`, so the guard changes nothing for the estimate-only
+ * library that existed before imports.
+ */
+export function confidenceCap(observations: readonly RateObservation[]): Confidence {
+  const committed = observations.filter((observation) => observation.source !== 'IMPORTED').length;
+  const base = confidenceFor(committed);
+  const hasImported = committed < observations.length;
+  // An imported rate lifts an empty key to a THIN starting point and does
+  // nothing else: it can never raise confidence a committed bid has not earned.
+  if (base === 'NONE' && hasImported) return 'THIN';
+  return base;
+}
+
 export type RateSummary = {
   key: string;
   description: string;
   unit: string;
   observations: number;
+  /** How many of the observations are proven on a committed bid. */
+  committedObservations: number;
+  /** How many are the firm's own imported rate-card figures (0 or 1 per key). */
+  importedObservations: number;
+  /**
+   * Where the figure stands: `COMMITTED` (proven on bids), `IMPORTED` (a
+   * starting rate from the firm's own rate card, not yet proven) or `MIXED`.
+   * Carried so the console and any reader can tell a seeded rate from an earned
+   * one — an imported rate reads as a starting point, never as history.
+   */
+  provenance: 'COMMITTED' | 'IMPORTED' | 'MIXED';
   confidence: Confidence;
   medianMinor: number;
   lowMinor: number;
@@ -142,11 +208,80 @@ type EstimateLine = {
 };
 
 /**
- * Read every unit rate the business has committed to an estimate.
+ * The firm's own rate card, loaded to seed the library.
  *
- * Estimates are the only place a defensible unit rate exists: they carry a
- * description, a unit, a quantity and a rate that somebody priced and somebody
- * else approved.
+ * `RATE_CARD_IMPORTED` carries one of these per line. It is the firm's *own*
+ * number — not a bought index — stored here so a one-person firm can price its
+ * first bid against something instead of a blank box. One record per
+ * `rateKey(description, unit)` per tenancy: re-importing a key replaces its
+ * entry rather than filing a second, which is half of the honesty guard (the
+ * other half is `confidenceCap`).
+ */
+export type RateCardEntry = {
+  id: string;
+  key: string;
+  description: string;
+  unit: string;
+  /** Rate per unit in minor units. No component split — a rate card has none. */
+  rateMinor: number;
+  /** The firm's own reference, optional. */
+  code?: string;
+  note?: string;
+  importedAt: string;
+  importedBy: string;
+};
+
+/**
+ * Read the firm's imported rate-card entries as unit-rate observations.
+ *
+ * Each becomes a single `IMPORTED` observation at the rate card's figure. They
+ * join the unit-rate feed beside the committed estimate rates — same kind of
+ * observation, kept apart only by provenance, which is how `confidenceCap`
+ * keeps them from ever reading as more than a THIN starting point until a
+ * committed bid proves the key.
+ */
+export function harvestImportedRates(ctx: EngineContext): RateObservation[] {
+  const observations: RateObservation[] = [];
+  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'RateCardEntry')) {
+    const entry = record.state as unknown as RateCardEntry;
+    if (!entry.description || !entry.unit || !(Number(entry.rateMinor) > 0)) continue;
+    observations.push({
+      key: entry.key ?? rateKey(entry.description, entry.unit),
+      description: entry.description,
+      unit: entry.unit,
+      rateMinor: Number(entry.rateMinor),
+      quantity: 0,
+      // A rate card carries an all-in figure and no breakdown. Zeroed rather
+      // than apportioned: inventing a labour/material split for a number that
+      // never had one is exactly the kind of precise-looking nonsense this
+      // module refuses.
+      components: { labourMinor: 0, materialMinor: 0, plantMinor: 0, subcontractMinor: 0 },
+      // No project: the rate card is the tenancy's, not one job's. Excluded from
+      // the project count for that reason.
+      projectId: '',
+      projectName: 'Rate card',
+      // Never a real estimate id, so a benchmark never mistakes an imported rate
+      // for one of the estimate's own lines and never excludes it by accident.
+      estimateId: `rate-card:${entry.id}`,
+      observedOn: String(entry.importedAt ?? '').slice(0, 10) || 'unknown',
+      source: 'IMPORTED',
+      ...(entry.code ? { code: entry.code } : {}),
+      ...(entry.note ? { note: entry.note } : {}),
+    });
+  }
+  return observations;
+}
+
+/**
+ * Read every unit rate the business has: committed to an estimate, and seeded
+ * from its own rate card.
+ *
+ * Estimates are where a *proven* unit rate lives — a description, a unit, a
+ * quantity and a rate somebody priced and somebody else approved. Imported
+ * rate-card lines join them as `IMPORTED` observations so the library is not
+ * empty on a firm's first bid, tagged so a reader can always tell a seeded
+ * starting rate from one earned on a bid. The two kinds of *source* for a unit
+ * rate; package outturns from the market stay in their own feed, as ever.
  */
 export function harvestRates(ctx: EngineContext): RateObservation[] {
   const observations: RateObservation[] = [];
@@ -193,6 +328,8 @@ export function harvestRates(ctx: EngineContext): RateObservation[] {
       }
     }
   }
+
+  observations.push(...harvestImportedRates(ctx));
 
   return observations;
 }
@@ -295,10 +432,25 @@ export function costIntelligence(
       const high = Math.max(...values);
       const newestOn = observations.map((o) => o.observedOn).filter((d) => d !== 'unknown').sort().at(-1) ?? 'unknown';
       const ageDays = newestOn === 'unknown' ? -1 : Math.max(0, Math.round((Date.parse(today) - Date.parse(newestOn)) / DAY_MS));
-      const confidence = confidenceFor(observations.length);
+      // Capped, not raw: an imported rate card cannot manufacture confidence
+      // past a single THIN data point. Only committed bids lift a key.
+      const confidence = confidenceCap(observations);
+      const committedObservations = observations.filter((o) => o.source !== 'IMPORTED').length;
+      const importedObservations = observations.length - committedObservations;
+      const provenance: RateSummary['provenance'] =
+        importedObservations === 0 ? 'COMMITTED' : committedObservations === 0 ? 'IMPORTED' : 'MIXED';
 
       const caveats: string[] = [];
-      if (confidence === 'THIN') caveats.push(`Only ${observations.length} observation${observations.length === 1 ? '' : 's'} — this is a data point, not a benchmark`);
+      if (provenance === 'IMPORTED') {
+        caveats.push(
+          'A starting rate from your own rate card, not yet proven on a committed bid — a point to price from and correct, not a benchmark',
+        );
+      } else if (confidence === 'THIN') {
+        caveats.push(`Only ${observations.length} observation${observations.length === 1 ? '' : 's'} — this is a data point, not a benchmark`);
+      }
+      if (provenance === 'MIXED') {
+        caveats.push(`Includes an imported starting rate alongside ${committedObservations} committed observation${committedObservations === 1 ? '' : 's'}`);
+      }
       if (ageDays > 365) caveats.push(`Newest observation is ${Math.round(ageDays / 30)} months old`);
       if (mid > 0 && (high - low) / mid > 0.5) caveats.push('The observations disagree by more than half the median — they may not be the same item');
 
@@ -307,6 +459,9 @@ export function costIntelligence(
         description: observations[0]!.description,
         unit: observations[0]!.unit,
         observations: observations.length,
+        committedObservations,
+        importedObservations,
+        provenance,
         confidence,
         medianMinor: mid,
         lowMinor: low,
@@ -314,7 +469,9 @@ export function costIntelligence(
         spreadPercent: mid === 0 ? 0 : Number((((high - low) / mid) * 100).toFixed(1)),
         newestOn,
         ageDays,
-        projects: new Set(observations.map((o) => o.projectId)).size,
+        // Projects, not the rate card: an imported rate belongs to no job, so it
+        // is not counted as one.
+        projects: new Set(observations.filter((o) => o.source !== 'IMPORTED').map((o) => o.projectId)).size,
         ...(caveats.length > 0 ? { caveat: caveats.join('. ') } : {}),
       };
     })
@@ -342,13 +499,20 @@ export function costIntelligence(
           };
         })();
 
+  const importedCount = rawRates.filter((o) => o.source === 'IMPORTED').length;
+  const committedCount = rawRates.length - importedCount;
   const observations: string[] = [];
   if (rawRates.length === 0) {
-    observations.push('No priced estimate lines yet. The library fills itself as estimates are built — nothing needs entering twice.');
+    observations.push('No priced estimate lines yet. The library fills itself as estimates are built — nothing needs entering twice. You can also seed it from your own rate card to price a first bid.');
   } else {
     const strong = rates.filter((r) => r.confidence === 'STRONG' || r.confidence === 'USABLE').length;
     observations.push(
-      `${rawRates.length} rate observations across ${rates.length} distinct items. ${strong} ${strong === 1 ? 'item has' : 'items have'} enough history to price against.`,
+      `${rawRates.length} rate observations across ${rates.length} distinct items. ${strong} ${strong === 1 ? 'item has' : 'items have'} enough committed history to price against.`,
+    );
+  }
+  if (importedCount > 0) {
+    observations.push(
+      `${importedCount} ${importedCount === 1 ? 'item is' : 'items are'} a starting rate imported from your own rate card — your own number, not a bought index. ${importedCount === 1 ? 'It stays' : 'They stay'} at THIN until a committed bid proves the item.`,
     );
   }
   const stale = rates.filter((r) => r.ageDays > 365).length;
@@ -366,7 +530,8 @@ export function costIntelligence(
       rateObservations: rawRates.length,
       distinctItems: rates.length,
       packages: outturns.length,
-      projects: new Set(rawRates.map((o) => o.projectId)).size,
+      // Distinct delivery projects, which an imported rate does not belong to.
+      projects: new Set(rawRates.filter((o) => o.source === 'ESTIMATE').map((o) => o.projectId)).size,
     },
     estimatingAccuracy,
     observations,
@@ -468,7 +633,9 @@ export function benchmarkEstimate(ctx: EngineContext, estimateId: string, today?
       rateMinor,
       medianMinor,
       observations: otherObservations,
-      confidence: confidenceFor(otherObservations),
+      // Capped: an imported starting rate the key carries cannot, on its own,
+      // make the business's history read as more than a single THIN data point.
+      confidence: confidenceCap(observations),
       variancePercent: variance,
       verdict,
       note:
@@ -496,5 +663,170 @@ export function benchmarkEstimate(ctx: EngineContext, estimateId: string, today?
     medianVariancePercent:
       compared.length === 0 ? null : Number(median(compared.map((c) => Math.round((c.variancePercent ?? 0) * 10))) / 10),
     warnings,
+  };
+}
+
+// --- Importing a rate card ----------------------------------------------------
+
+/**
+ * One line as it arrives from the console's bulk paste.
+ *
+ * The description, unit and rate are the library's; the code is the firm's own
+ * reference and optional; the note travels with the rate. `line` and `raw` are
+ * carried only so a rejected line can be named back to the person precisely.
+ * Validation is the domain's job, not the route's — a line missing a field must
+ * be *reported*, not dropped at the door, which is why the route admits a line
+ * that has not got one.
+ */
+export type RateCardImportEntry = {
+  line?: number;
+  code?: string;
+  description?: string;
+  unit?: string;
+  rateMinor?: number;
+  note?: string;
+  raw?: string;
+};
+
+export type RateCardImportResult = {
+  imported: Array<{
+    key: string;
+    code?: string;
+    description: string;
+    unit: string;
+    rateMinor: number;
+    note?: string;
+    status: 'NEW' | 'REPLACED';
+  }>;
+  skipped: Array<{ line?: number; raw?: string; reason: string }>;
+  totals: { imported: number; replaced: number; skipped: number };
+  /** The honest framing, returned so the console can repeat it verbatim. */
+  note: string;
+};
+
+const RATE_CARD_DESCRIPTION_MIN = 3;
+
+/**
+ * Seed the rate library from the firm's own rate card.
+ *
+ * `ESTIMATE_TENDER` `C`, `COMMERCIAL_L3`, human-authored (the catalogue marks
+ * `RATE_CARD_IMPORTED` `aiAllowed: false` — what a firm says its own rates are
+ * is a person's statement, not a model's). Tenant-scoped, like the library it
+ * feeds: a rate card is the business's, not one project's.
+ *
+ * Two honesty guards, both here and in `confidenceCap`:
+ *
+ *   - **It is the firm's own number, not a bought index.** Nothing is fetched
+ *     or invented; every rate is one the firm typed, loaded under its own name.
+ *   - **It cannot buy confidence.** Each line is one THIN observation keyed by
+ *     `rateKey`. Re-importing a key *replaces* its entry rather than filing a
+ *     second, so the key still holds one imported observation however many
+ *     times it is pasted, and `confidenceCap` holds it at THIN until a
+ *     committed bid proves it. A key appearing twice in one paste keeps the
+ *     last and reports the earlier as replaced — the same rule, within a paste.
+ *
+ * A malformed line is reported, never silently dropped: the result names which
+ * line and why.
+ */
+export function importRateCard(ctx: EngineContext, input: { entries: RateCardImportEntry[] }): RateCardImportResult {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const entries = Array.isArray(input.entries) ? input.entries : [];
+  if (entries.length === 0) {
+    throw new DomainError('RATE_CARD_EMPTY', 'No rate lines were supplied to import.', 400);
+  }
+
+  const skipped: RateCardImportResult['skipped'] = [];
+
+  // First pass: validate, and keep the last line for each key so a paste that
+  // lists the same item twice does not try to write it twice.
+  const valid = new Map<string, { entry: RateCardImportEntry; description: string; unit: string; rateMinor: number }>();
+  for (const [index, entry] of entries.entries()) {
+    const line = entry.line ?? index + 1;
+    const description = String(entry.description ?? '').trim();
+    const unit = String(entry.unit ?? '').trim();
+    const rateMinor = Number(entry.rateMinor);
+
+    if (!description) {
+      skipped.push({ line, raw: entry.raw, reason: 'no description — a rate needs the item it prices' });
+      continue;
+    }
+    if (description.length < RATE_CARD_DESCRIPTION_MIN) {
+      skipped.push({ line, raw: entry.raw, reason: `description "${description}" is too short to key a rate on` });
+      continue;
+    }
+    if (!unit) {
+      skipped.push({ line, raw: entry.raw, reason: 'no unit — a rate per nothing is not a rate' });
+      continue;
+    }
+    if (!Number.isFinite(rateMinor) || !Number.isInteger(rateMinor) || rateMinor <= 0) {
+      skipped.push({ line, raw: entry.raw, reason: 'no valid rate — expected a positive amount per unit' });
+      continue;
+    }
+
+    const key = rateKey(description, unit);
+    if (valid.has(key)) {
+      const previous = valid.get(key)!;
+      skipped.push({
+        line: previous.entry.line ?? undefined,
+        raw: previous.entry.raw,
+        reason: `the same item and unit (${description} · ${unit}) appears again later in this paste; the later line is kept`,
+      });
+    }
+    valid.set(key, { entry, description, unit, rateMinor });
+  }
+
+  // Existing entries, so a re-import replaces its key rather than stacking.
+  const existingByKey = new Map<string, EntityRecord>();
+  for (const record of ctx.ledger.listByTenant(ctx.tenantId, 'RateCardEntry')) {
+    const state = record.state as unknown as RateCardEntry;
+    if (state.key) existingByKey.set(state.key, record);
+  }
+
+  const imported: RateCardImportResult['imported'] = [];
+  for (const [key, { entry, description, unit, rateMinor }] of valid) {
+    const existing = existingByKey.get(key);
+    const id = existing ? String((existing.state as unknown as RateCardEntry).id) : ulid();
+    const code = entry.code ? String(entry.code).trim() : '';
+    const note = entry.note ? String(entry.note).trim() : '';
+
+    const next: RateCardEntry = {
+      id,
+      key,
+      description,
+      unit,
+      rateMinor,
+      ...(code ? { code } : {}),
+      ...(note ? { note } : {}),
+      importedAt: new Date().toISOString(),
+      importedBy: ctx.auth.actorId,
+    };
+
+    write(ctx, {
+      eventType: 'RATE_CARD_IMPORTED',
+      entity: { refType: 'RateCardEntry', refId: id },
+      nextState: { ...next },
+    });
+
+    imported.push({
+      key,
+      ...(code ? { code } : {}),
+      description,
+      unit,
+      rateMinor,
+      ...(note ? { note } : {}),
+      status: existing ? 'REPLACED' : 'NEW',
+    });
+  }
+
+  const replaced = imported.filter((row) => row.status === 'REPLACED').length;
+  return {
+    imported,
+    skipped,
+    totals: { imported: imported.length, replaced, skipped: skipped.length },
+    note:
+      'These are your own rate card figures, not a bought index. Each enters the library as a THIN, imported ' +
+      'starting rate and stays there until a committed bid proves the item — importing the same rate again does ' +
+      'not make it any more certain.',
   };
 }

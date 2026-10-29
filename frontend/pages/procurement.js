@@ -1506,15 +1506,37 @@ export async function procurement(root) {
         title: 'Cost intelligence',
         intent:
           'Unit rates and package outturns from this business\u2019s own committed records — not a bought index. ' +
-          'Confidence is stated, because a median of two observations is not a rate.',
+          'Confidence is stated, because a median of two observations is not a rate. Seed the library from your own ' +
+          'rate card below; an imported rate shows as imported and stays THIN until a committed bid proves it.',
         data: costIntel,
         error: costIntel?.error,
         sections: [
-          { key: 'rates', label: 'Unit rates', empty: 'No rate has enough observations to publish.' },
+          {
+            key: 'rates',
+            label: 'Unit rates',
+            // Provenance made visible beside the figure: a reader must be able
+            // to tell a rate seeded from the firm's own card from one earned on
+            // a committed bid.
+            columns: ['description', 'unit', 'confidence', 'provenance', 'observations', 'medianMinor', 'lowMinor', 'highMinor'],
+            empty: 'No rate has enough observations to publish.',
+          },
           { key: 'outturns', label: 'Package outturns', empty: 'No package has reached outturn.' },
           { key: 'estimatingAccuracy', label: 'Estimating accuracy' },
         ],
       })}
+
+      <div class="actions" style="margin:12px 0">
+        ${raw(
+          commandBar([
+            {
+              id: 'import-rate-card',
+              label: 'Import a rate card',
+              permitted: can('ESTIMATE_TENDER', 'C'),
+              reason: blockedReason('ESTIMATE_TENDER', 'C'),
+            },
+          ]),
+        )}
+      </div>
 
       ${positionReport({
         title: 'What the record has learned',
@@ -1635,6 +1657,69 @@ export async function procurement(root) {
      * business has already committed — and where it cannot, it says so on the
      * proposal rather than opening another form.
      */
+    /*
+     * Seed the rate library from the firm's own rate card.
+     *
+     * For a firm whose library is empty — most of all a one-person firm pricing
+     * its first bid, which is the case this serves. One rate per line, so a
+     * whole card goes in on one paste instead of being built rate by rate. The
+     * figures are the firm's own and are loaded under its own name; they enter
+     * the library as THIN, imported starting rates and stay there until a
+     * committed bid proves the item — which is said in the hint, so nobody
+     * mistakes a pasted number for proven history.
+     */
+    'import-rate-card': {
+      title: 'Import a rate card',
+      intent:
+        'Load your own unit rates in one paste to seed the library — your own numbers, not a bought index. Each ' +
+        'rate enters as an imported, THIN starting point and stays there until a committed bid proves the item. A ' +
+        'line the platform cannot read is reported back to you, not dropped.',
+      path: `/v1/rate-card/import`,
+      submitLabel: 'Import the rates',
+      fields: [
+        {
+          name: 'card',
+          label: 'The rate card, one rate per line',
+          type: 'textarea',
+          rows: 10,
+          placeholder:
+            'E20.007, Facing-brick outer leaf, m2, 145\nF10.001, Blockwork inner leaf 100mm, m2, 62\nR10.004, Readymix GEN3 to foundations, m3, 148, supply and place',
+          hint:
+            'code, description, unit, rate — and an optional note at the end. The code is your own reference and may ' +
+            'be left off (just description, unit, rate). Rate is £ per unit. Blank lines are skipped; a line ' +
+            'missing a description, unit or rate is reported back.',
+        },
+      ],
+      transform: (v) => ({
+        entries: String(v.card ?? '')
+          .split('\n')
+          .map((raw, index) => ({ raw: raw.trim(), line: index + 1 }))
+          .filter((row) => row.raw.length > 0)
+          .map((row) => {
+            const parts = row.raw.split(',').map((part) => part.trim());
+            // Four or more fields means a code is present; exactly three is the
+            // code-less form. Fewer than three is a malformed line, sent as it
+            // stands so the server names it rather than the browser hiding it.
+            const hasCode = parts.length >= 4;
+            const code = hasCode ? parts[0] : '';
+            const description = hasCode ? parts[1] : parts[0];
+            const unit = hasCode ? parts[2] : parts[1];
+            const rateText = hasCode ? parts[3] : parts[2];
+            const note = hasCode ? parts.slice(4).join(', ') : '';
+            const rate = Number(rateText);
+            const rateMinor = Number.isFinite(rate) && rate > 0 ? Math.round(rate * 100) : undefined;
+            return {
+              line: row.line,
+              raw: row.raw,
+              ...(code ? { code } : {}),
+              ...(description ? { description } : {}),
+              ...(unit ? { unit } : {}),
+              ...(rateMinor !== undefined ? { rateMinor } : {}),
+              ...(note ? { note } : {}),
+            };
+          }),
+      }),
+    },
     'supersede-measure': {
       title: 'Retire a package’s measure',
       intent:

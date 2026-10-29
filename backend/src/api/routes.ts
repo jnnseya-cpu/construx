@@ -13261,6 +13261,43 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'POST',
+    pattern: '/v1/rate-card/import',
+    description:
+      "Seed the cost-intelligence library from the firm's own rate card. Imported rates enter as THIN, imported " +
+      'starting points — the firm’s own numbers, not a bought index — and stay there until a committed bid ' +
+      'proves the item. A malformed line is reported, not dropped. Tenant-scoped, like the library it feeds.',
+    schema: {
+      type: 'object',
+      required: ['entries'],
+      properties: {
+        entries: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 2000,
+          items: {
+            type: 'object',
+            // description, unit and rateMinor are deliberately not required: a
+            // malformed line must reach the domain to be reported rather than
+            // refused at the door with a bare schema error.
+            properties: {
+              line: { type: 'number' },
+              code: { type: 'string', maxLength: 60 },
+              description: { type: 'string', maxLength: 300 },
+              unit: { type: 'string', maxLength: 30 },
+              rateMinor: { type: 'number' },
+              note: { type: 'string', maxLength: 300 },
+              raw: { type: 'string', maxLength: 600 },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => costintel.importRateCard(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/tender/estimate/:estimateId/benchmark',
     readOnly: true,

@@ -373,6 +373,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // competitor would most like to see.
   MeasurementSchedule: { area: 'BOQ_TAKEOFF', sensitivity: 'COMMERCIAL_L3' },
   Estimate: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
+  // The firm's own imported rate card, seeding the cost-intelligence library.
+  // Same area and sensitivity as the estimates it is read beside: a firm's unit
+  // rates are the one thing a competitor would most like to see, imported or
+  // earned.
+  RateCardEntry: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   TenderResponse: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   ITTAnalysis: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },
   BidResponsePack: { area: 'ESTIMATE_TENDER', sensitivity: 'COMMERCIAL_L3' },

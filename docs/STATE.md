@@ -3136,6 +3136,31 @@ rate per cubic metre; doing so is how a cost database fills with numbers that
 look precise and mean nothing. Unit rates come from estimate lines, package
 outturns from the market, and the two are kept apart.
 
+**A firm can seed the library from its own rate card.** The unit-rate feed has
+a third source alongside committed estimates: imported rate-card entries, loaded
+in one paste (`code, description, unit, rate [, note]`) so a firm with no
+committed history — a one-person firm pricing its first bid most of all — is not
+staring at a blank library. `importRateCard` (`costintel.ts`) validates each
+line, reports any it cannot read rather than dropping it, and writes a
+`RATE_CARD_IMPORTED` event per item (`aiAllowed: false` — what a firm states its
+own rates are is a person's statement, not a model's); the route is the
+tenant-scoped `POST /v1/rate-card/import`, and the console surfaces it as "Import
+a rate card" on Tender & Procurement beside the cost-intelligence panel.
+
+**It is the firm's own number, not a bought index, and it cannot buy
+confidence.** Imported entries join the unit-rate feed as `IMPORTED`
+observations, tagged so every reader can tell a seeded starting rate from one
+earned on a bid, and held honest by two guards. Re-importing a key *replaces* its
+entry rather than filing a second (`harvestImportedRates`), so a key holds at
+most one imported observation however many times it is pasted; and
+`confidenceCap` governs a key's confidence by its **committed** observations
+alone — an imported rate lifts an empty key to a THIN starting point and does
+nothing else, so only a committed bid ever lifts a key past THIN. The guard is
+applied wherever a mixed bucket is summarised (the library, the estimate
+benchmark, and the bid-run rate proposer) and is, by construction, identical to
+the old `confidenceFor` for the estimate-only library that existed before
+imports.
+
 Every figure carries what is behind it — the count, the spread and the age of
 the newest observation — and confidence is stated rather than implied. A single
 observation is called a data point, not a benchmark. Benchmarking an estimate

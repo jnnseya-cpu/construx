@@ -4,7 +4,7 @@ import type { EvidenceStore } from '../evidence/store.ts';
 import { ingestedFiles } from '../evidence/pipeline.ts';
 import * as perception from '../engines/perception.ts';
 import * as tender from '../engines/tender.ts';
-import { confidenceFor, harvestRates, rateKey, type Confidence } from './costintel.ts';
+import { confidenceCap, harvestRates, rateKey, type Confidence } from './costintel.ts';
 import { costHead, priceEstimate, type CostHead, type CostModelInput, type MeasuredLine } from '../engines/maths/costModel.ts';
 import { quoteFromEstimate, type QuotationInput } from './quotation.ts';
 import type { AuthContext } from '../identity/auth.ts';
@@ -227,9 +227,14 @@ function proposedRates(ctx: EngineContext): Map<string, ProposedRate> {
     // built with own labour are different shapes of the same money, and the
     // difference decides which cost head it lands on and whether inflation
     // touches it.
-    const confidence = confidenceFor(bucket.length);
+    // Capped, not raw: an imported rate-card figure is the firm's own starting
+    // point and never lifts confidence past a THIN floor — only committed bids
+    // do. Same guard as the cost-intelligence library this reads from.
+    const confidence = confidenceCap(bucket);
+    const committed = bucket.filter((o) => o.source !== 'IMPORTED');
+    const imported = bucket.length - committed.length;
     const newestOn = bucket.map((o) => o.observedOn).filter((d) => d !== 'unknown').sort().at(-1) ?? 'unknown';
-    const projects = new Set(bucket.map((o) => o.projectId)).size;
+    const projects = new Set(committed.map((o) => o.projectId)).size;
     rates.set(key, {
       source: 'OUR_RECORD',
       allInMinor: middle(bucket.map((o) => o.rateMinor)),
@@ -242,9 +247,12 @@ function proposedRates(ctx: EngineContext): Map<string, ProposedRate> {
       projects,
       newestOn,
       basis:
-        `Median of ${bucket.length} priced line${bucket.length === 1 ? '' : 's'} across ` +
-        `${projects} project${projects === 1 ? '' : 's'}, newest ${newestOn}` +
-        `${confidence === 'THIN' ? ' — a data point, not a benchmark' : ''}`,
+        committed.length === 0
+          ? `An imported starting rate from your own rate card, newest ${newestOn} — a point to price from, not a committed-bid rate`
+          : `Median of ${committed.length} priced line${committed.length === 1 ? '' : 's'} across ` +
+            `${projects} project${projects === 1 ? '' : 's'}, newest ${newestOn}` +
+            `${imported > 0 ? ', plus an imported starting rate' : ''}` +
+            `${confidence === 'THIN' ? ' — a data point, not a benchmark' : ''}`,
     });
   }
   return rates;
