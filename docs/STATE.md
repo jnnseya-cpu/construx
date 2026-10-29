@@ -3192,6 +3192,23 @@ benchmark, and the bid-run rate proposer) and is, by construction, identical to
 the old `confidenceFor` for the estimate-only library that existed before
 imports.
 
+**A rate can be reused by selection, without the library proving itself.** When
+a measured line is priced ("Price the bill"), any line the rate library already
+holds a rate for (matched by `rateKey`, normalised in the console exactly as the
+server does) offers a **"From rate library"** basis beside the four kind bases.
+Choosing it applies the stored rate to the line — carried all-in as a priced
+package (`subcontractRateMinor`, because an all-in rate is a price for a scope,
+not a built-up resource cost) and tagged `rateSource: 'LIBRARY'`. That tag is the
+one new thing: `harvestRates` excludes a `LIBRARY` line exactly as it excludes a
+`MARKET_AI` one, because an applied rate is a *copy* of a library entry, not a
+fresh independent pricing — counting it would let an imported starting rate climb
+from THIN to STRONG by being reused, with no bid behind it. The line is priced
+and real (it contributes to the estimate total like any other); it simply is not
+evidence the library gets to count in its own favour. No new event (it is an
+ordinary estimate line) and no flat-rate path was added to the component build-up
+(`priceItem` still refuses a number typed straight in) — the applied rate is
+honest because it carries a stated provenance the build-up rule exists to demand.
+
 Every figure carries what is behind it — the count, the spread and the age of
 the newest observation — and confidence is stated rather than implied. A single
 observation is called a data point, not a benchmark. Benchmarking an estimate

@@ -301,7 +301,14 @@ export function harvestRates(ctx: EngineContext): RateObservation[] {
         // confident every time it is reused, with nothing behind it but the
         // first guess. Excluded here, at the one place "our own rates" is
         // defined.
-        if (line.rateSource === 'MARKET_AI') continue;
+        //
+        // A `LIBRARY` line is excluded for the same reason: it is a rate taken
+        // from this library and applied to a line, a copy rather than a fresh
+        // pricing. Counting it would let an entry corroborate itself — an
+        // imported starting rate climbing from THIN to STRONG by being reused,
+        // with no bid behind it. The line is still priced and real; it is just
+        // not evidence the library gets to count in its own favour.
+        if (line.rateSource === 'MARKET_AI' || line.rateSource === 'LIBRARY') continue;
         const components = {
           labourMinor: line.labourRateMinor ?? 0,
           materialMinor: line.materialRateMinor ?? 0,

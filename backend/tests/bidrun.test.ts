@@ -690,6 +690,65 @@ describe('a market view is never mistaken for this business’s own rate', () =>
   });
 });
 
+describe('a rate applied from the library does not come back as proof of itself', () => {
+  /*
+   * "Reuse by selection" lets a measured line be priced at a rate the firm
+   * already holds. That rate is a copy, not a fresh pricing — so if the line
+   * were harvested back it would corroborate the very library entry it came
+   * from: an imported starting rate climbing from THIN to STRONG by being
+   * reused, with no bid behind it. The line is priced and real; it simply does
+   * not get counted as the library proving its own number.
+   */
+  it('prices the line but is kept out of the rate history', async () => {
+    const qs = ctxFor('qs');
+    const taken = await tender.runTakeoff(qs, {
+      packageId: 'APPLIED',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'APPLIED' }],
+      costCodePrefix: 'APP',
+      measuredBy: 'PERSON',
+      items: [{ description: 'Facing-brick outer leaf applied from library', unit: 'm2', quantity: 10 }],
+    });
+
+    tender.buildEstimate(qs, {
+      packageId: 'APPLIED',
+      durationWeeks: 2,
+      lines: [
+        {
+          boqItemId: taken.boqItemIds[0]!,
+          description: 'Facing-brick outer leaf applied from library',
+          unit: 'm2',
+          quantity: 10,
+          // Carried all-in as a priced package, tagged as a library application.
+          subcontractRateMinor: 14_500,
+          rateSource: 'LIBRARY',
+        },
+      ],
+      quantified: [{ head: 'WASTE', description: 'Skips', unit: 'sum', quantity: 1, rateMinor: 10_000 }],
+      insurance: { policies: [{ type: 'Contract works', percentOfContractValue: 0.9 }] },
+      exclusions: [{ head: 'PLANT', reason: 'None required' }],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+      basisOfEstimate: 'A line priced at a rate taken from the firm’s own library.',
+      assumptions: [],
+    });
+
+    // The estimate carries it and priced it: the amount is real.
+    const estimate = platform.ledger.list(projectId, 'Estimate').at(-1)!.state;
+    const line = (estimate.lines as Array<{ rateSource?: string; subcontractRateMinor?: number }>)[0];
+    assert.equal(line?.rateSource, 'LIBRARY');
+    assert.equal(line?.subcontractRateMinor, 14_500);
+    assert.ok(Number(estimate.totalMinor) > 0, 'the applied line did not contribute to the estimate total');
+
+    // But the rate history does not take it back as a fresh, independent rate.
+    const harvested = harvestRates(qs);
+    assert.equal(
+      harvested.filter((observation) => observation.description === 'Facing-brick outer leaf applied from library').length,
+      0,
+      'a rate applied from the library was harvested back as if it independently proved that library entry',
+    );
+    assert.ok(harvested.length > 0, 'nothing at all was harvested; the check would pass by finding nothing');
+  });
+});
+
 describe('where the job is, and the one thing to do next', () => {
   /*
    * The complaint this answers, in the words it was made in: "the flow is not

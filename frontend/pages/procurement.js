@@ -110,6 +110,22 @@ function csvRateCardToLines(text) {
 }
 
 /**
+ * The library key for an item, normalised exactly as the server's `rateKey`
+ * does, so a measured line and a library rate for the same work on the same
+ * unit match here the same way they match in the cost-intelligence feed. Kept in
+ * step with `backend/src/domain/costintel.ts` `rateKey`.
+ */
+function rateKeyFor(description, unit) {
+  const normalised = String(description ?? '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `${normalised}::${String(unit ?? '').toLowerCase().trim()}`;
+}
+
+/**
  * Tender & Procurement.
  *
  * The screen where an award has to be defensible. Bid scores are deterministic,
@@ -460,6 +476,15 @@ export async function procurement(root) {
     .catch(() => ({ routes: [], summary: '' }));
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
+
+  // The firm's own rate library, keyed for a measured line to find its match.
+  // Lets "Price the bill" offer a stored rate as a basis for a line rather than
+  // asking the estimator to retype a number the library already holds.
+  const libraryByKey = new Map(
+    (costIntel?.rates ?? [])
+      .filter((rate) => Number(rate?.medianMinor) > 0)
+      .map((rate) => [rateKeyFor(rate.description, rate.unit), rate]),
+  );
 
   // Five reads that cannot answer until somebody chooses what to ask about.
   // Every option comes from a record this page already holds, so the chooser
@@ -2407,29 +2432,40 @@ export async function procurement(root) {
         // the drawings and are not asked for again; the rate is the
         // estimator's, and nothing here fills it in from an index — that would
         // be pricing somebody else's job.
-        ...(boq?.items ?? []).flatMap((item) => [
-          {
-            name: `rate:${item.boqItemId}`,
-            label: `${item.description} — ${item.quantity} ${item.unit}`,
-            type: 'number',
-            money: true,
-            required: false,
-            hint: `${item.packageId}${item.sourceSheet ? ` · measured off ${item.sourceSheet}` : ''} · all-in rate per ${item.unit}.`,
-          },
-          {
-            name: `basis:${item.boqItemId}`,
-            label: `— priced as`,
-            type: 'select',
-            required: false,
-            value: 'labourRateMinor',
-            options: [
-              { value: 'labourRateMinor', label: 'Our own labour' },
-              { value: 'materialRateMinor', label: 'Materials' },
-              { value: 'plantRateMinor', label: 'Plant' },
-              { value: 'subcontractRateMinor', label: 'Subcontract' },
-            ],
-          },
-        ]),
+        ...(boq?.items ?? []).flatMap((item) => {
+          // A stored rate for this exact work and unit, if the library holds
+          // one. Offered as a basis the estimator can pick instead of typing —
+          // the one-click reuse — and named in the hint either way.
+          const lib = libraryByKey.get(rateKeyFor(item.description, item.unit));
+          return [
+            {
+              name: `rate:${item.boqItemId}`,
+              label: `${item.description} — ${item.quantity} ${item.unit}`,
+              type: 'number',
+              money: true,
+              required: false,
+              hint:
+                `${item.packageId}${item.sourceSheet ? ` · measured off ${item.sourceSheet}` : ''} · all-in rate per ${item.unit}.` +
+                (lib ? ` Your rate library has ${exact(lib.medianMinor)}/${item.unit} for this (${String(lib.confidence ?? '').toLowerCase()}) — choose “From rate library” below to use it.` : ''),
+            },
+            {
+              name: `basis:${item.boqItemId}`,
+              label: `— priced as`,
+              type: 'select',
+              required: false,
+              value: 'labourRateMinor',
+              options: [
+                { value: 'labourRateMinor', label: 'Our own labour' },
+                { value: 'materialRateMinor', label: 'Materials' },
+                { value: 'plantRateMinor', label: 'Plant' },
+                { value: 'subcontractRateMinor', label: 'Subcontract' },
+                // Only where the library actually has a rate for this item, so a
+                // basis can never be chosen that has no number behind it.
+                ...(lib ? [{ value: 'LIBRARY', label: `From rate library — ${exact(lib.medianMinor)}/${item.unit}` }] : []),
+              ],
+            },
+          ];
+        }),
       ],
       transform: (v) => {
         const excluded = Array.isArray(v.excluded) ? v.excluded : v.excluded ? [v.excluded] : [];
@@ -2466,13 +2502,27 @@ export async function procurement(root) {
             .map((item) => {
               const rate = Number(v[`rate:${item.boqItemId}`] ?? 0);
               const basis = v[`basis:${item.boqItemId}`] || 'labourRateMinor';
-              return {
+              const base = {
                 boqItemId: item.boqItemId,
                 description: item.description,
                 unit: item.unit,
                 quantity: item.quantity,
-                ...(rate > 0 ? { [basis]: rate } : {}),
               };
+              // "From rate library": apply the stored rate, not a typed one. It
+              // is carried all-in as a priced package (subcontract) and tagged
+              // so the rate history does not take it back as a fresh pricing —
+              // an applied rate is a copy, not evidence of itself.
+              if (basis === 'LIBRARY') {
+                const lib = libraryByKey.get(rateKeyFor(item.description, item.unit));
+                if (lib && Number(lib.medianMinor) > 0) {
+                  return { ...base, subcontractRateMinor: Number(lib.medianMinor), rateSource: 'LIBRARY' };
+                }
+                // The option is only offered with a match, but if the library
+                // changed under the panel, fall back to any typed rate rather
+                // than price the line at nothing.
+                return { ...base, ...(rate > 0 ? { subcontractRateMinor: rate } : {}) };
+              }
+              return { ...base, ...(rate > 0 ? { [basis]: rate } : {}) };
             }),
         };
       },

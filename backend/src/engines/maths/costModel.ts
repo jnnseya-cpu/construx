@@ -171,8 +171,16 @@ export type MeasuredLine = {
    * "this business's own rates" and must not harvest a model's guess back as
    * one. A guess that becomes history is a guess that gets more confident every
    * time it is reused.
+   *
+   * `LIBRARY` is a rate taken straight from the firm's own rate library and
+   * applied to this line — a *copy* of a stored rate, not a fresh pricing. It is
+   * excluded from `harvestRates` for the same reason `MARKET_AI` is: a rate that
+   * corroborated itself every time it was reused would grow more confident with
+   * no new evidence behind it. The line is priced honestly (the amount is real
+   * and the provenance is stated); it simply does not count as the library
+   * proving its own entry.
    */
-  rateSource?: 'OUR_RECORD' | 'PERSON' | 'MARKET_AI';
+  rateSource?: 'OUR_RECORD' | 'PERSON' | 'MARKET_AI' | 'LIBRARY';
 };
 
 /**
