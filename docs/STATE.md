@@ -5239,6 +5239,19 @@ button gates on `agreedPlans`, but `agreedPlans ⊆ openPlans`, so the chooser i
 never empty when the button is live — the server refuses an unagreed pick, which
 is a different matter from an empty dropdown and is not changed here.
 
+**`frontend/pages/design.js` splits the other way, and six doors needed the
+hint.** Its submittal, design-change, container, baseline and inheritance
+workflows all gate the command-bar button on the array the chooser is built
+from, so those cannot open empty. But six "primary verb" buttons are gated on
+the role alone, each opening a *filtered* required chooser: `submit-review` and
+`markup` offer only current deliverables (a project whose every drawing is
+superseded saw "none yet"); `comment` and `decide-review` offer only open review
+cycles; `answer` offers only unanswered RFIs (every RFI answered read as no RFI);
+and `resolve-clash` offers only open clashes. Each now carries an `emptyHint`
+naming what it filters on. The create verbs (`drawing`, `deposit`,
+`specification`, `propose-change`) have no data-backed required chooser, so they
+have no trap and were left alone.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

@@ -1790,6 +1790,9 @@ export async function design(root) {
             value: drawing._refId,
             label: `${drawing.drawingNumber} rev ${drawing.revision} · ${drawing.title ?? ''}`,
           })),
+          emptyHint:
+            'Only a current deliverable can be submitted for review — a superseded revision cannot. If the list is ' +
+            'empty, nothing on this project is at a current revision yet. Register a drawing first.',
         },
         {
           name: 'selfCheck',
@@ -1829,6 +1832,9 @@ export async function design(root) {
             value: cycle.cycleId,
             label: `${cycle.reference} · ${cycle.deliverable.refType} rev ${cycle.revision}`,
           })),
+          emptyHint:
+            'A comment is raised against a review that is still open. If the list is empty, every review has been ' +
+            'decided — a new one begins when a deliverable is submitted for review.',
         },
         {
           name: 'severity',
@@ -1871,6 +1877,9 @@ export async function design(root) {
             label:
               `${cycle.reference} · ${cycle.comments.blocking > 0 ? `${cycle.comments.blocking} blocking open` : 'nothing blocking'}`,
           })),
+          emptyHint:
+            'Only an open review can be decided. If the list is empty, every review has already been decided; a new ' +
+            'one begins when a deliverable is submitted for review.',
         },
         {
           name: 'decision',
@@ -1917,7 +1926,10 @@ export async function design(root) {
       submitLabel: 'Add',
       fields: [
         { name: 'drawingId', label: 'Drawing', type: 'select',
-          options: b.Drawing.filter((d) => d.status === 'CURRENT').map((d) => ({ value: d._refId, label: `${d.drawingNumber} rev ${d.revision} · ${d.title}` })) },
+          options: b.Drawing.filter((d) => d.status === 'CURRENT').map((d) => ({ value: d._refId, label: `${d.drawingNumber} rev ${d.revision} · ${d.title}` })),
+          emptyHint:
+            'A markup is added to a current drawing — a superseded revision is not marked up. If the list is empty, no ' +
+            'drawing is at a current revision yet. Register one first.' },
         { name: 'note', label: 'Markup', type: 'textarea' },
         { name: 'author', label: 'Author', type: 'text', value: state.session.user.name },
         { name: 'convertTo', label: 'Convert to', type: 'select', options: [
@@ -1946,7 +1958,10 @@ export async function design(root) {
       submitLabel: 'Answer',
       fields: [
         { name: 'rfiId', label: 'RFI', type: 'select',
-          options: b.RFI.filter((r) => r.status !== 'ANSWERED').map((r) => ({ value: r._refId, label: `${r.reference} · ${String(r.question).slice(0, 50)}` })) },
+          options: b.RFI.filter((r) => r.status !== 'ANSWERED').map((r) => ({ value: r._refId, label: `${r.reference} · ${String(r.question).slice(0, 50)}` })),
+          emptyHint:
+            'Only an unanswered RFI can be answered. If the list is empty, every RFI on this project has already been ' +
+            'answered — a new one is raised from a markup or by the site.' },
         { name: 'answer', label: 'Answer', type: 'textarea', hint: 'It has to say something a site team can build to' },
         { name: 'answeredBy', label: 'Answered by', type: 'text', value: state.session.user.name },
         { name: 'changesDesign', label: 'Does this change the design?', type: 'select', options: [
@@ -1985,7 +2000,10 @@ export async function design(root) {
           options: openClashes.map((c) => ({
             value: c._refId,
             label: `${c.severity} · ${c.location} · ${humanise(c.disciplineA)}/${humanise(c.disciplineB)}`,
-          })) },
+          })),
+          emptyHint:
+            'Only an open clash can be closed. If the list is empty, every detected clash has been resolved — new ones ' +
+            'appear when a model revision is run through clash detection.' },
         { name: 'method', label: 'How was it resolved', type: 'select', options: [
           { value: 'MODEL_REVISED', label: 'A discipline moved — model revised' },
           { value: 'WITHIN_TOLERANCE', label: 'Within tolerance — real geometry, acceptable overlap' },
