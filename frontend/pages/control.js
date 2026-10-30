@@ -625,6 +625,7 @@ export async function control(root) {
         <div class="actions cmd-bar">
           ${raw(commandBar([
             { id: 'gate', label: 'Decide the stage gate', tone: '', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
+            { id: 'movePhase', label: 'Move the phase', permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
             /*
              * Only on a bid, and only once.
              *
@@ -1342,6 +1343,48 @@ export async function control(root) {
   const COMMANDS = {
     responsibility: RESPONSIBILITY_COMMAND,
     gate: GATE_COMMAND,
+    /*
+     * The flexible phase move, for everything the dedicated controls do not
+     * cover. Winning a tender is the contract-award conversion below; a clean
+     * forward step is the stage-gate decision above. This is the rest of what a
+     * real construction job needs: a regression to an earlier phase for rework,
+     * or a deliberate skip of a phase the project has already been through
+     * (a design-and-build job that started at tender and converted to design
+     * steps over tender on its way to site). The engine refuses a skip over a
+     * phase never reached, and a forward move whose gate is unmet, and says why.
+     */
+    movePhase: {
+      title: 'Move the project phase',
+      intent:
+        'Move the project to another phase directly — back to an earlier one for rework, or stepping over a phase it ' +
+        'has already been through. A phase the project has never reached cannot be skipped, and a forward move still ' +
+        'needs its gate met; the engine says which clause, and why, if it refuses. All the project’s records carry ' +
+        'across — the phase is where the work is, not a new project.',
+      path: `/v1/projects/${projectId}/phase`,
+      submitLabel: 'Move it',
+      fields: [
+        { name: 'to', label: 'Phase', type: 'select',
+          options: [
+            { value: 'CONCEPT', label: 'Concept' },
+            { value: 'DESIGN', label: 'Design' },
+            { value: 'TENDER', label: 'Tender' },
+            { value: 'CONSTRUCTION', label: 'Construction' },
+            { value: 'COMMISSIONING', label: 'Commissioning' },
+            { value: 'HANDOVER', label: 'Handover' },
+            { value: 'OPERATIONS', label: 'Operations' },
+          ] },
+        { name: 'justification', label: 'Why', type: 'textarea', rows: 2,
+          hint: 'The move and the reason — a regression for rework, or a deliberate skip of a phase already been through.' },
+      ],
+      report: (res) => ({
+        title: `Moved to ${String(res.to ?? '').toLowerCase()}`,
+        message:
+          res.direction === 'REGRESSION'
+            ? 'Recorded as a regression — an earlier phase, deliberately re-entered. Every record carried across.'
+            : 'Recorded as a forward move through the gate.',
+        tone: 'ok',
+      }),
+    },
     /*
      * How a tender ends.
      *

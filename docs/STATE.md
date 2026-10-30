@@ -4572,6 +4572,19 @@ and on a loss the winner and the winning price, which is what the estimate
 learns a sharper number from. The phase does not move — a closed tender is still
 a tender — and reopening stays the separate, deliberate act it was.
 
+**The flexible phase move is reachable too.** The engine has always allowed a
+real construction job's non-linear path — open at any phase, regress to an
+earlier one, step over a phase already traversed (a design-and-build job that
+registered at tender and converted to design steps over tender on its way to
+site), with a skip over a phase *never* reached refused and a forward move still
+gated. But the only phase controls on the screen were the forward **stage-gate
+decision** and the **contract-award conversion** (the win path); an arbitrary
+regression or deliberate skip had the `transitionPhase` route and no button. A
+**Move the phase** control on the Command Centre now reuses that route, so the
+moves the engine already permits can be driven from the UI, with the backend
+enforcing what is legitimate and naming the clause when it refuses. No new rule,
+no second writer — the phase stays one field with one set of transition rules.
+
 **Not built:** the deterministic file-name, size and page-limit checks against
 the deliverable register at compile time; post-tender clarification cycles; and
 the procurement records and mobilisation tasks the conversion could also seed.
