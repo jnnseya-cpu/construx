@@ -1437,6 +1437,9 @@ export async function field(root) {
           label: 'Which item',
           type: 'select',
           options: (plant?.items ?? []).filter((item) => item.status === 'ON_HIRE').map((item) => ({ value: item.id, label: `${item.description}${item.reference ? ` (${item.reference})` : ''} — on hire since ${item.onHireFrom}` })),
+          emptyHint:
+            'Only plant currently on hire can be off-hired. If this is empty, nothing is on hire — either none was ' +
+            'hired, or everything hired has already been off-hired.',
         },
         { name: 'offHiredOn', label: 'Off-hired on', type: 'date', max: today() },
         { name: 'reason', label: 'Why', type: 'text', required: false, placeholder: 'Dig complete' },
@@ -1539,7 +1542,10 @@ export async function field(root) {
       submitLabel: 'Discharge',
       fields: [
         { name: 'findingId', label: 'Finding', type: 'select',
-          options: openFindings.map((f) => ({ value: f.findingId, label: `${f.reference} · ${String(f.description).slice(0, 50)}` })) },
+          options: openFindings.map((f) => ({ value: f.findingId, label: `${f.reference} · ${String(f.description).slice(0, 50)}` })),
+          emptyHint:
+            'Only an open finding can be discharged. If this is empty, every site finding has been discharged already — ' +
+            'a discharged one is not closed twice.' },
         { name: 'discharge', label: 'What discharged it', type: 'textarea', rows: 3,
           placeholder: 'Gate posts moved to 4.8m and the kerb radius eased; swept path re-checked against a 16.5m artic' },
         { name: 'evidenceHash', label: 'Evidence', type: 'file', required: false,
@@ -1723,7 +1729,10 @@ export async function field(root) {
           options: openObservations.map((o) => ({
             value: o._refId,
             label: `${o.reference} · ${String(o.description).slice(0, 46)}`,
-          })) },
+          })),
+          emptyHint:
+            'Only an open observation can be closed. If this is empty, every observation on this project has already ' +
+            'been closed.' },
         { name: 'actionTaken', label: 'What was done', type: 'textarea' },
         { name: 'closedBy', label: 'Closed by', type: 'text', value: state.session.user.name },
         { name: 'evidenceHash', label: 'Closeout evidence', type: 'file', required: false },

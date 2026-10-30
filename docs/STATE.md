@@ -5267,6 +5267,25 @@ command) choose a contract from an *unfiltered* list, so an empty one genuinely
 means no contract exists and "none yet" is true; `adopt-form`'s standard-form
 chooser reads a platform catalogue, not project data.
 
+**Two pages were swept and needed nothing.** `siteservices.js` does not use
+`emptyHint` at all — every one of its ~45 inline-`command()` handlers pre-guards
+its filtered array with a tailored `blocked`/`toast` and `return` *before* the
+form opens (e.g. "Every open interface still needs an owner before it can be
+accepted"), which is stronger than the hint because the empty form never opens;
+its remaining choosers are unfiltered maps or platform reference lists. `commercial.js`
+has only one filtered chooser (`contra`'s pay-less-notice selector), and it is
+`required: false` so the guard never fires on it; every other chooser there is
+unfiltered or a reference list. Neither page was changed.
+
+**`frontend/pages/field.js` needed three.** It button-gates its mission- and
+site-dependent actions (the author's own note calls out the empty-dropdown dead
+end), but three role-gated commands open a *filtered* required chooser:
+`plant-off` offers only plant on hire, `discharge` only open site findings, and
+`close-walk` only open observations. Each now carries an `emptyHint`. Its
+unfiltered choosers (`finding`'s visit list, the progress and vision-review
+activity pickers, the supplier list) and the per-draft vision-review item picker
+were left alone — an empty one of those genuinely means none exists.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
