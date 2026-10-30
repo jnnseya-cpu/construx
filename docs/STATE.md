@@ -5313,6 +5313,27 @@ only a company not already in a group (a tenancy is in one group at most), and
 carries an `emptyHint`. Its other choosers read platform vocabularies — currencies,
 jurisdictions, the module catalogue — which are reference data, not project state.
 
+**`team.js` closed the sweep and needed nothing.** Its two filtered project-data
+choosers — `company-roles` (the subject's own active roles) and `place`'s manager
+picker (other active people) — are both `required: false` by design, so the guard
+never fires on them; its remaining choosers read authority or reference
+catalogues (`tenantGrantableRoles`, the reporting metrics, the seat classes and
+capabilities the admin holds), not project state.
+
+**The empty-chooser sweep is complete across the eleven highest-select screens.**
+Audited: procurement, pipeline, construction, design, contracts, siteservices,
+commercial, field, programme, handover, tenants and team. Thirty filtered
+required choosers whose button or handler did not already prevent an empty open
+now carry an `emptyHint` naming what they filter on, so a chooser that is empty
+because everything is settled no longer reads as one that is empty because
+nothing exists. The rule the sweep settled on: a chooser needs the hint only when
+it is a *required* select, its options are *filtered* on project state, nothing
+upstream (a button gate, a pre-form guard, or an existing filter-explaining hint)
+already prevents or explains the empty open, and the filter can realistically
+exclude everything while records still exist. Unfiltered choosers, optional ones,
+reference/vocabulary catalogues, and choosers already gated or guarded were left
+untouched.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
