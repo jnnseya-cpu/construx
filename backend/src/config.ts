@@ -1842,6 +1842,36 @@ export const config = {
     pass: str('SMTP_PASS', ''),
     timeoutMs: num('SMTP_TIMEOUT_MS', 15_000),
   },
+
+  /**
+   * How a construction duration is estimated from measured works, before a
+   * planner builds the real programme.
+   *
+   * These are **declared assumptions, not market data**. There is no live feed
+   * of real contract durations behind them, so the estimate they drive is a
+   * structural proposal to confirm — never a figure to quote. They sit here, and
+   * are overridable, for the same reason the overhead and profit rates do: a
+   * commercial assumption hard-coded into an engine stays invisible until it is
+   * wrong for somebody's market, and the one number that must be a deliberate
+   * choice is the one nobody can see.
+   */
+  programme: {
+    /**
+     * Measured works a single small-works crew turns over in a week, in minor
+     * units — the throughput the value-based leg of the estimate divides by.
+     * £4,500/week of net measured works is a Midlands small-project assumption,
+     * excluding preliminaries, overhead and profit, and it is the number to
+     * change first when the estimate does not match a real programme.
+     */
+    weeklyThroughputMinor: num('PROGRAMME_WEEKLY_THROUGHPUT_MINOR', 450_000),
+    /**
+     * The irreducible sequence: distinct trade phases cannot all run at once —
+     * you cannot finish before the substructure is in — so each present phase
+     * carries at least this many weeks in series. The floor the value leg is
+     * taken against.
+     */
+    minWeeksPerSequenceStep: num('PROGRAMME_MIN_WEEKS_PER_STEP', 1),
+  },
 } as const;
 
 /**

@@ -743,6 +743,8 @@ export async function procurement(root) {
             { id: 'freezeSchedule', label: 'Freeze the schedule',
               permitted: can('ESTIMATE_TENDER', 'A') && openSchedules.length > 0,
               reason: blockedReason('ESTIMATE_TENDER', 'A') ?? NO_OPEN_SCHEDULE },
+            { id: 'duration-estimate', label: 'Estimate the programme duration',
+              permitted: can('ESTIMATE_TENDER', 'R'), reason: blockedReason('ESTIMATE_TENDER', 'R') },
             { id: 'clarification', label: 'Raise clarification', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'clarification-batch', label: 'Raise several clarifications', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'issueClarification', label: 'Issue answer',
@@ -2187,6 +2189,53 @@ export async function procurement(root) {
             quantity: Number(parts[2]),
             sourceSheet: parts[3] || v.sheetId,
           })),
+      }),
+    },
+    'duration-estimate': {
+      title: 'Estimate the programme duration',
+      intent:
+        'How long the job is, proposed from the measured works rather than guessed — the one input the drawings never ' +
+        'state, and the one that drives every time-related head and the whole programme. A structural estimate to ' +
+        'confirm, not a market-researched or resource-loaded programme: it carries low confidence and states its own ' +
+        'basis. Take the figure to the construction-period field, and to the WBS generator on the programme side.',
+      path: `/v1/projects/${projectId}/programme/duration-estimate`,
+      submitLabel: 'Estimate it',
+      fields: [
+        {
+          name: 'netMeasuredMinor',
+          label: 'Net measured works',
+          type: 'number',
+          money: true,
+          hint: 'The measured-works total from the estimate — direct cost only, before heads, overhead and profit.',
+        },
+        {
+          name: 'tradeGroups',
+          label: 'Trade phases the works span',
+          type: 'number',
+          step: '1',
+          hint: 'How many distinct trade phases are in the bill — groundworks, walls, roof, finishes, externals and so on.',
+        },
+        {
+          name: 'complexity',
+          label: 'Complexity',
+          type: 'select',
+          required: false,
+          options: [
+            { value: 'NORMAL', label: 'Normal' },
+            { value: 'SIMPLE', label: 'Simple — repetitive, few interfaces' },
+            { value: 'COMPLEX', label: 'Complex — constrained site, many interfaces' },
+          ],
+        },
+      ],
+      transform: (v) => ({
+        netMeasuredMinor: Number(v.netMeasuredMinor),
+        tradeGroups: Number(v.tradeGroups),
+        ...(v.complexity ? { complexity: v.complexity } : {}),
+      }),
+      report: (res) => ({
+        title: `About ${res.weeks} week${res.weeks === 1 ? '' : 's'} — low confidence`,
+        message: `${res.basis} Take it to the construction period and confirm it; this is an estimate from the works, not a programme a planner has built.`,
+        tone: 'ok',
       }),
     },
     'build-estimate': {

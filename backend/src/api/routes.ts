@@ -157,6 +157,7 @@ import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
+import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
 import { AGENTS } from '../agents/registry.ts';
@@ -15612,6 +15613,22 @@ export const ROUTES: Route[] = [
         ...body(ctx),
         taskId: ctx.params.taskId as string,
       }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/programme/duration-estimate',
+    description: 'Propose a construction duration from the measured works — a structural estimate to confirm, feeding the period and the WBS',
+    schema: {
+      type: 'object',
+      required: ['netMeasuredMinor', 'tradeGroups'],
+      properties: {
+        netMeasuredMinor: { type: 'integer', minimum: 0 },
+        tradeGroups: { type: 'integer', minimum: 1 },
+        complexity: { type: 'string', enum: [...DURATION_COMPLEXITY] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => costintel.proposeProgrammeDuration(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

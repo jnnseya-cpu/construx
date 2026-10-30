@@ -3,6 +3,12 @@ import { ulid } from '../core/ids.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { authorise, write, type EngineContext } from '../engines/context.ts';
 import { liveProjects } from './structure.ts';
+import { config } from '../config.ts';
+import {
+  estimateProgrammeDuration,
+  type DurationComplexity,
+  type ProgrammeDurationEstimate,
+} from '../engines/maths/programmeDuration.ts';
 
 /**
  * The cost intelligence database.
@@ -892,4 +898,35 @@ export function runRateCardImport(
         'starting rate and stays there until a committed bid proves the item — importing the same rate again does ' +
         'not make it any more certain.',
   };
+}
+
+/**
+ * Propose a construction duration from the measured works.
+ *
+ * The estimate's hardest single input is the one the drawings never state — how
+ * long the job is — and it drives every time-related head and the whole
+ * programme. This proposes it from the works already measured, so the agent
+ * answers "how long will it take" rather than handing the question back.
+ *
+ * A read, not a write: it commits nothing. It is advice the estimator takes to
+ * the construction-period field and the programme generator, carrying LOW
+ * confidence and its own basis, and it is a structural estimate — not a
+ * market-researched or resource-loaded programme, which only a planner builds.
+ * The two declared assumptions it rests on live in `config.programme`, not here.
+ */
+export function proposeProgrammeDuration(
+  ctx: EngineContext,
+  input: { netMeasuredMinor: number; tradeGroups: number; complexity?: DurationComplexity },
+): ProgrammeDurationEstimate {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+  if (!Number.isFinite(input.netMeasuredMinor) || input.netMeasuredMinor < 0) {
+    throw new DomainError('MEASURED_VALUE_INVALID', 'The measured-works value is the figure the estimate is built on; it cannot be negative.');
+  }
+  return estimateProgrammeDuration({
+    netMeasuredMinor: input.netMeasuredMinor,
+    tradeGroups: input.tradeGroups,
+    complexity: input.complexity,
+    weeklyThroughputMinor: config.programme.weeklyThroughputMinor,
+    minWeeksPerSequenceStep: config.programme.minWeeksPerSequenceStep,
+  });
 }

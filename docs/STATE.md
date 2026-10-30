@@ -25573,6 +25573,34 @@ them out of it that somebody is this business.* A warning and not a refusal —
 a genuine one-visit job exists, and the estimator is the one who knows which
 this is.
 
+### How long is the job — proposed, not guessed
+
+The construction period drives every time-related head and the whole
+programme, and it was the one figure only ever typed in by hand. The drawings
+never state it, so a bidder either carried a number from the last job or
+guessed — and a guess here re-prices the whole tender.
+
+`estimateProgrammeDuration` (POST `…/programme/duration-estimate`, `Estimate
+the programme duration` in the command bar) proposes it from the measured
+works. It is two legs taken against each other and reconciled by the larger: a
+**value leg** — measured works ÷ what a small-works crew turns over in a week —
+and a **sequence floor** — distinct trade phases cannot all run at once, so each
+present phase carries a minimum in series — nudged by a complexity multiplier.
+On a real ~£32.5k, six-trade bill it proposes about seven weeks, next to a
+hand-set eight.
+
+It is deliberately **not** sold as more than it is. There is no live feed of
+real contract durations behind it, so it carries **LOW confidence**, states its
+own basis and assumptions on every result, and names itself a structural
+estimate — never a market-researched or resource-loaded programme, which only a
+planner builds. The two assumptions it rests on (weekly throughput, minimum
+weeks per sequence step) are **declared in `config.programme`**, overridable,
+for the same reason the overhead and profit rates are: a commercial assumption
+hard-coded into an engine stays invisible until it is wrong for somebody's
+market. The figure feeds the construction-period field and seeds the WBS
+generator's `targetDurationDays` — so "how long is this job" is answered from
+the works, and then a person confirms it.
+
 ### Retiring a measure, without deleting one
 
 The duplicate-measure guard was right and it left somebody stuck: a bill
