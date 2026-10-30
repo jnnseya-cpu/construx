@@ -5334,6 +5334,25 @@ exclude everything while records still exist. Unfiltered choosers, optional ones
 reference/vocabulary catalogues, and choosers already gated or guarded were left
 untouched.
 
+**The sweep was then extended across every remaining page that carries a
+chooser, for completeness.** A mechanical scan classified each: most lower-select
+pages (admin, alerts, billing, blog, developer, enterprise, group, newsletter,
+onboarding, partners, portfolio, security, support, work) choose from unfiltered
+maps or reference catalogues and needed nothing; `concept` already carried the
+four `emptyHint`s its filtered choosers needed; `control` is fully button-gated
+(reachable, openWorkstreams, linkableProjects, draftMeetings, closableActions all
+gate on their own `.length`); `documents` and bid-on's `issue-invoice` already
+explain their filter in a hint; and `bidonguest`'s filtered chooser is optional
+with a standing "no document" option. Ten real gaps were found and fixed: `risk`
+(`rescore`, open risks only), `aiengine` (`clear-credential`, stored overrides
+only), and eight in `bidon` — `resolve-gap` (bids with an open gap), the four
+engagement-state transitions (`activate`/`pause`/`resume`/`open-cycle`, each
+filtered to the state it acts on), and the three issued-invoice actions
+(`record-payment`/`waive`/`void`). bid-on's six question/gap choosers already
+carried `emptyHint`s from the earlier bid-on work. With this, every filtered
+required chooser in the console that is not otherwise gated, guarded or hinted
+names what it filters on.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

@@ -520,7 +520,8 @@ export async function aiengine(root) {
               .map((entry) => ({
                 value: entry.name,
                 label: `${entry.label}${entry.fromEnvironment ? ' — falls back to the environment' : ' — nothing else supplies it'}`,
-              })) },
+              })),
+            emptyHint: 'Only a key stored as an override can be cleared. If this is empty, nothing is overridden in the store — every credential is coming from the environment, and clearing acts on the store.' },
           { name: 'reason', label: 'Why', type: 'text' },
         ],
         transform: ({ name: _n, ...rest }) => rest,

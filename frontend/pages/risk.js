@@ -324,7 +324,8 @@ export async function risk(root) {
       submitLabel: 'Rescore',
       fields: [
         { name: 'riskId', label: 'Risk', type: 'select',
-          options: openRisks.map((r) => ({ value: r._refId, label: `${r.title} · ${pct((r.probability ?? 0) * 100, 0)}` })) },
+          options: openRisks.map((r) => ({ value: r._refId, label: `${r.title} · ${pct((r.probability ?? 0) * 100, 0)}` })),
+          emptyHint: 'Only an open risk can be rescored. If this is empty, every risk on the register is closed — there is nothing live to reprice.' },
         { name: 'probability', label: 'Probability', type: 'number', step: '0.05', min: 0, hint: 'Between 0 and 1' },
         { name: 'costOptimistic', label: 'Cost impact — best case', type: 'number', money: true },
         { name: 'costMostLikely', label: 'Cost impact — most likely', type: 'number', money: true },
