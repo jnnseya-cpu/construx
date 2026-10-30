@@ -1137,6 +1137,11 @@ export type TenderIntelPosition = {
     issuedAt?: string;
     recipients: number;
     acknowledged: number;
+    /** On an ANSWERED client-side question: the client's answer, and the date it was given. */
+    answer?: string;
+    answeredOn?: string;
+    /** On a WITHDRAWN question: why it was dropped, so it is not raised again. */
+    withdrawnReason?: string;
   }>;
   comparisons: Array<{
     comparisonId: string;
@@ -1169,6 +1174,9 @@ export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
       issuedAt: (record.state.issuedAt ?? record.state.answeredAt) as string | undefined,
       recipients: distribution.length,
       acknowledged: acknowledgements.length,
+      ...(record.state.answer ? { answer: String(record.state.answer) } : {}),
+      ...(record.state.answeredOn ? { answeredOn: String(record.state.answeredOn) } : {}),
+      ...(record.state.withdrawnReason ? { withdrawnReason: String(record.state.withdrawnReason) } : {}),
     };
   });
 

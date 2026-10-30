@@ -1159,8 +1159,8 @@ export async function procurement(root) {
                 distribution and the reads are the record — not the answer.
               </div></div>
               ${table({
-                headers: ['Ref', 'Side', 'Subject', 'About', 'Due', 'Issued', 'Sent to', 'Read', 'State'],
-                align: ['', '', '', '', '', '', 'num', 'num', ''],
+                headers: ['Ref', 'Side', 'Subject', 'About', 'Due', 'Issued', 'Sent to', 'Read', 'State', 'Outcome'],
+                align: ['', '', '', '', '', '', 'num', 'num', '', ''],
                 rows: intel.clarifications.map((c) => [
                   c.reference,
                   badge(String(c.side).toLowerCase(), c.side === 'BIDDER' ? 'info' : 'neutral'),
@@ -1175,6 +1175,15 @@ export async function procurement(root) {
                   c.recipients || '—',
                   c.recipients ? `${c.acknowledged}/${c.recipients}` : '—',
                   badge(badgeText(c.status), statusTone(c.status)),
+                  // The client's answer, or why the question was withdrawn — the
+                  // thing a client-side question's whole life comes down to.
+                  c.answer
+                    ? `${c.answer.length > 90 ? `${c.answer.slice(0, 90)}…` : c.answer}${c.answeredOn ? ` · ${c.answeredOn}` : ''}`
+                    : c.withdrawnReason
+                      ? c.withdrawnReason.length > 90
+                        ? `${c.withdrawnReason.slice(0, 90)}…`
+                        : c.withdrawnReason
+                      : '—',
                 ]),
               })}
             </div>`

@@ -5155,7 +5155,11 @@ to a client-side question in the client's own words, with the date a late-questi
 dispute turns on, moving it to ANSWERED; a bidder-side question is refused here,
 because its answer is *issued* through the fence that reaches every entitled
 bidder at once. `CLARIFICATION_WITHDRAWN` is the one new event; the answer reuses
-`CLARIFICATION_ANSWERED`.
+`CLARIFICATION_ANSWERED`. The register read carries the **withdrawal reason** and
+the **client's answer** (with its date), and the register table shows them in an
+**Outcome** column, so a client-side question's whole life — raised, checked,
+then withdrawn with a reason or answered in the client's words — is visible on
+one row rather than ending at a bare status.
 
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material

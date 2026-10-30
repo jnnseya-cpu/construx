@@ -408,9 +408,9 @@ export function badge(text, tone = 'neutral') {
 /** Map a status string to a badge tone, using the platform's own vocabulary. */
 export function statusTone(status) {
   const value = String(status ?? '').toUpperCase();
-  if (['APPROVED', 'ACCEPTED', 'EXECUTED', 'COMPLETE', 'COMPLETED', 'PASSED', 'CLOSED', 'VERIFIED', 'AGREED', 'IN_SERVICE', 'LIVE', 'CURRENT', 'FROZEN', 'LOCKED', 'AWARDED'].includes(value)) return 'ok';
+  if (['APPROVED', 'ACCEPTED', 'EXECUTED', 'COMPLETE', 'COMPLETED', 'PASSED', 'CLOSED', 'VERIFIED', 'AGREED', 'IN_SERVICE', 'LIVE', 'CURRENT', 'FROZEN', 'LOCKED', 'AWARDED', 'ANSWERED'].includes(value)) return 'ok';
   if (['OPEN', 'DRAFT', 'SUBMITTED', 'ASSESSED', 'IN_PROGRESS', 'RUNNING', 'ISSUED', 'INSTRUCTED', 'DISPATCHED', 'RECEIVED', 'PROPOSED', 'CLAIMED'].includes(value)) return 'info';
-  if (['INCOMPLETE', 'PENDING', 'NOT_STARTED', 'SUPERSEDED', 'MEDIUM', 'WARNING'].includes(value)) return 'warn';
+  if (['INCOMPLETE', 'PENDING', 'NOT_STARTED', 'SUPERSEDED', 'MEDIUM', 'WARNING', 'WITHDRAWN'].includes(value)) return 'warn';
   if (['FAILED', 'REJECTED', 'CRITICAL', 'HIGH', 'BLOCKED', 'OVERDUE', 'EXPIRED'].includes(value)) return 'bad';
   return 'neutral';
 }

@@ -954,6 +954,7 @@ describe('tender intelligence · the bidder’s own side of a question', () => {
     assert.equal(res.status, 'WITHDRAWN');
     const row = tenderintel.tenderIntelPosition(asQS()).clarifications.find((c) => c.reference === reference);
     assert.equal(row?.status, 'WITHDRAWN');
+    assert.match(String(row?.withdrawnReason), /Appendix B/, 'the reason surfaces on the register');
   });
 
   it('refuses a withdrawal with no real reason, and a second withdrawal', () => {
@@ -983,6 +984,8 @@ describe('tender intelligence · the bidder’s own side of a question', () => {
     assert.equal(res.status, 'ANSWERED');
     const row = tenderintel.tenderIntelPosition(asQS()).clarifications.find((c) => c.reference === reference);
     assert.equal(row?.status, 'ANSWERED');
+    assert.match(String(row?.answer), /Warm roof/, "the client's answer surfaces on the register");
+    assert.equal(row?.answeredOn, '2026-11-10');
     throwsCode(() => tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'Changed our mind.' }), 'CLARIFICATION_ANSWERED');
   });
 
