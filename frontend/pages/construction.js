@@ -837,7 +837,11 @@ export async function construction(root) {
         { name: 'packId', label: 'Test pack', type: 'select',
           options: ((testPacks?.packs ?? []).filter((pack) => pack.status === 'RELEASED')
             .map((pack) => ({ value: pack.packId, label: `${pack.reference} · ${pack.systemTag}` }))),
-          hint: 'Only released packs. An unreleased one is not a controlled retest.' },
+          hint: 'Only released packs. An unreleased one is not a controlled retest.',
+          emptyHint:
+            'A controlled retest runs against a released test pack, and this project has none to run against — an ' +
+            'unreleased pack is not a controlled retest. The exception is still open; it is the released pack that is ' +
+            'missing, so release one before starting the retest.' },
         { name: 'startedBy', label: 'Run by', type: 'text', value: state.session.user.name },
       ],
       transform: ({ exceptionId, ...rest }) => rest,
@@ -888,7 +892,9 @@ export async function construction(root) {
       submitLabel: 'Record the decision',
       fields: [
         { name: 'systemTag', label: 'System', type: 'select', options: systemOptions,
-          hint: systemOptions.length === 0 ? 'No system carries an exception on this project yet' : '' },
+          emptyHint:
+            'A system is accepted into operation once it is defined — a dossier compiled for it, or an exception raised ' +
+            'against it. This project has neither yet, so there is nothing to accept. Compile a dossier for a system first.' },
         { name: 'decision', label: 'Decision', type: 'select', options: [
           { value: 'ACCEPTED', label: 'Accepted' },
           { value: 'CONDITIONAL', label: 'Accepted with conditions' },

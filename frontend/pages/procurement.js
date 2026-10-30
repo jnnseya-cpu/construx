@@ -3483,7 +3483,10 @@ export async function procurement(root) {
         { name: 'clarificationId', label: 'Clarification', type: 'select',
           options: (intel.clarifications ?? [])
             .filter((c) => c.status === 'OPEN')
-            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })),
+          emptyHint:
+            'Only an open clarification can be checked against the pack. One already answered, issued or withdrawn is ' +
+            'settled, and there is nothing left to check. Raise a clarification first, or clear its filter by reopening the register.' },
       ],
       transform: () => ({}),
       report: (res) => {
@@ -3519,7 +3522,10 @@ export async function procurement(root) {
         { name: 'clarificationId', label: 'Clarification', type: 'select',
           options: (intel.clarifications ?? [])
             .filter((c) => c.status === 'OPEN')
-            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })),
+          emptyHint:
+            'Only an open clarification can be withdrawn. One the client has already answered, or that has been issued ' +
+            'to bidders or withdrawn before, is settled and is not touched here.' },
         { name: 'reason', label: 'Why it is being withdrawn', type: 'textarea', rows: 2,
           hint: 'e.g. “Answered by Appendix B, Section 3 — strip foundations priced per the SE report.”' },
       ],
@@ -3538,7 +3544,10 @@ export async function procurement(root) {
         { name: 'clarificationId', label: 'Clarification', type: 'select',
           options: (intel.clarifications ?? [])
             .filter((c) => c.status === 'OPEN' && c.side !== 'BIDDER')
-            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })),
+          emptyHint:
+            'This records an answer to a question you put to the client, while it is still open. A bidder’s own question ' +
+            'is not answered here — its answer is issued to every bidder. One already answered or withdrawn is settled.' },
         { name: 'answer', label: 'The client’s answer, in their words', type: 'textarea', rows: 3 },
         { name: 'answeredOn', label: 'Date answered', type: 'date', required: false },
       ],

@@ -1,7 +1,7 @@
 import { api, entityBundle } from '../lib/api.js';
-import { command, commandBar, confirmCost } from '../lib/command.js';
+import { command, commandBar } from '../lib/command.js';
 import { today as todayIso } from '../lib/enums.js';
-import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, resolveHtml, shortHash, statusTone, table, toast, track } from '../lib/ui.js';
+import { badge, date, drillable, esc, html, humanise, money, pct, positionReport, raw, render, resolveHtml, shortHash, statusTone, table, track } from '../lib/ui.js';
 import { barChart, gauge, histogram, pieChart, radarChart, treemap } from '../lib/charts.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { insightPanel } from '../lib/insight.js';
@@ -993,32 +993,37 @@ export async function handover(root) {
     `,
   );
 
-  document.getElementById('maintenance')?.addEventListener('click', async (event) => {
-    const button = event.currentTarget;
-    const path = `/v1/projects/${state.session.projectId}/om/maintenance-forecast`;
-
-    const accepted = await confirmCost({
+  document.getElementById('maintenance')?.addEventListener('click', async () => {
+    // Both figures are the operator's, not the platform's. The forecast
+    // prioritises the schedule against the budget and defers what will not fit,
+    // so an invented budget would invent the deferrals — the number has to be
+    // asked for rather than assumed.
+    const result = await command({
       title: 'Forecast maintenance',
-      intent: 'Prioritises the maintenance schedule against the available budget and identifies deferrals.',
-      path,
-      runLabel: 'Forecast',
+      intent:
+        'Prioritises the maintenance schedule over the horizon against the annual budget available for planned ' +
+        'maintenance, and names what has to be deferred where the two do not meet. The forecast is only as real as ' +
+        'the budget it is measured against, so both figures are yours.',
+      path: `/v1/projects/${state.session.projectId}/om/maintenance-forecast`,
+      submitLabel: 'Forecast',
+      aiCost: true,
+      fields: [
+        { name: 'horizonMonths', label: 'Horizon (months)', type: 'number', min: 1, value: 60,
+          hint: 'How far ahead to plan. Sixty months is the usual five-year view.' },
+        { name: 'annualBudgetMinor', label: 'Annual maintenance budget', type: 'number', money: true,
+          hint: 'The planned-maintenance budget available each year, in pounds. What will not fit inside it is what the forecast defers.' },
+      ],
+      transform: (v) => ({
+        horizonMonths: Math.round(Number(v.horizonMonths)),
+        annualBudgetMinor: Number(v.annualBudgetMinor),
+      }),
+      report: (r) => ({
+        title: 'Maintenance forecast complete',
+        message: `${(r.schedule ?? []).length} interventions · ${r.acuConsumed} ACU`,
+        tone: 'ok',
+      }),
     });
-    if (!accepted) return;
-
-    button.disabled = true;
-    button.textContent = 'Forecasting…';
-    try {
-      const result = await api.post(path, {
-        horizonMonths: 60,
-        annualBudgetMinor: 12_000_000,
-      });
-      toast('Maintenance forecast complete', `${result.schedule.length} interventions · ${result.acuConsumed} ACU`, 'ok');
-      await handover(root);
-    } catch (error) {
-      toast('Forecast failed', error.message, 'err');
-      button.disabled = false;
-      button.textContent = 'Forecast maintenance';
-    }
+    if (result) await handover(root);
   });
 
   const COMMANDS = {

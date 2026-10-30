@@ -2623,7 +2623,8 @@ export async function bidon(root) {
       submitLabel: 'Close',
       fields: [
         { name: 'bidId', label: 'Bid', type: 'select',
-          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })) },
+          options: bidList.filter((bid) => bid.openGaps > 0).map((bid) => ({ value: bid.id, label: `${bid.reference} — ${bid.openGaps} open` })),
+          emptyHint: 'Only a bid with an open gap is listed. If this is empty, every gap has been closed — there is nothing left to answer.' },
         { name: 'gapId', label: 'Gap id', type: 'text', hint: 'From the opened pack above.' },
         haveDocuments
           ? { name: 'evidenceId', label: 'Evidence filed to close it', type: 'select', required: false,
@@ -2943,7 +2944,8 @@ export async function bidon(root) {
             .map((invoice) => ({
               value: invoice.id,
               label: `${invoice.reference} — ${invoice.customerName} — ${invoice.narrative}`,
-            })) },
+            })),
+          emptyHint: 'Only an issued invoice can be marked paid. If this is empty, nothing is awaiting payment — every invoice is already paid, waived or voided.' },
         { name: 'paymentReference', label: 'Reference', type: 'text',
           hint: 'The bank reference or whatever identifies it on your statement.' },
         { name: 'paidOn', label: 'Paid on', type: 'date', required: false },
@@ -2965,7 +2967,8 @@ export async function bidon(root) {
         { name: 'invoiceId', label: 'Invoice', type: 'select',
           options: invoiceList
             .filter((invoice) => invoice.status === 'ISSUED')
-            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })) },
+            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })),
+          emptyHint: 'Only an issued invoice can be waived. If this is empty, nothing is outstanding to waive — every invoice is already paid, waived or voided.' },
         { name: 'reason', label: 'Why', type: 'text' },
       ],
       transform: ({ invoiceId: _i, ...rest }) => rest,
@@ -2981,7 +2984,8 @@ export async function bidon(root) {
         { name: 'invoiceId', label: 'Invoice', type: 'select',
           options: invoiceList
             .filter((invoice) => invoice.status === 'ISSUED')
-            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })) },
+            .map((invoice) => ({ value: invoice.id, label: `${invoice.reference} — ${invoice.narrative}` })),
+          emptyHint: 'Only an issued invoice can be voided. If this is empty, nothing issued is outstanding — a paid invoice cannot be voided.' },
         { name: 'reason', label: 'Why', type: 'text' },
       ],
       transform: ({ invoiceId: _i, ...rest }) => rest,
@@ -3073,7 +3077,8 @@ export async function bidon(root) {
       submitLabel: 'Activate',
       fields: [
         { name: 'engagementId', label: 'Engagement', type: 'select',
-          options: liveEngagements.filter((e) => e.status === 'DRAFT').map((e) => ({ value: e.id, label: engagementLabel(e) })) },
+          options: liveEngagements.filter((e) => e.status === 'DRAFT').map((e) => ({ value: e.id, label: engagementLabel(e) })),
+          emptyHint: 'Only a draft engagement can be activated. If this is empty, nothing is in draft — every engagement has already been activated, or none exists yet.' },
       ],
       transform: () => ({}),
     },
@@ -3086,7 +3091,8 @@ export async function bidon(root) {
       submitLabel: 'Pause',
       fields: [
         { name: 'engagementId', label: 'Engagement', type: 'select',
-          options: liveEngagements.filter((e) => e.status === 'ACTIVE').map((e) => ({ value: e.id, label: engagementLabel(e) })) },
+          options: liveEngagements.filter((e) => e.status === 'ACTIVE').map((e) => ({ value: e.id, label: engagementLabel(e) })),
+          emptyHint: 'Only an active engagement can be paused. If this is empty, none is active — one may be in draft (activate it first), already paused, or ended.' },
         { name: 'reason', label: 'Why', type: 'text' },
       ],
       transform: ({ engagementId: _e, ...rest }) => rest,
@@ -3098,7 +3104,8 @@ export async function bidon(root) {
       submitLabel: 'Resume',
       fields: [
         { name: 'engagementId', label: 'Engagement', type: 'select',
-          options: liveEngagements.filter((e) => e.status === 'PAUSED').map((e) => ({ value: e.id, label: engagementLabel(e) })) },
+          options: liveEngagements.filter((e) => e.status === 'PAUSED').map((e) => ({ value: e.id, label: engagementLabel(e) })),
+          emptyHint: 'Only a paused engagement can be resumed. If this is empty, none is paused — everything is active, in draft, or ended.' },
       ],
       transform: () => ({}),
     },
@@ -3136,7 +3143,8 @@ export async function bidon(root) {
         { name: 'engagementId', label: 'Engagement', type: 'select',
           options: liveEngagements
             .filter((e) => e.type === 'CONTINUOUS' && e.status === 'ACTIVE')
-            .map((e) => ({ value: e.id, label: engagementLabel(e) })) },
+            .map((e) => ({ value: e.id, label: engagementLabel(e) })),
+          emptyHint: 'A cycle is opened on a continuous engagement that is active. If this is empty, no engagement is both continuous and active — a one-off engagement has stages, not cycles, and a paused one must be resumed first.' },
         { name: 'scope', label: 'What this cycle covers', type: 'textarea', rows: 2,
           hint: '"Weekly portal watch and bid/no-bid advice, w/c 2 November" — read by whoever signs it off.' },
       ],

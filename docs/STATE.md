@@ -5195,6 +5195,186 @@ so an open question with a closing window is the first thing read, not something
 found too late. Bidder-side questions are not counted against the client window,
 because their answer is issued, not asked for.
 
+**The three commands that act on one open clarification now say so when there
+is none.** `Check against the pack`, `Withdraw a clarification` and `Record the
+client's answer` each filter their clarification chooser — the first two to open
+questions, the last to open *client-side* ones. A register holding only answered,
+issued or withdrawn questions left all three choosers empty, and the shared
+empty-form guard then read "there is no clarification here yet" — false, and
+exactly the filtered-chooser trap `frontend/lib/command.js` documents. Each now
+carries the `emptyHint` the guard prints in place of that sentence, naming what
+it filters on, so a subscriber with six answered TQs is told the questions are
+settled rather than that none exist.
+
+**The same sweep was run across `frontend/pages/pipeline.js`.** Six commands
+there open a *filtered* required chooser whose command-bar button is not gated on
+the same filter, so the chooser can be reached empty while the things it filters
+do exist: `bid-section`, `bid-issue`, `bid-challenge` and `bid-floor` all offer
+only packs not yet issued (a register of all-issued packs read "no pack here
+yet"); `finding-dispose` offers only open, non-critical findings (a review with
+only critical or already-decided findings read "no finding"); and `bid-outcome`
+offers only a bid at a decision with no outcome yet, while its button gates on
+stage alone — so once every bid had its outcome recorded, the button stayed live
+and the chooser was empty. Each now carries an `emptyHint`. The choosers that
+were *already* safe were left alone and are the reason the sweep is bounded:
+`qualify`, `decide` and `convert` have buttons gated on `scorable`/`decidable`/
+`convertible` being non-empty (an empty chooser cannot be opened); `adapterId`
+filters on `live` but `MANUAL` is always live, so it is never empty; and the
+`analysisId` choosers are unfiltered, so an empty list genuinely means no matrix
+and "none yet" is true — one of them already carries a hint explaining why.
+
+**`frontend/pages/construction.js` was swept too, and is the model the guard
+itself cites** (`command.js` points at its "locks with a reason rather than a
+modal whose required dropdown is empty"). Of its ~21 doors, all but two gate the
+command-bar button on exactly the array the chooser is built from, so the chooser
+can never be reached empty. The two exceptions each now carry an `emptyHint`:
+`exception-retest` has a *second* required chooser — a released test pack —
+that the button's `openExceptions > 0` gate does not cover, so an open exception
+with no released pack opened onto an empty pack list; and `accept-system` was the
+one door whose button is role-gated only, so a project with no system defined
+reached an empty system chooser (its inline hint was also stale, still naming
+"an exception" after the source was widened to every defined system, and the
+`emptyHint` replaces it). Left alone: `inspection` offers `openPlans` while its
+button gates on `agreedPlans`, but `agreedPlans ⊆ openPlans`, so the chooser is
+never empty when the button is live — the server refuses an unagreed pick, which
+is a different matter from an empty dropdown and is not changed here.
+
+**`frontend/pages/design.js` splits the other way, and six doors needed the
+hint.** Its submittal, design-change, container, baseline and inheritance
+workflows all gate the command-bar button on the array the chooser is built
+from, so those cannot open empty. But six "primary verb" buttons are gated on
+the role alone, each opening a *filtered* required chooser: `submit-review` and
+`markup` offer only current deliverables (a project whose every drawing is
+superseded saw "none yet"); `comment` and `decide-review` offer only open review
+cycles; `answer` offers only unanswered RFIs (every RFI answered read as no RFI);
+and `resolve-clash` offers only open clashes. Each now carries an `emptyHint`
+naming what it filters on. The create verbs (`drawing`, `deposit`,
+`specification`, `propose-change`) have no data-backed required chooser, so they
+have no trap and were left alone.
+
+**`frontend/pages/contracts.js` gates almost nothing at the button, so six
+filtered choosers needed the hint.** Only `adopt-form` gates its command-bar
+button on a source (a contract existing and no form yet loaded); the rest are
+role-gated. Six of them open a *filtered* required chooser: `reply` offers only
+letters still awaiting a reply; `value` offers only an instructed variation not
+yet valued (a domestic or already-valued one is excluded); `reject` offers only
+a change not yet instructed or refused; `refer` offers only a dispute at
+notice-given and `decision` only one that has been referred; and `signature`
+offers only a document whose file the platform actually holds (evidence
+referenced but not uploaded is filtered out). Each now carries an `emptyHint`.
+Left alone: `dispute` and `obligation` (and the inline "track a commitment"
+command) choose a contract from an *unfiltered* list, so an empty one genuinely
+means no contract exists and "none yet" is true; `adopt-form`'s standard-form
+chooser reads a platform catalogue, not project data.
+
+**Two pages were swept and needed nothing.** `siteservices.js` does not use
+`emptyHint` at all — every one of its ~45 inline-`command()` handlers pre-guards
+its filtered array with a tailored `blocked`/`toast` and `return` *before* the
+form opens (e.g. "Every open interface still needs an owner before it can be
+accepted"), which is stronger than the hint because the empty form never opens;
+its remaining choosers are unfiltered maps or platform reference lists. `commercial.js`
+has only one filtered chooser (`contra`'s pay-less-notice selector), and it is
+`required: false` so the guard never fires on it; every other chooser there is
+unfiltered or a reference list. Neither page was changed.
+
+**`frontend/pages/field.js` needed three.** It button-gates its mission- and
+site-dependent actions (the author's own note calls out the empty-dropdown dead
+end), but three role-gated commands open a *filtered* required chooser:
+`plant-off` offers only plant on hire, `discharge` only open site findings, and
+`close-walk` only open observations. Each now carries an `emptyHint`. Its
+unfiltered choosers (`finding`'s visit list, the progress and vision-review
+activity pickers, the supplier list) and the per-draft vision-review item picker
+were left alone — an empty one of those genuinely means none exists.
+
+**`frontend/pages/programme.js` needed two, and the distinction sharpened the
+rule.** A filtered chooser that already carries a hint explaining its filter is
+not a bare-generic trap, because the guard appends that hint after "there is
+none here yet" and the two together are not misleading: `comment` ("No review is
+open…") and `respond` ("Only unanswered comments…") were left exactly as they
+are. The two with a *filtered* chooser and **no** such hint were the gaps:
+`closeReview` offers only an open review, and `clear` only an open constraint —
+each now carries an `emptyHint`. The unfiltered choosers (`openReview`'s run
+list, `task`'s work-package list, `constraint`'s activity list, and the review
+invitee list) were left alone.
+
+**`handover.js` needed nothing** — like `construction.js` it button-gates every
+required chooser on exactly its source array (the pack and requirement
+workflows), its two secondary choosers (`defect`'s asset, `decidehandover`'s
+manifest) are `required: false`, and its remaining commands take text or dates.
+(One unrelated defect was found here and has since been fixed: the *Forecast
+maintenance* handler used to post a hardcoded `annualBudgetMinor` of £120k with
+no way to change it, so its deferrals were computed against an invented budget —
+exactly the fabricated-input failure the operating directive forbids. It now
+opens a form that asks for the horizon, with the usual five-year default, and the
+annual maintenance budget, with no default, so the figure the forecast is
+measured against is the operator's. The ACU cost is still confirmed before the
+run, now through the form's own `aiCost` quote rather than a separate dialog.)
+
+**A second defect surfaced while that fix was being run in a real browser, and
+is also fixed.** `money()` and `exact()` in `frontend/lib/ui.js` formatted every
+figure through `Intl.NumberFormat(LOCALE, …)`, where `LOCALE` was
+`navigator.language` passed straight through. A host set to the POSIX locale
+reports `en-US@posix`, which is not a well-formed BCP-47 tag, so the constructor
+threw `RangeError: Invalid language tag` — and because every money figure runs
+through it, the error took down the whole screen, not one number. `LOCALE` now
+goes through `resolveLocale()`, which checks each tag the browser offers with
+`Intl.getCanonicalLocales` and falls back to `en-GB` when none is usable; the
+intent of honouring the reader's own locale is kept, but a malformed one can no
+longer break the console. Verified in a headless browser whose `navigator.language`
+was `en-US@posix`: the handover screen rendered, assets and money formatted, and
+the maintenance form opened — where before it showed only the RangeError. The
+explicit `toLocaleString('en-GB')` calls elsewhere were never exposed to this
+(they pass a valid tag), and bare `toLocaleString()` uses the engine's
+already-resolved default rather than a raw tag, so the fix is scoped to the one
+place that passed `navigator.language` into `Intl`.
+
+**`tenants.js` needed two.** Its per-row group actions go straight to a form with
+no pre-guard, and two of them open a *filtered* required chooser: `attach` offers
+only a company not already in a group (a tenancy is in one group at most), and
+`transfer` offers only a group other than the one the company is in. Each now
+carries an `emptyHint`. Its other choosers read platform vocabularies — currencies,
+jurisdictions, the module catalogue — which are reference data, not project state.
+
+**`team.js` closed the sweep and needed nothing.** Its two filtered project-data
+choosers — `company-roles` (the subject's own active roles) and `place`'s manager
+picker (other active people) — are both `required: false` by design, so the guard
+never fires on them; its remaining choosers read authority or reference
+catalogues (`tenantGrantableRoles`, the reporting metrics, the seat classes and
+capabilities the admin holds), not project state.
+
+**The empty-chooser sweep is complete across the eleven highest-select screens.**
+Audited: procurement, pipeline, construction, design, contracts, siteservices,
+commercial, field, programme, handover, tenants and team. Thirty filtered
+required choosers whose button or handler did not already prevent an empty open
+now carry an `emptyHint` naming what they filter on, so a chooser that is empty
+because everything is settled no longer reads as one that is empty because
+nothing exists. The rule the sweep settled on: a chooser needs the hint only when
+it is a *required* select, its options are *filtered* on project state, nothing
+upstream (a button gate, a pre-form guard, or an existing filter-explaining hint)
+already prevents or explains the empty open, and the filter can realistically
+exclude everything while records still exist. Unfiltered choosers, optional ones,
+reference/vocabulary catalogues, and choosers already gated or guarded were left
+untouched.
+
+**The sweep was then extended across every remaining page that carries a
+chooser, for completeness.** A mechanical scan classified each: most lower-select
+pages (admin, alerts, billing, blog, developer, enterprise, group, newsletter,
+onboarding, partners, portfolio, security, support, work) choose from unfiltered
+maps or reference catalogues and needed nothing; `concept` already carried the
+four `emptyHint`s its filtered choosers needed; `control` is fully button-gated
+(reachable, openWorkstreams, linkableProjects, draftMeetings, closableActions all
+gate on their own `.length`); `documents` and bid-on's `issue-invoice` already
+explain their filter in a hint; and `bidonguest`'s filtered chooser is optional
+with a standing "no document" option. Ten real gaps were found and fixed: `risk`
+(`rescore`, open risks only), `aiengine` (`clear-credential`, stored overrides
+only), and eight in `bidon` — `resolve-gap` (bids with an open gap), the four
+engagement-state transitions (`activate`/`pause`/`resume`/`open-cycle`, each
+filtered to the state it acts on), and the three issued-invoice actions
+(`record-payment`/`waive`/`void`). bid-on's six question/gap choosers already
+carried `emptyHint`s from the earlier bid-on work. With this, every filtered
+required chooser in the console that is not otherwise gated, guarded or hinted
+names what it filters on.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
