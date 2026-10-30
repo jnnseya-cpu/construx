@@ -2336,11 +2336,15 @@ export async function procurement(root) {
               required: false,
               // Pre-selected to the closest match so the common case is one
               // confirmation, not a search. Blank where nothing is close enough.
-              value: suggested ? String(suggested.medianMinor) : '',
+              // The value carries the rate AND the description, because two items
+              // can share a rate (£32 plasterboard and £32 hardcore) and a value
+              // of the rate alone would pre-select whichever came first in the
+              // list — showing the wrong name against the right money.
+              value: suggested ? `${suggested.medianMinor}|${suggested.description}` : '',
               options: [
                 { value: '', label: '— none; I will type the rate —' },
                 ...candidates.map((rate) => ({
-                  value: String(rate.medianMinor),
+                  value: `${rate.medianMinor}|${rate.description}`,
                   label: `${rate.description} · ${exact(rate.medianMinor)}/${item.unit} · ${String(rate.confidence ?? '').toLowerCase()}`,
                 })),
               ],
@@ -2401,7 +2405,9 @@ export async function procurement(root) {
                 const basis = v[`basis:${item.boqItemId}`] || 'labourRateMinor';
                 return { ...base, [basis]: typed };
               }
-              const picked = Number(v[`libRate:${item.boqItemId}`] ?? 0);
+              // The value is "rateMinor|description"; the rate is the part before
+              // the first bar, so a description of its own cannot corrupt it.
+              const picked = Number(String(v[`libRate:${item.boqItemId}`] ?? '').split('|')[0]);
               if (picked > 0) {
                 return { ...base, subcontractRateMinor: picked, rateSource: 'LIBRARY' };
               }
