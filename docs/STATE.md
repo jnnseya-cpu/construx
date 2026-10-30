@@ -5206,6 +5206,23 @@ carries the `emptyHint` the guard prints in place of that sentence, naming what
 it filters on, so a subscriber with six answered TQs is told the questions are
 settled rather than that none exist.
 
+**The same sweep was run across `frontend/pages/pipeline.js`.** Six commands
+there open a *filtered* required chooser whose command-bar button is not gated on
+the same filter, so the chooser can be reached empty while the things it filters
+do exist: `bid-section`, `bid-issue`, `bid-challenge` and `bid-floor` all offer
+only packs not yet issued (a register of all-issued packs read "no pack here
+yet"); `finding-dispose` offers only open, non-critical findings (a review with
+only critical or already-decided findings read "no finding"); and `bid-outcome`
+offers only a bid at a decision with no outcome yet, while its button gates on
+stage alone — so once every bid had its outcome recorded, the button stayed live
+and the chooser was empty. Each now carries an `emptyHint`. The choosers that
+were *already* safe were left alone and are the reason the sweep is bounded:
+`qualify`, `decide` and `convert` have buttons gated on `scorable`/`decidable`/
+`convertible` being non-empty (an empty chooser cannot be opened); `adapterId`
+filters on `live` but `MANUAL` is always live, so it is never empty; and the
+`analysisId` choosers are unfiltered, so an empty list genuinely means no matrix
+and "none yet" is true — one of them already carries a hint explaining why.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

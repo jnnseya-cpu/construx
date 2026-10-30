@@ -2055,7 +2055,10 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Pack', type: 'select',
           options: (bidPacks?.packs ?? [])
             .filter((pack) => pack.status !== 'ISSUED')
-            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.written ?? 0} of ${pack.completeness?.total ?? 0} written` })) },
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.written ?? 0} of ${pack.completeness?.total ?? 0} written` })),
+          emptyHint:
+            'Only a pack that has not been issued can still be written. If every pack is off this list, they have all ' +
+            'been issued — issuing is final. Plan a new response pack above to start another.' },
       ],
       transform: ({ packId: _packId }) => ({}),
     },
@@ -2071,7 +2074,10 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Pack', type: 'select',
           options: (bidPacks?.packs ?? [])
             .filter((pack) => pack.status !== 'ISSUED')
-            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })) },
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })),
+          emptyHint:
+            'Only a pack not yet issued can be issued, and issuing happens once. If the list is empty, every pack has ' +
+            'already been issued — there is nothing left to send.' },
       ],
       transform: ({ packId: _packId }) => ({}),
     },
@@ -2099,7 +2105,10 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Pack', type: 'select',
           options: (bidPacks?.packs ?? [])
             .filter((pack) => pack.status !== 'ISSUED')
-            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })) },
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — ${pack.completeness?.summary ?? ''}` })),
+          emptyHint:
+            'The red team runs before a pack is issued, not after. If the list is empty, every pack has already been ' +
+            'issued and can no longer be attacked — attack the next one before you issue it.' },
       ],
       transform: ({ packId: _packId }) => ({}),
     },
@@ -2116,7 +2125,11 @@ export async function pipeline(root) {
         { name: 'findingId', label: 'Finding', type: 'select',
           options: (latestReview?.findings ?? [])
             .filter((f) => f.severity !== 'CRITICAL' && !f.disposition)
-            .map((f) => ({ value: f.id, label: `${f.severity} · ${f.title}` })) },
+            .map((f) => ({ value: f.id, label: `${f.severity} · ${f.title}` })),
+          emptyHint:
+            'This disposes of an open finding that is not critical. A critical finding is a hard block with no ' +
+            'disposition — it is fixed, not decided — and one already decided is settled. An empty list means every ' +
+            'high finding has a recorded decision, and only critical ones (if any) remain to fix.' },
         { name: 'decision', label: 'What was decided', type: 'select',
           options: [
             { value: 'FIXED', label: 'Fixed — the section has been rewritten' },
@@ -2141,7 +2154,10 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Pack', type: 'select',
           options: (bidPacks?.packs ?? [])
             .filter((pack) => pack.status !== 'ISSUED')
-            .map((pack) => ({ value: pack.id, label: `${pack.reference} — floor ${pack.qualityFloorPercent ?? 80}%` })) },
+            .map((pack) => ({ value: pack.id, label: `${pack.reference} — floor ${pack.qualityFloorPercent ?? 80}%` })),
+          emptyHint:
+            'The quality floor is set before a pack is issued. If the list is empty, every pack has already been ' +
+            'issued and its floor is fixed — the floor only governs a pack still being worked on.' },
         { name: 'floorPercent', label: 'Quality floor (%)', type: 'number', min: 0, max: 100,
           hint: 'The findable mark this review can measure, not the buyer’s own mark. 80 is the product’s 4/5.' },
       ],
@@ -2432,7 +2448,10 @@ export async function pipeline(root) {
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
           options: opportunities
             .filter((o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome)
-            .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })) },
+            .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })),
+          emptyHint:
+            'This records the outcome of a bid that reached a decision to bid and has none yet. If the list is empty, ' +
+            'every such bid already has its outcome on record — an outcome is written once and not rewritten.' },
         { name: 'outcome', label: 'How it ended', type: 'select',
           options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }] },
         { name: 'decidedOn', label: 'Decided on', type: 'date' },
