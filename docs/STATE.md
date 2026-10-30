@@ -5195,6 +5195,17 @@ so an open question with a closing window is the first thing read, not something
 found too late. Bidder-side questions are not counted against the client window,
 because their answer is issued, not asked for.
 
+**The three commands that act on one open clarification now say so when there
+is none.** `Check against the pack`, `Withdraw a clarification` and `Record the
+client's answer` each filter their clarification chooser — the first two to open
+questions, the last to open *client-side* ones. A register holding only answered,
+issued or withdrawn questions left all three choosers empty, and the shared
+empty-form guard then read "there is no clarification here yet" — false, and
+exactly the filtered-chooser trap `frontend/lib/command.js` documents. Each now
+carries the `emptyHint` the guard prints in place of that sentence, naming what
+it filters on, so a subscriber with six answered TQs is told the questions are
+settled rather than that none exist.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
