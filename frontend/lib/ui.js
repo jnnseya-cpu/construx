@@ -133,13 +133,40 @@ function minorPerMajor(currency) {
 }
 
 /**
- * The reader's locale, taken from the browser rather than assumed.
+ * The reader's locale, taken from the browser rather than assumed — but only
+ * when it is one `Intl` can actually use.
  *
  * `Intl` already knows a French reader expects a space before the symbol and a
- * comma for the decimal. Hardcoding a symbol table threw that away and got the
- * answer wrong for every currency outside three.
+ * comma for the decimal, so the browser's own locale is honoured where it is
+ * valid. What it is not always is valid: a host set to the POSIX locale reports
+ * `en-US@posix`, which is not a well-formed BCP-47 tag, and passing it straight
+ * to `new Intl.NumberFormat('en-US@posix')` throws `RangeError: Invalid language
+ * tag` — which took down every screen that formats a number, not just one. So
+ * each tag the browser offers is checked, the first well-formed one is used, and
+ * a readable default stands in when none is, rather than trusting the string
+ * blind.
  */
-const LOCALE = typeof navigator !== 'undefined' && navigator.language ? navigator.language : 'en-GB';
+function resolveLocale() {
+  if (typeof navigator === 'undefined') return 'en-GB';
+  const offered = [navigator.language, ...(navigator.languages ?? [])].filter(
+    (tag) => typeof tag === 'string' && tag.length > 0,
+  );
+  for (const tag of offered) {
+    try {
+      // Throws on a malformed tag such as "en-US@posix" and returns [] for one
+      // that canonicalises to nothing. A tag that comes back is one every
+      // `Intl` formatter below will accept; its canonical form is what they
+      // want, so that is what is kept.
+      const [canonical] = Intl.getCanonicalLocales(tag);
+      if (canonical) return canonical;
+    } catch {
+      // Not a usable tag — try the next one the browser offered.
+    }
+  }
+  return 'en-GB';
+}
+
+const LOCALE = resolveLocale();
 
 function symbolFor(currency) {
   // Just the symbol, so the abbreviated forms below can keep their K/M/B suffix.

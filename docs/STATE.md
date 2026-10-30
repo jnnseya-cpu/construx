@@ -5310,6 +5310,24 @@ annual maintenance budget, with no default, so the figure the forecast is
 measured against is the operator's. The ACU cost is still confirmed before the
 run, now through the form's own `aiCost` quote rather than a separate dialog.)
 
+**A second defect surfaced while that fix was being run in a real browser, and
+is also fixed.** `money()` and `exact()` in `frontend/lib/ui.js` formatted every
+figure through `Intl.NumberFormat(LOCALE, …)`, where `LOCALE` was
+`navigator.language` passed straight through. A host set to the POSIX locale
+reports `en-US@posix`, which is not a well-formed BCP-47 tag, so the constructor
+threw `RangeError: Invalid language tag` — and because every money figure runs
+through it, the error took down the whole screen, not one number. `LOCALE` now
+goes through `resolveLocale()`, which checks each tag the browser offers with
+`Intl.getCanonicalLocales` and falls back to `en-GB` when none is usable; the
+intent of honouring the reader's own locale is kept, but a malformed one can no
+longer break the console. Verified in a headless browser whose `navigator.language`
+was `en-US@posix`: the handover screen rendered, assets and money formatted, and
+the maintenance form opened — where before it showed only the RangeError. The
+explicit `toLocaleString('en-GB')` calls elsewhere were never exposed to this
+(they pass a valid tag), and bare `toLocaleString()` uses the engine's
+already-resolved default rather than a raw tag, so the fix is scoped to the one
+place that passed `navigator.language` into `Intl`.
+
 **`tenants.js` needed two.** Its per-row group actions go straight to a form with
 no pre-guard, and two of them open a *filtered* required chooser: `attach` offers
 only a company not already in a group (a tenancy is in one group at most), and
