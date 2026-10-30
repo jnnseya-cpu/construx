@@ -3232,6 +3232,17 @@ ordinary estimate line) and no flat-rate path was added to the component build-u
 (`priceItem` still refuses a number typed straight in) — the applied rate is
 honest because it carries a stated provenance the build-up rule exists to demand.
 
+**The pricing form carries every priceable head, not a handful.** "Price the
+bill" collects all four time-related heads (preliminaries, site management,
+logistics, quality — by the week), the quantified ones (temporary works, testing,
+commissioning, waste — as sums), the fees (design, professional — as lump sums)
+and insurance. It used to expose only preliminaries, health-and-safety, waste and
+insurance, which forced an estimator to *exclude* every other head they were
+actually doing — a bid that reads as thin and over-caveated. Now a head is
+excluded only when it genuinely does not apply. The cost model already priced all
+of these (`timeRelated` / `quantified` / `fees` in `costModel.ts`); the form was
+the narrow part, and is not any more.
+
 Every figure carries what is behind it — the count, the spread and the age of
 the newest observation — and confidence is stated rather than implied. A single
 observation is called a data point, not a benchmark. Benchmarking an estimate

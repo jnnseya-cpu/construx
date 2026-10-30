@@ -2247,6 +2247,14 @@ export async function procurement(root) {
           hint: 'Set-up, welfare, accommodation, utilities. Multiplied by the period above, so a longer job costs more.',
         },
         {
+          name: 'siteManagementWeeklyMinor',
+          label: 'Site management, per week',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'A visiting or resident manager — the site-staff establishment, by the week. Price it here rather than excluding it.',
+        },
+        {
           name: 'safetyWeeklyMinor',
           label: 'Health and safety, per week',
           type: 'number',
@@ -2255,12 +2263,68 @@ export async function procurement(root) {
           hint: 'Safety advice, inductions, PPE, monitoring.',
         },
         {
+          name: 'logisticsWeeklyMinor',
+          label: 'Logistics, per week',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Gate, marshalling, hoists, cranage, deliveries — by the week.',
+        },
+        {
+          name: 'qualityWeeklyMinor',
+          label: 'Quality, per week',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Inspection, ITP administration, snagging and handover evidence — by the week.',
+        },
+        {
+          name: 'temporaryWorksMinor',
+          label: 'Temporary works, as a sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Design-and-check plus hire — scaffold, props, support. A CDM duty, not a percentage allowance.',
+        },
+        {
+          name: 'testingMinor',
+          label: 'Testing, as a sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Materials, structural and systems testing against the ITP.',
+        },
+        {
+          name: 'commissioningMinor',
+          label: 'Commissioning, as a sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'Systems commissioning, witnessing and demonstration.',
+        },
+        {
           name: 'wasteMinor',
           label: 'Waste, as a sum',
           type: 'number',
           money: true,
           required: false,
           hint: 'Skips, muck away and gate fees for the whole job.',
+        },
+        {
+          name: 'designMinor',
+          label: 'Design, as a lump sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'The contractor-designed portion, per the design responsibility matrix.',
+        },
+        {
+          name: 'professionalFeesMinor',
+          label: 'Professional fees, as a lump sum',
+          type: 'number',
+          money: true,
+          required: false,
+          hint: 'External consultants, surveys, statutory and planning fees.',
         },
         {
           name: 'insurancePercent',
@@ -2363,13 +2427,39 @@ export async function procurement(root) {
           v.prelimsWeeklyMinor
             ? { head: 'PRELIMINARIES', description: 'Site set-up, welfare and establishment', weeklyRateMinor: Number(v.prelimsWeeklyMinor), quantity: 1 }
             : null,
+          v.siteManagementWeeklyMinor
+            ? { head: 'SITE_MANAGEMENT', description: 'Site management establishment', weeklyRateMinor: Number(v.siteManagementWeeklyMinor), quantity: 1 }
+            : null,
           v.safetyWeeklyMinor
             ? { head: 'HEALTH_AND_SAFETY', description: 'Safety advice, inductions and monitoring', weeklyRateMinor: Number(v.safetyWeeklyMinor), quantity: 1 }
             : null,
+          v.logisticsWeeklyMinor
+            ? { head: 'LOGISTICS', description: 'Gate, deliveries, hoists and cranage', weeklyRateMinor: Number(v.logisticsWeeklyMinor), quantity: 1 }
+            : null,
+          v.qualityWeeklyMinor
+            ? { head: 'QUALITY', description: 'Inspection, ITP administration and handover', weeklyRateMinor: Number(v.qualityWeeklyMinor), quantity: 1 }
+            : null,
         ].filter(Boolean);
-        const quantified = v.wasteMinor
-          ? [{ head: 'WASTE', description: 'Skips, muck away and gate fees', unit: 'sum', quantity: 1, rateMinor: Number(v.wasteMinor) }]
-          : [];
+        const quantified = [
+          v.temporaryWorksMinor
+            ? { head: 'TEMPORARY_WORKS', description: 'Temporary works design, check and hire', unit: 'sum', quantity: 1, rateMinor: Number(v.temporaryWorksMinor) }
+            : null,
+          v.testingMinor
+            ? { head: 'TESTING', description: 'Materials, structural and systems testing', unit: 'sum', quantity: 1, rateMinor: Number(v.testingMinor) }
+            : null,
+          v.commissioningMinor
+            ? { head: 'COMMISSIONING', description: 'Systems commissioning and demonstration', unit: 'sum', quantity: 1, rateMinor: Number(v.commissioningMinor) }
+            : null,
+          v.wasteMinor
+            ? { head: 'WASTE', description: 'Skips, muck away and gate fees', unit: 'sum', quantity: 1, rateMinor: Number(v.wasteMinor) }
+            : null,
+        ].filter(Boolean);
+        const fees = [
+          v.designMinor ? { head: 'DESIGN', description: 'Contractor-designed portion', lumpSumMinor: Number(v.designMinor) } : null,
+          v.professionalFeesMinor
+            ? { head: 'PROFESSIONAL_FEES', description: 'Consultants, surveys and statutory fees', lumpSumMinor: Number(v.professionalFeesMinor) }
+            : null,
+        ].filter(Boolean);
         return {
           packageId: v.packageId,
           durationWeeks: weeks,
@@ -2378,6 +2468,7 @@ export async function procurement(root) {
           margin: { overheadPercent: Number(v.overheadPercent), profitPercent: Number(v.profitPercent) },
           ...(timeRelated.length > 0 ? { timeRelated } : {}),
           ...(quantified.length > 0 ? { quantified } : {}),
+          ...(fees.length > 0 ? { fees } : {}),
           ...(v.insurancePercent
             ? { insurance: { policies: [{ type: 'Contract works and liability', percentOfContractValue: Number(v.insurancePercent) }] } }
             : {}),
