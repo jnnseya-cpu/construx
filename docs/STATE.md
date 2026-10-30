@@ -5121,6 +5121,26 @@ validated before a single write, naming the line any failure fell on, so the
 register never carries half a batch. The ceiling is fifty, which is a guard
 against a paste nobody read, not a real limit.
 
+**A clarification is checked against the pack before it is sent.** Raising a
+clarification is the cheap half; the valuable half is catching the one the
+documents already answer — six were raised on a live tender before the pricing
+schedule was in hand, and the schedule answered five of them. A clarification
+the pack already answers, sent to the buyer, marks the bidder as one who did not
+read it. `checkClarificationAgainstPack` (POST
+`…/tender-clarifications/:id/pack-check`, `Check against the pack` in the command
+bar) reads the clarification against the tender documents ingested on the
+project and returns a verdict — **ANSWERED**, with the citing document and the
+quoted passage; **GAP**, nothing found; or **NO_PACK**, nothing ingested to
+check against. Three rules make it safe to rely on: it checks only what is
+loaded and returns `NO_PACK` rather than guessing against an empty pack; it
+**writes no state and never withdraws anything**, because a model wrongly saying
+"answered" would drop a question the bidder needed, so the withdrawal stays a
+person's act in the portal; and the verdict **must come from a model** — a
+clarification and the pack are `COMMERCIAL_L3`, so `requireModel` refuses the
+local stand-in and the task refuses to run without a reasoning provider cleared
+for that sensitivity, rather than dressing a fixed answer as a reading of the
+pack.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

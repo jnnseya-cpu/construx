@@ -747,6 +747,9 @@ export async function procurement(root) {
               permitted: can('ESTIMATE_TENDER', 'R'), reason: blockedReason('ESTIMATE_TENDER', 'R') },
             { id: 'clarification', label: 'Raise clarification', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'clarification-batch', label: 'Raise several clarifications', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'clarification-packcheck', label: 'Check against the pack',
+              permitted: can('PROCUREMENT_AWARD', 'C') && (intel.clarifications ?? []).some((c) => c.status === 'OPEN'),
+              reason: blockedReason('PROCUREMENT_AWARD', 'C') ?? 'No open clarification to check' },
             { id: 'issueClarification', label: 'Issue answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
               reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Every clarification on the register has been answered' },
@@ -3394,6 +3397,42 @@ export async function procurement(root) {
             ...(v.responseDeadline ? { responseDeadline: v.responseDeadline } : {}),
           })),
       }),
+    },
+    'clarification-packcheck': {
+      title: 'Check a clarification against the pack',
+      intent:
+        'Before you send a clarification, check whether the tender documents already answer it. The agent reads the ' +
+        'ingested pack — the ITT, the pricing schedule, the specification — and comes back with a verdict and, where ' +
+        'it finds one, the passage that answers it. It is advice you verify: it never withdraws the question. A ' +
+        'clarification the pack already answers is one to withdraw in the portal before the deadline.',
+      path: (collected) => `/v1/projects/${projectId}/tender-clarifications/${collected.clarificationId}/pack-check`,
+      submitLabel: 'Check it',
+      fields: [
+        { name: 'clarificationId', label: 'Clarification', type: 'select',
+          options: (intel.clarifications ?? [])
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+      ],
+      transform: () => ({}),
+      report: (res) => {
+        if (res.verdict === 'NO_PACK') {
+          return { title: 'No pack to check against', message: res.reasoning, tone: 'warn' };
+        }
+        if (res.verdict === 'ANSWERED') {
+          const cite = res.citation ? ` — ${res.citation.document}: "${res.citation.passage}"` : '';
+          const conf = res.confidence != null ? ` (${Math.round(res.confidence * 100)}% confidence)` : '';
+          return {
+            title: `Likely already answered${conf}`,
+            message: `${res.reasoning}${cite} Verify it — and if it holds, withdraw ${res.reference} in the portal before the deadline.`,
+            tone: 'warn',
+          };
+        }
+        return {
+          title: 'No answer found in the pack — looks like a genuine gap',
+          message: `${res.reasoning} Checked against: ${(res.documentsSearched || []).join(', ') || 'nothing'}. Keep ${res.reference}.`,
+          tone: 'ok',
+        };
+      },
     },
     issueClarification: {
       title: 'Issue the answer',

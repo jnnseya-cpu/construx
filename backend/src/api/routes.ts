@@ -157,6 +157,7 @@ import * as evidenceclaim from '../domain/evidenceclaim.ts';
 import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
+import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
@@ -24384,6 +24385,17 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => tenderintel.raiseTenderClarifications(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/pack-check',
+    ai: { engine: 'TENDER', taskType: 'clarification_pack_check', capability: 'REASONING' },
+    description: 'Check whether the tender pack already answers a clarification, before it is sent — advice, citing the passage; never withdraws it',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) =>
+      tenderpackcheck.checkClarificationAgainstPack(projectContext(platform, ctx), {
+        clarificationId: ctx.params.clarificationId as string,
+      }),
   },
   {
     method: 'POST',
