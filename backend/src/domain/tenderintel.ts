@@ -1153,8 +1153,69 @@ export type TenderIntelPosition = {
     carriedRiskMinor: number;
     rankingSuppressed: boolean;
   }>;
+  clarificationStanding: ClarificationStanding;
   summary: string;
 };
+
+/**
+ * Where the clarification register stands, and whether a deadline is about to be
+ * missed. The question that loses a tender is rarely the one that was answered
+ * wrong — it is the one that was never asked because the window shut while it sat
+ * open, so the counts carry a deadline edge: a client-side question still open
+ * with its answer-by date within a week, or already past it.
+ */
+export type ClarificationStanding = {
+  total: number;
+  open: number;
+  answered: number;
+  withdrawn: number;
+  issued: number;
+  /** Client-side open questions whose answer-by date is within a week. */
+  dueSoon: number;
+  /** Client-side open questions whose answer-by date has already passed. */
+  overdue: number;
+  summary: string;
+};
+
+export function clarificationStanding(
+  clarifications: Array<{ side: ClarificationSide; status: string; responseDeadline?: string }>,
+  asAt: string = new Date().toISOString().slice(0, 10),
+): ClarificationStanding {
+  const today = asAt.slice(0, 10);
+  const weekOut = new Date(Date.parse(today) + 7 * 86_400_000).toISOString().slice(0, 10);
+
+  let open = 0;
+  let answered = 0;
+  let withdrawn = 0;
+  let issued = 0;
+  let dueSoon = 0;
+  let overdue = 0;
+  for (const c of clarifications) {
+    if (c.status === 'OPEN') open += 1;
+    else if (c.status === 'ANSWERED') answered += 1;
+    else if (c.status === 'WITHDRAWN') withdrawn += 1;
+    else if (c.status === 'ISSUED') issued += 1;
+    if (c.status === 'OPEN' && c.side === 'CLIENT' && c.responseDeadline) {
+      const due = c.responseDeadline.slice(0, 10);
+      if (due < today) overdue += 1;
+      else if (due <= weekOut) dueSoon += 1;
+    }
+  }
+
+  const bits: string[] = [];
+  if (open) bits.push(`${open} open`);
+  if (answered) bits.push(`${answered} answered`);
+  if (withdrawn) bits.push(`${withdrawn} withdrawn`);
+  if (issued) bits.push(`${issued} issued`);
+  let summary = clarifications.length === 0 ? 'No clarifications raised.' : `${bits.join(', ')}.`;
+  if (overdue > 0) {
+    summary = `${overdue} client question${overdue === 1 ? '' : 's'} past the answer-by date and still open. ${summary}`;
+  } else if (dueSoon > 0) {
+    summary = `${dueSoon} client question${dueSoon === 1 ? '' : 's'} due within a week and still open. ${summary}`;
+  }
+
+  return { total: clarifications.length, open, answered, withdrawn, issued, dueSoon, overdue, summary };
+}
 
 export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
   authorise(ctx, 'PROCUREMENT_AWARD', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
@@ -1194,14 +1255,14 @@ export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
     };
   });
 
-  const unanswered = clarifications.filter((c) => c.status === 'OPEN').length;
+  const standing = clarificationStanding(clarifications);
   const suppressed = comparisons.filter((c) => c.rankingSuppressed).length;
 
   const parts: string[] = [];
   parts.push(`${clarifications.length} clarification${clarifications.length === 1 ? '' : 's'}`);
-  if (unanswered > 0) parts.push(`${unanswered} unanswered`);
+  if (standing.open > 0) parts.push(`${standing.open} open`);
   parts.push(`${comparisons.length} comparison${comparisons.length === 1 ? '' : 's'}`);
   if (suppressed > 0) parts.push(`${suppressed} with ranking suppressed`);
 
-  return { clarifications, comparisons, summary: parts.join(', ') + '.' };
+  return { clarifications, comparisons, clarificationStanding: standing, summary: parts.join(', ') + '.' };
 }

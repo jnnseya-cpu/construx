@@ -5161,6 +5161,16 @@ the **client's answer** (with its date), and the register table shows them in an
 then withdrawn with a reason or answered in the client's words — is visible on
 one row rather than ending at a bare status.
 
+**The standing carries the deadline.** The question that loses a tender is rarely
+the one answered wrong — it is the one never asked, because the window shut while
+it sat open. `clarificationStanding` counts the register by status and adds a
+deadline edge: a client-side question still open with its answer-by date within a
+week (`dueSoon`), or already past it (`overdue`). It is on the position, and the
+register shows a warning — amber for due-soon, red for overdue — above the table,
+so an open question with a closing window is the first thing read, not something
+found too late. Bidder-side questions are not counted against the client window,
+because their answer is issued, not asked for.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

@@ -1016,6 +1016,46 @@ describe('tender intelligence · the bidder’s own side of a question', () => {
   });
 });
 
+describe('tender intelligence · the clarification standing', () => {
+  const asAt = '2026-11-06';
+
+  it('counts by status and flags client questions near or past their answer-by date', () => {
+    const standing = tenderintel.clarificationStanding(
+      [
+        { side: 'CLIENT', status: 'OPEN', responseDeadline: '2026-11-10' }, // due within a week
+        { side: 'CLIENT', status: 'OPEN', responseDeadline: '2026-11-04' }, // overdue
+        { side: 'CLIENT', status: 'OPEN' }, // open, no deadline
+        { side: 'CLIENT', status: 'ANSWERED', responseDeadline: '2026-11-10' },
+        { side: 'CLIENT', status: 'WITHDRAWN' },
+        { side: 'BIDDER', status: 'OPEN', responseDeadline: '2026-11-04' }, // not a client-side question
+      ],
+      asAt,
+    );
+    assert.equal(standing.total, 6);
+    assert.equal(standing.open, 4);
+    assert.equal(standing.answered, 1);
+    assert.equal(standing.withdrawn, 1);
+    assert.equal(standing.dueSoon, 1);
+    assert.equal(standing.overdue, 1, 'the bidder-side overdue question is not counted against the client window');
+    assert.match(standing.summary, /past the answer-by date/);
+  });
+
+  it('is empty-safe, and warns of due-soon when nothing is overdue', () => {
+    assert.equal(tenderintel.clarificationStanding([], asAt).total, 0);
+    const soon = tenderintel.clarificationStanding([{ side: 'CLIENT', status: 'OPEN', responseDeadline: '2026-11-12' }], asAt);
+    assert.equal(soon.dueSoon, 1);
+    assert.equal(soon.overdue, 0);
+    assert.match(soon.summary, /due within a week/);
+  });
+
+  it('surfaces the standing on the position', () => {
+    const standing = tenderintel.tenderIntelPosition(asQS()).clarificationStanding;
+    assert.ok(standing);
+    assert.equal(typeof standing.total, 'number');
+    assert.equal(typeof standing.open, 'number');
+  });
+});
+
 describe('tender intelligence · what the catalogue says', () => {
   /**
    * The specification puts issue and commercial interpretation on the person.

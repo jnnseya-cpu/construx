@@ -1195,6 +1195,19 @@ export async function procurement(root) {
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
               <h2 style="padding:15px 17px 0">Clarification register</h2>
+              ${
+                intel.clarificationStanding && (intel.clarificationStanding.overdue > 0 || intel.clarificationStanding.dueSoon > 0)
+                  ? html`<div style="padding:10px 17px 0"><div class="notice ${intel.clarificationStanding.overdue > 0 ? 'bad' : 'warn'}"><div>
+                      ${
+                        intel.clarificationStanding.overdue > 0
+                          ? html`<b>${intel.clarificationStanding.overdue} client clarification${intel.clarificationStanding.overdue === 1 ? ' is' : 's are'} past the answer-by date and still open.</b>
+                              Submit them to the client, or withdraw the ones the pack answers, before the window shuts.`
+                          : html`<b>${intel.clarificationStanding.dueSoon} client clarification${intel.clarificationStanding.dueSoon === 1 ? ' is' : 's are'} due within a week and still open.</b>
+                              Get them to the client before the clarification deadline.`
+                      }
+                    </div></div></div>`
+                  : ''
+              }
               <div style="padding:8px 17px 0"><div class="metric-sub">
                 Every question against the document, clause, drawing or package it concerns, and who the answer went to.
                 A bidder who had the answer three days before the others is what makes an award challengeable, so the
