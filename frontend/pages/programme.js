@@ -1577,6 +1577,9 @@ export async function programme(root) {
           label: 'Review',
           type: 'select',
           options: review?.open ? [{ value: review.open.reviewId, label: `Run ${review.open.runId.slice(-6)}, closing ${review.open.closesOn}` }] : [],
+          emptyHint:
+            'A review is closed once it has been issued for comment. If this is empty, no review is open — issue the ' +
+            'programme for comment first, or this review has already been closed.',
         },
         {
           name: 'note',
@@ -1638,7 +1641,10 @@ export async function programme(root) {
       submitLabel: 'Clear',
       fields: [
         { name: 'constraintId', label: 'Constraint', type: 'select',
-          options: (bundle.Constraint ?? []).filter((c) => c.status !== 'CLOSED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 46)}` })) },
+          options: (bundle.Constraint ?? []).filter((c) => c.status !== 'CLOSED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 46)}` })),
+          emptyHint:
+            'Only an open constraint can be cleared. If this is empty, every constraint has already been cleared — a ' +
+            'cleared one is not closed twice.' },
         { name: 'resolution', label: 'What cleared it', type: 'textarea', hint: '"Resolved" tells the next job nothing' },
       ],
     },

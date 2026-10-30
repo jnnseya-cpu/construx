@@ -5286,6 +5286,17 @@ unfiltered choosers (`finding`'s visit list, the progress and vision-review
 activity pickers, the supplier list) and the per-draft vision-review item picker
 were left alone — an empty one of those genuinely means none exists.
 
+**`frontend/pages/programme.js` needed two, and the distinction sharpened the
+rule.** A filtered chooser that already carries a hint explaining its filter is
+not a bare-generic trap, because the guard appends that hint after "there is
+none here yet" and the two together are not misleading: `comment` ("No review is
+open…") and `respond` ("Only unanswered comments…") were left exactly as they
+are. The two with a *filtered* chooser and **no** such hint were the gaps:
+`closeReview` offers only an open review, and `clear` only an open constraint —
+each now carries an `emptyHint`. The unfiltered choosers (`openReview`'s run
+list, `task`'s work-package list, `constraint`'s activity list, and the review
+invitee list) were left alone.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
