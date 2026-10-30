@@ -5252,6 +5252,21 @@ naming what it filters on. The create verbs (`drawing`, `deposit`,
 `specification`, `propose-change`) have no data-backed required chooser, so they
 have no trap and were left alone.
 
+**`frontend/pages/contracts.js` gates almost nothing at the button, so six
+filtered choosers needed the hint.** Only `adopt-form` gates its command-bar
+button on a source (a contract existing and no form yet loaded); the rest are
+role-gated. Six of them open a *filtered* required chooser: `reply` offers only
+letters still awaiting a reply; `value` offers only an instructed variation not
+yet valued (a domestic or already-valued one is excluded); `reject` offers only
+a change not yet instructed or refused; `refer` offers only a dispute at
+notice-given and `decision` only one that has been referred; and `signature`
+offers only a document whose file the platform actually holds (evidence
+referenced but not uploaded is filtered out). Each now carries an `emptyHint`.
+Left alone: `dispute` and `obligation` (and the inline "track a commitment"
+command) choose a contract from an *unfiltered* list, so an empty one genuinely
+means no contract exists and "none yet" is true; `adopt-form`'s standard-form
+chooser reads a platform catalogue, not project data.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

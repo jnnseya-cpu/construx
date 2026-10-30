@@ -1010,7 +1010,10 @@ export async function contracts(root) {
           options: (letters?.outstanding ?? []).map((entry) => ({
             value: entry.id,
             label: `${entry.reference} — ${entry.subject}${entry.dueBy ? ` (due ${entry.dueBy})` : ''}`,
-          })) },
+          })),
+          emptyHint:
+            'Only a letter still awaiting a reply is listed here. If it is empty, every letter on this project has ' +
+            'been answered — there is nothing outstanding to reply to.' },
         { name: 'body', label: 'Reply', type: 'textarea', rows: 6 },
         { name: 'author', label: 'Signed by', type: 'text', value: state.session.user.name },
         { name: 'evidenceHash', label: 'The reply as sent', type: 'file', required: false },
@@ -1026,7 +1029,10 @@ export async function contracts(root) {
       submitLabel: 'Request signatures',
       fields: [
         { name: 'documentHash', label: 'Document', type: 'select',
-          options: evidenceHeld.map((entry) => ({ value: entry.hash, label: `${entry.description} · ${entry.type}` })) },
+          options: evidenceHeld.map((entry) => ({ value: entry.hash, label: `${entry.description} · ${entry.type}` })),
+          emptyHint:
+            'Only a document whose file the platform actually holds can be put to signature — a signature binds to the ' +
+            'file’s hash. If this is empty, nothing is held for this project yet; upload the document as evidence first.' },
         { name: 'purpose', label: 'What is being agreed', type: 'textarea', rows: 3,
           hint: 'This is signed along with the document hash, so a signature agreeing one thing cannot be read as agreeing another.' },
         { name: 'area', label: 'Whose decision this is', type: 'select',
@@ -1128,7 +1134,10 @@ export async function contracts(root) {
         { name: 'disputeId', label: 'Dispute', type: 'select',
           options: (disputes?.disputes ?? [])
             .filter((d) => d.status === 'NOTICE_GIVEN')
-            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })) },
+            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })),
+          emptyHint:
+            'A referral follows a notice of adjudication. If this is empty, no dispute is at notice-given — give notice ' +
+            'of adjudication first, or the referral has already been recorded.' },
         { name: 'adjudicatorName', label: 'Adjudicator', type: 'text' },
         { name: 'nominatingBody', label: 'Nominating body', type: 'text', required: false,
           placeholder: 'Where the parties did not agree — RICS, TeCSA, ICE' },
@@ -1150,7 +1159,10 @@ export async function contracts(root) {
         { name: 'disputeId', label: 'Dispute', type: 'select',
           options: (disputes?.disputes ?? [])
             .filter((d) => d.status === 'REFERRED')
-            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })) },
+            .map((d) => ({ value: d.disputeId, label: `${d.reference} · ${String(d.natureOfDispute).slice(0, 44)}` })),
+          emptyHint:
+            'A decision follows a referral. If this is empty, no dispute has been referred yet — record the referral ' +
+            'first, or the decision has already been recorded.' },
         { name: 'decisionDate', label: 'Date of the decision', type: 'date', value: today(), max: today() },
         { name: 'inFavourOf', label: 'In favour of', type: 'text' },
         { name: 'awardedAmountMinor', label: 'Amount awarded', type: 'number', money: true, required: false },
@@ -1201,7 +1213,10 @@ export async function contracts(root) {
       submitLabel: 'Agree',
       fields: [
         { name: 'variationId', label: 'Variation', type: 'select',
-          options: b.Variation.filter((v) => !v.isDomestic && v.status !== 'VALUED').map((v) => ({ value: v._refId, label: `${v.reference} · ${money(v.valuedAmountMinor)} instructed` })) },
+          options: b.Variation.filter((v) => !v.isDomestic && v.status !== 'VALUED').map((v) => ({ value: v._refId, label: `${v.reference} · ${money(v.valuedAmountMinor)} instructed` })),
+          emptyHint:
+            'Only an instructed variation not yet valued is listed. If it is empty, every one has been valued already ' +
+            '— a domestic variation is never valued here, and a valued one is not re-agreed.' },
         { name: 'valuationMethod', label: 'Valuation method', type: 'select', options: [
           { value: 'BOQ_RATES', label: 'Bill rates' },
           { value: 'STAR_RATE', label: 'Star rate' },
@@ -1223,7 +1238,10 @@ export async function contracts(root) {
       submitLabel: 'Refuse',
       fields: [
         { name: 'changeRequestId', label: 'Change', type: 'select',
-          options: b.ChangeRequest.filter((c) => c.status !== 'REJECTED' && c.status !== 'INSTRUCTED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 50)}` })) },
+          options: b.ChangeRequest.filter((c) => c.status !== 'REJECTED' && c.status !== 'INSTRUCTED').map((c) => ({ value: c._refId, label: `${c.reference} · ${String(c.description).slice(0, 50)}` })),
+          emptyHint:
+            'Only a change still open can be refused. If it is empty, every change request has already been instructed ' +
+            'or refused — a decided change is not refused again.' },
         { name: 'reason', label: 'Grounds for refusal', type: 'textarea', hint: 'An unexplained rejection gets re-opened' },
       ],
     },
