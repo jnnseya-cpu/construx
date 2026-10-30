@@ -696,7 +696,8 @@ export async function tenants(root) {
           path: `/v1/admin/groups/${groupId}/companies`,
           submitLabel: 'Bring in',
           fields: [
-            { name: 'tenantId', label: 'Company', type: 'select', options: tenantOptions.filter((option) => !inGroups.has(option.value)) },
+            { name: 'tenantId', label: 'Company', type: 'select', options: tenantOptions.filter((option) => !inGroups.has(option.value)),
+              emptyHint: 'Only a company not already in a group is listed — a tenancy is in one group at most. If this is empty, every company already belongs to a group.' },
             { name: 'code', label: 'Cost centre code', placeholder: 'ETX', hint: '2 to 8 letters or digits, unique in the group' },
             { name: 'slug', label: 'Slug', required: false, hint: 'Made from the legal name when blank' },
             { name: 'chargeMode', label: 'Charge mode', type: 'select', options: [{ value: 'INTERNAL', label: 'Internal — tracked, not invoiced' }, { value: 'INTERCOMPANY', label: 'Intercompany — cross-charged' }, { value: 'EXTERNAL', label: 'External — invoiced' }] },
@@ -899,7 +900,8 @@ export async function tenants(root) {
           path: `/v1/admin/tenants/${tenant}/transfer-cases`,
           submitLabel: 'Open the case',
           fields: [
-            { name: 'toGroupId', label: 'Destination group', type: 'select', options: (groupsHeld?.groups ?? []).filter((g) => g.id !== groupId).map((g) => ({ value: g.id, label: g.displayName })) },
+            { name: 'toGroupId', label: 'Destination group', type: 'select', options: (groupsHeld?.groups ?? []).filter((g) => g.id !== groupId).map((g) => ({ value: g.id, label: g.displayName })),
+              emptyHint: 'A company is transferred to a different group, so the one it is already in is not listed. If this is empty, there is no other group to transfer it to — create the destination group first.' },
             { name: 'code', label: 'Cost centre code there', placeholder: 'ETX' },
             { name: 'chargeMode', label: 'Charge mode there', type: 'select', options: [{ value: 'INTERNAL', label: 'Internal' }, { value: 'INTERCOMPANY', label: 'Intercompany' }, { value: 'EXTERNAL', label: 'External' }] },
             { name: 'reason', label: 'Why', type: 'textarea', placeholder: 'Sale of the subsidiary completed on …' },

@@ -5297,6 +5297,22 @@ each now carries an `emptyHint`. The unfiltered choosers (`openReview`'s run
 list, `task`'s work-package list, `constraint`'s activity list, and the review
 invitee list) were left alone.
 
+**`handover.js` needed nothing** — like `construction.js` it button-gates every
+required chooser on exactly its source array (the pack and requirement
+workflows), its two secondary choosers (`defect`'s asset, `decidehandover`'s
+manifest) are `required: false`, and its remaining commands take text or dates.
+(An unrelated observation recorded for later: the *Forecast maintenance* handler
+posts a hardcoded `annualBudgetMinor` of £120k, so its deferrals are computed
+against an arbitrary budget rather than the project's own — left untouched as out
+of scope for the chooser sweep.)
+
+**`tenants.js` needed two.** Its per-row group actions go straight to a form with
+no pre-guard, and two of them open a *filtered* required chooser: `attach` offers
+only a company not already in a group (a tenancy is in one group at most), and
+`transfer` offers only a group other than the one the company is in. Each now
+carries an `emptyHint`. Its other choosers read platform vocabularies — currencies,
+jurisdictions, the module catalogue — which are reference data, not project state.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
