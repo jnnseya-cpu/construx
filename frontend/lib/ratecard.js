@@ -69,14 +69,28 @@ export function csvRateCardToLines(text) {
   const rows = parseCsv(text).filter((row) => row.some((cell) => String(cell ?? '').trim() !== ''));
   if (rows.length === 0) return '';
 
-  const header = rows[0].map((cell) => String(cell ?? '').trim().toLowerCase());
-  const looksHeader = header.some((h) =>
-    /code|ref|descr|item|resource|unit|rate|price|note|inclusion|exclusion|scope|head/.test(h),
-  );
+  // Find the header row rather than assume it is the first. A real exported sheet
+  // has a title and a subtitle above the column names ("37 measured items", then
+  // a note, then "Code,Description,Unit,…"). The header is the first row that
+  // names BOTH a description-like column AND a unit-or-rate column — a title or a
+  // subtitle names at most one, so this skips them without guessing.
+  const headerish = (cells) => {
+    // Only short cells can be column labels; a long cell is a sentence (a
+    // subtitle, or a data row's description/note), never a header. Then the
+    // description token is anchored at the start of a cell so a data description
+    // that happens to contain "work" or "rate" cannot pass as a header.
+    const labels = cells.map((cell) => String(cell ?? '').trim().toLowerCase()).filter((h) => h.length > 0 && h.length <= 40);
+    const hasDesc = labels.some((h) => /^(description|desc|item|work\s*item|resource|service|operation|activity)\b/.test(h));
+    const hasUnit = labels.some((h) => /^(unit|rate\s*unit|uom)\b/.test(h));
+    const hasRate = labels.some((h) => /\b(rate|price)\b/.test(h));
+    return hasDesc && (hasUnit || hasRate);
+  };
+  const headerIdx = rows.findIndex(headerish);
 
   let idx = { code: 0, description: 1, unit: 2, rate: 3, note: 4 };
   let dataRows = rows;
-  if (looksHeader) {
+  if (headerIdx >= 0) {
+    const header = rows[headerIdx].map((cell) => String(cell ?? '').trim().toLowerCase());
     const find = (re) => header.findIndex((h) => re.test(h));
     const rateCols = header
       .map((h, i) => ({ h, i }))
@@ -89,7 +103,7 @@ export function csvRateCardToLines(text) {
       rate: rateIdx,
       note: find(/note|inclusion|exclusion|scope|comment|remark/),
     };
-    dataRows = rows.slice(1);
+    dataRows = rows.slice(headerIdx + 1);
   }
 
   const cell = (row, i) => (i >= 0 && i < row.length ? String(row[i] ?? '').trim() : '');
