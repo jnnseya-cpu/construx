@@ -4561,6 +4561,17 @@ reconcile.
 only thing that pays for it, so a loss records who won and at what, and stays
 searchable. Converting one is refused, and the refusal says why.
 
+**Closing a failed tender is reachable from the tender work, not only the
+Command Centre.** The lifecycle control that records a loss or a withdrawal
+(`setLifecycleState` → `CLOSED_LOST` / `WITHDRAWN`) lived on the Command Centre,
+where somebody who had just lost a tender — and was looking at Tender &amp;
+Procurement — would not find it, so the project sat open in the pipeline. A
+focused **Close the tender** command on the procurement screen now posts to the
+same lifecycle route (no second source of truth): lost or withdrawn, a reason,
+and on a loss the winner and the winning price, which is what the estimate
+learns a sharper number from. The phase does not move — a closed tender is still
+a tender — and reopening stays the separate, deliberate act it was.
+
 **Not built:** the deterministic file-name, size and page-limit checks against
 the deliverable register at compile time; post-tender clarification cycles; and
 the procurement records and mobilisation tasks the conversion could also seed.

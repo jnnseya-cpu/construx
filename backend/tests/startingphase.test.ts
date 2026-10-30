@@ -579,6 +579,29 @@ describe('the lifecycle state is its own dimension', () => {
     assert.equal(state.deliveryStatus, 'NOT_STARTED');
   });
 
+  it('closes a lost tender with who won and at what, and withdraws a no-bid — the phase staying put', () => {
+    const lost = bid('Lost it');
+    structure.setLifecycleState(lost, {
+      to: 'CLOSED_LOST',
+      reason: 'Awarded to the incumbent; our price was mid-field on a quality-led evaluation.',
+      commercialOutcome: 'LOST',
+      wonBy: 'Incumbent Contractors Ltd',
+      winningValueMinor: 6_800_000,
+    });
+    const lostState = stateOf(lost);
+    assert.equal(lostState.lifecycleState, 'CLOSED_LOST');
+    assert.equal(lostState.commercialOutcome, 'LOST');
+    assert.equal(lostState.lostTo, 'Incumbent Contractors Ltd');
+    assert.equal(lostState.phase, 'TENDER', 'closing the tender does not move the phase');
+
+    const noBid = bid('No bid');
+    structure.setLifecycleState(noBid, {
+      to: 'WITHDRAWN',
+      reason: 'Declined to bid — the programme clashed with two live jobs and the risk profile was wrong for us.',
+    });
+    assert.equal(stateOf(noBid).lifecycleState, 'WITHDRAWN');
+  });
+
   it('refuses a transition the table does not allow, and says what is allowed', () => {
     const ctx = bid('Illegal move');
     const refusal = throwsCode(

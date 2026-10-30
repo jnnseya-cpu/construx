@@ -772,6 +772,8 @@ export async function procurement(root) {
             { id: 'clarification-answer', label: 'Record the client’s answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && (intel.clarifications ?? []).some((c) => c.status === 'OPEN' && c.side !== 'BIDDER'),
               reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'No open client-side clarification awaiting an answer' },
+            { id: 'close-tender', label: 'Close the tender — lost or withdrawn',
+              permitted: can('PROJECT_SETUP', 'A'), reason: blockedReason('PROJECT_SETUP', 'A') },
             { id: 'issueClarification', label: 'Issue answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
               reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Every clarification on the register has been answered' },
@@ -3541,6 +3543,41 @@ export async function procurement(root) {
         { name: 'answeredOn', label: 'Date answered', type: 'date', required: false },
       ],
       report: (res) => ({ title: `${res.reference} answered`, message: 'The client’s answer is on the record; the question is closed.', tone: 'ok' }),
+    },
+    'close-tender': {
+      title: 'Close the tender',
+      intent:
+        'The tender was lost, or we have decided not to bid. Closing moves the project to a closed state so it is not ' +
+        'left sitting open in the pipeline — and, on a loss, records who won and at what value, which is what the ' +
+        'estimate learns a sharper number from next time. A closed project can be reopened, but that is a separate, ' +
+        'deliberate act, not this one.',
+      path: `/v1/projects/${projectId}/lifecycle`,
+      submitLabel: 'Close it',
+      fields: [
+        { name: 'to', label: 'Outcome', type: 'select',
+          options: [
+            { value: 'CLOSED_LOST', label: 'Lost — the tender was awarded elsewhere' },
+            { value: 'WITHDRAWN', label: 'Withdrawn — we pulled out, or did not bid' },
+          ] },
+        { name: 'reason', label: 'What happened', type: 'textarea', rows: 2,
+          hint: 'Enough to be read later — the debrief, or the reason for the no-bid.' },
+        { name: 'wonBy', label: 'Won by', type: 'text', required: false,
+          hint: 'On a loss, the firm that won — where it is known.' },
+        { name: 'winningValueMinor', label: 'Winning price', type: 'number', money: true, required: false,
+          hint: 'What it was won at, where it is known. This is what sharpens the next estimate.' },
+      ],
+      transform: (v) => ({
+        to: v.to,
+        reason: v.reason,
+        ...(v.to === 'CLOSED_LOST' ? { commercialOutcome: 'LOST' } : {}),
+        ...(v.wonBy ? { wonBy: v.wonBy } : {}),
+        ...(v.winningValueMinor ? { winningValueMinor: Number(v.winningValueMinor) } : {}),
+      }),
+      report: (res) => ({
+        title: 'Tender closed',
+        message: `Moved to ${String(res.to ?? '').replace(/_/g, ' ').toLowerCase()}. It is out of the open pipeline; reopening it is a separate, deliberate act.`,
+        tone: 'ok',
+      }),
     },
     issueClarification: {
       title: 'Issue the answer',
