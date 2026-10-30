@@ -5301,10 +5301,14 @@ invitee list) were left alone.
 required chooser on exactly its source array (the pack and requirement
 workflows), its two secondary choosers (`defect`'s asset, `decidehandover`'s
 manifest) are `required: false`, and its remaining commands take text or dates.
-(An unrelated observation recorded for later: the *Forecast maintenance* handler
-posts a hardcoded `annualBudgetMinor` of £120k, so its deferrals are computed
-against an arbitrary budget rather than the project's own — left untouched as out
-of scope for the chooser sweep.)
+(One unrelated defect was found here and has since been fixed: the *Forecast
+maintenance* handler used to post a hardcoded `annualBudgetMinor` of £120k with
+no way to change it, so its deferrals were computed against an invented budget —
+exactly the fabricated-input failure the operating directive forbids. It now
+opens a form that asks for the horizon, with the usual five-year default, and the
+annual maintenance budget, with no default, so the figure the forecast is
+measured against is the operator's. The ACU cost is still confirmed before the
+run, now through the form's own `aiCost` quote rather than a separate dialog.)
 
 **`tenants.js` needed two.** Its per-row group actions go straight to a form with
 no pre-guard, and two of them open a *filtered* required chooser: `attach` offers
