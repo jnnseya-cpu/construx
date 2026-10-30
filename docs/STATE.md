@@ -25641,6 +25641,25 @@ market. The figure feeds the construction-period field and seeds the WBS
 generator's `targetDurationDays` — so "how long is this job" is answered from
 the works, and then a person confirms it.
 
+### The bill, rolled up by section
+
+A sectional pricing schedule — the kind a buyer issues that asks for one lump
+sum against sub-structure, superstructure, externals and the rest — is priced
+from the measured bill, but the bill is a list of lines, not sections. The
+roll-up between them was done by hand.
+
+`rollUpSections` groups the priced lines by the cost code they were filed under
+(the leading code of each reference — `E20` from `E20.001`, `WALL` from
+`WALL.001`), and `ScheduleTotals.sections` and the measurement position carry
+the result: a priced subtotal per section, with how many of its lines are priced
+against how many exist, so an unpriced line inside a section is visible rather
+than hidden in the sum. The Tender &amp; Procurement bill shows it as a **Priced
+works by section** panel. Each section is a lump sum that still traces back to
+the lines beneath it, which is what lets a sectional return be filled from the
+take-off rather than re-estimated. The grouping is only as good as the firm's
+own coding: a bill filed entirely under one prefix rolls up to one section, which
+is the honest answer for a bill coded that way, not a defect.
+
 ### Retiring a measure, without deleting one
 
 The duplicate-measure guard was right and it left somebody stuck: a bill

@@ -716,6 +716,46 @@ export type PricedItem = {
   priced: boolean;
 };
 
+/**
+ * A priced subtotal for one work section — the measured lines grouped by the
+ * cost-code they were filed under. A sectional priced return (a pricing schedule
+ * that asks for a lump sum against "sub-structure", "superstructure" and the
+ * rest) is built from these: each section is the roll-up of the lines beneath
+ * it, so a lump sum per section still traces back to the take-off.
+ */
+export type ScheduleSection = {
+  /** The code the lines share — "E20" from "E20.001", "WALL" from "WALL.001". */
+  code: string;
+  amountMinor: number;
+  items: number;
+  priced: number;
+};
+
+/** The section a reference belongs to: its leading code, before the item number. */
+export function sectionCodeOf(reference: string): string {
+  const ref = String(reference ?? '').trim();
+  const dot = ref.indexOf('.');
+  if (dot > 0) return ref.slice(0, dot).toUpperCase();
+  const stripped = ref.replace(/\d+$/, '').replace(/[-_\s]+$/, '');
+  return (stripped || ref).toUpperCase();
+}
+
+/** Roll measured lines up into their work sections, each a priced subtotal. */
+export function rollUpSections(
+  items: Array<{ reference: string; amountMinor: number; priced: boolean }>,
+): ScheduleSection[] {
+  const byCode = new Map<string, ScheduleSection>();
+  for (const item of items) {
+    const code = sectionCodeOf(item.reference);
+    const section = byCode.get(code) ?? { code, amountMinor: 0, items: 0, priced: 0 };
+    section.amountMinor += item.amountMinor;
+    section.items += 1;
+    if (item.priced) section.priced += 1;
+    byCode.set(code, section);
+  }
+  return [...byCode.values()].sort((a, b) => a.code.localeCompare(b.code, 'en', { numeric: true }));
+}
+
 export type ScheduleTotals = {
   reference: string;
   currency: string;
@@ -723,6 +763,8 @@ export type ScheduleTotals = {
   /** Direct cost only. Preliminaries, risk and OH&P are the estimate's, not this. */
   directCostMinor: number;
   byKind: Record<RateComponentKind, number>;
+  /** The measured works rolled up by cost-code section, for a sectional return. */
+  sections: ScheduleSection[];
   unpriced: string[];
   /** What sits on a quantity that is not firm, and what share of the total that is. */
   uncertainMinor: number;
@@ -768,6 +810,7 @@ function totalsOf(record: EntityRecord): ScheduleTotals {
     items,
     directCostMinor,
     byKind,
+    sections: rollUpSections(items),
     unpriced: items
       .filter((item) => !item.priced)
       .map((item) => item.reference)
@@ -1101,6 +1144,7 @@ export type MeasurementPosition = {
     uncertainPercent: number;
     critical: number;
     openRemeasure: number;
+    sections: ScheduleSection[];
   }>;
   summary: string;
 };
@@ -1123,6 +1167,7 @@ export function measurementPosition(ctx: EngineContext): MeasurementPosition {
       uncertainPercent: totals.uncertainPercent,
       critical: totals.findings.filter((finding) => finding.severity === 'CRITICAL').length,
       openRemeasure: totals.openRemeasure.length,
+      sections: totals.sections,
     };
   });
 

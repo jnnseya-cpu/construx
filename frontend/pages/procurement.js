@@ -345,6 +345,22 @@ export async function procurement(root) {
     .read(`/v1/projects/${projectId}/measurement`, 'BOQ_TAKEOFF')
     .catch(() => ({ schedules: [], summary: '' }));
   const openSchedules = bill.schedules.filter((s) => s.status === 'OPEN');
+  // The measured works rolled up by cost-code section, summed across every
+  // schedule — what a sectional pricing schedule (sub-structure, superstructure
+  // and the rest) is built from, each section still tracing to its lines.
+  const billSections = (() => {
+    const map = new Map();
+    for (const s of bill.schedules ?? []) {
+      for (const sec of s.sections ?? []) {
+        const cur = map.get(sec.code) ?? { code: sec.code, amountMinor: 0, items: 0, priced: 0 };
+        cur.amountMinor += sec.amountMinor;
+        cur.items += sec.items;
+        cur.priced += sec.priced;
+        map.set(sec.code, cur);
+      }
+    }
+    return [...map.values()].sort((a, b) => a.code.localeCompare(b.code, 'en', { numeric: true }));
+  })();
 
   // T-WF-04. Which revision of the pack each firm actually holds.
   const enquiries = await api
@@ -1078,6 +1094,32 @@ export async function procurement(root) {
                   badge(badgeText(s.status), statusTone(s.status)),
                 ]),
               })}
+              ${
+                billSections.length === 0
+                  ? ''
+                  : html`<div style="padding:14px 17px 2px"><div class="metric-sub">
+                        <b>Priced works by section.</b> The roll-up a sectional pricing schedule is built from — each
+                        section is a lump sum that still traces back to the measured lines beneath it.
+                      </div></div>
+                      ${table({
+                        headers: ['Section', 'Items', 'Priced', 'Amount'],
+                        align: ['', 'num', 'num', 'num'],
+                        rows: [
+                          ...billSections.map((sec) => [
+                            sec.code,
+                            sec.items,
+                            sec.priced < sec.items ? badge(`${sec.priced}/${sec.items}`, 'warn') : `${sec.priced}/${sec.items}`,
+                            money(sec.amountMinor),
+                          ]),
+                          [
+                            html`<b>Total</b>`,
+                            billSections.reduce((n, sec) => n + sec.items, 0),
+                            '',
+                            html`<b>${money(billSections.reduce((n, sec) => n + sec.amountMinor, 0))}</b>`,
+                          ],
+                        ],
+                      })}`
+              }
               ${
                 bill.schedules.some((s) => s.openRemeasure > 0)
                   ? html`<div style="padding:12px 17px 0"><div class="notice warn">
