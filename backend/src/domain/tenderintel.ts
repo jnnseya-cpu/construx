@@ -411,6 +411,130 @@ export function acknowledgeClarification(
   return { acknowledgedAt };
 }
 
+/**
+ * Drop a question asked of the client before it is answered, with a reason.
+ *
+ * A clarification raised against the client is the bidder's own; checking it
+ * against the tender pack, or reading the documents more carefully, routinely
+ * shows the answer was there all along. Withdrawing it — rather than leaving it
+ * open or quietly deleting it — is what stops the next person re-raising it, and
+ * the reason is required for exactly that: a dropped question with no reason
+ * reads as one that was answered elsewhere, judged irrelevant, or simply missed,
+ * and there is no way to tell which.
+ *
+ * It cannot touch a question with an answer on it. A client-side answer is part
+ * of the tender documents from the moment it is given, and an issued answer went
+ * to every bidder; neither becomes un-given because the bidder would rather not
+ * have asked.
+ */
+export function withdrawTenderClarification(
+  ctx: EngineContext,
+  input: { clarificationId: string; reason: string },
+): { clarificationId: string; reference: string; status: 'WITHDRAWN' } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireClarification(ctx, input.clarificationId);
+  const reference = String(record.state.reference);
+  const status = String(record.state.status);
+
+  if (status === 'ISSUED' || status === 'ANSWERED') {
+    throw new DomainError(
+      'CLARIFICATION_ANSWERED',
+      `${reference} has an answer on the record. A question that has been answered is not un-asked by withdrawing it.`,
+      409,
+    );
+  }
+  if (status === 'WITHDRAWN') {
+    throw new DomainError('CLARIFICATION_ALREADY_WITHDRAWN', `${reference} is already withdrawn.`, 409);
+  }
+  if (!input.reason?.trim() || input.reason.trim().length < 8) {
+    throw new DomainError(
+      'WITHDRAWAL_REASON_REQUIRED',
+      'A withdrawal carries why it was dropped — answered in the pack, judged irrelevant, or superseded — so the next ' +
+        'person does not raise it again.',
+    );
+  }
+
+  write(ctx, {
+    eventType: 'CLARIFICATION_WITHDRAWN',
+    entity: { refType: 'Clarification', refId: input.clarificationId },
+    nextState: {
+      ...record.state,
+      status: 'WITHDRAWN',
+      withdrawnReason: input.reason.trim(),
+      withdrawnAt: new Date().toISOString(),
+      withdrawnBy: ctx.auth.actorId,
+    },
+  });
+
+  return { clarificationId: input.clarificationId, reference, status: 'WITHDRAWN' };
+}
+
+/**
+ * Record the client's answer to a question the bidder asked them.
+ *
+ * The other direction from `issueClarification`, which is the buyer issuing an
+ * answer out to their bidders. This is the bidder recording, against their own
+ * client-side question, the answer the client gave — in the client's own words,
+ * because a client's answer is part of the tender documents from the moment it
+ * is given, and a paraphrase of it is a new claim with nobody's name on it. The
+ * date is kept because a dispute about a late question turns on it.
+ *
+ * A bidder-side question has no place here: its answer is issued, through the
+ * fence that keeps it reaching every entitled bidder at once.
+ */
+export function recordClientAnswer(
+  ctx: EngineContext,
+  input: { clarificationId: string; answer: string; answeredOn?: string },
+): { clarificationId: string; reference: string; status: 'ANSWERED' } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'U', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireClarification(ctx, input.clarificationId);
+  const reference = String(record.state.reference);
+  const side = (record.state.side as ClarificationSide | undefined) ?? 'INTERNAL';
+  const status = String(record.state.status);
+
+  if (side === 'BIDDER') {
+    throw new DomainError(
+      'CLARIFICATION_SIDE_WRONG',
+      `${reference} is a question from a bidder; the answer to it is issued to every entitled bidder, not recorded here.`,
+      409,
+    );
+  }
+  if (status === 'WITHDRAWN') {
+    throw new DomainError('CLARIFICATION_WITHDRAWN', `${reference} was withdrawn.`, 409);
+  }
+  if (status === 'ANSWERED' || status === 'ISSUED') {
+    throw new DomainError(
+      'CLARIFICATION_ALREADY_ANSWERED',
+      `${reference} already has an answer on the record. A changed answer is a new clarification, because the first has been priced against.`,
+      409,
+    );
+  }
+  if (!input.answer?.trim()) {
+    throw new DomainError(
+      'ANSWER_EMPTY',
+      "There is no answer to record. Record the client's answer in their own words — it is part of the tender documents from the moment they give it.",
+    );
+  }
+
+  const answeredOn = (input.answeredOn ?? new Date().toISOString()).slice(0, 10);
+
+  write(ctx, {
+    eventType: 'CLARIFICATION_ANSWERED',
+    entity: { refType: 'Clarification', refId: input.clarificationId },
+    nextState: {
+      ...record.state,
+      status: 'ANSWERED',
+      answer: input.answer.trim(),
+      answeredOn,
+      answeredBy: ctx.auth.actorId,
+    },
+  });
+
+  return { clarificationId: input.clarificationId, reference, status: 'ANSWERED' };
+}
+
 // --- The return comparison ---------------------------------------------------
 
 export type RawReturnLine = {

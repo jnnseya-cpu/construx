@@ -750,6 +750,12 @@ export async function procurement(root) {
             { id: 'clarification-packcheck', label: 'Check against the pack',
               permitted: can('PROCUREMENT_AWARD', 'C') && (intel.clarifications ?? []).some((c) => c.status === 'OPEN'),
               reason: blockedReason('PROCUREMENT_AWARD', 'C') ?? 'No open clarification to check' },
+            { id: 'clarification-withdraw', label: 'Withdraw a clarification',
+              permitted: can('PROCUREMENT_AWARD', 'U') && (intel.clarifications ?? []).some((c) => c.status === 'OPEN'),
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'No open clarification to withdraw' },
+            { id: 'clarification-answer', label: 'Record the client’s answer',
+              permitted: can('PROCUREMENT_AWARD', 'U') && (intel.clarifications ?? []).some((c) => c.status === 'OPEN' && c.side !== 'BIDDER'),
+              reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'No open client-side clarification awaiting an answer' },
             { id: 'issueClarification', label: 'Issue answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
               reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Every clarification on the register has been answered' },
@@ -3433,6 +3439,44 @@ export async function procurement(root) {
           tone: 'ok',
         };
       },
+    },
+    'clarification-withdraw': {
+      title: 'Withdraw a clarification',
+      intent:
+        'Drop a question you raised against the client before it is answered — because the pack already answers it, or ' +
+        'it is no longer needed. A reason is required so the register shows why it was dropped rather than leaving a ' +
+        'question nobody can tell was answered elsewhere, judged irrelevant, or missed. It does not touch anything the ' +
+        'client has already answered.',
+      path: (collected) => `/v1/projects/${projectId}/tender-clarifications/${collected.clarificationId}/withdraw`,
+      submitLabel: 'Withdraw',
+      fields: [
+        { name: 'clarificationId', label: 'Clarification', type: 'select',
+          options: (intel.clarifications ?? [])
+            .filter((c) => c.status === 'OPEN')
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+        { name: 'reason', label: 'Why it is being withdrawn', type: 'textarea', rows: 2,
+          hint: 'e.g. “Answered by Appendix B, Section 3 — strip foundations priced per the SE report.”' },
+      ],
+      report: (res) => ({ title: `${res.reference} withdrawn`, message: 'It is off the open register, with the reason on the record.', tone: 'ok' }),
+    },
+    'clarification-answer': {
+      title: 'Record the client’s answer',
+      intent:
+        'When the client answers a question you asked them, record their answer in their own words — it is part of the ' +
+        'tender documents from the moment they give it, and a paraphrase is a new claim with nobody’s name on it. The ' +
+        'date is kept because a dispute about a late question turns on it. A bidder’s question is not answered here; ' +
+        'its answer is issued to every bidder.',
+      path: (collected) => `/v1/projects/${projectId}/tender-clarifications/${collected.clarificationId}/record-answer`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'clarificationId', label: 'Clarification', type: 'select',
+          options: (intel.clarifications ?? [])
+            .filter((c) => c.status === 'OPEN' && c.side !== 'BIDDER')
+            .map((c) => ({ value: c.clarificationId, label: `${c.reference} · ${c.subject}` })) },
+        { name: 'answer', label: 'The client’s answer, in their words', type: 'textarea', rows: 3 },
+        { name: 'answeredOn', label: 'Date answered', type: 'date', required: false },
+      ],
+      report: (res) => ({ title: `${res.reference} answered`, message: 'The client’s answer is on the record; the question is closed.', tone: 'ok' }),
     },
     issueClarification: {
       title: 'Issue the answer',

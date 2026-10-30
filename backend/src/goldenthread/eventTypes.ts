@@ -902,6 +902,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // release a clarification could release it unequally.
   def('CLARIFICATION_ISSUED', 'Clarification', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
   def('CLARIFICATION_ACKNOWLEDGED', 'Clarification', 'UPDATE', 'PROCUREMENT'),
+  // The bidder's own side of a question it asked the client: dropped before the
+  // client answers, with a reason, so the next person does not re-raise it.
+  def('CLARIFICATION_WITHDRAWN', 'Clarification', 'UPDATE', 'PROCUREMENT'),
   // Opening, every adjustment and the close all write this. The comparison is
   // one record whose whole life is the audit trail of how it was normalised.
   def('RETURN_COMPARISON_UPDATED', 'ReturnComparison', 'UPDATE', 'PROCUREMENT', { creates: true }),

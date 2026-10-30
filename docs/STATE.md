@@ -5141,6 +5141,22 @@ local stand-in and the task refuses to run without a reasoning provider cleared
 for that sensitivity, rather than dressing a fixed answer as a reading of the
 pack.
 
+**The bidder's own side of a question now closes.** The register could raise a
+question to the client and the buyer could issue an answer out to bidders, but a
+bidder had no way to close its *own* client-side question: nothing to **withdraw**
+one the pack turned out to answer, and nothing to **record the client's answer**
+when it came back. Both exist now. `withdrawTenderClarification`
+(`…/:id/withdraw`, `Withdraw a clarification`) drops an open question with a
+required reason — answered in the pack, superseded, or no longer needed — so the
+next person does not raise it again, and it refuses to touch anything already
+answered or issued (a given answer does not become un-given). `recordClientAnswer`
+(`…/:id/record-answer`, `Record the client's answer`) records the client's answer
+to a client-side question in the client's own words, with the date a late-question
+dispute turns on, moving it to ANSWERED; a bidder-side question is refused here,
+because its answer is *issued* through the fence that reaches every entitled
+bidder at once. `CLARIFICATION_WITHDRAWN` is the one new event; the answer reuses
+`CLARIFICATION_ANSWERED`.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

@@ -942,6 +942,77 @@ describe('tender intelligence · a reviewed set raises in one act', () => {
   });
 });
 
+describe('tender intelligence · the bidder’s own side of a question', () => {
+  it('withdraws an open client-side question, with the reason on the record', () => {
+    const { clarificationId, reference } = tenderintel.raiseTenderClarification(asQS(), {
+      side: 'CLIENT',
+      subject: 'Foundations',
+      question: 'Confirm the foundation design below DPC.',
+      links: { drawing: 'R4780' },
+    });
+    const res = tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'Answered by Appendix B, Section 3 — strip foundations.' });
+    assert.equal(res.status, 'WITHDRAWN');
+    const row = tenderintel.tenderIntelPosition(asQS()).clarifications.find((c) => c.reference === reference);
+    assert.equal(row?.status, 'WITHDRAWN');
+  });
+
+  it('refuses a withdrawal with no real reason, and a second withdrawal', () => {
+    const { clarificationId } = tenderintel.raiseTenderClarification(asQS(), {
+      side: 'CLIENT',
+      subject: 'Drainage',
+      question: 'Confirm the external drainage scope.',
+      links: { drawing: 'R4780-8' },
+    });
+    throwsCode(() => tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'no' }), 'WITHDRAWAL_REASON_REQUIRED');
+    tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'No longer required.' });
+    throwsCode(() => tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'Again, for some reason.' }), 'CLARIFICATION_ALREADY_WITHDRAWN');
+  });
+
+  it('records the client’s answer on a client-side question, and will not then withdraw it', () => {
+    const { clarificationId, reference } = tenderintel.raiseTenderClarification(asQS(), {
+      side: 'CLIENT',
+      subject: 'Roof',
+      question: 'Confirm the flat-roof build-up.',
+      links: { drawing: 'R4780-2' },
+    });
+    const res = tenderintel.recordClientAnswer(asQS(), {
+      clarificationId,
+      answer: 'Warm roof, 150mm PIR with VCL below the deck, in line with the specification.',
+      answeredOn: '2026-11-10',
+    });
+    assert.equal(res.status, 'ANSWERED');
+    const row = tenderintel.tenderIntelPosition(asQS()).clarifications.find((c) => c.reference === reference);
+    assert.equal(row?.status, 'ANSWERED');
+    throwsCode(() => tenderintel.withdrawTenderClarification(asQS(), { clarificationId, reason: 'Changed our mind.' }), 'CLARIFICATION_ANSWERED');
+  });
+
+  it('refuses to record a client answer on a bidder-side question, and on a withdrawn one', () => {
+    const fromBidder = tenderintel.raiseTenderClarification(asQS(), {
+      side: 'BIDDER',
+      subject: 'Groundworks rate',
+      question: 'What rate applies to the groundworks package?',
+      links: { package: 'GROUNDWORKS' },
+      bidderPartyId: AMEY,
+    });
+    throwsCode(
+      () => tenderintel.recordClientAnswer(asQS(), { clarificationId: fromBidder.clarificationId, answer: 'An answer that does not belong here.' }),
+      'CLARIFICATION_SIDE_WRONG',
+    );
+
+    const dropped = tenderintel.raiseTenderClarification(asQS(), {
+      side: 'CLIENT',
+      subject: 'M&E',
+      question: 'Confirm the M&E scope.',
+      links: { scopeItem: 'M&E distribution' },
+    });
+    tenderintel.withdrawTenderClarification(asQS(), { clarificationId: dropped.clarificationId, reason: 'Answered in Appendix B — M&E priced from the spec.' });
+    throwsCode(
+      () => tenderintel.recordClientAnswer(asQS(), { clarificationId: dropped.clarificationId, answer: 'Too late to answer.' }),
+      'CLARIFICATION_WITHDRAWN',
+    );
+  });
+});
+
 describe('tender intelligence · what the catalogue says', () => {
   /**
    * The specification puts issue and commercial interpretation on the person.

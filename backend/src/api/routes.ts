@@ -24444,6 +24444,38 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/withdraw',
+    description: 'Drop a question asked of the client before it is answered, with a reason, so it is not raised again',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.withdrawTenderClarification(projectContext(platform, ctx), {
+        clarificationId: ctx.params.clarificationId as string,
+        reason: body<{ reason: string }>(ctx).reason,
+      }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/record-answer',
+    description: "Record the client's answer to a question the bidder asked them, in the client's own words",
+    schema: {
+      type: 'object',
+      required: ['answer'],
+      properties: { answer: stringField, answeredOn: { type: 'string' } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintel.recordClientAnswer(projectContext(platform, ctx), {
+        clarificationId: ctx.params.clarificationId as string,
+        ...body<{ answer: string; answeredOn?: string }>(ctx),
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/return-comparisons',
     description: 'Open a comparison of the returns against one package',
     schema: {
