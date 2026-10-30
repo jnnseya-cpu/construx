@@ -5223,6 +5223,22 @@ filters on `live` but `MANUAL` is always live, so it is never empty; and the
 `analysisId` choosers are unfiltered, so an empty list genuinely means no matrix
 and "none yet" is true — one of them already carries a hint explaining why.
 
+**`frontend/pages/construction.js` was swept too, and is the model the guard
+itself cites** (`command.js` points at its "locks with a reason rather than a
+modal whose required dropdown is empty"). Of its ~21 doors, all but two gate the
+command-bar button on exactly the array the chooser is built from, so the chooser
+can never be reached empty. The two exceptions each now carry an `emptyHint`:
+`exception-retest` has a *second* required chooser — a released test pack —
+that the button's `openExceptions > 0` gate does not cover, so an open exception
+with no released pack opened onto an empty pack list; and `accept-system` was the
+one door whose button is role-gated only, so a project with no system defined
+reached an empty system chooser (its inline hint was also stale, still naming
+"an exception" after the source was widened to every defined system, and the
+`emptyHint` replaces it). Left alone: `inspection` offers `openPlans` while its
+button gates on `agreedPlans`, but `agreedPlans ⊆ openPlans`, so the chooser is
+never empty when the button is live — the server refuses an unagreed pick, which
+is a different matter from an empty dropdown and is not changed here.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one
