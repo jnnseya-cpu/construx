@@ -24328,6 +24328,48 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/batch',
+    description: 'Raise a reviewed set of clarifications onto the register in one act, each against the information it concerns',
+    schema: {
+      type: 'object',
+      required: ['items'],
+      properties: {
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            required: ['side', 'subject', 'question', 'links'],
+            properties: {
+              side: { type: 'string', enum: [...tenderintel.CLARIFICATION_SIDE] },
+              subject: stringField,
+              question: stringField,
+              links: {
+                type: 'object',
+                properties: {
+                  document: { type: 'string' },
+                  clause: { type: 'string' },
+                  drawing: { type: 'string' },
+                  package: { type: 'string' },
+                  scopeItem: { type: 'string' },
+                },
+                additionalProperties: false,
+              },
+              responseDeadline: { type: 'string' },
+              confidentiality: { type: 'string', enum: [...tenderintel.CONFIDENTIALITY] },
+              bidderPartyId: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderintel.raiseTenderClarifications(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/issue',
     description: 'Issue the approved response to everybody entitled to it, and record who and when',
     schema: {

@@ -5109,6 +5109,18 @@ and the question to the client — and the link into the controlled information
 that makes an answer findable by whoever prices that thing a fortnight later. A
 question naming no document, clause, drawing, package or scope item is refused.
 
+**A reviewed set raises in one act.** The agent's job is to draft the
+clarifications a scope review throws up; a clarification that lives in a chat or
+a PDF governs nothing, so a drafted set has to reach the register as tracked
+records rather than be retyped a form at a time. `raiseTenderClarifications`
+(POST `…/tender-clarifications/batch`, and `Raise several clarifications` in the
+command bar) raises a set together. It adds no rule — each item passes through
+`raiseTenderClarification`, so the same refusals, the same link requirement and
+the one `TQ-nnn` sequence apply — and it is **all or nothing**: the whole set is
+validated before a single write, naming the line any failure fell on, so the
+register never carries half a batch. The ceiling is fifty, which is a guard
+against a paste nobody read, not a real limit.
+
 **Completeness is a count, and the first version of it was wrong.** It
 multiplied two proportions — how many firms returned, by how many material
 queries were answered — and on a real case with both firms returned and one

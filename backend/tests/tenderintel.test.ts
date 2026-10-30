@@ -896,6 +896,52 @@ describe('tender intelligence · the position', () => {
   });
 });
 
+describe('tender intelligence · a reviewed set raises in one act', () => {
+  it('raises several client questions at once, each its own TQ on the register', () => {
+    const before = tenderintel.tenderIntelPosition(asQS()).clarifications.length;
+    const { raised } = tenderintel.raiseTenderClarifications(asQS(), {
+      items: [
+        { side: 'CLIENT', subject: 'Foundations', question: 'Confirm foundation type, depth and concrete grade below DPC.', links: { drawing: 'R4780' } },
+        { side: 'CLIENT', subject: 'Drainage', question: 'Is below-ground drainage in this contract or by others?', links: { drawing: 'R4780-8' } },
+        { side: 'CLIENT', subject: 'M&E', question: 'Confirm the heating, ventilation and electrical certification scope.', links: { scopeItem: 'M&E distribution' } },
+      ],
+    });
+    assert.equal(raised.length, 3);
+    for (const r of raised) assert.match(r.reference, /^TQ-\d{3}$/);
+    assert.equal(new Set(raised.map((r) => r.reference)).size, 3, 'three distinct references in sequence');
+    const after = tenderintel.tenderIntelPosition(asQS()).clarifications.length;
+    assert.equal(after, before + 3, 'all three reached the register');
+  });
+
+  it('is all-or-nothing: a line with nothing to attach to raises none of them', () => {
+    const before = tenderintel.tenderIntelPosition(asQS()).clarifications.length;
+    const error = throwsCode(
+      () =>
+        tenderintel.raiseTenderClarifications(asQS(), {
+          items: [
+            { side: 'CLIENT', subject: 'Roof', question: 'Confirm the flat-roof thermal build-up.', links: { drawing: 'R4780-2' } },
+            { side: 'CLIENT', subject: 'Unlinked', question: 'A question attached to nothing.', links: {} },
+          ],
+        }),
+      'CLARIFICATION_UNLINKED',
+    );
+    assert.match(String(error.message), /Clarification 2/);
+    const after = tenderintel.tenderIntelPosition(asQS()).clarifications.length;
+    assert.equal(after, before, 'nothing was written — the register did not take half the batch');
+  });
+
+  it('refuses an empty set and a set too large to have been read', () => {
+    throwsCode(() => tenderintel.raiseTenderClarifications(asQS(), { items: [] }), 'CLARIFICATIONS_EMPTY');
+    const tooMany = Array.from({ length: 51 }, (_, i) => ({
+      side: 'CLIENT' as const,
+      subject: `Q${i}`,
+      question: 'A question.',
+      links: { scopeItem: `item-${i}` },
+    }));
+    throwsCode(() => tenderintel.raiseTenderClarifications(asQS(), { items: tooMany }), 'CLARIFICATIONS_TOO_MANY');
+  });
+});
+
 describe('tender intelligence · what the catalogue says', () => {
   /**
    * The specification puts issue and commercial interpretation on the person.

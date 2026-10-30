@@ -185,6 +185,84 @@ export function raiseTenderClarification(
 }
 
 /**
+ * Raise several clarifications in one act.
+ *
+ * The agent's reason for existing is that it does the drafting. A clarification
+ * that lives in a chat window or a PDF governs nothing — it has to reach the
+ * register as a tracked record, or the person who prices the thing it concerns
+ * never finds it. Until now a drafted set had to be retyped one form at a time,
+ * which is exactly the manual labour the platform exists to remove; this lets a
+ * reviewed set land together.
+ *
+ * It adds no new rule. Each item goes through `raiseTenderClarification`, so
+ * every refusal, every link requirement and the single `TQ-nnn` sequence are
+ * exactly what raising them one by one would produce. The only thing the batch
+ * guarantees on top is that it is **all or nothing**: the whole set is validated
+ * before a single write, so a bad line in the middle never leaves half a batch
+ * on the register. The ceiling is a guard against a paste nobody read.
+ */
+export function raiseTenderClarifications(
+  ctx: EngineContext,
+  input: {
+    items: Array<{
+      side: ClarificationSide;
+      subject: string;
+      question: string;
+      links: InformationLink;
+      responseDeadline?: string;
+      confidentiality?: Confidentiality;
+      bidderPartyId?: string;
+    }>;
+  },
+): { raised: Array<{ clarificationId: string; reference: string }> } {
+  const items = input.items ?? [];
+  if (items.length === 0) {
+    throw new DomainError('CLARIFICATIONS_EMPTY', 'A batch raises at least one clarification.');
+  }
+  if (items.length > 50) {
+    throw new DomainError(
+      'CLARIFICATIONS_TOO_MANY',
+      'Raise at most 50 clarifications in one act. A larger set than that is a set nobody has read.',
+    );
+  }
+
+  // Validate the whole set before anything is written, so a bad line in the
+  // middle does not leave the register carrying half a batch. The checks mirror
+  // `raiseTenderClarification` exactly — the same refusals, reported with the
+  // line they fell on so the one to fix is named.
+  items.forEach((item, i) => {
+    const n = i + 1;
+    if (!item.subject?.trim() || !item.question?.trim()) {
+      throw new DomainError('CLARIFICATION_EMPTY', `Clarification ${n} needs a subject and the question itself.`);
+    }
+    if (!hasLink(item.links ?? {})) {
+      throw new DomainError(
+        'CLARIFICATION_UNLINKED',
+        `Clarification ${n} names nothing it is about — a document, clause, drawing, package or scope item. ` +
+          'An answer attached to nothing is not found by the person pricing it.',
+      );
+    }
+    if (item.side === 'BIDDER' && !item.bidderPartyId?.trim()) {
+      throw new DomainError('BIDDER_NOT_NAMED', `Clarification ${n} is bidder-side but names no firm that asked it.`);
+    }
+    const confidentiality: Confidentiality = item.confidentiality ?? 'OPEN';
+    if (confidentiality === 'COMMERCIAL_IN_CONFIDENCE' && item.side !== 'BIDDER') {
+      throw new DomainError(
+        'CONFIDENTIALITY_NOT_APPLICABLE',
+        `Clarification ${n}: in-confidence describes one bidder's position; a client or internal question has no bidder to keep it from.`,
+      );
+    }
+  });
+
+  // Fail fast on authority before any write. The inner raise authorises again —
+  // that inner check is the one of record; this one only spares a partial batch.
+  authorise(ctx, 'PROCUREMENT_AWARD', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const raised = items.map((item) => raiseTenderClarification(ctx, item));
+  return { raised };
+}
+
+/**
  * Issue the approved response.
  *
  * `AC-T-WF-06-02`: the recipients and the time are the record. Two refusals

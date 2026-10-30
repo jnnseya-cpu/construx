@@ -64,7 +64,7 @@ before(async () => {
   const bid = bids.createBid(asProviderAdmin(), {
     engagementId: engagement.id,
     buyerName: 'A District Council',
-    scheme: 'OPEN',
+    scheme: 'ITT',
     deadline: '2027-06-01',
   });
   bidId = bid.id;

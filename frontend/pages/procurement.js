@@ -744,6 +744,7 @@ export async function procurement(root) {
               permitted: can('ESTIMATE_TENDER', 'A') && openSchedules.length > 0,
               reason: blockedReason('ESTIMATE_TENDER', 'A') ?? NO_OPEN_SCHEDULE },
             { id: 'clarification', label: 'Raise clarification', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
+            { id: 'clarification-batch', label: 'Raise several clarifications', permitted: can('PROCUREMENT_AWARD', 'C'), reason: blockedReason('PROCUREMENT_AWARD', 'C') },
             { id: 'issueClarification', label: 'Issue answer',
               permitted: can('PROCUREMENT_AWARD', 'U') && unanswered.length > 0,
               reason: blockedReason('PROCUREMENT_AWARD', 'U') ?? 'Every clarification on the register has been answered' },
@@ -3300,6 +3301,51 @@ export async function procurement(root) {
       }),
     },
 
+    'clarification-batch': {
+      title: 'Raise several clarifications',
+      intent:
+        'A reviewed set of questions onto the register in one act, rather than a form at a time. Each line becomes its own ' +
+        'TQ against the information it names. The set is all-or-nothing: if one line has no question or nothing to attach to, ' +
+        'none is raised and the line is named — the register never carries half a batch.',
+      path: `/v1/projects/${projectId}/tender-clarifications/batch`,
+      submitLabel: 'Raise them',
+      fields: [
+        { name: 'side', label: 'Between', type: 'select',
+          options: [
+            { value: 'CLIENT', label: 'To the client or their agent' },
+            { value: 'INTERNAL', label: 'Internal — the bid team asking itself' },
+          ] },
+        { name: 'linkType', label: 'Each question is about', type: 'select',
+          options: [
+            { value: 'scopeItem', label: 'A scope item' },
+            { value: 'drawing', label: 'A drawing' },
+            { value: 'document', label: 'A document' },
+            { value: 'clause', label: 'A clause' },
+            { value: 'package', label: 'A package' },
+          ],
+          hint: 'What the third column on each line points at.' },
+        { name: 'responseDeadline', label: 'Answer needed by', type: 'date', required: false,
+          hint: 'Applied to every question in the set.' },
+        { name: 'items', label: 'One clarification per line', type: 'textarea', rows: 8,
+          placeholder:
+            'Foundations | Confirm foundation type, depth and concrete grade — not detailed below DPC | R4780\n' +
+            'Drainage | Confirm whether below-ground drainage is in this contract or by others | R4780-8',
+          hint: 'subject | question | the drawing or scope item it is about' },
+      ],
+      transform: (v) => ({
+        items: String(v.items ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
+          .map((parts) => ({
+            side: v.side,
+            subject: parts[0],
+            question: parts[1],
+            links: parts[2] ? { [v.linkType]: parts[2] } : {},
+            ...(v.responseDeadline ? { responseDeadline: v.responseDeadline } : {}),
+          })),
+      }),
+    },
     issueClarification: {
       title: 'Issue the answer',
       intent:
