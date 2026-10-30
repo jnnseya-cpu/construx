@@ -7,7 +7,7 @@ import { lookupPanel, wireLookups } from '../lib/lookup.js';
 import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
 import { supplierPaymentCard } from '../lib/siteportal.js';
-import { csvRateCardToLines, parseRateCardEntries, rateCardReport, rateKeyFor } from '../lib/ratecard.js';
+import { csvRateCardToLines, parseRateCardEntries, rateCardReport } from '../lib/ratecard.js';
 import { blockedReason, can, draw, state } from '../app.js';
 
 /**
@@ -362,14 +362,54 @@ export async function procurement(root) {
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
 
-  // The firm's own rate library, keyed for a measured line to find its match.
-  // Lets "Price the bill" offer a stored rate as a basis for a line rather than
-  // asking the estimator to retype a number the library already holds.
-  const libraryByKey = new Map(
-    (costIntel?.rates ?? [])
-      .filter((rate) => Number(rate?.medianMinor) > 0)
-      .map((rate) => [rateKeyFor(rate.description, rate.unit), rate]),
-  );
+  // The firm's own rate library, grouped by unit so a measured line can be
+  // priced by picking a stored rate rather than retyping it — and crucially
+  // without the line's wording having to match the rate card's. A pack-run
+  // take-off and a hand-built rate card describe the same work in different
+  // words; keying on an exact description would hand the picker nothing on
+  // exactly the lines it is meant to help with. So the picker offers every
+  // library rate in the item's unit and pre-selects the closest by shared words.
+  const libraryRates = (costIntel?.rates ?? []).filter((rate) => Number(rate?.medianMinor) > 0);
+  const libraryByUnit = new Map();
+  for (const rate of libraryRates) {
+    const unit = String(rate.unit ?? '').toLowerCase().trim();
+    if (!libraryByUnit.has(unit)) libraryByUnit.set(unit, []);
+    libraryByUnit.get(unit).push(rate);
+  }
+  for (const list of libraryByUnit.values()) {
+    list.sort((a, b) => String(a.description).localeCompare(String(b.description), 'en', { numeric: true }));
+  }
+  // Shared-word overlap, so the right rate is usually already selected and the
+  // estimator confirms rather than hunts. Short/noise words are dropped so "the"
+  // and "to" do not make two unrelated lines look alike.
+  const STOP = new Set(['the', 'to', 'of', 'in', 'and', 'a', 'on', 'for', 'with', 'at', 'by', 'mm', 'new']);
+  const wordsOf = (text) =>
+    new Set(
+      String(text ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]+/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length > 1 && !STOP.has(w)),
+    );
+  const bestLibraryRate = (description, unit) => {
+    const candidates = libraryByUnit.get(String(unit ?? '').toLowerCase().trim()) ?? [];
+    if (candidates.length === 0) return null;
+    const want = wordsOf(description);
+    let best = null;
+    let bestScore = 0;
+    for (const rate of candidates) {
+      const have = wordsOf(rate.description);
+      let shared = 0;
+      for (const w of want) if (have.has(w)) shared += 1;
+      if (shared > bestScore) {
+        bestScore = shared;
+        best = rate;
+      }
+    }
+    // Two shared meaningful words is enough to pre-select; below that, leave it
+    // to the estimator rather than pre-fill a wrong rate they might not catch.
+    return bestScore >= 2 ? best : null;
+  };
 
   // Five reads that cannot answer until somebody chooses what to ask about.
   // Every option comes from a record this page already holds, so the chooser
@@ -2256,11 +2296,14 @@ export async function procurement(root) {
         // estimator's, and nothing here fills it in from an index — that would
         // be pricing somebody else's job.
         ...(boq?.items ?? []).flatMap((item) => {
-          // A stored rate for this exact work and unit, if the library holds
-          // one. Offered as a basis the estimator can pick instead of typing —
-          // the one-click reuse — and named in the hint either way.
-          const lib = libraryByKey.get(rateKeyFor(item.description, item.unit));
-          return [
+          // The library rates in this item's unit, with the closest by shared
+          // words pre-selected. The estimator confirms a rate rather than types
+          // it — and it works whatever the line is called, because the match is
+          // by unit and word overlap, not an exact description. Typing a rate in
+          // the box above always overrides the pick.
+          const candidates = libraryByUnit.get(String(item.unit ?? '').toLowerCase().trim()) ?? [];
+          const suggested = bestLibraryRate(item.description, item.unit);
+          const fields = [
             {
               name: `rate:${item.boqItemId}`,
               label: `${item.description} — ${item.quantity} ${item.unit}`,
@@ -2269,11 +2312,11 @@ export async function procurement(root) {
               required: false,
               hint:
                 `${item.packageId}${item.sourceSheet ? ` · measured off ${item.sourceSheet}` : ''} · all-in rate per ${item.unit}.` +
-                (lib ? ` Your rate library has ${exact(lib.medianMinor)}/${item.unit} for this (${String(lib.confidence ?? '').toLowerCase()}) — choose “From rate library” below to use it.` : ''),
+                (candidates.length ? ' Leave blank to use the library rate chosen below, or type one here to override it.' : ''),
             },
             {
               name: `basis:${item.boqItemId}`,
-              label: `— priced as`,
+              label: `— a typed rate is`,
               type: 'select',
               required: false,
               value: 'labourRateMinor',
@@ -2282,12 +2325,31 @@ export async function procurement(root) {
                 { value: 'materialRateMinor', label: 'Materials' },
                 { value: 'plantRateMinor', label: 'Plant' },
                 { value: 'subcontractRateMinor', label: 'Subcontract' },
-                // Only where the library actually has a rate for this item, so a
-                // basis can never be chosen that has no number behind it.
-                ...(lib ? [{ value: 'LIBRARY', label: `From rate library — ${exact(lib.medianMinor)}/${item.unit}` }] : []),
               ],
             },
           ];
+          if (candidates.length > 0) {
+            fields.push({
+              name: `libRate:${item.boqItemId}`,
+              label: `— or a rate from your library`,
+              type: 'select',
+              required: false,
+              // Pre-selected to the closest match so the common case is one
+              // confirmation, not a search. Blank where nothing is close enough.
+              value: suggested ? String(suggested.medianMinor) : '',
+              options: [
+                { value: '', label: '— none; I will type the rate —' },
+                ...candidates.map((rate) => ({
+                  value: String(rate.medianMinor),
+                  label: `${rate.description} · ${exact(rate.medianMinor)}/${item.unit} · ${String(rate.confidence ?? '').toLowerCase()}`,
+                })),
+              ],
+              hint: suggested
+                ? 'Pre-selected as the closest match in your library — change it if it is wrong, or type a rate above to override.'
+                : 'Pick the stored rate for this item, or type one above.',
+            });
+          }
+          return fields;
         }),
       ],
       transform: (v) => {
@@ -2323,29 +2385,27 @@ export async function procurement(root) {
           lines: (boq?.items ?? [])
             .filter((item) => item.packageId === v.packageId)
             .map((item) => {
-              const rate = Number(v[`rate:${item.boqItemId}`] ?? 0);
-              const basis = v[`basis:${item.boqItemId}`] || 'labourRateMinor';
               const base = {
                 boqItemId: item.boqItemId,
                 description: item.description,
                 unit: item.unit,
                 quantity: item.quantity,
               };
-              // "From rate library": apply the stored rate, not a typed one. It
-              // is carried all-in as a priced package (subcontract) and tagged
-              // so the rate history does not take it back as a fresh pricing —
-              // an applied rate is a copy, not evidence of itself.
-              if (basis === 'LIBRARY') {
-                const lib = libraryByKey.get(rateKeyFor(item.description, item.unit));
-                if (lib && Number(lib.medianMinor) > 0) {
-                  return { ...base, subcontractRateMinor: Number(lib.medianMinor), rateSource: 'LIBRARY' };
-                }
-                // The option is only offered with a match, but if the library
-                // changed under the panel, fall back to any typed rate rather
-                // than price the line at nothing.
-                return { ...base, ...(rate > 0 ? { subcontractRateMinor: rate } : {}) };
+              // A typed rate always wins — it is the estimator overriding the
+              // suggestion. Otherwise the library rate picked (or pre-selected)
+              // for this line applies: carried all-in as a priced package and
+              // tagged LIBRARY so the rate history does not take it back as a
+              // fresh pricing — an applied rate is a copy, not evidence of itself.
+              const typed = Number(v[`rate:${item.boqItemId}`] ?? 0);
+              if (typed > 0) {
+                const basis = v[`basis:${item.boqItemId}`] || 'labourRateMinor';
+                return { ...base, [basis]: typed };
               }
-              return { ...base, ...(rate > 0 ? { [basis]: rate } : {}) };
+              const picked = Number(v[`libRate:${item.boqItemId}`] ?? 0);
+              if (picked > 0) {
+                return { ...base, subcontractRateMinor: picked, rateSource: 'LIBRARY' };
+              }
+              return { ...base };
             }),
         };
       },

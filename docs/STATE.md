@@ -3210,12 +3210,18 @@ the old `confidenceFor` for the estimate-only library that existed before
 imports.
 
 **A rate can be reused by selection, without the library proving itself.** When
-a measured line is priced ("Price the bill"), any line the rate library already
-holds a rate for (matched by `rateKey`, normalised in the console exactly as the
-server does) offers a **"From rate library"** basis beside the four kind bases.
-Choosing it applies the stored rate to the line — carried all-in as a priced
-package (`subcontractRateMinor`, because an all-in rate is a price for a scope,
-not a built-up resource cost) and tagged `rateSource: 'LIBRARY'`. That tag is the
+a measured line is priced ("Price the bill"), each line carries a picker of the
+library rates **in that line's unit**, with the closest by shared words
+pre-selected, so the common case is a confirmation rather than a typed number.
+The match is deliberately *not* an exact description: a drawing-read take-off and
+a hand-built rate card describe the same work in different words ("Excavation of
+foundation trenches…" vs "Foundation trench excavation…"), and keying on an
+exact description handed the picker nothing on exactly the lines it is meant to
+help with — proven across the firm's own 37 pack-run lines, where a unit +
+word-overlap match pre-selects the right rate on all 37. A typed rate always
+overrides the pick. The chosen rate is applied all-in as a priced package
+(`subcontractRateMinor`, because an all-in rate is a price for a scope, not a
+built-up resource cost) and tagged `rateSource: 'LIBRARY'`. That tag is the
 one new thing: `harvestRates` excludes a `LIBRARY` line exactly as it excludes a
 `MARKET_AI` one, because an applied rate is a *copy* of a library entry, not a
 fresh independent pricing — counting it would let an imported starting rate climb
