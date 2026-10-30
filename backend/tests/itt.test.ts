@@ -118,6 +118,62 @@ describe('The compliance matrix', () => {
   });
 });
 
+// ── Named technical certificates ──────────────────────────────────────────────
+//
+// The seeded company profile holds CHAS, Constructionline Gold, ISO 9001 and
+// ISO 45001 — and not ISO 14001, which is what makes it a real test of the
+// difference between holding an accreditation and holding the one that was asked
+// for.
+
+describe('A named certificate is matched to the one the invitation asks for', () => {
+  const cert = (over: Partial<itt.ITTRequirement>) =>
+    analyse({ requirements: [requirement({ reference: 'C1', category: 'QUALITY', mandatory: false, ...over })] }).matrix[0]!;
+
+  it('proves a specific certificate the company holds, by that name', () => {
+    const line = cert({ requirement: 'ISO 45001 occupational health and safety certification', evidenceRequired: 'ISO 45001 certificate' });
+    assert.equal(line.status, 'SATISFIED');
+    assert.ok(line.evidenceHeld?.includes('ISO 45001'));
+  });
+
+  it('does not pass a certificate it lacks off the back of a different one it holds', () => {
+    // The defect this fixes: the blanket accreditation probe matched "ISO 14001"
+    // and returned the whole list — ISO 9001, ISO 45001 — marking satisfied a
+    // standard the company does not hold.
+    const line = cert({ requirement: 'ISO 14001 environmental management certification', evidenceRequired: 'ISO 14001 certificate' });
+    assert.equal(line.status, 'GAP');
+    assert.equal(line.evidenceHeld, undefined);
+  });
+
+  it('needs every certificate a line names, so a partial hold is still a gap', () => {
+    const line = cert({ requirement: 'ISO 9001 and ISO 14001 certification', evidenceRequired: 'ISO 9001 and ISO 14001 certificates' });
+    assert.equal(line.status, 'GAP', 'holds ISO 9001 but not ISO 14001');
+  });
+
+  it('recognises a scheme by name, not just ISO numbers', () => {
+    const held = cert({ requirement: 'CHAS accreditation or equivalent', evidenceRequired: 'CHAS certificate' });
+    assert.equal(held.status, 'SATISFIED');
+    assert.ok(held.evidenceHeld?.includes('CHAS'));
+
+    const notHeld = cert({ requirement: 'Achilles UVDB registration', evidenceRequired: 'Achilles UVDB certificate' });
+    assert.equal(notHeld.status, 'GAP');
+  });
+
+  it('still answers a generic accreditation requirement from the whole list', () => {
+    // No specific scheme named, so the general probe answers it — holding a
+    // recognised accreditation is the right answer to "hold one".
+    const line = cert({ requirement: 'Hold a recognised industry accreditation', evidenceRequired: 'Accreditation certificates' });
+    assert.equal(line.status, 'SATISFIED');
+    assert.ok(line.evidenceHeld?.includes('CHAS'));
+  });
+
+  it('leaves a certificate it does not recognise as unknown, not a false gap', () => {
+    // ISO 55001 is not in the catalogue; the platform says it cannot tell rather
+    // than burying the real gaps under everything it has not automated.
+    const line = cert({ requirement: 'ISO 55001 asset management certification', evidenceRequired: 'ISO 55001 certificate' });
+    assert.equal(line.status, 'UNKNOWN');
+  });
+});
+
 // ── Commercial terms ────────────────────────────────────────────────────────
 
 describe('Commercial terms, assessed rather than transcribed', () => {

@@ -104,9 +104,65 @@ export type ITTRequirement = {
 /** Where the platform can already prove a requirement from its own records. */
 type EvidenceProbe = {
   match: RegExp;
-  /** Reads the profile and returns proof, or null when there is none. */
-  find: (profile: CompanyProfile) => string | null;
+  /**
+   * Reads the profile — and the requirement, so a probe can look for the
+   * specific thing the invitation named rather than only the category — and
+   * returns proof, or null when there is none.
+   */
+  find: (profile: CompanyProfile, requirement: ITTRequirement) => string | null;
 };
+
+/**
+ * Specific technical certificates and management-system standards an invitation
+ * names by number or scheme, each recognised the same way whether the string is
+ * the buyer's requirement or the company's own record.
+ *
+ * This is separate from the accreditation probe below on purpose. That one
+ * answers a *category* — "an accreditation" — by returning the whole list, which
+ * is right for "hold a recognised accreditation" and wrong for "hold ISO 14001":
+ * a company with ISO 9001 and no ISO 14001 was marked satisfied against the one
+ * it does not hold, and a satisfied line is a line nobody checks again. These
+ * match the one the invitation asked for and look for that one on file; a
+ * certificate named but not held is a gap, which is the safe direction to be
+ * wrong in.
+ *
+ * Exact by design. "ISO 45001 or equivalent" is not auto-satisfied by an OHSAS
+ * 18001 or an SSIP membership held instead — reading "or equivalent" is the
+ * bidder's judgement, and a probe that made it would be guessing a line
+ * satisfied. The unmatched case falls to a gap, which prompts the check rather
+ * than hiding it.
+ */
+const NAMED_CERTIFICATES: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'ISO 9001', pattern: /iso[\s-]?9001/i },
+  { label: 'ISO 14001', pattern: /iso[\s-]?14001/i },
+  { label: 'ISO 45001', pattern: /iso[\s-]?45001/i },
+  { label: 'ISO 27001', pattern: /iso[\s-]?27001/i },
+  { label: 'ISO 44001', pattern: /iso[\s-]?44001/i },
+  { label: 'ISO 19650', pattern: /iso[\s-]?19650/i },
+  { label: 'ISO 50001', pattern: /iso[\s-]?50001/i },
+  { label: 'CHAS', pattern: /\bchas\b/i },
+  { label: 'SafeContractor', pattern: /safe\s?contractor/i },
+  { label: 'Constructionline', pattern: /constructionline/i },
+  { label: 'SMAS Worksafe', pattern: /\bsmas\b/i },
+  { label: 'Acclaim', pattern: /\bacclaim\b/i },
+  { label: 'Achilles', pattern: /\bachilles\b|\buvdb\b/i },
+  { label: 'Gas Safe', pattern: /gas\s?safe/i },
+  { label: 'NICEIC', pattern: /\bniceic\b/i },
+  { label: 'NAPIT', pattern: /\bnapit\b/i },
+  { label: 'FORS', pattern: /\bfors\b/i },
+  { label: 'BES 6001', pattern: /bes[\s-]?6001/i },
+  { label: 'PAS 2080', pattern: /pas[\s-]?2080/i },
+  { label: 'Considerate Constructors Scheme', pattern: /considerate\s?constructors/i },
+];
+
+/** One regex that fires when any recognised certificate is named. */
+const NAMES_A_CERTIFICATE = new RegExp(NAMED_CERTIFICATES.map((cert) => `(?:${cert.pattern.source})`).join('|'), 'i');
+
+/** The specific certificates an invitation line names, in catalogue order. */
+function certificatesNamedIn(requirement: ITTRequirement): Array<{ label: string; pattern: RegExp }> {
+  const text = `${requirement.requirement} ${requirement.evidenceRequired}`;
+  return NAMED_CERTIFICATES.filter((cert) => cert.pattern.test(text));
+}
 
 /**
  * What the platform can evidence without being asked.
@@ -115,6 +171,19 @@ type EvidenceProbe = {
  * matrix line marked satisfied is a line nobody checks again.
  */
 const PROBES: EvidenceProbe[] = [
+  // The specific named certificate, ahead of the general accreditation probe, so
+  // a line naming ISO 14001 is answered by ISO 14001 rather than by the list.
+  {
+    match: NAMES_A_CERTIFICATE,
+    find: (profile, requirement) => {
+      const named = certificatesNamedIn(requirement);
+      if (named.length === 0) return null;
+      const held = named.filter((cert) => profile.accreditations.some((entry) => cert.pattern.test(entry)));
+      // Satisfied only when every certificate the line names is on file. A line
+      // that names two and holds one is a gap, not a pass.
+      return held.length === named.length ? `Held: ${held.map((cert) => cert.label).join(', ')}` : null;
+    },
+  },
   {
     match: /employer'?s liability|public liability|professional indemnity|contract works/i,
     find: (p) => {
@@ -123,7 +192,11 @@ const PROBES: EvidenceProbe[] = [
     },
   },
   {
-    match: /chas|constructionline|safecontractor|iso ?9001|iso ?14001|iso ?45001|accreditation/i,
+    // The general case — "a recognised accreditation" with no specific scheme
+    // named. A named one is caught by the probe above; this answers the rest
+    // from the whole list, which is the right answer to a requirement that asks
+    // for any accreditation rather than a particular one.
+    match: /accreditation|accredited|pre-?qualif/i,
     find: (p) => (p.accreditations.length > 0 ? `Held: ${p.accreditations.join(', ')}` : null),
   },
   {
@@ -324,7 +397,7 @@ export function analyseITT(
   // --- The matrix -----------------------------------------------------------
   const matrix: MatrixLine[] = input.requirements.map((requirement) => {
     const probe = PROBES.find((p) => p.match.test(requirement.requirement) || p.match.test(requirement.evidenceRequired));
-    const held = probe?.find(profile) ?? null;
+    const held = probe?.find(profile, requirement) ?? null;
 
     return {
       reference: requirement.reference,
