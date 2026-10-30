@@ -14,6 +14,30 @@ UNDERSTAND → INSPECT → REUSE → PLAN → IMPLEMENT → VERIFY → STABILISE
 The target: **maximum forward progress, minimum rework, zero unnecessary
 repetition, zero regressions, production-grade stability.**
 
+## 0. Right the first time — non-negotiable
+
+Every part of this OS — every stage, every feature, every screen, every
+change — must be **95–100% correct and working the first time it is delivered.**
+Not "mostly works", not "works once the next pass fixes it", not a happy path
+with the edges unhandled. If it is not there, it does not ship.
+
+This binds everywhere, without exception. A change is delivered at this standard
+or it is not delivered:
+
+- It does what it claims, end to end, including the error, empty, loading and
+  permission-denied paths — not just the one route that demos well.
+- It is **proven** before it is called done: `npm test` green, `npm run
+  typecheck` clean, the specific behaviour covered by a test, existing behaviour
+  preserved. "I wrote it" is not "it works" (rule 10).
+- Nothing is faked to reach it — no placeholder, no mock, no invented number
+  presented as real (rule 9).
+- If it genuinely cannot reach 95% this pass, the honest move is to **not ship
+  it** and say exactly what remains — never to ship the 70% and leave the rest
+  as a surprise for the user or the next agent.
+
+The bar is first-time-right because the alternative — ship, discover, re-do — is
+the rework, the regression and the lost trust this directive exists to prevent.
+
 ---
 
 ## 1. Read before you write
