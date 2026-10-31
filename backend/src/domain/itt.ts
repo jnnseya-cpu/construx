@@ -4,6 +4,7 @@ import { authorise, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import type { Role } from '../identity/roles.ts';
 import { companyProfile, type CompanyProfile } from './radar.ts';
+import { evidenceRegister, type ClaimKind, type ClaimStanding } from './evidenceclaim.ts';
 
 /**
  * The ITT analyst.
@@ -158,9 +159,9 @@ const NAMED_CERTIFICATES: Array<{ label: string; pattern: RegExp }> = [
 /** One regex that fires when any recognised certificate is named. */
 const NAMES_A_CERTIFICATE = new RegExp(NAMED_CERTIFICATES.map((cert) => `(?:${cert.pattern.source})`).join('|'), 'i');
 
-/** The specific certificates an invitation line names, in catalogue order. */
-function certificatesNamedIn(requirement: ITTRequirement): Array<{ label: string; pattern: RegExp }> {
-  const text = `${requirement.requirement} ${requirement.evidenceRequired}`;
+/** The specific certificates a requirement or matrix line names, in catalogue order. */
+function certificatesNamedIn(line: { requirement: string; evidenceRequired: string }): Array<{ label: string; pattern: RegExp }> {
+  const text = `${line.requirement} ${line.evidenceRequired}`;
   return NAMED_CERTIFICATES.filter((cert) => cert.pattern.test(text));
 }
 
@@ -781,6 +782,177 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
     throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
   }
   return readAnalysis(record);
+}
+
+// --- Matching held evidence to the requirements -------------------------------
+//
+// The matrix says what the buyer wants and what the company profile proves. It
+// does not read the evidence register — the documents and claims the business
+// has actually filed — so a certificate on file that answers a requirement was
+// invisible to the matrix, and linking a claim to the requirement it covers was
+// a job somebody did by memory. This reads the register against the matrix and
+// says, per requirement, what already covers it and what held evidence could.
+//
+// It proposes; it never links and never invents. A suggestion is "you hold this,
+// consider linking it" — the link itself is still an authored act (`assertClaim`
+// with `covers`), because a claim answering a requirement is a sentence the
+// business puts to a buyer, not a match a function makes on its behalf.
+
+/** Which kinds of claim can plausibly answer which category of requirement. */
+const CATEGORY_CLAIM_KINDS: Record<RequirementCategory, ClaimKind[]> = {
+  QUALIFICATION: ['ACCREDITATION', 'CERTIFICATE', 'FINANCIAL', 'REFERENCE'],
+  TECHNICAL: ['METHOD', 'CASE_STUDY', 'CV', 'CALCULATION', 'TEST_RESULT'],
+  COMMERCIAL: ['FINANCIAL'],
+  INSURANCE: ['INSURANCE'],
+  HEALTH_AND_SAFETY: ['ACCREDITATION', 'CERTIFICATE', 'POLICY', 'METHOD'],
+  QUALITY: ['ACCREDITATION', 'CERTIFICATE', 'TEST_RESULT', 'POLICY'],
+  ENVIRONMENTAL: ['ACCREDITATION', 'CERTIFICATE', 'POLICY'],
+  SOCIAL_VALUE: ['KPI', 'CASE_STUDY', 'POLICY'],
+  PROGRAMME: ['METHOD', 'CASE_STUDY'],
+  SUBMISSION: [],
+};
+
+export type EvidenceMatch = {
+  claimId: string;
+  reference: string;
+  kind: ClaimKind;
+  claim: string;
+  standing: ClaimStanding;
+  expiresAt?: string;
+  /** Why it was suggested: the claim's kind fits the category, or it names the same certificate. */
+  because: 'KIND' | 'NAMED_CERTIFICATE' | 'LINKED';
+};
+
+export type RequirementCoverage = {
+  reference: string;
+  requirement: string;
+  category: RequirementCategory;
+  evidenceRequired: string;
+  mandatory: boolean;
+  /** The stored matrix status, from the company-profile probes. */
+  matrixStatus: MatrixStatus;
+  /** Claims the business has explicitly linked to this requirement. */
+  linked: EvidenceMatch[];
+  /** Held claims that could cover it but are not linked yet. */
+  suggested: EvidenceMatch[];
+  /**
+   * What to do about this line:
+   *  COVERED           — a current, approved linked claim answers it
+   *  PROFILE           — proven from the company profile, no document needed here
+   *  ATTENTION         — a linked claim is pending or has lapsed
+   *  LINK_SUGGESTED    — nothing linked, but held evidence could be
+   *  MISSING           — the buyer asked for evidence and nothing held answers it
+   *  NO_EVIDENCE_ASKED — the requirement names no evidence to hold
+   */
+  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'MISSING' | 'NO_EVIDENCE_ASKED';
+};
+
+export type EvidenceCoverage = {
+  analysisId: string;
+  reference: string;
+  asAt: string;
+  requirements: RequirementCoverage[];
+  covered: number;
+  /** Requirements with nothing linked but at least one suggestion. */
+  linkSuggested: number;
+  /** Requirements that ask for evidence and have nothing held to answer them. */
+  missing: number;
+  /** Linked claims that are pending or lapsed. */
+  attention: number;
+  summary: string;
+};
+
+/**
+ * Read the evidence register against a compliance matrix and say, per
+ * requirement, what covers it and what held evidence could.
+ */
+export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: string): EvidenceCoverage {
+  // `complianceMatrix` and `evidenceRegister` both authorise ESTIMATE_TENDER R
+  // at COMMERCIAL_L3; reusing them keeps one authorisation rule, not a third.
+  const analysis = complianceMatrix(ctx, analysisId);
+  const day = asAt ?? new Date().toISOString().slice(0, 10);
+  const register = evidenceRegister(ctx, day);
+  const current = register.claims.filter((claim) => claim.standing !== 'REJECTED' && claim.standing !== 'EXPIRED');
+
+  const requirements: RequirementCoverage[] = analysis.matrix.map((line) => {
+    const linked: EvidenceMatch[] = register.claims
+      .filter((claim) => claim.covers.includes(line.reference))
+      .map((claim) => ({
+        claimId: claim.id,
+        reference: claim.reference,
+        kind: claim.kind,
+        claim: claim.claim,
+        standing: claim.standing,
+        expiresAt: claim.expiresAt,
+        because: 'LINKED' as const,
+      }));
+
+    const linkedIds = new Set(linked.map((entry) => entry.claimId));
+    const kinds = CATEGORY_CLAIM_KINDS[line.category] ?? [];
+    const namedCerts = certificatesNamedIn(line);
+
+    const suggested: EvidenceMatch[] = [];
+    if (line.evidenceRequired) {
+      for (const claim of current) {
+        if (linkedIds.has(claim.id)) continue;
+        const namesSameCert =
+          namedCerts.length > 0 &&
+          namedCerts.some((cert) => cert.pattern.test(`${claim.reference} ${claim.claim}`));
+        const kindFits = kinds.includes(claim.kind);
+        if (!namesSameCert && !kindFits) continue;
+        suggested.push({
+          claimId: claim.id,
+          reference: claim.reference,
+          kind: claim.kind,
+          claim: claim.claim,
+          standing: claim.standing,
+          expiresAt: claim.expiresAt,
+          // A shared certificate name is the stronger reason, so it wins the label.
+          because: namesSameCert ? 'NAMED_CERTIFICATE' : 'KIND',
+        });
+      }
+    }
+
+    const hasCurrentLink = linked.some((entry) => entry.standing === 'APPROVED');
+    const hasStaleLink = linked.length > 0 && !hasCurrentLink;
+    const disposition: RequirementCoverage['disposition'] = !line.evidenceRequired
+      ? 'NO_EVIDENCE_ASKED'
+      : hasCurrentLink
+        ? 'COVERED'
+        : hasStaleLink
+          ? 'ATTENTION'
+          : line.status === 'SATISFIED'
+            ? 'PROFILE'
+            : suggested.length > 0
+              ? 'LINK_SUGGESTED'
+              : 'MISSING';
+
+    return {
+      reference: line.reference,
+      requirement: line.requirement,
+      category: line.category,
+      evidenceRequired: line.evidenceRequired,
+      mandatory: line.mandatory,
+      matrixStatus: line.status,
+      linked,
+      suggested,
+      disposition,
+    };
+  });
+
+  const covered = requirements.filter((r) => r.disposition === 'COVERED' || r.disposition === 'PROFILE').length;
+  const linkSuggested = requirements.filter((r) => r.disposition === 'LINK_SUGGESTED').length;
+  const missing = requirements.filter((r) => r.disposition === 'MISSING').length;
+  const attention = requirements.filter((r) => r.disposition === 'ATTENTION').length;
+
+  const summary =
+    `${covered} of ${requirements.length} requirement(s) covered` +
+    (linkSuggested > 0 ? `, ${linkSuggested} with held evidence to link` : '') +
+    (attention > 0 ? `, ${attention} with evidence pending or lapsed` : '') +
+    (missing > 0 ? `, ${missing} with nothing on file` : '') +
+    '.';
+
+  return { analysisId, reference: analysis.reference, asAt: day, requirements, covered, linkSuggested, missing, attention, summary };
 }
 
 // --- A requirement consciously not answered -----------------------------------------

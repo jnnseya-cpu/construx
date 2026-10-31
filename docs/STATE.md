@@ -3132,6 +3132,24 @@ the check. A certificate the catalogue does not recognise stays `UNKNOWN`, and a
 requirement that names no specific scheme ("hold a recognised accreditation") is
 still answered from the whole list.
 
+The matrix also reads the **evidence register** — the documents and claims the
+business has actually filed — not only the company profile. `evidenceCoverage`
+(`itt.ts`; `GET …/pipeline/analyses/:id/evidence-coverage`, surfaced on the
+opened matrix as "Evidence you already hold, matched to the matrix") reports, per
+requirement: the claims explicitly linked to it, and the held claims that could
+cover it but are not linked yet — matched by the claim's kind fitting the
+requirement's category, or by the claim naming the same certificate the
+requirement does. Each line gets a disposition — covered, proven from the
+profile, needs attention (a linked claim pending or lapsed), link-suggested, or
+missing — so the half that used to be manual (hunting the register for the
+document that answers a line) is proposed. It **proposes and never links or
+invents**: linking a claim to the requirement it covers stays an authored act
+(`assertClaim` with `covers`), because a claim answering a requirement is a
+sentence the business puts to a buyer, and a document the business does not hold
+is a gap, not something the platform conjures. The matching is advisory, so it is
+allowed to be generous where the probes are exact; the safe direction, again, is
+to surface a candidate for a person to confirm rather than to assert a match.
+
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
 damages are set against the margin, not reported as a rate. A performance bond

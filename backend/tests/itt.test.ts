@@ -4,6 +4,7 @@ import { throwsCode } from './helpers.ts';
 import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as itt from '../src/domain/itt.ts';
+import * as evidence from '../src/domain/evidenceclaim.ts';
 import * as costintel from '../src/domain/costintel.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
@@ -171,6 +172,88 @@ describe('A named certificate is matched to the one the invitation asks for', ()
     // than burying the real gaps under everything it has not automated.
     const line = cert({ requirement: 'ISO 55001 asset management certification', evidenceRequired: 'ISO 55001 certificate' });
     assert.equal(line.status, 'UNKNOWN');
+  });
+});
+
+// ── Held evidence read against the matrix ─────────────────────────────────────
+
+describe('Held evidence is read against the matrix and proposed, never invented', () => {
+  let coverage: ReturnType<typeof itt.evidenceCoverage>;
+  const line = (ref: string) => coverage.requirements.find((r) => r.reference === ref)!;
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-COVERAGE-01',
+      requirements: [
+        requirement({ reference: 'R1', category: 'INSURANCE', requirement: 'Employers liability insurance of £10m', evidenceRequired: 'EL certificate' }),
+        requirement({ reference: 'R2', category: 'ENVIRONMENTAL', mandatory: false, requirement: 'ISO 14001 environmental management', evidenceRequired: 'ISO 14001 certificate' }),
+        requirement({ reference: 'R3', category: 'TECHNICAL', mandatory: false, requirement: 'Method statement for the temporary works', evidenceRequired: 'Temporary works method statement' }),
+        requirement({ reference: 'R4', category: 'TECHNICAL', mandatory: false, requirement: 'Technical approach to the deep basement excavation', evidenceRequired: 'A technical narrative with worked examples' }),
+        requirement({ reference: 'R5', category: 'COMMERCIAL', mandatory: false, requirement: 'Anti-collusion declaration', evidenceRequired: 'Signed anti-collusion certificate' }),
+        requirement({ reference: 'R6', category: 'QUALITY', mandatory: false, requirement: 'Quality plan certificate', evidenceRequired: 'A current quality certificate' }),
+      ],
+    });
+
+    const q = qs();
+    // The owner holds ESTIMATE_TENDER approval and is not the claim's author, so
+    // the two-person rule on verification is satisfied.
+    const owner = platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+    // A method statement linked to R3, verified by someone other than the author.
+    const method = evidence.assertClaim(q, { kind: 'METHOD', claim: 'Temporary works method statement for the basement', sourceHash: 'h-method-r3', covers: ['R3'] });
+    evidence.verifyClaim(owner, method.id, { method: 'Read against the temporary works design check' });
+    // An ISO 14001 accreditation held but not linked — matches R2 by name.
+    evidence.assertClaim(q, { kind: 'ACCREDITATION', claim: 'ISO 14001 environmental management system certificate 2026', sourceHash: 'h-iso14001' });
+    // A case study held but not linked — matches R4 by kind.
+    evidence.assertClaim(q, { kind: 'CASE_STUDY', claim: 'Case study: comparable water treatment upgrade delivered 2025', sourceHash: 'h-casestudy' });
+    // A quality certificate linked to R6 but left pending (nobody verified it).
+    evidence.assertClaim(q, { kind: 'CERTIFICATE', claim: 'Quality management certificate for the works', sourceHash: 'h-quality-r6', covers: ['R6'] });
+
+    coverage = itt.evidenceCoverage(q, written.analysisId);
+  });
+
+  it('counts a requirement with a current, verified linked claim as covered', () => {
+    const r3 = line('R3');
+    assert.equal(r3.disposition, 'COVERED');
+    assert.equal(r3.linked[0]!.standing, 'APPROVED');
+  });
+
+  it('suggests held evidence by a shared certificate name, and does not link it', () => {
+    const r2 = line('R2');
+    assert.equal(r2.disposition, 'LINK_SUGGESTED');
+    const match = r2.suggested.find((s) => /ISO 14001/.test(s.claim))!;
+    assert.ok(match, 'the held ISO 14001 certificate was not suggested');
+    assert.equal(match.because, 'NAMED_CERTIFICATE');
+    // Advisory only — the claim is not actually linked to R2.
+    assert.ok(!r2.linked.some((l) => l.claimId === match.claimId));
+  });
+
+  it('suggests held evidence by claim kind for the requirement category', () => {
+    const r4 = line('R4');
+    assert.equal(r4.disposition, 'LINK_SUGGESTED');
+    assert.ok(r4.suggested.some((s) => s.kind === 'CASE_STUDY' && s.because === 'KIND'));
+  });
+
+  it('counts a profile-proven requirement as covered without needing a document here', () => {
+    assert.equal(line('R1').disposition, 'PROFILE');
+  });
+
+  it('flags a requirement with nothing held to answer it as missing', () => {
+    const r5 = line('R5');
+    assert.equal(r5.disposition, 'MISSING');
+    assert.equal(r5.suggested.length, 0);
+  });
+
+  it('flags a linked claim that is only pending as needing attention', () => {
+    const r6 = line('R6');
+    assert.equal(r6.disposition, 'ATTENTION');
+    assert.equal(r6.linked[0]!.standing, 'PENDING');
+  });
+
+  it('summarises the counts across the matrix', () => {
+    assert.ok(coverage.covered >= 2, 'R1 by profile and R3 by claim are both covered');
+    assert.ok(coverage.missing >= 1);
+    assert.ok(coverage.linkSuggested >= 2);
+    assert.match(coverage.summary, /covered/);
   });
 });
 

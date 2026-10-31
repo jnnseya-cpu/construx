@@ -4211,6 +4211,12 @@ export const ROUTES: Route[] = [
     description: 'One compliance matrix: every requirement with an owner and a status, and the terms assessed',
     handler: (platform, ctx) => itt.complianceMatrix(tenantContext(platform, ctx), ctx.params.analysisId as string),
   },
+  {
+    method: 'GET',
+    pattern: '/v1/pipeline/analyses/:analysisId/evidence-coverage',
+    description: 'Held evidence read against the matrix: what covers each requirement, and what could',
+    handler: (platform, ctx) => itt.evidenceCoverage(tenantContext(platform, ctx), ctx.params.analysisId as string),
+  },
   /*
    * Waivers.
    *
