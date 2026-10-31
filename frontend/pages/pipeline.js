@@ -517,7 +517,17 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
   `;
 }
 
-function matrixDetail(analysis, waivers, addenda) {
+const COVERAGE_TONE = { COVERED: 'ok', PROFILE: 'ok', LINK_SUGGESTED: 'warn', ATTENTION: 'warn', MISSING: 'bad', NO_EVIDENCE_ASKED: '' };
+const COVERAGE_LABEL = {
+  COVERED: 'covered',
+  PROFILE: 'from the profile',
+  LINK_SUGGESTED: 'evidence to link',
+  ATTENTION: 'needs attention',
+  MISSING: 'nothing on file',
+  NO_EVIDENCE_ASKED: 'no evidence asked',
+};
+
+function matrixDetail(analysis, waivers, addenda, coverage) {
   const gapRefs = new Set(analysis.mandatoryGaps.map((line) => line.reference));
   // A waiver is read live, so a line waived after the matrix was analysed reads
   // as waived here without the analysis being rerun.
@@ -615,6 +625,46 @@ function matrixDetail(analysis, waivers, addenda) {
         ]),
         empty: 'This analysis carries no requirements',
       })}
+
+      ${
+        coverage
+          ? html`<h2 style="padding:15px 17px 0">Evidence you already hold, matched to the matrix</h2>
+              <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                ${coverage.summary} The platform proposes which held evidence could cover each requirement — linking it is
+                still your decision, and it never invents a document you do not have. Only the lines that need action are
+                listed; the rest are covered.
+              </p>
+              ${table({
+                headers: ['Ref', 'Requirement', 'Standing', 'Held evidence and suggestions'],
+                rows: coverage.requirements
+                  .filter((r) => !['NO_EVIDENCE_ASKED', 'COVERED', 'PROFILE'].includes(r.disposition))
+                  .map((r) => [
+                    r.reference,
+                    html`<span style="font-size:12px">${r.requirement}</span>`,
+                    badge(COVERAGE_LABEL[r.disposition] ?? r.disposition, COVERAGE_TONE[r.disposition] ?? ''),
+                    html`${[
+                      ...r.linked.map(
+                        (c) =>
+                          html`<div style="font-size:12px">Linked: ${c.reference} — ${c.claim} ${badge(
+                            humanise(c.standing),
+                            c.standing === 'APPROVED' ? 'ok' : c.standing === 'PENDING' ? 'warn' : 'bad',
+                          )}</div>`,
+                      ),
+                      ...r.suggested.map(
+                        (c) =>
+                          html`<div style="font-size:12px;color:var(--text-3)">Consider linking: ${c.reference} — ${c.claim}${
+                            c.because === 'NAMED_CERTIFICATE' ? ' (names the same certificate)' : ''
+                          }</div>`,
+                      ),
+                      r.disposition === 'MISSING'
+                        ? html`<div style="font-size:12px;color:var(--text-3)">Nothing held answers this — file the document and assert a claim, or raise a clarification.</div>`
+                        : '',
+                    ]}`,
+                  ]),
+                empty: 'Every requirement that needs evidence is covered or proven from the profile.',
+              })}`
+          : ''
+      }
 
       ${
         (addenda?.impacts ?? []).length > 0
@@ -3304,7 +3354,7 @@ export async function pipeline(root) {
     open.disabled = true;
     open.textContent = 'Opening…';
     try {
-      const [analysis, waivers, addenda] = await Promise.all([
+      const [analysis, waivers, addenda, coverage] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         // Read separately rather than folded into the analysis: a waiver is a
         // decision made after the invitation was read, and putting it inside the
@@ -3312,8 +3362,11 @@ export async function pipeline(root) {
         // somebody granted one.
         api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
         api.read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        // The held evidence read against this matrix, live, for the same reason:
+        // a claim filed after the analysis still shows here without a re-analysis.
+        api.read(`/v1/pipeline/analyses/${analysisId}/evidence-coverage`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(analysis, waivers, addenda));
+      render(detail, matrixDetail(analysis, waivers, addenda, coverage));
       detail.dataset.analysis = analysisId;
       detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
@@ -4007,12 +4060,13 @@ export async function pipeline(root) {
     const spec = specs[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) {
-      const [fresh, freshWaivers, freshAddenda] = await Promise.all([
+      const [fresh, freshWaivers, freshAddenda, freshCoverage] = await Promise.all([
         api.get(`/v1/pipeline/analyses/${analysisId}`),
         api.read(`/v1/pipeline/analyses/${analysisId}/waivers`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
         api.read(`/v1/pipeline/analyses/${analysisId}/addenda`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
+        api.read(`/v1/pipeline/analyses/${analysisId}/evidence-coverage`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch(() => null),
       ]);
-      render(detail, matrixDetail(fresh, freshWaivers, freshAddenda));
+      render(detail, matrixDetail(fresh, freshWaivers, freshAddenda, freshCoverage));
       detail.dataset.analysis = analysisId;
     }
   });

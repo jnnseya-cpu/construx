@@ -3111,6 +3111,45 @@ from the upload, and an owner against every line is the cheapest fix there is. A
 requirement the platform cannot probe is `UNKNOWN` rather than a gap — marking
 it a gap would bury the real ones under everything nobody automated.
 
+What the platform can prove now includes the **specific technical certificate the
+invitation names**, not only the four standing categories (insurance,
+accreditation, turnover, references). `backend/src/domain/itt.ts` carries a
+catalogue of recognised certificates and management-system standards — the ISO
+series (9001, 14001, 45001, 27001, 44001, 19650, 50001), the SSIP and
+pre-qualification schemes (CHAS, SafeContractor, Constructionline, SMAS, Acclaim,
+Achilles/UVDB) and the common trade and product marks (Gas Safe, NICEIC, NAPIT,
+FORS, BES 6001, PAS 2080, Considerate Constructors) — each matched the same way
+whether the string is the buyer's requirement or the company's own record. A line
+naming ISO 14001 is now answered by ISO 14001: it is `SATISFIED` only when that
+exact certificate is on file, and a `GAP` when it is not, where before the
+blanket accreditation probe matched the word and returned the whole list —
+marking a company with ISO 9001 and no ISO 14001 satisfied against the one it
+does not hold. The matching is exact on purpose: "ISO 45001 or equivalent" is not
+auto-satisfied by an OHSAS 18001 or an SSIP membership held instead, because
+reading "or equivalent" is the bidder's judgement and a probe that made it would
+be guessing a line satisfied; the unmatched case falls to a gap, which prompts
+the check. A certificate the catalogue does not recognise stays `UNKNOWN`, and a
+requirement that names no specific scheme ("hold a recognised accreditation") is
+still answered from the whole list.
+
+The matrix also reads the **evidence register** — the documents and claims the
+business has actually filed — not only the company profile. `evidenceCoverage`
+(`itt.ts`; `GET …/pipeline/analyses/:id/evidence-coverage`, surfaced on the
+opened matrix as "Evidence you already hold, matched to the matrix") reports, per
+requirement: the claims explicitly linked to it, and the held claims that could
+cover it but are not linked yet — matched by the claim's kind fitting the
+requirement's category, or by the claim naming the same certificate the
+requirement does. Each line gets a disposition — covered, proven from the
+profile, needs attention (a linked claim pending or lapsed), link-suggested, or
+missing — so the half that used to be manual (hunting the register for the
+document that answers a line) is proposed. It **proposes and never links or
+invents**: linking a claim to the requirement it covers stays an authored act
+(`assertClaim` with `covers`), because a claim answering a requirement is a
+sentence the business puts to a buyer, and a document the business does not hold
+is a gap, not something the platform conjures. The matching is advisory, so it is
+allowed to be generous where the probes are exact; the safe direction, again, is
+to surface a candidate for a person to confirm rather than to assert a match.
+
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
 damages are set against the margin, not reported as a rate. A performance bond

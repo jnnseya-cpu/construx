@@ -4,6 +4,7 @@ import { authorise, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import type { Role } from '../identity/roles.ts';
 import { companyProfile, type CompanyProfile } from './radar.ts';
+import { evidenceRegister, type ClaimKind, type ClaimStanding } from './evidenceclaim.ts';
 
 /**
  * The ITT analyst.
@@ -104,9 +105,65 @@ export type ITTRequirement = {
 /** Where the platform can already prove a requirement from its own records. */
 type EvidenceProbe = {
   match: RegExp;
-  /** Reads the profile and returns proof, or null when there is none. */
-  find: (profile: CompanyProfile) => string | null;
+  /**
+   * Reads the profile — and the requirement, so a probe can look for the
+   * specific thing the invitation named rather than only the category — and
+   * returns proof, or null when there is none.
+   */
+  find: (profile: CompanyProfile, requirement: ITTRequirement) => string | null;
 };
+
+/**
+ * Specific technical certificates and management-system standards an invitation
+ * names by number or scheme, each recognised the same way whether the string is
+ * the buyer's requirement or the company's own record.
+ *
+ * This is separate from the accreditation probe below on purpose. That one
+ * answers a *category* — "an accreditation" — by returning the whole list, which
+ * is right for "hold a recognised accreditation" and wrong for "hold ISO 14001":
+ * a company with ISO 9001 and no ISO 14001 was marked satisfied against the one
+ * it does not hold, and a satisfied line is a line nobody checks again. These
+ * match the one the invitation asked for and look for that one on file; a
+ * certificate named but not held is a gap, which is the safe direction to be
+ * wrong in.
+ *
+ * Exact by design. "ISO 45001 or equivalent" is not auto-satisfied by an OHSAS
+ * 18001 or an SSIP membership held instead — reading "or equivalent" is the
+ * bidder's judgement, and a probe that made it would be guessing a line
+ * satisfied. The unmatched case falls to a gap, which prompts the check rather
+ * than hiding it.
+ */
+const NAMED_CERTIFICATES: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'ISO 9001', pattern: /iso[\s-]?9001/i },
+  { label: 'ISO 14001', pattern: /iso[\s-]?14001/i },
+  { label: 'ISO 45001', pattern: /iso[\s-]?45001/i },
+  { label: 'ISO 27001', pattern: /iso[\s-]?27001/i },
+  { label: 'ISO 44001', pattern: /iso[\s-]?44001/i },
+  { label: 'ISO 19650', pattern: /iso[\s-]?19650/i },
+  { label: 'ISO 50001', pattern: /iso[\s-]?50001/i },
+  { label: 'CHAS', pattern: /\bchas\b/i },
+  { label: 'SafeContractor', pattern: /safe\s?contractor/i },
+  { label: 'Constructionline', pattern: /constructionline/i },
+  { label: 'SMAS Worksafe', pattern: /\bsmas\b/i },
+  { label: 'Acclaim', pattern: /\bacclaim\b/i },
+  { label: 'Achilles', pattern: /\bachilles\b|\buvdb\b/i },
+  { label: 'Gas Safe', pattern: /gas\s?safe/i },
+  { label: 'NICEIC', pattern: /\bniceic\b/i },
+  { label: 'NAPIT', pattern: /\bnapit\b/i },
+  { label: 'FORS', pattern: /\bfors\b/i },
+  { label: 'BES 6001', pattern: /bes[\s-]?6001/i },
+  { label: 'PAS 2080', pattern: /pas[\s-]?2080/i },
+  { label: 'Considerate Constructors Scheme', pattern: /considerate\s?constructors/i },
+];
+
+/** One regex that fires when any recognised certificate is named. */
+const NAMES_A_CERTIFICATE = new RegExp(NAMED_CERTIFICATES.map((cert) => `(?:${cert.pattern.source})`).join('|'), 'i');
+
+/** The specific certificates a requirement or matrix line names, in catalogue order. */
+function certificatesNamedIn(line: { requirement: string; evidenceRequired: string }): Array<{ label: string; pattern: RegExp }> {
+  const text = `${line.requirement} ${line.evidenceRequired}`;
+  return NAMED_CERTIFICATES.filter((cert) => cert.pattern.test(text));
+}
 
 /**
  * What the platform can evidence without being asked.
@@ -115,6 +172,19 @@ type EvidenceProbe = {
  * matrix line marked satisfied is a line nobody checks again.
  */
 const PROBES: EvidenceProbe[] = [
+  // The specific named certificate, ahead of the general accreditation probe, so
+  // a line naming ISO 14001 is answered by ISO 14001 rather than by the list.
+  {
+    match: NAMES_A_CERTIFICATE,
+    find: (profile, requirement) => {
+      const named = certificatesNamedIn(requirement);
+      if (named.length === 0) return null;
+      const held = named.filter((cert) => profile.accreditations.some((entry) => cert.pattern.test(entry)));
+      // Satisfied only when every certificate the line names is on file. A line
+      // that names two and holds one is a gap, not a pass.
+      return held.length === named.length ? `Held: ${held.map((cert) => cert.label).join(', ')}` : null;
+    },
+  },
   {
     match: /employer'?s liability|public liability|professional indemnity|contract works/i,
     find: (p) => {
@@ -123,7 +193,11 @@ const PROBES: EvidenceProbe[] = [
     },
   },
   {
-    match: /chas|constructionline|safecontractor|iso ?9001|iso ?14001|iso ?45001|accreditation/i,
+    // The general case — "a recognised accreditation" with no specific scheme
+    // named. A named one is caught by the probe above; this answers the rest
+    // from the whole list, which is the right answer to a requirement that asks
+    // for any accreditation rather than a particular one.
+    match: /accreditation|accredited|pre-?qualif/i,
     find: (p) => (p.accreditations.length > 0 ? `Held: ${p.accreditations.join(', ')}` : null),
   },
   {
@@ -324,7 +398,7 @@ export function analyseITT(
   // --- The matrix -----------------------------------------------------------
   const matrix: MatrixLine[] = input.requirements.map((requirement) => {
     const probe = PROBES.find((p) => p.match.test(requirement.requirement) || p.match.test(requirement.evidenceRequired));
-    const held = probe?.find(profile) ?? null;
+    const held = probe?.find(profile, requirement) ?? null;
 
     return {
       reference: requirement.reference,
@@ -708,6 +782,177 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
     throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
   }
   return readAnalysis(record);
+}
+
+// --- Matching held evidence to the requirements -------------------------------
+//
+// The matrix says what the buyer wants and what the company profile proves. It
+// does not read the evidence register — the documents and claims the business
+// has actually filed — so a certificate on file that answers a requirement was
+// invisible to the matrix, and linking a claim to the requirement it covers was
+// a job somebody did by memory. This reads the register against the matrix and
+// says, per requirement, what already covers it and what held evidence could.
+//
+// It proposes; it never links and never invents. A suggestion is "you hold this,
+// consider linking it" — the link itself is still an authored act (`assertClaim`
+// with `covers`), because a claim answering a requirement is a sentence the
+// business puts to a buyer, not a match a function makes on its behalf.
+
+/** Which kinds of claim can plausibly answer which category of requirement. */
+const CATEGORY_CLAIM_KINDS: Record<RequirementCategory, ClaimKind[]> = {
+  QUALIFICATION: ['ACCREDITATION', 'CERTIFICATE', 'FINANCIAL', 'REFERENCE'],
+  TECHNICAL: ['METHOD', 'CASE_STUDY', 'CV', 'CALCULATION', 'TEST_RESULT'],
+  COMMERCIAL: ['FINANCIAL'],
+  INSURANCE: ['INSURANCE'],
+  HEALTH_AND_SAFETY: ['ACCREDITATION', 'CERTIFICATE', 'POLICY', 'METHOD'],
+  QUALITY: ['ACCREDITATION', 'CERTIFICATE', 'TEST_RESULT', 'POLICY'],
+  ENVIRONMENTAL: ['ACCREDITATION', 'CERTIFICATE', 'POLICY'],
+  SOCIAL_VALUE: ['KPI', 'CASE_STUDY', 'POLICY'],
+  PROGRAMME: ['METHOD', 'CASE_STUDY'],
+  SUBMISSION: [],
+};
+
+export type EvidenceMatch = {
+  claimId: string;
+  reference: string;
+  kind: ClaimKind;
+  claim: string;
+  standing: ClaimStanding;
+  expiresAt?: string;
+  /** Why it was suggested: the claim's kind fits the category, or it names the same certificate. */
+  because: 'KIND' | 'NAMED_CERTIFICATE' | 'LINKED';
+};
+
+export type RequirementCoverage = {
+  reference: string;
+  requirement: string;
+  category: RequirementCategory;
+  evidenceRequired: string;
+  mandatory: boolean;
+  /** The stored matrix status, from the company-profile probes. */
+  matrixStatus: MatrixStatus;
+  /** Claims the business has explicitly linked to this requirement. */
+  linked: EvidenceMatch[];
+  /** Held claims that could cover it but are not linked yet. */
+  suggested: EvidenceMatch[];
+  /**
+   * What to do about this line:
+   *  COVERED           — a current, approved linked claim answers it
+   *  PROFILE           — proven from the company profile, no document needed here
+   *  ATTENTION         — a linked claim is pending or has lapsed
+   *  LINK_SUGGESTED    — nothing linked, but held evidence could be
+   *  MISSING           — the buyer asked for evidence and nothing held answers it
+   *  NO_EVIDENCE_ASKED — the requirement names no evidence to hold
+   */
+  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'MISSING' | 'NO_EVIDENCE_ASKED';
+};
+
+export type EvidenceCoverage = {
+  analysisId: string;
+  reference: string;
+  asAt: string;
+  requirements: RequirementCoverage[];
+  covered: number;
+  /** Requirements with nothing linked but at least one suggestion. */
+  linkSuggested: number;
+  /** Requirements that ask for evidence and have nothing held to answer them. */
+  missing: number;
+  /** Linked claims that are pending or lapsed. */
+  attention: number;
+  summary: string;
+};
+
+/**
+ * Read the evidence register against a compliance matrix and say, per
+ * requirement, what covers it and what held evidence could.
+ */
+export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: string): EvidenceCoverage {
+  // `complianceMatrix` and `evidenceRegister` both authorise ESTIMATE_TENDER R
+  // at COMMERCIAL_L3; reusing them keeps one authorisation rule, not a third.
+  const analysis = complianceMatrix(ctx, analysisId);
+  const day = asAt ?? new Date().toISOString().slice(0, 10);
+  const register = evidenceRegister(ctx, day);
+  const current = register.claims.filter((claim) => claim.standing !== 'REJECTED' && claim.standing !== 'EXPIRED');
+
+  const requirements: RequirementCoverage[] = analysis.matrix.map((line) => {
+    const linked: EvidenceMatch[] = register.claims
+      .filter((claim) => claim.covers.includes(line.reference))
+      .map((claim) => ({
+        claimId: claim.id,
+        reference: claim.reference,
+        kind: claim.kind,
+        claim: claim.claim,
+        standing: claim.standing,
+        expiresAt: claim.expiresAt,
+        because: 'LINKED' as const,
+      }));
+
+    const linkedIds = new Set(linked.map((entry) => entry.claimId));
+    const kinds = CATEGORY_CLAIM_KINDS[line.category] ?? [];
+    const namedCerts = certificatesNamedIn(line);
+
+    const suggested: EvidenceMatch[] = [];
+    if (line.evidenceRequired) {
+      for (const claim of current) {
+        if (linkedIds.has(claim.id)) continue;
+        const namesSameCert =
+          namedCerts.length > 0 &&
+          namedCerts.some((cert) => cert.pattern.test(`${claim.reference} ${claim.claim}`));
+        const kindFits = kinds.includes(claim.kind);
+        if (!namesSameCert && !kindFits) continue;
+        suggested.push({
+          claimId: claim.id,
+          reference: claim.reference,
+          kind: claim.kind,
+          claim: claim.claim,
+          standing: claim.standing,
+          expiresAt: claim.expiresAt,
+          // A shared certificate name is the stronger reason, so it wins the label.
+          because: namesSameCert ? 'NAMED_CERTIFICATE' : 'KIND',
+        });
+      }
+    }
+
+    const hasCurrentLink = linked.some((entry) => entry.standing === 'APPROVED');
+    const hasStaleLink = linked.length > 0 && !hasCurrentLink;
+    const disposition: RequirementCoverage['disposition'] = !line.evidenceRequired
+      ? 'NO_EVIDENCE_ASKED'
+      : hasCurrentLink
+        ? 'COVERED'
+        : hasStaleLink
+          ? 'ATTENTION'
+          : line.status === 'SATISFIED'
+            ? 'PROFILE'
+            : suggested.length > 0
+              ? 'LINK_SUGGESTED'
+              : 'MISSING';
+
+    return {
+      reference: line.reference,
+      requirement: line.requirement,
+      category: line.category,
+      evidenceRequired: line.evidenceRequired,
+      mandatory: line.mandatory,
+      matrixStatus: line.status,
+      linked,
+      suggested,
+      disposition,
+    };
+  });
+
+  const covered = requirements.filter((r) => r.disposition === 'COVERED' || r.disposition === 'PROFILE').length;
+  const linkSuggested = requirements.filter((r) => r.disposition === 'LINK_SUGGESTED').length;
+  const missing = requirements.filter((r) => r.disposition === 'MISSING').length;
+  const attention = requirements.filter((r) => r.disposition === 'ATTENTION').length;
+
+  const summary =
+    `${covered} of ${requirements.length} requirement(s) covered` +
+    (linkSuggested > 0 ? `, ${linkSuggested} with held evidence to link` : '') +
+    (attention > 0 ? `, ${attention} with evidence pending or lapsed` : '') +
+    (missing > 0 ? `, ${missing} with nothing on file` : '') +
+    '.';
+
+  return { analysisId, reference: analysis.reference, asAt: day, requirements, covered, linkSuggested, missing, attention, summary };
 }
 
 // --- A requirement consciously not answered -----------------------------------------
