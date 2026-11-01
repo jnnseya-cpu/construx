@@ -4717,6 +4717,28 @@ own hazard, the logistics plan returns three criticals and a major, and the
 report comes back as a three-page PDF with the photograph embedded under
 `DCTDecode`.
 
+**The method is on the screen beside the register.** A register tells somebody
+what to write down; it does not tell them what to look at, and an inexperienced
+visitor photographs the wrong eleven things. `frontend/lib/sitevisitguide.js` is
+a collapsed-by-default guidance panel rendered under the site-visit section of
+the field screen — the pre-construction walkover methodology as structured
+reference, not prose: the three kinds of site and the dangerous assumption each
+invites, the desk study to do first, the four-part visit structure, the per-site
+inspection checklists (greenfield access/ground/water/ecology/utilities;
+brownfield obstructions/contamination/services/retained structures; live-site
+critical-systems tracing, interface plan and tie-in/rollback), the
+observed/measured/reported/verified/unknown discipline that sits behind the
+finding form's "How it is known" field, the targeted survey programme, site
+establishment as an engineered system, and the phased layouts. It is a Great
+Britain framework; the statutory and environmental points are flagged as
+England-specific and needing local verification, rather than implied universal.
+It is reference content only — static, holds no project data, invents nothing,
+and presents nothing as this project's own facts — built entirely from the
+existing `card`/`details`/`table`/`notice` design-system components (the
+`<details>` pattern already in `team.js` and `performance.js`). Added because a
+subscriber testing a live tender asked for the walkover method to sit where the
+walk is actually recorded.
+
 **One defect found by opening the PDF and reading the viewer's tab.** It said
 *"Site visit report Š SV-001"*. A literal string outside a content stream is read
 as PDFDocEncoding, not the WinAnsi the fonts are declared with, and the two
