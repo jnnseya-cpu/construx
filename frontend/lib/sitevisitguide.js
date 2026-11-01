@@ -297,6 +297,111 @@ const DELIVERABLES = [
   'Updated programme, estimate and mobilisation readiness record.',
 ];
 
+// --- The principal contractor's delivery-readiness view ---------------------
+// The same walk read from the party that has to take control of the site,
+// organise the works, manage subcontractors and protect everyone affected —
+// so every finding ends in a construction decision, a required piece of
+// information, an assigned action, a programme allowance or a commercial
+// qualification.
+
+const PC_ASSESSMENTS = [
+  ['Permanent works buildability', 'Can we construct the design safely and in a workable sequence?'],
+  ['Temporary construction infrastructure', 'What access, platforms, temporary works, utilities, welfare and logistics do we need?'],
+  ['Site control and interfaces', 'How will we control subcontractors, neighbouring activities, live operations and the public?'],
+];
+
+const PC_VISITS = [
+  ['Tender visit', 'Test scope, access, methods, constraints and preliminary allowances', 'Tender queries, assumptions, exclusions and preliminary logistics plan'],
+  ['Post-award validation', 'Reconcile the tender assumptions with actual requirements', 'Agreed actions, investigations and revised delivery strategy'],
+  ['Pre-mobilisation inspection', 'Check whether establishment and enabling works can proceed', 'Readiness review and release of defined activities'],
+  ['Specialist package visits', 'Validate piling, lifting, demolition, utilities and other package methods', 'Package-specific design inputs and interface agreements'],
+  ['Before major phase changes', 'Confirm the site remains suitable as workfronts and risks change', 'Revised layout, access and control arrangements'],
+];
+
+const PC_SITE_PRIORITIES = [
+  ['Greenfield', 'Whether plant can reach and work on the site throughout the planned season', 'Enabling works, road and platform design, drainage, temporary connections and mobilisation sequence'],
+  ['Brownfield', 'Whether existing ground, assets and buried infrastructure match the available information', 'Investigation, clearance, remediation, excavation methods, temporary support and disposal strategy'],
+  ['Live operational site', 'Whether construction can be separated from operations while maintaining essential services', 'Work boundaries, access, permits, isolations, shutdowns, sequencing and handback'],
+];
+
+const PC_INSPECTIONS = [
+  ['Possession and boundaries', 'Available land, occupation, shared areas and third-party access', 'Phased possession plan and boundary responsibilities'],
+  ['Delivery access', 'Full route, gate, turning, unloading and exit', 'Vehicle strategy, swept-path assessment and delivery controls'],
+  ['Working ground', 'Surface condition, slopes, water, chambers and possible voids', 'Investigation and engineered requirements for roads / platforms'],
+  ['Services', 'Visible assets, records discrepancies and affected connections', 'Verification, diversion, protection and isolation schedule'],
+  ['Existing structures', 'Condition, alterations, structural interfaces and access limitations', 'Structural investigations and construction-stage support requirements'],
+  ['Drainage', 'Flow routes, outfalls, flood exposure and receiving systems', 'Temporary drainage and water-management strategy'],
+  ['Lifting', 'Delivery position, crane setup, lifting path and exclusion areas', 'Lift feasibility, platform design inputs and erection sequence'],
+  ['Workfronts', 'Available space, access and interaction between trades', 'Work zoning, sequence and subcontractor interfaces'],
+  ['Welfare and compounds', 'Location, servicing, safe access and future clashes', 'Phased establishment design and capacity schedule'],
+  ['Neighbours / public', 'Sensitive receptors, shared routes and existing condition', 'Protection, monitoring and communication arrangements'],
+  ['Emergency response', 'Access, escape, rescue constraints and existing arrangements', 'Site-specific emergency and rescue provisions'],
+  ['Demobilisation', 'Removal routes and reinstatement requirements', 'Removal sequence, access reservations and cost allowance'],
+];
+
+const PC_ESTABLISH_PACKAGE = [
+  'Site possession, fencing, hoarding and security.',
+  'Access roads, crossings, turning and unloading areas.',
+  'Ground preparation and cabin foundations.',
+  'Welfare, offices, drying and induction facilities.',
+  'Temporary electricity, water, drainage and communications.',
+  'Lighting, fire arrangements and emergency access.',
+  'Storage, waste, fuel and environmental controls.',
+  'Maintenance, changes, demobilisation and reinstatement.',
+];
+
+const PC_LAYOUT_TESTS = [
+  'Where does each major delivery arrive?',
+  'How is it unloaded?',
+  'Where is it stored?',
+  'How does it reach its installation position?',
+  'What plant and people movements does that create?',
+  'Which other work must stop while that happens?',
+  'Can emergency access remain available?',
+];
+
+const PC_LAYOUT_PHASES = [
+  ['Enabling works', 'Initial access, welfare, drainage and segregation'],
+  ['Groundworks', 'Excavations, spoil, haul roads and piling platforms'],
+  ['Structure', 'Crane positions, assembly and material laydown'],
+  ['Fit-out', 'Loading areas, internal distribution and completed-area protection'],
+  ['Commissioning', 'Energised systems, controlled access and operational interfaces'],
+  ['Demobilisation', 'Removal routes and reinstatement'],
+];
+
+const PC_AUTHORITY = [
+  'Who controls each area.',
+  'Who authorises access and work.',
+  'Who isolates and verifies existing systems.',
+  'Who approves service interruptions.',
+  'Who can stop work.',
+  'Who accepts the completed installation back into operation.',
+];
+
+const PC_UNRESOLVED_QS = [
+  'What information or decision is missing?',
+  'Who is responsible for providing it?',
+  'When is it required to avoid affecting the works?',
+  'What happens to cost and programme if it is not resolved?',
+];
+
+const PC_CONSTRAINTS = [
+  ['Temporary power connection date unconfirmed', 'Obtain confirmed connection programme', 'Assess generation, fuel, maintenance and changeover'],
+  ['Ground conditions beneath haul road unknown', 'Investigate and complete design', 'Road construction and heavy deliveries depend on release'],
+  ['Existing drain crosses new foundation', 'Verify route and agree diversion / protection', 'Foundation sequence may change'],
+  ['Operational shutdown not approved', 'Agree window and acceptance criteria', 'Tie-in date remains conditional'],
+];
+
+const PC_READINESS = [
+  'Adequate site information and suitable designs.',
+  'Available work areas and controlled interfaces.',
+  'Safe access, welfare and emergency arrangements.',
+  'Suitable temporary works and plant arrangements.',
+  'Competent supervision and subcontractor coordination.',
+  'Necessary permissions and operational approvals.',
+  'An appropriate construction phase plan.',
+];
+
 function list(items) {
   return items.length === 0 ? '' : html`<ul style="margin:6px 0 0;padding-left:18px">${items.map((item) => html`<li style="margin:3px 0">${item}</li>`)}</ul>`;
 }
@@ -319,6 +424,10 @@ function greenfieldBlock(block) {
 export function siteVisitGuide() {
   return html`
     <div class="card" style="margin-bottom:14px">
+      <div class="metric-sub" style="margin-bottom:10px">
+        Two readings of the same walk — the project-wide method, and the principal contractor’s delivery-readiness
+        checklist. Open whichever fits the job in front of you.
+      </div>
       <details>
         <summary style="cursor:pointer;font-weight:600;font-size:15px">
           Pre-construction site visit — how to make the walk count
@@ -451,6 +560,77 @@ export function siteVisitGuide() {
               responsibilities and removal obligations that can actually be priced and delivered.
             </div>
           </div>
+        </div>
+      </details>
+
+      <details style="margin-top:10px">
+        <summary style="cursor:pointer;font-weight:600;font-size:15px">
+          As principal contractor — the delivery-readiness view
+        </summary>
+
+        <div style="margin-top:10px">
+          <div class="notice">
+            <div>
+              For a principal contractor the visit is a <b>delivery-readiness assessment</b>: how you will take control of
+              the site, organise the works, manage subcontractors and protect everyone affected. Every finding should lead
+              to a construction decision, required information, an assigned action, a programme allowance or a commercial
+              qualification. The question becomes: <i>can we deliver the proposed design using our intended methods, within
+              the available land, access, time and operational restrictions — and what must be resolved before we start?</i>
+            </div>
+          </div>
+
+          <h3 style="margin-top:16px">1. Define what you are assessing</h3>
+          <div class="metric-sub">Three connected things. The client and design team must supply the information, but you must identify the gaps that affect your delivery plan and pursue them — a site visit transfers no unknown condition to you, and missing information never justifies an unsafe assumption. Where more than one contractor is involved, HSE puts planning, managing, monitoring and coordinating health and safety during construction on the principal contractor.</div>
+          ${table({ headers: ['Assessment', 'Principal contractor’s question'], rows: PC_ASSESSMENTS })}
+
+          <h3 style="margin-top:16px">2. Visit while decisions can still change</h3>
+          <div class="metric-sub">Recommended delivery stages, not a prescribed statutory number. Attending the tender visit is not proof that every condition was discoverable — record what you could inspect, what was inaccessible and what information was unavailable.</div>
+          ${table({ headers: ['Visit', 'Purpose', 'Required output'], rows: PC_VISITS })}
+
+          <h3 style="margin-top:16px">3. Priorities differ by site</h3>
+          ${table({ headers: ['Site', 'What you must establish', 'What it changes in your delivery plan'], rows: PC_SITE_PRIORITIES })}
+
+          <h3 style="margin-top:16px">4. What the site team inspects — and must decide</h3>
+          <div class="metric-sub">For underground services, drawings alone are insufficient — HSE combines planning, locating and identifying services with safe excavation.</div>
+          ${table({ headers: ['Inspection area', 'Check on the ground', 'Principal contractor’s decision / output'], rows: PC_INSPECTIONS })}
+
+          <h3 style="margin-top:16px">5. Treat site setup as a construction package</h3>
+          <div class="metric-sub">Manage establishment with the same discipline as foundations or steelwork — scope, design inputs, responsibilities, procurement, inspections, programme and acceptance criteria. The package should cover:</div>
+          ${list(PC_ESTABLISH_PACKAGE)}
+          <div class="metric-sub" style="margin-top:6px">The first workers installing the compound need welfare and safe arrangements too. Plan the initial establishment stage explicitly — do not assume the finished compound solves conditions during its own installation. Welfare is required from the start of construction.</div>
+
+          <h3 style="margin-top:16px">6. Design the layout around production</h3>
+          <div class="metric-sub">Before approving a compound or logistics layout, test it against the actual construction sequence:</div>
+          ${list(PC_LAYOUT_TESTS)}
+          <div class="metric-sub" style="margin-top:6px">Steel laydown beside the entrance may look convenient yet force repeated transport across excavations to reach the crane; a different location or delivery sequence can remove the handling entirely. Approve phase-specific layouts showing at least:</div>
+          ${table({ headers: ['Phase', 'Critical layout consideration'], rows: PC_LAYOUT_PHASES })}
+
+          <h3 style="margin-top:16px">7. On a live site, agree authority before dates</h3>
+          <div class="metric-sub">The principal contractor needs a clear agreement with the operator covering:</div>
+          ${list(PC_AUTHORITY)}
+          <div class="metric-sub" style="margin-top:6px">The construction boundary does not contain the consequences of the work — dust, vibration, drainage changes, fire-system impairments and service interruptions reach the wider facility. Before a shutdown, hold a readiness review covering design, materials, personnel, isolation, installation, testing, restoration and rollback. A permit supports those arrangements; it does not replace the risk assessment.</div>
+
+          <h3 style="margin-top:16px">8. Record findings so they can control delivery</h3>
+          <div class="notice"><div>Reference → location → evidence → uncertainty → consequence → action → owner → deadline → closure evidence.</div></div>
+          <div class="notice" style="margin-top:8px">
+            <div>
+              <i>LOG-014: Proposed crane standing area includes an existing underground chamber. Chamber construction and
+              load capacity unknown. Current crane arrangement cannot be released. Temporary works lead to coordinate
+              investigation and revised platform design before crane mobilisation.</i>
+            </div>
+          </div>
+          <div class="metric-sub" style="margin-top:8px">That entry drives design, procurement and programme decisions; “check crane area” cannot. Keep observed conditions, reported information and verified facts distinct, record drawing revisions, and name inspection limitations.</div>
+
+          <h3 style="margin-top:16px">9. Turn unresolved issues into programme and commercial items</h3>
+          <div class="metric-sub">Each unresolved constraint needs an answer to four questions:</div>
+          ${raw(`<ol style="margin:6px 0 0;padding-left:20px">${PC_UNRESOLVED_QS.map((item) => `<li style="margin:3px 0">${item}</li>`).join('')}</ol>`)}
+          ${table({ headers: ['Constraint', 'Required action', 'Delivery implication'], rows: PC_CONSTRAINTS })}
+          <div class="metric-sub" style="margin-top:8px">Allocate contractual responsibility using the actual contract — do not assume every survey, diversion or unforeseen condition automatically belongs to either party.</div>
+
+          <h3 style="margin-top:16px">10. The decision before mobilisation</h3>
+          <div class="metric-sub">Require a documented readiness review confirming that the specific activities being released have:</div>
+          ${list(PC_READINESS)}
+          <div class="metric-sub" style="margin-top:6px">HSE requires the construction phase plan before construction begins, and temporary works need the same care as permanent works. The report should end with a decision: <b>what can proceed, what remains restricted, and what evidence is needed to release the next activity.</b></div>
         </div>
       </details>
     </div>

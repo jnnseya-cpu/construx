@@ -4751,6 +4751,20 @@ between the two places it appears. Added because a subscriber testing a live
 tender asked for the walkover method to sit both where the walk is recorded and
 in the ETABLIX module.
 
+**Two readings of the same walk.** The panel opens with two collapsible
+perspectives. The first is the project-wide method (the thirteen sections
+above). The second, `As principal contractor — the delivery-readiness view`, is
+the same walk read from the party that has to take control of the site: the
+three things being assessed (buildability, temporary infrastructure, site
+control), the delivery-stage visits (tender, post-award, pre-mobilisation,
+specialist-package, phase-change) each with its required output, the by-site
+priorities, the twelve-row inspect-and-decide table, site setup as a managed
+construction package, laying the compound out around production, agreeing
+authority with the operator before dates, recording findings so they control
+delivery, turning unresolved issues into programme and commercial items, and the
+documented readiness decision before mobilisation. It is the same reference
+object — static, inventing nothing — so both surfaces carry both views.
+
 **One defect found by opening the PDF and reading the viewer's tab.** It said
 *"Site visit report Š SV-001"*. A literal string outside a content stream is read
 as PDFDocEncoding, not the WinAnsi the fonts are declared with, and the two
