@@ -946,7 +946,7 @@ export async function siteservices(root) {
 
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness, perception, evidence)}
 
-      ${siteVisitGuide()}
+      ${siteVisitGuide({ etablix: true })}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
 

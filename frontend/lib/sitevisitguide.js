@@ -420,8 +420,14 @@ function greenfieldBlock(block) {
  * The guidance card. Static — takes no project state, because the method is the
  * same whether or not a visit has been recorded yet, and is most useful before
  * the first one.
+ *
+ * `opts.etablix` adds the one ETABLIX-specific note (section 13). ETABLIX is an
+ * exclusive module, so its name must never appear on a surface a non-ETABLIX
+ * subscriber sees — the standard Field Modules page passes nothing and gets the
+ * generic methodology; only the ETABLIX site-services module passes `true`.
  */
-export function siteVisitGuide() {
+export function siteVisitGuide(opts = {}) {
+  const { etablix = false } = opts;
   return html`
     <div class="card" style="margin-bottom:14px">
       <div class="metric-sub" style="margin-bottom:10px">
@@ -553,13 +559,15 @@ export function siteVisitGuide() {
           <h3 style="margin-top:16px">13. What the completed assessment should deliver</h3>
           <div class="metric-sub">For a substantial project, the visit and its follow-up investigations should produce:</div>
           ${raw(`<ol style="margin:6px 0 0;padding-left:20px">${DELIVERABLES.map((item) => `<li style="margin:3px 0">${item}</li>`).join('')}</ol>`)}
-          <div class="notice" style="margin-top:10px">
-            <div>
-              <b>For ETABLIX’s site-services scope this is where the value lands.</b> It converts a client’s request for
-              cabins, roads and utilities into a defined, phased operating requirement — with the quantities, capacities,
-              responsibilities and removal obligations that can actually be priced and delivered.
-            </div>
-          </div>
+          ${etablix
+            ? html`<div class="notice" style="margin-top:10px">
+                <div>
+                  <b>For ETABLIX’s site-services scope this is where the value lands.</b> It converts a client’s request for
+                  cabins, roads and utilities into a defined, phased operating requirement — with the quantities, capacities,
+                  responsibilities and removal obligations that can actually be priced and delivered.
+                </div>
+              </div>`
+            : ''}
         </div>
       </details>
 

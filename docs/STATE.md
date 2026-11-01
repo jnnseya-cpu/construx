@@ -4751,6 +4751,15 @@ between the two places it appears. Added because a subscriber testing a live
 tender asked for the walkover method to sit both where the walk is recorded and
 in the ETABLIX module.
 
+**ETABLIX is an exclusive module, so its name is gated, not shared.**
+`siteVisitGuide(opts)` renders the one ETABLIX-specific note (section 13's
+value statement) only when `opts.etablix` is true. The ETABLIX site-services
+module passes `true`; the standard Field Modules page — which every subscriber
+can see, not only ETABLIX holders — passes nothing and gets the generic
+methodology with no mention of ETABLIX. The brand must never appear on a
+non-ETABLIX surface; the public marketing site (`backend/src/site/`) has never
+referenced it and still does not (verified: zero occurrences).
+
 **Two readings of the same walk.** The panel opens with two collapsible
 perspectives. The first is the project-wide method (the thirteen sections
 above). The second, `As principal contractor — the delivery-readiness view`, is
