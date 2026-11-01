@@ -4,6 +4,7 @@ import { command, commandBar, confirmCost } from '../lib/command.js';
 import { badge, date, html, money, pct, raw, render, table, toast, track } from '../lib/ui.js';
 import { head, refusal } from '../lib/estate.js';
 import { supplierPaymentCard } from '../lib/siteportal.js';
+import { siteVisitGuide } from '../lib/sitevisitguide.js';
 import { blockedReason, can, modules, state } from '../app.js';
 
 /**
@@ -944,6 +945,8 @@ export async function siteservices(root) {
       ${automation.error ? refusal('The automation measure', automation.error) : automationCard(automation)}
 
       ${readiness.error ? refusal('Brief readiness', readiness.error) : briefCard(readiness, perception, evidence)}
+
+      ${siteVisitGuide()}
 
       ${structure.error ? refusal('The system breakdown structure', structure.error) : sbsCard(structure)}
 

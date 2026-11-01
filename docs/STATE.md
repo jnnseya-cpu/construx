@@ -4720,24 +4720,36 @@ report comes back as a three-page PDF with the photograph embedded under
 **The method is on the screen beside the register.** A register tells somebody
 what to write down; it does not tell them what to look at, and an inexperienced
 visitor photographs the wrong eleven things. `frontend/lib/sitevisitguide.js` is
-a collapsed-by-default guidance panel rendered under the site-visit section of
-the field screen — the pre-construction walkover methodology as structured
-reference, not prose: the three kinds of site and the dangerous assumption each
-invites, the desk study to do first, the four-part visit structure, the per-site
-inspection checklists (greenfield access/ground/water/ecology/utilities;
-brownfield obstructions/contamination/services/retained structures; live-site
-critical-systems tracing, interface plan and tie-in/rollback), the
-observed/measured/reported/verified/unknown discipline that sits behind the
-finding form's "How it is known" field, the targeted survey programme, site
-establishment as an engineered system, and the phased layouts. It is a Great
-Britain framework; the statutory and environmental points are flagged as
-England-specific and needing local verification, rather than implied universal.
-It is reference content only — static, holds no project data, invents nothing,
-and presents nothing as this project's own facts — built entirely from the
-existing `card`/`details`/`table`/`notice` design-system components (the
-`<details>` pattern already in `team.js` and `performance.js`). Added because a
-subscriber testing a live tender asked for the walkover method to sit where the
-walk is actually recorded.
+a collapsed-by-default guidance panel — the pre-construction walkover methodology
+as structured reference, not prose, in thirteen sections: the three kinds of site
+and the dangerous assumption each invites; the desk study to do first; the
+four-part visit structure; the per-site inspection checklists (greenfield
+access/ground/water/ecology/utilities; brownfield
+obstructions/contamination/services/retained structures; live-site
+critical-systems tracing, interface plan and tie-in/rollback); the
+observed/measured/reported/verified/unknown discipline that sits behind the "How
+it is known" basis on every finding; the targeted survey programme; site
+establishment as an engineered system; the phased layouts; the programme and
+estimate built from the constraints (dependency chains and distinct cost
+categories); the readiness gates before releasing work; and what the completed
+assessment should deliver. It is a Great Britain framework; the statutory and
+environmental points are flagged as England-specific and needing local
+verification, rather than implied universal. It is reference content only —
+static, holds no project data, invents nothing, and presents nothing as this
+project's own facts — built entirely from the existing
+`card`/`details`/`table`/`notice` design-system components (the `<details>`
+pattern already in `team.js` and `performance.js`).
+
+**One source, rendered on both surfaces the subscriber named.** The same
+`siteVisitGuide()` is rendered under the site-visit register on the field screen
+(`frontend/pages/field.js`), where the walk is recorded, and under the
+pre-construction brief in the ETABLIX site-services module
+(`frontend/pages/siteservices.js`), where section 13's deliverables convert a
+client's request for cabins, roads and utilities into a phased, priceable
+operating requirement. One function, not two copies — the method cannot drift
+between the two places it appears. Added because a subscriber testing a live
+tender asked for the walkover method to sit both where the walk is recorded and
+in the ETABLIX module.
 
 **One defect found by opening the PDF and reading the viewer's tab.** It said
 *"Site visit report Š SV-001"*. A literal string outside a content stream is read

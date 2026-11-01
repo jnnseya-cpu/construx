@@ -264,6 +264,39 @@ const PHASES = [
   ['Handover / demobilisation', 'Operational access, removal routes and reinstatement'],
 ];
 
+const COST_CATEGORIES = [
+  ['Establishment', 'Access, fencing, platforms, cabins and connections'],
+  ['Time-related running costs', 'Hire, security, cleaning, fuel and servicing'],
+  ['Production constraints', 'Restricted hours, escorts, small deliveries and limited workfronts'],
+  ['Investigations', 'Surveys, trial holes, testing and monitoring'],
+  ['Defined risk allowances', 'Unresolved conditions with stated assumptions'],
+  ['Demobilisation', 'Disconnections, removal, waste and reinstatement'],
+];
+
+const READINESS_CHECKS = [
+  'The work area is available and legally accessible.',
+  'Relevant permissions and conditions are satisfied.',
+  'Information is adequate for that activity.',
+  'Design and temporary works arrangements are sufficiently developed.',
+  'Services and operational interfaces are controlled.',
+  'Access, welfare and emergency arrangements are in place.',
+  'Required competent people and equipment are available.',
+  'Outstanding risks have named owners and acceptable controls.',
+];
+
+const DELIVERABLES = [
+  'Site constraints drawing showing boundaries, services, exclusions and interfaces.',
+  'Photographic and baseline condition record.',
+  'Findings / action register with owners and deadlines.',
+  'Survey and investigation schedule addressing specific uncertainties.',
+  'Buildability and construction sequence review.',
+  'Phased site establishment and logistics drawings.',
+  'Temporary works register and design briefs.',
+  'Temporary utilities demand and connection plan.',
+  'Operational interface and shutdown plan, where applicable.',
+  'Updated programme, estimate and mobilisation readiness record.',
+];
+
 function list(items) {
   return items.length === 0 ? '' : html`<ul style="margin:6px 0 0;padding-left:18px">${items.map((item) => html`<li style="margin:3px 0">${item}</li>`)}</ul>`;
 }
@@ -366,7 +399,7 @@ export function siteVisitGuide() {
           <h3 style="margin-top:16px">7. What to record — and how to make it useful</h3>
           <div class="metric-sub">A folder of photographs is evidence, not a managed assessment. Each observation should carry:</div>
           ${table({ headers: ['Field', 'Example'], rows: RECORD_FIELDS })}
-          <div class="metric-sub" style="margin-top:8px"><b>Mark the information status of every line</b> — this is the discipline behind the “How it is known” field when you raise a finding above:</div>
+          <div class="metric-sub" style="margin-top:8px"><b>Mark the information status of every line</b> — this is the discipline behind the “How it is known” basis recorded against every site finding:</div>
           ${table({ headers: ['Status', 'Means'], rows: INFO_STATUS })}
           <div class="metric-sub" style="margin-top:8px">For photographs, record location, direction, date and subject; take an overview, a context view and detail, and link them to the marked-up plan. Obtain a baseline condition record of roads, boundaries, neighbouring assets and retained structures where damage could later be disputed, and record inaccessible areas explicitly.</div>
           <div class="notice" style="margin-top:8px">
@@ -392,8 +425,32 @@ export function siteVisitGuide() {
           )}
 
           <h3 style="margin-top:16px">10. Produce layouts for the changing phases</h3>
-          <div class="metric-sub">One layout rarely serves a significant project throughout. Check every temporary installation against future works — a compound sited over a future drainage corridor forces an avoidable move mid-programme.</div>
+          <div class="metric-sub">One layout rarely serves a significant project throughout. Check every temporary installation against future works — a compound over a future drainage corridor may create an avoidable second mobilisation — and verify the crane used to install the cabins can return to remove them once the permanent works are complete.</div>
           ${table({ headers: ['Phase', 'Main layout requirement'], rows: PHASES })}
+
+          <h3 style="margin-top:16px">11. Build the programme and estimate from the constraints</h3>
+          <div class="metric-sub">The programme should carry investigations, approvals and enabling works as real activities with dependencies — not as assumptions sitting behind the bars.</div>
+          <div class="notice" style="margin-top:8px"><div><b>A typical dependency chain:</b><br>Ground investigation → interpretation → platform design → procurement → construction → inspection/release → crane mobilisation.</div></div>
+          <div class="notice" style="margin-top:8px"><div><b>And on a live site:</b><br>Existing-system verification → tie-in design → operational approval → outage booking → readiness review → isolation → installation → testing → handback.</div></div>
+          <div class="metric-sub" style="margin-top:10px">The estimate should keep these cost categories distinct rather than burying them in rates:</div>
+          ${table({ headers: ['Cost category', 'Examples'], rows: COST_CATEGORIES })}
+          <div class="metric-sub" style="margin-top:8px">Link every uncertainty to a specific assumption and a named owner. “Ground risk included” is not a commercial position — state the ground model assumed, what remains unknown, and how the contract allocates the risk.</div>
+
+          <h3 style="margin-top:16px">12. Use readiness gates before releasing work</h3>
+          <div class="metric-sub">Release enabling works, main construction and high-risk operational interfaces separately. Before releasing an activity, confirm:</div>
+          ${list(READINESS_CHECKS)}
+          <div class="metric-sub" style="margin-top:8px">Under CDM, the construction phase plan must be prepared before construction begins, and must reflect the project’s actual risks and arrangements rather than reproduce a generic company document.</div>
+
+          <h3 style="margin-top:16px">13. What the completed assessment should deliver</h3>
+          <div class="metric-sub">For a substantial project, the visit and its follow-up investigations should produce:</div>
+          ${raw(`<ol style="margin:6px 0 0;padding-left:20px">${DELIVERABLES.map((item) => `<li style="margin:3px 0">${item}</li>`).join('')}</ol>`)}
+          <div class="notice" style="margin-top:10px">
+            <div>
+              <b>For ETABLIX’s site-services scope this is where the value lands.</b> It converts a client’s request for
+              cabins, roads and utilities into a defined, phased operating requirement — with the quantities, capacities,
+              responsibilities and removal obligations that can actually be priced and delivered.
+            </div>
+          </div>
         </div>
       </details>
     </div>
