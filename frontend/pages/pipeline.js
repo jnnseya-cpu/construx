@@ -3653,6 +3653,13 @@ export async function pipeline(root) {
             : { hint: fromOurRecord('the largest job on your record') + ' The largest you have built is not necessarily the largest you can carry.' }),
         },
         { name: 'accreditations', label: 'Accreditations', required: false, value: asList(held?.accreditations), hint: 'CHAS, SafeContractor, ISO 9001 — comma separated.' },
+        { name: 'insurances', label: 'Insurances held', type: 'textarea', rows: 4, required: false,
+          value: (held?.insurances ?? []).map((i) => `${i.type} | ${i.limitMinor / 100}${i.expiresOn ? ` | ${i.expiresOn}` : ''}`).join('\n'),
+          hint:
+            'One per line: cover | limit in £ | renews on (optional). ' +
+            'e.g. "Employers Liability | 10000000 | 2027-03-31". The compliance matrix reads these against the ' +
+            'insurance an ITT demands, so a line here is what turns an insurance requirement from a gap to satisfied. ' +
+            'Clearing the box removes them.' },
         { name: 'trades', label: 'Trades delivered in-house', required: false, value: asList(held?.selfDeliveredTrades) },
         { name: 'concurrent', label: 'Sites the business can run at once', type: 'number', value: held?.capacity?.concurrentProjects ?? '' },
         {
@@ -3677,7 +3684,18 @@ export async function pipeline(root) {
           sectors: Array.isArray(v.sectors) ? v.sectors : [v.sectors].filter(Boolean),
           cpvCodes: held?.cpvCodes ?? [],
           valueBandMinor: { min: money(v.valueMin), max: money(v.valueMax) },
-          insurances: held?.insurances ?? [],
+          // Parsed from the textarea: "cover | limit in £ | renews" per line. A
+          // line without a cover name or a numeric limit is dropped rather than
+          // written as a malformed insurance the matrix cannot read.
+          insurances: String(v.insurances || '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts[0] && parts[1] && !Number.isNaN(Number(parts[1])))
+            .map((parts) => ({
+              type: parts[0],
+              limitMinor: Math.round(Number(parts[1]) * 100),
+              ...(parts[2] ? { expiresOn: parts[2] } : {}),
+            })),
           accreditations: list(v.accreditations),
           references: held?.references ?? [],
           selfDeliveredTrades: list(v.trades),
