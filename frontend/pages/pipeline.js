@@ -634,6 +634,52 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
                 still your decision, and it never invents a document you do not have. Only the lines that need action are
                 listed; the rest are covered.
               </p>
+
+              ${
+                coverage.toAttach.length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Attach these when you submit to the client portal</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        The distinct documents the register already holds that answer this matrix — one line per document,
+                        however many requirements it covers. A proposed match (${'?'}) is yours to confirm; a pending
+                        document is yours to verify before it is sent.
+                      </p>
+                      ${table({
+                        headers: ['Document', 'Answers', 'Standing'],
+                        rows: coverage.toAttach.map((a) => [
+                          html`${a.reference} — <span style="font-size:12px;color:var(--text-3)">${a.claim}</span>`,
+                          html`${a.linkedRefs.map((r) => badge(r, 'ok'))}${a.suggestedRefs.map((r) => badge(`${r}?`, 'warn'))}${
+                            a.suggestedRefs.length > 0
+                              ? html`<br><span style="font-size:11px;color:var(--text-3)">? proposed — confirm it answers the requirement</span>`
+                              : ''
+                          }`,
+                          badge(humanise(a.standing), a.standing === 'APPROVED' ? 'ok' : a.standing === 'PENDING' ? 'warn' : 'bad'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
+              ${
+                coverage.toObtain.length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Add these to your library before you submit</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        The pass/fail evidence gates nothing on file answers — the documents to go and get (insurances,
+                        accreditations, checks, policies, references), not the scored questions, which are answered in the
+                        submission itself. The mandatory ones end the bid if still open on the day, so they are first. File
+                        the document and assert a claim against it, or raise a clarification if the buyer should not be asking.
+                      </p>
+                      ${table({
+                        headers: ['Ref', 'Requirement', 'Evidence needed', 'Why'],
+                        rows: coverage.toObtain.map((o) => [
+                          html`${o.reference}${o.mandatory ? badge('mandatory', 'bad') : ''}`,
+                          html`<span style="font-size:12px">${o.requirement}</span>`,
+                          html`<span style="font-size:12px;color:var(--text-3)">${o.evidenceRequired}</span>`,
+                          o.reason === 'MISSING' ? badge('nothing on file', 'bad') : badge('expired or not current', 'warn'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
+              <h2 style="padding:15px 17px 0">Every requirement that needs action</h2>
               ${table({
                 headers: ['Ref', 'Requirement', 'Standing', 'Held evidence and suggestions'],
                 rows: coverage.requirements

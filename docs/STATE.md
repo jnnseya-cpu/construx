@@ -3150,6 +3150,24 @@ is a gap, not something the platform conjures. The matching is advisory, so it i
 allowed to be generous where the probes are exact; the safe direction, again, is
 to surface a candidate for a person to confirm rather than to assert a match.
 
+From the same read, `evidenceCoverage` also derives the **two action lists a
+submission actually needs**, as a projection that invents nothing:
+`toAttach` — the distinct documents the register already holds that answer the
+matrix, de-duplicated so a single certificate covering three requirements is one
+line carrying all three references, each flagged where the match is only
+proposed (confirm it) or the document is still pending (verify it before it is
+sent); and `toObtain` — the evidence to add to the library before the bid can go
+in, mandatory first because those end the bid on the day. `toObtain` is
+deliberately **only the pass/fail evidence gates a document answers** —
+insurances, accreditations, DBS, policies, references — and excludes the scored
+questions (a weighting at stake is answered in the submission, not filed as
+evidence) and the `SUBMISSION`-category process instructions (followed, not
+obtained). That split keeps "the evidence to go and get" clear of "the questions
+to go and answer", which are two different acts the bidder does in two different
+places. Surfaced on the opened matrix as "Attach these when you submit" and "Add
+these to your library before you submit". Verified on a six-requirement fixture
+and a dual-purpose document that answers two lines at once.
+
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
 damages are set against the margin, not reported as a rate. A performance bond

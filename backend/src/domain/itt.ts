@@ -829,6 +829,8 @@ export type RequirementCoverage = {
   category: RequirementCategory;
   evidenceRequired: string;
   mandatory: boolean;
+  /** The mark at stake where the requirement is scored rather than pass/fail. */
+  weightingPercent?: number;
   /** The stored matrix status, from the company-profile probes. */
   matrixStatus: MatrixStatus;
   /** Claims the business has explicitly linked to this requirement. */
@@ -847,6 +849,42 @@ export type RequirementCoverage = {
   disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'MISSING' | 'NO_EVIDENCE_ASKED';
 };
 
+/**
+ * One document to attach when submitting to the client portal.
+ *
+ * De-duplicated across the matrix: a single certificate that answers three
+ * requirements is one line here, carrying all three references — the submission
+ * is a set of files, not a file per requirement.
+ */
+export type AttachItem = {
+  claimId: string;
+  reference: string;
+  kind: ClaimKind;
+  claim: string;
+  standing: ClaimStanding;
+  expiresAt?: string;
+  /** Every requirement this document answers, linked or proposed. */
+  covers: string[];
+  /** Of `covers`, the references already linked to this claim. */
+  linkedRefs: string[];
+  /** Of `covers`, the references only proposed — confirm the match before relying on it. */
+  suggestedRefs: string[];
+};
+
+/**
+ * One requirement to resolve in the library before the bid can be submitted.
+ * `MISSING` — nothing on file answers it; `LAPSED` — the only evidence has
+ * expired or was rejected, so a current one must be obtained.
+ */
+export type ObtainItem = {
+  reference: string;
+  requirement: string;
+  category: RequirementCategory;
+  evidenceRequired: string;
+  mandatory: boolean;
+  reason: 'MISSING' | 'LAPSED';
+};
+
 export type EvidenceCoverage = {
   analysisId: string;
   reference: string;
@@ -859,6 +897,14 @@ export type EvidenceCoverage = {
   missing: number;
   /** Linked claims that are pending or lapsed. */
   attention: number;
+  /**
+   * The two action lists the register and matrix together imply — a projection
+   * of `requirements`, inventing nothing.
+   *  toAttach — distinct documents to upload to the portal, deduped.
+   *  toObtain — requirements nothing current answers, mandatory first.
+   */
+  toAttach: AttachItem[];
+  toObtain: ObtainItem[];
   summary: string;
 };
 
@@ -933,6 +979,7 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
       category: line.category,
       evidenceRequired: line.evidenceRequired,
       mandatory: line.mandatory,
+      weightingPercent: line.weightingPercent,
       matrixStatus: line.status,
       linked,
       suggested,
@@ -945,6 +992,65 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   const missing = requirements.filter((r) => r.disposition === 'MISSING').length;
   const attention = requirements.filter((r) => r.disposition === 'ATTENTION').length;
 
+  // The two action lists, derived from the requirements above. A document is
+  // attachable when it exists on the register and is not spent — APPROVED
+  // (ready) or PENDING (filed, still to verify); an EXPIRED or REJECTED claim is
+  // not something to send. A requirement nothing attachable answers is one to
+  // resolve in the library first. A PROFILE line needs no document here.
+  const attach = new Map<string, AttachItem>();
+  const toObtain: ObtainItem[] = [];
+  for (const r of requirements) {
+    if (!r.evidenceRequired || r.disposition === 'PROFILE') continue;
+    const answering = [...r.linked, ...r.suggested];
+    const attachable = answering.filter((c) => c.standing === 'APPROVED' || c.standing === 'PENDING');
+    for (const c of attachable) {
+      let item = attach.get(c.claimId);
+      if (!item) {
+        item = {
+          claimId: c.claimId,
+          reference: c.reference,
+          kind: c.kind,
+          claim: c.claim,
+          standing: c.standing,
+          expiresAt: c.expiresAt,
+          covers: [],
+          linkedRefs: [],
+          suggestedRefs: [],
+        };
+        attach.set(c.claimId, item);
+      }
+      if (!item.covers.includes(r.reference)) item.covers.push(r.reference);
+      const linkedHere = r.linked.some((l) => l.claimId === c.claimId);
+      if (linkedHere) {
+        if (!item.linkedRefs.includes(r.reference)) item.linkedRefs.push(r.reference);
+      } else if (!item.suggestedRefs.includes(r.reference)) {
+        item.suggestedRefs.push(r.reference);
+      }
+    }
+    // "Add to the library" is for the pass/fail evidence gates a document
+    // answers — insurances, accreditations, DBS, policies, references. A scored
+    // question (a weighting at stake) is answered in the submission itself, not
+    // filed as library evidence, and a SUBMISSION-category line is a process
+    // instruction to follow, not a document to obtain. Both are excluded so the
+    // list is the evidence to go and get, not the questions to go and answer.
+    const isEvidenceGate = r.category !== 'SUBMISSION' && r.weightingPercent === undefined;
+    if (attachable.length === 0 && isEvidenceGate) {
+      // Nothing usable answers it: either nothing was ever held (MISSING) or
+      // what was held is expired/rejected and must be replaced (LAPSED).
+      toObtain.push({
+        reference: r.reference,
+        requirement: r.requirement,
+        category: r.category,
+        evidenceRequired: r.evidenceRequired,
+        mandatory: r.mandatory,
+        reason: answering.length === 0 ? 'MISSING' : 'LAPSED',
+      });
+    }
+  }
+  const toAttach = [...attach.values()].sort((a, b) => a.reference.localeCompare(b.reference));
+  // Mandatory first — those end the bid if still open on the day — then by ref.
+  toObtain.sort((a, b) => (a.mandatory === b.mandatory ? a.reference.localeCompare(b.reference) : a.mandatory ? -1 : 1));
+
   const summary =
     `${covered} of ${requirements.length} requirement(s) covered` +
     (linkSuggested > 0 ? `, ${linkSuggested} with held evidence to link` : '') +
@@ -952,7 +1058,19 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
     (missing > 0 ? `, ${missing} with nothing on file` : '') +
     '.';
 
-  return { analysisId, reference: analysis.reference, asAt: day, requirements, covered, linkSuggested, missing, attention, summary };
+  return {
+    analysisId,
+    reference: analysis.reference,
+    asAt: day,
+    requirements,
+    covered,
+    linkSuggested,
+    missing,
+    attention,
+    toAttach,
+    toObtain,
+    summary,
+  };
 }
 
 // --- A requirement consciously not answered -----------------------------------------

@@ -255,6 +255,79 @@ describe('Held evidence is read against the matrix and proposed, never invented'
     assert.ok(coverage.linkSuggested >= 2);
     assert.match(coverage.summary, /covered/);
   });
+
+  it('lists the distinct documents to attach, each once, with what each answers', () => {
+    const ids = coverage.toAttach.map((a) => a.claimId);
+    assert.equal(new Set(ids).size, ids.length, 'a document appears once, not per requirement');
+    const method = coverage.toAttach.find((a) => /Temporary works method statement/.test(a.claim))!;
+    assert.ok(method, 'the verified method statement is attachable');
+    assert.equal(method.standing, 'APPROVED');
+    assert.ok(method.linkedRefs.includes('R3'));
+    const iso = coverage.toAttach.find((a) => /ISO 14001/.test(a.claim))!;
+    assert.ok(iso, 'the held ISO 14001 certificate is attachable even while pending');
+    assert.ok(iso.suggestedRefs.includes('R2'), 'it answers R2 by proposal, not a link');
+    assert.ok(!iso.linkedRefs.includes('R2'));
+  });
+
+  it('lists what to obtain before submitting, and only what nothing current answers', () => {
+    const r5 = coverage.toObtain.find((o) => o.reference === 'R5')!;
+    assert.ok(r5, 'R5 has nothing on file and must be obtained');
+    assert.equal(r5.reason, 'MISSING');
+    // Profile-proven, covered, and has-held-evidence lines are not here.
+    assert.ok(!coverage.toObtain.some((o) => ['R1', 'R2', 'R3', 'R4', 'R6'].includes(o.reference)));
+  });
+});
+
+describe('The submission evidence plan — what to attach, what to obtain', () => {
+  let coverage: ReturnType<typeof itt.evidenceCoverage>;
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-PLAN-01',
+      requirements: [
+        requirement({ reference: 'P1', category: 'TECHNICAL', mandatory: false, requirement: 'Access method statement', evidenceRequired: 'A method statement' }),
+        requirement({ reference: 'P2', category: 'TECHNICAL', mandatory: false, requirement: 'Lifting method statement', evidenceRequired: 'A method statement' }),
+        requirement({ reference: 'P3', category: 'COMMERCIAL', mandatory: true, requirement: 'Form of tender, signed', evidenceRequired: 'Signed form of tender' }),
+        requirement({ reference: 'P4', category: 'COMMERCIAL', mandatory: false, requirement: 'Anti-collusion declaration', evidenceRequired: 'Signed anti-collusion certificate' }),
+        // A scored question — answered in the submission, not filed as library evidence.
+        requirement({ reference: 'P5', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1 — relevant experience', evidenceRequired: 'A written answer with worked examples' }),
+        // A process instruction — followed, not obtained.
+        requirement({ reference: 'P6', category: 'SUBMISSION', mandatory: true, requirement: 'Submit via the In-Tend portal', evidenceRequired: 'All tender returns sent via In-Tend' }),
+      ],
+    });
+    const q = qs();
+    const owner = platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+    // One document answering two requirements, linked to both and verified.
+    const method = evidence.assertClaim(q, {
+      kind: 'METHOD',
+      claim: 'Combined access and lifting method statement',
+      sourceHash: 'h-plan-method',
+      covers: ['P1', 'P2'],
+    });
+    evidence.verifyClaim(owner, method.id, { method: 'Read against the temporary works design' });
+    coverage = itt.evidenceCoverage(q, written.analysisId);
+  });
+
+  it('lists a document answering two requirements once, carrying both references', () => {
+    const doc = coverage.toAttach.find((a) => /Combined access and lifting/.test(a.claim))!;
+    assert.ok(doc, 'the dual-purpose document is attachable');
+    assert.deepEqual([...doc.covers].sort(), ['P1', 'P2']);
+    assert.deepEqual([...doc.linkedRefs].sort(), ['P1', 'P2']);
+  });
+
+  it('puts the mandatory requirement to obtain ahead of the discretionary one', () => {
+    const mine = coverage.toObtain.filter((o) => o.reference === 'P3' || o.reference === 'P4');
+    assert.deepEqual(mine.map((o) => o.reference), ['P3', 'P4']);
+    assert.equal(mine.find((o) => o.reference === 'P3')!.mandatory, true);
+    assert.equal(mine.find((o) => o.reference === 'P3')!.reason, 'MISSING');
+  });
+
+  it('keeps scored questions and process instructions out of the evidence-to-obtain list', () => {
+    // P5 is a weighted question (answered in the submission) and P6 is a
+    // process instruction (followed, not obtained) — neither is library evidence.
+    assert.ok(!coverage.toObtain.some((o) => o.reference === 'P5'), 'a scored question is not evidence to obtain');
+    assert.ok(!coverage.toObtain.some((o) => o.reference === 'P6'), 'a process instruction is not evidence to obtain');
+  });
 });
 
 // ── Commercial terms ────────────────────────────────────────────────────────
