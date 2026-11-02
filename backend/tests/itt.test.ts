@@ -419,6 +419,74 @@ describe('Compliance undertakings — the agent drafts, a person confirms', () =
   it('refuses to confirm a line that is not an undertaking', () => {
     throwsCode(() => itt.confirmUndertakings(owner(), analysisId, { references: ['U2'] }), 'NO_UNDERTAKINGS');
   });
+
+  it('confirms an undertaking on a matrix that lives on another project in the same tenant', () => {
+    // The field failure behind this: "Confirm all as true" returned "Entity
+    // belongs to a different tenant or project". The invitation, the matrix and
+    // the working project can be three separate records, so the matrix is looked
+    // up tenant-wide — and the confirmation event has to be written where the
+    // matrix actually lives, not under whatever project the user is viewing, or
+    // the ledger's tenant-isolation guard refuses the write.
+    //
+    // A second project in the same tenant, and a matrix recorded directly
+    // against it (the analysis event, as analyseITT would write it), so the
+    // scenario is reproduced without re-running the phase-gated take-off.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const projectB = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId,
+      name: 'A separate project that carries the matrix',
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 500_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+
+    const analysisId = 'analysis-crossproj-01';
+    platform.ledger.commit({
+      tenantId: seed.tenantId,
+      projectId: projectB,
+      actor: { refType: 'User', refId: seed.users.qs!.id },
+      source: 'WEB',
+      correlationId: 'itt-crossproj-test',
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId,
+        reference: 'ITT-CROSSPROJ-01',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        estimatedValueMinor: 500_000,
+        durationWeeks: 12,
+        matrix: [
+          { reference: 'U1', category: 'HEALTH_AND_SAFETY', requirement: 'Comply with all relevant legislation including CDM Regulations 2015', evidenceRequired: 'Comply with CDM Regulations 2015', mandatory: true, status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: [],
+        weightings: { stated: 0, complete: false },
+        terms: [],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: false,
+        analysedAt: new Date().toISOString(),
+        analysedBy: seed.users.qs!.id,
+      },
+    });
+
+    // Confirm from project A (the seed project) — a different project, same tenant.
+    const fromProjectA = platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+    const result = itt.confirmUndertakings(fromProjectA, analysisId, {});
+    assert.equal(result.confirmed.length, 1);
+    assert.equal(result.confirmed[0]!.reference, 'U1');
+
+    // Recorded against the matrix, read back from the project it lives on.
+    const cov = itt.evidenceCoverage(platform.context(seed.users.qs!.auth, projectB, { source: 'WEB' }), analysisId);
+    assert.equal(cov.undertakings.find((u) => u.reference === 'U1')!.confirmed, true);
+  });
 });
 
 // ── Commercial terms ────────────────────────────────────────────────────────

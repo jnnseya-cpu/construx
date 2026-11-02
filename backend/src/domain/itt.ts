@@ -1270,9 +1270,17 @@ export function confirmUndertakings(
     confirmedAt: now,
   }));
 
+  // Written against the project the analysis actually lives on, not the caller's
+  // current project. The matrix is looked up tenant-wide (requireAnalysis guards
+  // the tenant, not the project), so an analysis produced under one project and
+  // confirmed from another — which is exactly what happens when the invitation,
+  // the matrix and the working project are separate records — would otherwise
+  // commit the event under the wrong project and be refused by the ledger's
+  // tenant-isolation guard as "Entity belongs to a different tenant or project".
   write(ctx, {
     eventType: 'REQUIREMENT_UNDERTAKEN',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
     nextState: { ...(record.state as Record<string, unknown>), undertakings: [...held, ...confirmed] },
   });
 
@@ -1468,9 +1476,11 @@ export function waiveRequirement(
     grantedAt: new Date().toISOString(),
   };
 
+  // The analysis's own project, not the caller's — same reason as confirmUndertakings.
   write(ctx, {
     eventType: 'REQUIREMENT_WAIVED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
     nextState: { ...(record.state as Record<string, unknown>), waivers: [...held, waiver] },
   });
 
@@ -1518,9 +1528,11 @@ export function revokeWaiver(
   };
   const waivers = held.map((waiver, at) => (at === index ? revoked : waiver));
 
+  // The analysis's own project, not the caller's — same reason as confirmUndertakings.
   write(ctx, {
     eventType: 'REQUIREMENT_WAIVER_REVOKED',
     entity: { refType: 'ITTAnalysis', refId: analysisId },
+    projectId: record.projectId,
     nextState: { ...(record.state as Record<string, unknown>), waivers },
   });
 
