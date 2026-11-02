@@ -784,6 +784,54 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
   return readAnalysis(record);
 }
 
+/**
+ * A question the analysis raised, in the structured form the clarification
+ * register needs — so the AI's own questions can be put to the client in one
+ * act, rather than retyped into a delimited box by a person who has no way to
+ * know the format.
+ */
+export type TenderClarificationDraft = {
+  side: 'CLIENT';
+  subject: string;
+  question: string;
+  links: { scopeItem?: string; document?: string };
+};
+
+const truncate = (text: string, n = 80): string => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+
+/**
+ * Turn the "Questions for the buyer" an analysis produced into raisable
+ * clarifications. It invents nothing — the questions are the analysis's own:
+ *  - every mandatory requirement nothing on file satisfies, linked to that
+ *    requirement so the answer is findable against it;
+ *  - the commercial-term and weighting questions, carried verbatim and linked
+ *    to the invitation.
+ * Each carries a link, which is what the register requires and what a plain
+ * paste into the batch box never had.
+ */
+export function tenderClarificationDrafts(analysis: StoredITTAnalysis): TenderClarificationDraft[] {
+  const drafts: TenderClarificationDraft[] = [];
+  const seen = new Set<string>();
+
+  for (const gap of analysis.mandatoryGaps) {
+    const question = `Please confirm the requirement "${gap.requirement}" and the evidence or limit that will satisfy it — nothing on file currently does.`;
+    if (seen.has(question)) continue;
+    seen.add(question);
+    drafts.push({ side: 'CLIENT', subject: truncate(gap.requirement), question, links: { scopeItem: gap.reference } });
+  }
+
+  for (const clarification of analysis.clarifications) {
+    // The gap questions above are the ones that end this way; do not raise them twice.
+    if (/nothing on file to satisfy this\.?$/i.test(clarification)) continue;
+    if (seen.has(clarification)) continue;
+    seen.add(clarification);
+    const subject = clarification.includes(':') ? truncate(clarification.slice(0, clarification.indexOf(':'))) : truncate(clarification);
+    drafts.push({ side: 'CLIENT', subject, question: clarification, links: { document: `${analysis.reference || 'Invitation'}` } });
+  }
+
+  return drafts;
+}
+
 // --- Matching held evidence to the requirements -------------------------------
 //
 // The matrix says what the buyer wants and what the company profile proves. It

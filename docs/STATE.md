@@ -3168,6 +3168,25 @@ places. Surfaced on the opened matrix as "Attach these when you submit" and "Add
 these to your library before you submit". Verified on a six-requirement fixture
 and a dual-purpose document that answers two lines at once.
 
+**The analysis raises its own questions in one act.** The matrix produces the
+"Questions for the buyer" — insurance gaps, a weighting total that does not add
+up, uninsurable or bar terms — when it reads the invitation. Until now a person
+had to retype each one into the batch box in a `subject | question | reference`
+format they had no way to know, and a plain paste failed with "must contain at
+least one item" — the agent did the thinking and the human did transcription.
+`tenderClarificationDrafts` (`itt.ts`) turns those questions into the structured,
+linked form the register needs (a mandatory gap linked to its requirement by
+scope item; a term or weighting question linked to the invitation), inventing
+nothing, and `raiseClarificationsFromAnalysis` (`tenderintel.ts`;
+`POST …/tender-clarifications/from-analysis`) raises them to the client in one
+call. It is idempotent — a question already on the register is skipped, not
+duplicated — so the **"Raise these to the client"** button on the matrix's
+Questions-for-the-buyer list is safe to press again. Raising is not issuing:
+they land OPEN, to be sent and answered, exactly as a hand-raised one is
+(`CLARIFICATION_RAISED` is `aiAllowed`, `CLARIFICATION_ISSUED` is not). Verified:
+a mandatory certificate gap becomes a client-side draft linked to its
+requirement, a scored question does not, and a second press raises nothing new.
+
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
 damages are set against the margin, not reported as a rate. A performance bond

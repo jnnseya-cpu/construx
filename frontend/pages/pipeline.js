@@ -818,9 +818,21 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
           ${
             analysis.clarifications.length === 0
               ? html`<div class="empty"><b>Nothing to ask</b>The invitation is internally consistent and insurable as written.</div>`
-              : html`<div class="split-list">
-                  ${analysis.clarifications.map((c) => html`<div class="row"><span class="lbl">${c}</span></div>`)}
-                </div>`
+              : html`
+                  ${
+                    can('PROCUREMENT_AWARD', 'C')
+                      ? html`<button class="btn sm" data-raise-clars="${analysis.analysisId}" data-raise-project="${analysis.projectId}" style="margin-bottom:8px">
+                          Raise these to the client
+                        </button>
+                        <p style="font-size:11.5px;color:var(--text-3);margin:0 0 8px">
+                          One press puts every question above on the clarification register as a TQ, to the client — no retyping.
+                          Already-raised ones are skipped. Send and record the answers on Tender &amp; Procurement.
+                        </p>`
+                      : ''
+                  }
+                  <div class="split-list">
+                    ${analysis.clarifications.map((c) => html`<div class="row"><span class="lbl">${c}</span></div>`)}
+                  </div>`
           }
         </div>
       </div>
@@ -3422,6 +3434,37 @@ export async function pipeline(root) {
     } finally {
       open.disabled = false;
       open.textContent = 'Open';
+    }
+  });
+
+  // One press raises the analysis's own "Questions for the buyer" onto the
+  // clarification register, to the client — the structured form of that list,
+  // so nobody retypes the AI's questions into a delimited box. Idempotent: the
+  // backend skips a question already raised.
+  root.addEventListener('click', async (event) => {
+    const raiseBtn = event.target.closest('[data-raise-clars]');
+    if (!raiseBtn) return;
+    const analysisId = raiseBtn.dataset.raiseClars;
+    const raiseProjectId = raiseBtn.dataset.raiseProject;
+    raiseBtn.disabled = true;
+    raiseBtn.textContent = 'Raising…';
+    try {
+      const result = await api.post(`/v1/projects/${raiseProjectId}/tender-clarifications/from-analysis`, { analysisId });
+      const raised = result.raised?.length ?? 0;
+      toast(
+        raised > 0 ? `${raised} clarification${raised === 1 ? '' : 's'} raised to the client` : 'Nothing new to raise',
+        raised > 0
+          ? `${result.raised.map((entry) => entry.reference).join(', ')}` +
+              `${result.skipped > 0 ? ` · ${result.skipped} already on the register` : ''}` +
+              ' — send and record the answers on Tender & Procurement.'
+          : `All ${result.total} are already on the register.`,
+        'ok',
+      );
+    } catch (error) {
+      toast('Not raised', error.message, isRoleDenial(error) ? 'warn' : 'err');
+    } finally {
+      raiseBtn.disabled = false;
+      raiseBtn.textContent = 'Raise these to the client';
     }
   });
 

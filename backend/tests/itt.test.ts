@@ -5,6 +5,7 @@ import { issueTokens, verifyToken } from '../src/identity/auth.ts';
 import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as evidence from '../src/domain/evidenceclaim.ts';
+import * as tenderintel from '../src/domain/tenderintel.ts';
 import * as costintel from '../src/domain/costintel.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
@@ -327,6 +328,40 @@ describe('The submission evidence plan — what to attach, what to obtain', () =
     // process instruction (followed, not obtained) — neither is library evidence.
     assert.ok(!coverage.toObtain.some((o) => o.reference === 'P5'), 'a scored question is not evidence to obtain');
     assert.ok(!coverage.toObtain.some((o) => o.reference === 'P6'), 'a process instruction is not evidence to obtain');
+  });
+});
+
+describe('The analysis raises its own clarifications to the client in one act', () => {
+  let analysisId: string;
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-ONECLICK-01',
+      requirements: [
+        requirement({ reference: 'M1', category: 'QUALIFICATION', mandatory: true, requirement: 'Hold ISO 27001 information security certification', evidenceRequired: 'ISO 27001 certificate' }),
+        requirement({ reference: 'M2', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1 — relevant experience', evidenceRequired: 'A written answer' }),
+      ],
+    });
+    analysisId = written.analysisId;
+  });
+
+  it('turns the mandatory gaps into client-side drafts linked to the requirement, and leaves scored questions out', () => {
+    const analysis = itt.complianceMatrix(qs(), analysisId);
+    const drafts = itt.tenderClarificationDrafts(analysis);
+    const m1 = drafts.find((d) => d.links.scopeItem === 'M1')!;
+    assert.ok(m1, 'the unmet mandatory requirement becomes a clarification draft');
+    assert.equal(m1.side, 'CLIENT');
+    assert.ok(/ISO 27001/.test(m1.question));
+    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M2'), 'a scored question is answered in the submission, not asked of the buyer');
+  });
+
+  it('raises them to the register in one call, and a second press raises nothing new', () => {
+    const first = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
+    assert.ok(first.raised.length >= 1, 'at least the mandatory gap is raised');
+    assert.match(first.raised[0]!.reference, /^TQ-/);
+    const second = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
+    assert.equal(second.raised.length, 0, 'already on the register, so nothing is raised twice');
+    assert.ok(second.skipped >= 1, 'the duplicate is reported as skipped, not raised');
   });
 });
 

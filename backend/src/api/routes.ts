@@ -24394,6 +24394,19 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/from-analysis',
+    description:
+      'Raise the questions the analysis already wrote onto the register, to the client, in one act — the structured form of the "Questions for the buyer" list, so a reader never retypes them into a delimited box. Idempotent: a question already on the register is skipped, not duplicated',
+    schema: {
+      type: 'object',
+      required: ['analysisId'],
+      properties: { analysisId: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tenderintel.raiseClarificationsFromAnalysis(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender-clarifications/:clarificationId/pack-check',
     ai: { engine: 'TENDER', taskType: 'clarification_pack_check', capability: 'REASONING' },
     description: 'Check whether the tender pack already answers a clarification, before it is sent — advice, citing the passage; never withdraws it',
