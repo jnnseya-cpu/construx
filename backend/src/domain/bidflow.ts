@@ -157,7 +157,22 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   const deliverables = (invitation?.deliverables as Array<{ title?: string }> | undefined) ?? [];
   // An invitation asking for more than a price is a submission to write. One
   // that asks only for a price is a quotation, whatever it calls itself.
-  const wantsSubmission = deliverables.length > 1;
+  //
+  // The return register is the clearest signal, but it is filed by hand, and a
+  // tender can be read and its compliance matrix produced before anybody files
+  // it. At that point the matrix is itself proof the job is a tender: it carries
+  // the buyer's evaluation weightings and the scored and mandatory pass/fail
+  // requirements, none of which a price-only enquiry has. Reading only the
+  // deliverable count classed such a tender as a quotation and greyed out its
+  // whole submission road — reported on SHDC 000189, a 60/5/35 tender the panel
+  // told the bidder to "just price it".
+  const analysedAsTender = analyses.some((record) => {
+    const state = record.state;
+    const stated = Number((state.weightings as { stated?: number } | undefined)?.stated ?? 0);
+    const lines = (state.matrix as Array<{ mandatory?: boolean; weightingPercent?: number }> | undefined) ?? [];
+    return stated > 0 || lines.some((line) => line.mandatory === true || line.weightingPercent !== undefined);
+  });
+  const wantsSubmission = deliverables.length > 1 || analysedAsTender;
   const road: BidFlow['road'] = wantsSubmission ? 'BID' : 'PRICE';
 
   const steps: FlowStep[] = [];
@@ -387,9 +402,11 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
 
   return {
     road,
-    why: wantsSubmission
-      ? `${deliverables.length} return items are recorded against this invitation, so it is a submission to write as well as a price to build.`
-      : 'Nothing recorded against this enquiry asks for more than a price, so it is a quotation rather than a submission.',
+    why: !wantsSubmission
+      ? 'Nothing recorded against this enquiry asks for more than a price, so it is a quotation rather than a submission.'
+      : deliverables.length > 1
+        ? `${deliverables.length} return items are recorded against this invitation, so it is a submission to write as well as a price to build.`
+        : 'The compliance matrix carries the buyer’s evaluation weightings, so this is a tender to submit as well as a price to build — record the return register so every return has an owner and a date.',
     steps,
     nowDo,
     summary: nowDo

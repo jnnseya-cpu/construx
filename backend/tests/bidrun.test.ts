@@ -881,4 +881,71 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(flow.nowDo?.door, 'Upload a tender document');
     assert.equal(flow.steps.find((step) => step.id === 'MEASURED')!.state, 'BLOCKED');
   });
+
+  it('treats a tender with a compliance matrix as a submission, even before the return register is filed', () => {
+    /*
+     * Reported on SHDC 000189, a 60/5/35 tender: the panel classed it as a
+     * price-only quotation and greyed out its whole submission road, because the
+     * road was derived only from the invitation's return-deliverable count and
+     * the register had not been filed by hand yet. But the compliance matrix
+     * had already been produced — it carries the buyer's evaluation weightings
+     * and the scored and mandatory pass/fail requirements, none of which a
+     * price-only enquiry has. The matrix is itself proof the job is a tender.
+     */
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'A tender read but its register not yet filed',
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 7_260_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+
+    // A stored ITT analysis, the shape analyseITT writes: a matrix with a
+    // mandatory pass/fail line and a scored (weighted) question, and declared
+    // evaluation weightings totalling 100%.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId: tender,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: ctx.correlationId,
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: `analysis-${tender.slice(-6)}` },
+      nextState: {
+        id: `analysis-${tender.slice(-6)}`,
+        reference: 'SHDC 000189',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        matrix: [
+          { reference: 'INS-EL', category: 'Insurance', requirement: 'Employers Liability £10 million', mandatory: true, status: 'GAP' },
+          { reference: 'QQ1', category: 'Quality', requirement: 'Relevant experience', mandatory: false, weightingPercent: 10, status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: ['INS-EL'],
+        weightings: { stated: 100, complete: true },
+        terms: [],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: false,
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      },
+    });
+
+    const flow = bidFlow(platform, ctx);
+    // The road is BID, not PRICE, so the submission steps are live rather than
+    // greyed out as "asks only for a price".
+    assert.equal(flow.road, 'BID');
+    assert.notEqual(flow.steps.find((step) => step.id === 'MATRIX')!.state, 'NOT_NEEDED');
+    assert.notEqual(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'NOT_NEEDED');
+    assert.doesNotMatch(flow.why, /quotation rather than a submission/);
+  });
 });
