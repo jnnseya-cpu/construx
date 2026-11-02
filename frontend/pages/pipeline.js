@@ -679,6 +679,30 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
                   : ''
               }
 
+              ${
+                (coverage.undertakings ?? []).length > 0
+                  ? html`<h2 style="padding:13px 17px 0">Compliance undertakings — the platform drafted these; confirm each is true</h2>
+                      <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+                        These lines are answered by a statement, not a document. The agent has written each confirmation
+                        from the requirement; confirming is <b>you declaring it true</b> — the platform never confirms on
+                        your behalf. ${coverage.undertakings.filter((u) => !u.confirmed).length} of ${coverage.undertakings.length} still to confirm.
+                        ${
+                          can('ESTIMATE_TENDER', 'A') && coverage.undertakings.some((u) => !u.confirmed)
+                            ? html`<br><button class="btn sm" data-confirm-undertakings="${analysis.analysisId}" style="margin-top:8px">Confirm all as true</button>`
+                            : ''
+                        }
+                      </p>
+                      ${table({
+                        headers: ['Ref', 'Drafted confirmation', 'Status'],
+                        rows: coverage.undertakings.map((u) => [
+                          html`<span style="font-size:12px">${u.requirement}</span>`,
+                          html`<span style="font-size:12px;color:var(--text-3)">${u.statement}</span>`,
+                          u.confirmed ? badge('confirmed', 'ok') : badge('draft — confirm', 'warn'),
+                        ]),
+                      })}`
+                  : ''
+              }
+
               <h2 style="padding:15px 17px 0">Every requirement that needs action</h2>
               ${table({
                 headers: ['Ref', 'Requirement', 'Standing', 'Held evidence and suggestions'],
@@ -3465,6 +3489,34 @@ export async function pipeline(root) {
     } finally {
       raiseBtn.disabled = false;
       raiseBtn.textContent = 'Raise these to the client';
+    }
+  });
+
+  // Confirm the drafted compliance undertakings — the agent wrote them; this
+  // records that a person declares each true. Idempotent on the backend.
+  root.addEventListener('click', async (event) => {
+    const confirmBtn = event.target.closest('[data-confirm-undertakings]');
+    if (!confirmBtn) return;
+    const analysisId = confirmBtn.dataset.confirmUndertakings;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Confirming…';
+    try {
+      const result = await api.post(`/v1/pipeline/analyses/${analysisId}/undertakings`, {});
+      const n = result.confirmed?.length ?? 0;
+      toast(
+        n > 0 ? `${n} undertaking${n === 1 ? '' : 's'} confirmed` : 'Nothing new to confirm',
+        n > 0
+          ? `Recorded as declared true${result.already > 0 ? ` · ${result.already} already confirmed` : ''}.`
+          : `All ${result.total} are already confirmed.`,
+        'ok',
+      );
+      // Re-open the matrix so the confirmed lines show immediately.
+      const open = root.querySelector(`[data-matrix="${analysisId}"]`);
+      if (open) open.click();
+    } catch (error) {
+      toast('Not confirmed', error.message, isRoleDenial(error) ? 'warn' : 'err');
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Confirm all as true';
     }
   });
 

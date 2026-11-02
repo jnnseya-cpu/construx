@@ -365,6 +365,62 @@ describe('The analysis raises its own clarifications to the client in one act', 
   });
 });
 
+describe('Compliance undertakings — the agent drafts, a person confirms', () => {
+  let analysisId: string;
+  const owner = () => platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+
+  before(() => {
+    const written = analyse({
+      reference: 'ITT-UNDERTAKING-01',
+      requirements: [
+        requirement({ reference: 'U1', category: 'HEALTH_AND_SAFETY', mandatory: true, requirement: 'Comply with all relevant legislation including CDM Regulations 2015', evidenceRequired: 'Comply with CDM Regulations 2015' }),
+        requirement({ reference: 'U2', category: 'QUALIFICATION', mandatory: true, requirement: 'Hold ISO 27001 information security certification', evidenceRequired: 'ISO 27001 certificate' }),
+        requirement({ reference: 'U3', category: 'QUALITY', mandatory: false, weightingPercent: 10, requirement: 'Quality Question 1', evidenceRequired: 'A written answer' }),
+      ],
+    });
+    analysisId = written.analysisId;
+  });
+
+  it('classifies an obligation as an undertaking, but not an evidence gate or a scored question', () => {
+    assert.equal(itt.undertakingFor({ requirement: 'Comply with CDM Regulations 2015', evidenceRequired: 'Comply with CDM 2015' }).isUndertaking, true);
+    assert.equal(itt.undertakingFor({ requirement: 'Employers Liability £20m', evidenceRequired: 'EL insurance certificate' }).isUndertaking, false);
+    assert.equal(itt.undertakingFor({ requirement: 'Quality Question 1', evidenceRequired: 'A written answer', weightingPercent: 10 }).isUndertaking, false);
+    assert.match(itt.undertakingFor({ requirement: 'Comply with CDM 2015', evidenceRequired: 'Comply with CDM 2015' }).statement, /We confirm/);
+  });
+
+  it('surfaces the undertaking with a drafted statement, and keeps it out of the documents-to-obtain list', () => {
+    const cov = itt.evidenceCoverage(qs(), analysisId);
+    const u = cov.undertakings.find((entry) => entry.reference === 'U1')!;
+    assert.ok(u, 'the CDM line is an undertaking');
+    assert.equal(u.confirmed, false);
+    assert.match(u.statement, /We confirm/);
+    assert.equal(cov.requirements.find((r) => r.reference === 'U1')!.disposition, 'UNDERTAKING');
+    // An undertaking is never a document to fetch: not in toObtain, not in toAttach.
+    assert.ok(!cov.toObtain.some((o) => o.reference === 'U1'), 'an undertaking is not a document to obtain');
+    assert.ok(!cov.toAttach.some((a) => a.covers.includes('U1')), 'an undertaking is not a document to attach');
+    // The certificate gate and the scored question are evidence/answers, not undertakings.
+    assert.ok(!cov.undertakings.some((entry) => entry.reference === 'U2' || entry.reference === 'U3'));
+    assert.notEqual(cov.requirements.find((r) => r.reference === 'U2')!.disposition, 'UNDERTAKING');
+  });
+
+  it('records a confirmation, marks the line covered, and does not confirm twice', () => {
+    const first = itt.confirmUndertakings(owner(), analysisId, {});
+    assert.equal(first.confirmed.length, 1, 'only U1 is an undertaking');
+    assert.equal(first.confirmed[0]!.reference, 'U1');
+    const cov = itt.evidenceCoverage(qs(), analysisId);
+    const u = cov.undertakings.find((entry) => entry.reference === 'U1')!;
+    assert.equal(u.confirmed, true);
+    assert.equal(cov.requirements.find((r) => r.reference === 'U1')!.disposition, 'COVERED');
+    const second = itt.confirmUndertakings(owner(), analysisId, {});
+    assert.equal(second.confirmed.length, 0, 'already confirmed, not written twice');
+    assert.equal(second.already, 1);
+  });
+
+  it('refuses to confirm a line that is not an undertaking', () => {
+    throwsCode(() => itt.confirmUndertakings(owner(), analysisId, { references: ['U2'] }), 'NO_UNDERTAKINGS');
+  });
+});
+
 // ── Commercial terms ────────────────────────────────────────────────────────
 
 describe('Commercial terms, assessed rather than transcribed', () => {

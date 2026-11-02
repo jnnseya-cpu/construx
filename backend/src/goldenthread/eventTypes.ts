@@ -728,6 +728,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('TENDER_ADDENDUM_IMPACT_REVIEWED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   def('REQUIREMENT_WAIVER_REVOKED', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
+  // A compliance undertaking confirmed: the agent drafts the statement, a person
+  // confirms it is true, so the confirmation is a human act, not aiAllowed.
+  def('REQUIREMENT_UNDERTAKEN', 'ITTAnalysis', 'UPDATE', 'PROCUREMENT'),
   // The bid response pack: the half of a tender the platform could read and not
   // write. Planned by a person from a stored analysis, written one section at a
   // time so no single call carries a whole submission, and issued by a person

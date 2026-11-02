@@ -4217,6 +4217,19 @@ export const ROUTES: Route[] = [
     description: 'Held evidence read against the matrix: what covers each requirement, and what could',
     handler: (platform, ctx) => itt.evidenceCoverage(tenantContext(platform, ctx), ctx.params.analysisId as string),
   },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/analyses/:analysisId/undertakings',
+    description:
+      'Confirm the compliance undertakings on the matrix — the lines answered by a statement the agent drafted, not a document. Confirming records that a person declares each true. Idempotent; omit references to confirm them all',
+    schema: {
+      type: 'object',
+      properties: { references: { type: 'array', items: stringField } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      itt.confirmUndertakings(tenantContext(platform, ctx), ctx.params.analysisId as string, body(ctx)),
+  },
   /*
    * Waivers.
    *

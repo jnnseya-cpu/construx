@@ -166,6 +166,63 @@ function certificatesNamedIn(line: { requirement: string; evidenceRequired: stri
 }
 
 /**
+ * A compliance undertaking: a requirement answered by a statement, not a
+ * document or a scored answer.
+ *
+ * "Comply with CDM 2015", "the tender remains open 90 days", "submit via
+ * In-Tend" — there is no certificate to file and no mark to win, only a promise
+ * to make. The platform bounced these back as "nothing on file — file the
+ * document", which is work handed to a person for a thing no document answers.
+ * The agent can draft the confirmation; the person confirms it is true.
+ *
+ * The test is deliberately conservative: a line is an undertaking only when it
+ * names no document or credential to evidence (those are gates), carries no
+ * weighting (those are scored questions answered in the submission), and reads
+ * as an obligation to comply. A line that fails any of the three is left exactly
+ * as it was — the safe direction, because a wrongly-drafted confirmation against
+ * a line that actually needed a certificate would hide a real gap.
+ */
+const UNDERTAKING_EVIDENCE =
+  /\b(insurance|certificate|certification|accreditation|accredited|pre-?qualif|polic(?:y|ies)|dbs|evidence of|experience|reference|case stud|track record|turnover|accounts|financial standing|cv|registered with)\b/i;
+const UNDERTAKING_OBLIGATION =
+  /\b(confirm|comply|complies|compliance|adhere|meet|meets|undertake|undertaking|nominate|appoint|remain open|maintain|ensure|sent via|send[^.]*via|submit|provide[^.]*(?:notice|minimum))\b/i;
+
+function draftUndertaking(obligation: string): string {
+  const clean = String(obligation ?? '').replace(/\s+/g, ' ').trim();
+  return `We confirm that, if awarded this contract, we will meet this requirement in full: “${clean}”.`;
+}
+
+/**
+ * Classify one requirement, and where it is an undertaking, draft the
+ * confirmation. A pure function so the matrix read, the confirm command and the
+ * tests all decide it the same way.
+ */
+export function undertakingFor(requirement: {
+  requirement: string;
+  evidenceRequired: string;
+  weightingPercent?: number;
+}): { isUndertaking: boolean; statement: string } {
+  if (requirement.weightingPercent !== undefined) return { isUndertaking: false, statement: '' };
+  const text = `${requirement.requirement} ${requirement.evidenceRequired}`;
+  if (UNDERTAKING_EVIDENCE.test(text)) return { isUndertaking: false, statement: '' };
+  if (!UNDERTAKING_OBLIGATION.test(text)) return { isUndertaking: false, statement: '' };
+  return { isUndertaking: true, statement: draftUndertaking(requirement.evidenceRequired?.trim() || requirement.requirement) };
+}
+
+/** One confirmed undertaking, held on the analysis record. */
+export type UndertakingGiven = {
+  reference: string;
+  requirement: string;
+  statement: string;
+  confirmedBy: string;
+  confirmedAt: string;
+};
+
+function undertakingsOf(record: EntityRecord): UndertakingGiven[] {
+  return ((record.state as Record<string, unknown>).undertakings as UndertakingGiven[] | undefined) ?? [];
+}
+
+/**
  * What the platform can evidence without being asked.
  *
  * Deliberately short. A probe that guesses is worse than no probe, because a
@@ -885,16 +942,19 @@ export type RequirementCoverage = {
   linked: EvidenceMatch[];
   /** Held claims that could cover it but are not linked yet. */
   suggested: EvidenceMatch[];
+  /** Where the requirement is a compliance undertaking, the drafted confirmation. */
+  undertaking?: string;
   /**
    * What to do about this line:
-   *  COVERED           — a current, approved linked claim answers it
+   *  COVERED           — a current, approved linked claim answers it (or an undertaking confirmed)
    *  PROFILE           — proven from the company profile, no document needed here
    *  ATTENTION         — a linked claim is pending or has lapsed
    *  LINK_SUGGESTED    — nothing linked, but held evidence could be
+   *  UNDERTAKING       — a compliance statement to confirm, drafted and awaiting confirmation
    *  MISSING           — the buyer asked for evidence and nothing held answers it
    *  NO_EVIDENCE_ASKED — the requirement names no evidence to hold
    */
-  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'MISSING' | 'NO_EVIDENCE_ASKED';
+  disposition: 'COVERED' | 'PROFILE' | 'ATTENTION' | 'LINK_SUGGESTED' | 'UNDERTAKING' | 'MISSING' | 'NO_EVIDENCE_ASKED';
 };
 
 /**
@@ -953,6 +1013,11 @@ export type EvidenceCoverage = {
    */
   toAttach: AttachItem[];
   toObtain: ObtainItem[];
+  /**
+   * Compliance undertakings — the lines answered by a statement rather than a
+   * document. Each carries the drafted confirmation and whether it is confirmed.
+   */
+  undertakings: Array<{ reference: string; requirement: string; statement: string; confirmed: boolean }>;
   summary: string;
 };
 
@@ -967,8 +1032,12 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   const day = asAt ?? new Date().toISOString().slice(0, 10);
   const register = evidenceRegister(ctx, day);
   const current = register.claims.filter((claim) => claim.standing !== 'REJECTED' && claim.standing !== 'EXPIRED');
+  // Compliance undertakings confirmed on this analysis, read the same way the
+  // waiver register reads waivers — off the analysis record's own state.
+  const confirmedUndertakings = new Set(undertakingsOf(requireAnalysis(ctx, analysisId)).map((u) => u.reference));
 
   const requirements: RequirementCoverage[] = analysis.matrix.map((line) => {
+    const undertaking = undertakingFor(line);
     const linked: EvidenceMatch[] = register.claims
       .filter((claim) => claim.covers.includes(line.reference))
       .map((claim) => ({
@@ -1009,6 +1078,11 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
 
     const hasCurrentLink = linked.some((entry) => entry.standing === 'APPROVED');
     const hasStaleLink = linked.length > 0 && !hasCurrentLink;
+    // An undertaking is answered by a confirmed statement, not a document: a
+    // confirmed one is covered, an unconfirmed one is a drafted statement
+    // awaiting confirmation — ahead of the profile/claim dispositions, which do
+    // not apply to it. A held claim or profile match still wins first, so an
+    // undertaking line that somehow also has evidence is not hidden.
     const disposition: RequirementCoverage['disposition'] = !line.evidenceRequired
       ? 'NO_EVIDENCE_ASKED'
       : hasCurrentLink
@@ -1017,9 +1091,13 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
           ? 'ATTENTION'
           : line.status === 'SATISFIED'
             ? 'PROFILE'
-            : suggested.length > 0
-              ? 'LINK_SUGGESTED'
-              : 'MISSING';
+            : undertaking.isUndertaking
+              ? confirmedUndertakings.has(line.reference)
+                ? 'COVERED'
+                : 'UNDERTAKING'
+              : suggested.length > 0
+                ? 'LINK_SUGGESTED'
+                : 'MISSING';
 
     return {
       reference: line.reference,
@@ -1031,6 +1109,7 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
       matrixStatus: line.status,
       linked,
       suggested,
+      ...(undertaking.isUndertaking ? { undertaking: undertaking.statement } : {}),
       disposition,
     };
   });
@@ -1048,7 +1127,9 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   const attach = new Map<string, AttachItem>();
   const toObtain: ObtainItem[] = [];
   for (const r of requirements) {
-    if (!r.evidenceRequired || r.disposition === 'PROFILE') continue;
+    // An undertaking is confirmed with a statement, not a document, so it sits
+    // in neither list — it belongs to the undertakings section below.
+    if (!r.evidenceRequired || r.disposition === 'PROFILE' || r.disposition === 'UNDERTAKING') continue;
     const answering = [...r.linked, ...r.suggested];
     const attachable = answering.filter((c) => c.standing === 'APPROVED' || c.standing === 'PENDING');
     for (const c of attachable) {
@@ -1099,10 +1180,22 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
   // Mandatory first — those end the bid if still open on the day — then by ref.
   toObtain.sort((a, b) => (a.mandatory === b.mandatory ? a.reference.localeCompare(b.reference) : a.mandatory ? -1 : 1));
 
+  // The compliance undertakings — drafted by the platform, confirmed by a person.
+  const undertakings = requirements
+    .filter((r) => r.undertaking)
+    .map((r) => ({
+      reference: r.reference,
+      requirement: r.requirement,
+      statement: r.undertaking!,
+      confirmed: confirmedUndertakings.has(r.reference),
+    }));
+  const undertakingsPending = undertakings.filter((u) => !u.confirmed).length;
+
   const summary =
     `${covered} of ${requirements.length} requirement(s) covered` +
     (linkSuggested > 0 ? `, ${linkSuggested} with held evidence to link` : '') +
     (attention > 0 ? `, ${attention} with evidence pending or lapsed` : '') +
+    (undertakingsPending > 0 ? `, ${undertakingsPending} undertaking(s) to confirm` : '') +
     (missing > 0 ? `, ${missing} with nothing on file` : '') +
     '.';
 
@@ -1117,8 +1210,73 @@ export function evidenceCoverage(ctx: EngineContext, analysisId: string, asAt?: 
     attention,
     toAttach,
     toObtain,
+    undertakings,
     summary,
   };
+}
+
+/**
+ * Confirm the compliance undertakings on an analysis — the lines answered by a
+ * statement, not a document.
+ *
+ * The agent drafts each confirmation (`undertakingFor`); this records that a
+ * person has confirmed it is true, which is the act that turns a drafted
+ * statement into a commitment the business stands behind. It is the 95/5 split
+ * the platform exists for: the drafting is the agent's, the truth of it is a
+ * person's, and the platform never confirms on the company's behalf.
+ *
+ * Idempotent by reference, like the waiver register: an undertaking already
+ * confirmed is left as it is, not written twice. With no `references` it
+ * confirms every undertaking on the matrix; with a subset it confirms only
+ * those. It refuses on a line that is not an undertaking — one that needs a
+ * document or carries a weighting is not a thing to confirm with a sentence.
+ */
+export function confirmUndertakings(
+  ctx: EngineContext,
+  analysisId: string,
+  input: { references?: string[] },
+): { confirmed: UndertakingGiven[]; already: number; total: number } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'A', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireAnalysis(ctx, analysisId);
+  const analysis = readAnalysis(record);
+  const wanted = input.references && input.references.length > 0 ? new Set(input.references) : null;
+
+  const candidates = analysis.matrix.filter((line) => {
+    if (wanted && !wanted.has(line.reference)) return false;
+    return undertakingFor(line).isUndertaking;
+  });
+  if (candidates.length === 0) {
+    throw new DomainError(
+      'NO_UNDERTAKINGS',
+      wanted
+        ? 'None of those references is a compliance undertaking — a line that needs a document or carries a weighting is not confirmed with a statement.'
+        : 'This matrix has no compliance undertaking to confirm — every line is answered by a document or a scored answer.',
+    );
+  }
+
+  const held = undertakingsOf(record);
+  const heldRefs = new Set(held.map((u) => u.reference));
+  const fresh = candidates.filter((line) => !heldRefs.has(line.reference));
+  const already = candidates.length - fresh.length;
+  if (fresh.length === 0) return { confirmed: [], already, total: candidates.length };
+
+  const now = new Date().toISOString();
+  const confirmed: UndertakingGiven[] = fresh.map((line) => ({
+    reference: line.reference,
+    requirement: line.requirement,
+    statement: undertakingFor(line).statement,
+    confirmedBy: ctx.auth.actorId,
+    confirmedAt: now,
+  }));
+
+  write(ctx, {
+    eventType: 'REQUIREMENT_UNDERTAKEN',
+    entity: { refType: 'ITTAnalysis', refId: analysisId },
+    nextState: { ...(record.state as Record<string, unknown>), undertakings: [...held, ...confirmed] },
+  });
+
+  return { confirmed, already, total: candidates.length };
 }
 
 // --- A requirement consciously not answered -----------------------------------------

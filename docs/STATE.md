@@ -3187,6 +3187,30 @@ they land OPEN, to be sent and answered, exactly as a hand-raised one is
 a mandatory certificate gap becomes a client-side draft linked to its
 requirement, a scored question does not, and a second press raises nothing new.
 
+**A compliance undertaking is drafted, not bounced back.** Many mandatory lines
+are answered by a statement, not a document — "comply with CDM 2015", "the
+tender remains open 90 days", "submit via In-Tend". The matrix used to list
+these under "nothing on file — file the document", which is work handed to a
+person for a thing no document answers, and made the agent look as if it did
+nothing. `undertakingFor` (`itt.ts`) classifies a line as an undertaking only
+when it names no document or credential to evidence, carries no weighting, and
+reads as an obligation — conservative on purpose, because a wrong draft against
+a line that needed a certificate would hide a real gap. For each, the platform
+drafts the confirmation (`We confirm that, if awarded this contract, we will
+meet this requirement in full: "…"`), and `evidenceCoverage` surfaces them in
+their own `undertakings` list — out of the documents-to-obtain list, which is
+left as the real document gates. `confirmUndertakings`
+(`POST …/analyses/:id/undertakings`, `REQUIREMENT_UNDERTAKEN`) records that a
+person has confirmed each true, mirroring the waiver register: idempotent by
+reference, and it refuses a line that is not an undertaking. The drafting is the
+agent's; the truth of it is a person's — the platform never confirms on the
+company's behalf (`REQUIREMENT_UNDERTAKEN` is not `aiAllowed`). Surfaced on the
+matrix as "Compliance undertakings — the platform drafted these; confirm each is
+true", with one-click "Confirm all as true". Verified: an obligation becomes a
+drafted undertaking kept out of toObtain/toAttach, a certificate line and a
+scored question do not, confirming marks the line covered, and a second confirm
+writes nothing.
+
 The commercial terms are the half that decides whether the job is worth winning,
 and each is assessed against this business rather than transcribed. Liquidated
 damages are set against the margin, not reported as a rate. A performance bond
