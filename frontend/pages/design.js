@@ -783,6 +783,22 @@ export async function design(root) {
                   openDrafts.length > 0
                     ? html`<div style="padding:0 17px 15px">
                         <h2 style="margin-top:14px">Awaiting confirmation</h2>
+                        ${(() => {
+                          // File every measured take-off in one action, under one package, when
+                          // there is more than one to file. Each still lands as its own take-off;
+                          // this only saves typing the same package and code on each.
+                          const confirmable = openDrafts.filter(
+                            (d) => d.task === 'DRAWING_TAKEOFF' && (d.extraction.items ?? []).length > 0,
+                          );
+                          return confirmable.length >= 2
+                            ? html`<div class="notice" style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                                <span>File all ${confirmable.length} measured take-offs under one package:</span>
+                                <input data-confirm-all-pkg placeholder="work package e.g. Superstructure" style="width:190px" />
+                                <input data-confirm-all-code placeholder="code e.g. SUP" style="width:110px" />
+                                <button class="btn sm" data-confirm-all>Confirm all ${confirmable.length}</button>
+                              </div>`
+                            : '';
+                        })()}
                         ${table({
                           headers: ['Read', 'What it says', 'Confidence', ''],
                           rows: openDrafts.map((draft) => [
@@ -2217,6 +2233,36 @@ export async function design(root) {
         measure.disabled = false;
         measure.textContent = 'Measure quantities';
       }
+      return;
+    }
+
+    // File every measured take-off at once, under one package and cost code.
+    const confirmAll = event.target.closest('[data-confirm-all]');
+    if (confirmAll) {
+      const packageId = root.querySelector('[data-confirm-all-pkg]')?.value?.trim();
+      const costCodePrefix = root.querySelector('[data-confirm-all-code]')?.value?.trim();
+      if (!packageId || !costCodePrefix) {
+        toast('Package and cost code needed', 'Type a work package and a cost code — e.g. “Superstructure” / “SUP” — then Confirm all.', 'warn');
+        return;
+      }
+      const ids = [...root.querySelectorAll('button[data-confirm][data-task="DRAWING_TAKEOFF"]')].map((button) => button.dataset.confirm);
+      if (ids.length === 0) {
+        toast('Nothing to confirm', 'There are no measured take-offs waiting.', 'info');
+        return;
+      }
+      confirmAll.disabled = true;
+      confirmAll.textContent = 'Confirming…';
+      let filed = 0;
+      try {
+        for (const id of ids) {
+          await api.post(`/v1/projects/${projectId}/perception/${id}/confirm`, { packageId, costCodePrefix });
+          filed += 1;
+        }
+        toast('Confirmed', `${filed} take-off${filed === 1 ? '' : 's'} filed under ${packageId}.`, 'ok');
+      } catch (error) {
+        toast(filed > 0 ? `${filed} filed, then stopped` : 'Not confirmed', error.message, 'err');
+      }
+      await draw();
       return;
     }
 
