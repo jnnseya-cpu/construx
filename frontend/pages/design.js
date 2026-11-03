@@ -793,15 +793,21 @@ export async function design(root) {
                                 ? `${(draft.extraction.items ?? []).length} measured item(s)`
                                 : String(draft.extraction.transcript ?? '').slice(0, 70),
                             draft.confidence !== undefined && draft.confidence !== null ? pct(draft.confidence * 100) : '—',
-                            html`${
-                              draft.task === 'DRAWING_TAKEOFF'
-                                ? html`<input data-pkg-for="${draft.id}" placeholder="work package e.g. Substructure"
-                                    title="The work package these measured items belong to. Use the same name when you price them." style="width:150px;margin-right:4px" />
-                                  <input data-code-for="${draft.id}" placeholder="code e.g. SUB"
-                                    title="Cost code prefix — the measured items are numbered SUB.001, SUB.002 and so on." style="width:92px;margin-right:4px" /> `
-                                : ''
-                            }<button class="btn sm" data-confirm="${draft.id}" data-task="${draft.task}">Confirm</button>
-                              <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
+                            // A take-off that measured nothing — a text or form section read as a
+                            // drawing — has nothing to file, so it asks for no package or code: just
+                            // dismiss it. Everything else is confirmed against a package.
+                            draft.task === 'DRAWING_TAKEOFF' && (draft.extraction.items ?? []).length === 0
+                              ? html`<span class="metric-sub" style="margin-right:8px">nothing measurable on these pages</span>
+                                  <button class="btn quiet sm" data-discard="${draft.id}">Dismiss</button>`
+                              : html`${
+                                  draft.task === 'DRAWING_TAKEOFF'
+                                    ? html`<input data-pkg-for="${draft.id}" placeholder="work package e.g. Substructure"
+                                        title="The work package these measured items belong to. Use the same name when you price them." style="width:150px;margin-right:4px" />
+                                      <input data-code-for="${draft.id}" placeholder="code e.g. SUB"
+                                        title="Cost code prefix — the measured items are numbered SUB.001, SUB.002 and so on." style="width:92px;margin-right:4px" /> `
+                                    : ''
+                                }<button class="btn sm" data-confirm="${draft.id}" data-task="${draft.task}">Confirm</button>
+                                  <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
                           ]),
                         })}
                       </div>`
