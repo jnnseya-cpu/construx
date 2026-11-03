@@ -2140,11 +2140,13 @@ export async function design(root) {
     // nothing — and the person measures the sections they choose.
     const scan = event.target.closest('[data-scan]');
     if (scan) {
+      // The hash is the value of the data-scan attribute itself.
+      const scanHash = scan.dataset.scan;
       const panel = root.querySelector('[data-bundle-scan]');
       scan.disabled = true;
       scan.textContent = 'Scanning…';
       try {
-        const result = await api.post(`/v1/projects/${projectId}/perception/bundle-scan`, { hash: scan.dataset.hash });
+        const result = await api.post(`/v1/projects/${projectId}/perception/bundle-scan`, { hash: scanHash });
         const sections = result.sections ?? [];
         if (panel) {
           panel.innerHTML = resolveHtml(html`
@@ -2168,7 +2170,7 @@ export async function design(root) {
                           : badge('text', 'warn'),
                       section.kind === 'TEXT'
                         ? html`<span class="metric-sub">read, not measured</span>`
-                        : html`<button class="btn quiet sm" data-measure data-measure-hash="${scan.dataset.hash}"
+                        : html`<button class="btn quiet sm" data-measure data-measure-hash="${scanHash}"
                             data-from="${section.fromPage}" data-to="${section.toPage}">Measure quantities</button>`,
                     ]),
                   })
