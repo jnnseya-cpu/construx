@@ -6,7 +6,7 @@ import { config } from '../config.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import { findByHash } from '../evidence/registry.ts';
 import { extractText } from '../evidence/ingest.ts';
-import { extractPdfPages, PdfPageError } from '../evidence/pdftext.ts';
+import { extractPdfPages, PdfPageError, scanPdfBundle, type BundleScan } from '../evidence/pdftext.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import { submitProgress } from '../domain/progressverification.ts';
@@ -878,6 +878,35 @@ export type PerceptionDraft = {
  * no provider that can see it. A caller who is going to be refused should not
  * pay for the privilege.
  */
+/**
+ * Map a held PDF bundle into sections, so the take-off can be pointed at the ones
+ * that hold drawings instead of at a 360-page whole.
+ *
+ * It reads and charges nothing — no provider is called. The person still chooses
+ * what to measure; this only finds the candidates, from the file's own bookmarks
+ * where it has them, so nobody hunts page numbers in a bundle by hand.
+ */
+export async function scanBundle(ctx: EngineContext, store: EvidenceStore, hash: string): Promise<BundleScan> {
+  authorise(ctx, 'BOQ_TAKEOFF', 'R', { lifecyclePhase: currentPhase(ctx) });
+
+  const record = findByHash(ctx.ledger, ctx.tenantId, hash);
+  if (!record) {
+    throw new DomainError('PERCEPTION_EVIDENCE_UNKNOWN', 'No evidence record in this tenancy references that hash', 404);
+  }
+  if (!(await store.holds(ctx.tenantId, hash))) {
+    throw new DomainError(
+      'PERCEPTION_FILE_NOT_HELD',
+      'The platform holds the hash of this evidence but not the file, so it cannot be scanned.',
+      409,
+    );
+  }
+  const file = await store.fetch(ctx.tenantId, hash);
+  if (file.contentType !== 'application/pdf') {
+    throw new DomainError('PERCEPTION_NOT_A_BUNDLE', `A bundle scan reads a PDF; this evidence is ${file.contentType}.`, 415);
+  }
+  return scanPdfBundle(file.bytes);
+}
+
 export async function extract(
   ctx: EngineContext,
   store: EvidenceStore,

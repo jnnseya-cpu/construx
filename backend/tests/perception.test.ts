@@ -639,6 +639,22 @@ describe('a take-off reads a page range out of a bundle', () => {
       'PERCEPTION_PAGE_RANGE',
     );
   });
+
+  it('scans the bundle into sections without charging', async () => {
+    const before = platform.wallet(seed.tenantId).snapshot();
+    const scan = await perception.scanBundle(ctxFor('qs'), store, PDF_HASH);
+    assert.equal(scan.pageCount, 4);
+    assert.ok(scan.sections.length >= 1, 'the scan found no sections to measure');
+    assert.ok(scan.sections.every((section) => section.toPage >= section.fromPage));
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.heldMinor, before.heldMinor, 'a scan reads only and must not reserve');
+    assert.equal(after.balanceMinor, before.balanceMinor, 'a scan reads only and must not charge');
+  });
+
+  it('refuses to scan a file that is not a PDF', async () => {
+    // DRAWING_HASH is already a registered image from the page-range cases above.
+    await rejectsCode(() => perception.scanBundle(ctxFor('qs'), store, DRAWING_HASH), 'PERCEPTION_NOT_A_BUNDLE');
+  });
 });
 
 function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): void {

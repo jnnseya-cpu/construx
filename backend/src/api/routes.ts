@@ -27090,6 +27090,18 @@ export const ROUTES: Route[] = [
   // three different engines and three different cost profiles cannot be quoted
   // at all — which would make this the one AI action in the platform that
   // spends money without showing a price first.
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/perception/bundle-scan',
+    description: 'Map a held PDF bundle into named sections with page ranges, so the take-off can be pointed at the drawings',
+    schema: {
+      type: 'object',
+      required: ['hash'],
+      properties: { hash: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => perception.scanBundle(projectContext(platform, ctx), platform.evidence, body<{ hash: string }>(ctx).hash),
+  },
   ...(Object.entries(perception.PERCEPTION_TASKS) as Array<[perception.PerceptionTask, (typeof perception.PERCEPTION_TASKS)[perception.PerceptionTask]]>)
     .map(([task, definition]): Route => ({
       method: 'POST',

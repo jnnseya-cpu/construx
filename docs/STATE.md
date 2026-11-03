@@ -31003,6 +31003,29 @@ non-PDF reaches a charge.
 
 The cost not paid down: the slice is sent whole to the provider, so a range out
 of an 18MB bundle still sends a slim file built from those pages, not the 18MB.
-What is not built is automatic bundle-splitting at ingest — a person names the
-pages, because the person knows which appendix holds the foundations and the
-platform, today, does not.
+
+**The AI finds the pages — `scanPdfBundle` (`pdftext.ts`).** Naming page ranges by
+hand is the take-off's job, not the estimator's, so a bundle is scanned into
+sections first. It prefers the file's own **outline** — the bookmarks a tender pack
+carries, e.g. "Appendix 3 – Structural Engineers Report" at page 194 — resolving
+each bookmark's destination to a real page through the same page order the reader
+uses (`pdfOutline`, UTF-16BE titles decoded), and annotates each section as
+drawings, text or mixed from a per-page visual/text profile (`pdfPageProfiles`:
+few words, an image, or a stated scale reads as a visual sheet). Where there are no
+bookmarks it falls back to the runs of visual pages it can see, named by their page
+numbers. It reads and charges nothing — no provider is called; the person still
+chooses what to measure. `perception.scanBundle` adds the authorisation and file
+fetch (`BOQ_TAKEOFF` R, PDF only — `PERCEPTION_NOT_A_BUNDLE` otherwise); the route
+is `POST …/perception/bundle-scan`. On the design page, **Scan bundle** beside a
+held PDF lists the sections with a reads-as badge and a **Measure quantities**
+button on each drawings/mixed section, which runs the page-range take-off on that
+range — so the estimator clicks the structural section rather than hunting for page
+194. Covered in `pdfpages.test.ts` (bookmarks read into named ranges with the right
+kinds; visual-run fallback with none; empty for a file with no pages) and
+`perception.test.ts` (scan finds sections and charges nothing; a non-PDF is
+refused).
+
+What is still the person's call, by design: *which* sections to measure. The scan
+proposes; the governance rule that a human owns the numbers means it does not
+measure the whole bundle on its own. What is not built is automatic
+bundle-splitting at ingest.

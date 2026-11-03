@@ -1553,3 +1553,157 @@ export function extractPdfPages(bytes: Buffer, fromPage: number, toPage: number)
 
   return Buffer.concat(chunks);
 }
+
+/** A PDF string decoded to text — UTF-16BE where it carries a byte-order mark, PDFDocEncoding otherwise. */
+function decodePdfString(token: string | undefined): string {
+  if (!token) return '';
+  const bytes = stringBytes(token);
+  if (bytes.charCodeAt(0) === 0xfe && bytes.charCodeAt(1) === 0xff) {
+    let out = '';
+    for (let at = 2; at + 1 < bytes.length; at += 2) out += String.fromCharCode((bytes.charCodeAt(at) << 8) | bytes.charCodeAt(at + 1));
+    return out;
+  }
+  return bytes;
+}
+
+/**
+ * The bookmark tree, as a flat list of {title, page} in document order.
+ *
+ * A bundled tender's own outline is the most reliable map of it: "Appendix 3 –
+ * Structural Engineers Report" at page 194 is a fact the file states, where
+ * "which pages look like drawings" is a guess that misses a text-heavy report
+ * with sketches in it. Resolves a bookmark's destination page through the same
+ * page order the rest of the reader uses; a bookmark whose destination is a
+ * named reference this does not follow comes back as page 0 and is dropped.
+ */
+function pdfOutline(file: PdfFile, pageNumbers: number[]): Array<{ title: string; page: number; level: number }> {
+  const pageIndex = new Map(pageNumbers.map((number, index) => [number, index + 1]));
+  const catalog = file.catalogEntry();
+  if (!catalog) return [];
+  const { object: root } = file.objectOf(get(catalog.dict, 'Outlines'));
+  if (!root) return [];
+
+  const items: Array<{ title: string; page: number; level: number }> = [];
+  const seen = new Set<number>();
+  const destinationPage = (dict: string): number => {
+    let dest = get(dict, 'Dest');
+    if (dest === undefined) {
+      const action = file.resolve(get(dict, 'A'));
+      if (action) dest = get(action, 'D');
+    }
+    if (dest === undefined) return 0;
+    const array = file.resolve(dest) ?? dest;
+    const first = elements(array)[0];
+    if (first === undefined) return 0;
+    const { number } = file.objectOf(first);
+    return number === undefined ? 0 : (pageIndex.get(number) ?? 0);
+  };
+  const walk = (token: string | undefined, level: number, depth: number): void => {
+    if (depth > 256) return;
+    let { number, object } = file.objectOf(token);
+    while (number !== undefined && object && !seen.has(number)) {
+      seen.add(number);
+      const title = decodePdfString(get(object.dict, 'Title')).replace(/\s+/g, ' ').trim();
+      if (title) items.push({ title, page: destinationPage(object.dict), level });
+      const first = get(object.dict, 'First');
+      if (first) walk(first, level + 1, depth + 1);
+      ({ number, object } = file.objectOf(get(object.dict, 'Next')));
+    }
+  };
+  walk(get(root.dict, 'First'), 0, 0);
+  return items;
+}
+
+/** Per-page profile: how many words and images carry on it, and whether it reads as a visual sheet rather than prose. */
+function pdfPageProfiles(file: PdfFile): Array<{ words: number; images: number; visual: boolean }> {
+  const cache = new Map<string, Decoder>();
+  return file.pages().map((page) => {
+    const state: PageState = { out: [], pending: '', undecodable: 0, images: 0, runs: [] };
+    const content = pageContent(file, page);
+    if (content !== undefined) walkContent(file, content, page.resources, state, cache, 0);
+    const text = tidy(state.out.join(''));
+    const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+    const scale = /\b(scale\s*1\s*[:/]\s*\d|do not scale)\b/i.test(text);
+    // A drawing carries few words — labels and dimensions, not sentences — or it
+    // is a scanned sheet with no extractable text at all; a stated scale settles it.
+    const visual = scale || state.images > 0 || words < 40;
+    return { words, images: state.images, visual };
+  });
+}
+
+export type BundleSection = {
+  title: string;
+  fromPage: number;
+  toPage: number;
+  pages: number;
+  /** DRAWINGS where most of the range reads as visual sheets, TEXT where it is prose, MIXED between. */
+  kind: 'DRAWINGS' | 'TEXT' | 'MIXED';
+};
+
+export type BundleScan = {
+  pageCount: number;
+  /** True where the file's own bookmarks named the sections; false where they were inferred from the pages. */
+  hasOutline: boolean;
+  sections: BundleSection[];
+};
+
+/**
+ * Map a bundled PDF into sections, so the take-off can be pointed at the ones
+ * that hold drawings rather than at a 360-page whole no model will read.
+ *
+ * Prefers the file's own outline — named sections with real page ranges — and
+ * annotates each with whether it reads as drawings, prose or a mix. Where there
+ * is no outline it falls back to the runs of visual pages it can see, named by
+ * their page numbers. It reads; it sends nothing to a provider and charges
+ * nothing. What to measure is still the person's call; this only finds the
+ * candidates so they do not have to hunt page numbers in a bundle by hand.
+ */
+export function scanPdfBundle(bytes: Buffer): BundleScan {
+  const file = new PdfFile(bytes.toString('latin1'));
+  const pageNumbers = file.pageObjectNumbers();
+  const pageCount = pageNumbers.length;
+  if (pageCount === 0) return { pageCount: 0, hasOutline: false, sections: [] };
+
+  const profiles = pdfPageProfiles(file);
+  const kindOf = (from: number, to: number): BundleSection['kind'] => {
+    let visual = 0;
+    let total = 0;
+    for (let page = from; page <= to; page += 1) {
+      const profile = profiles[page - 1];
+      if (!profile) continue;
+      total += 1;
+      if (profile.visual) visual += 1;
+    }
+    if (total === 0) return 'TEXT';
+    const ratio = visual / total;
+    return ratio >= 0.5 ? 'DRAWINGS' : ratio <= 0.15 ? 'TEXT' : 'MIXED';
+  };
+
+  const marks = pdfOutline(file, pageNumbers)
+    .filter((item) => item.page >= 1)
+    .sort((a, b) => a.page - b.page);
+  if (marks.length > 0) {
+    const sections: BundleSection[] = [];
+    for (let index = 0; index < marks.length; index += 1) {
+      const fromPage = marks[index]!.page;
+      const toPage = index + 1 < marks.length ? marks[index + 1]!.page - 1 : pageCount;
+      if (toPage < fromPage) continue;
+      sections.push({ title: marks[index]!.title, fromPage, toPage, pages: toPage - fromPage + 1, kind: kindOf(fromPage, toPage) });
+    }
+    return { pageCount, hasOutline: true, sections };
+  }
+
+  // No bookmarks: the runs of visual pages, named by where they sit.
+  const sections: BundleSection[] = [];
+  let runStart = 0;
+  for (let page = 1; page <= pageCount + 1; page += 1) {
+    const visual = page <= pageCount && (profiles[page - 1]?.visual ?? false);
+    if (visual && runStart === 0) runStart = page;
+    else if (!visual && runStart !== 0) {
+      const toPage = page - 1;
+      sections.push({ title: `Pages ${runStart}–${toPage}`, fromPage: runStart, toPage, pages: toPage - runStart + 1, kind: 'DRAWINGS' });
+      runStart = 0;
+    }
+  }
+  return { pageCount, hasOutline: false, sections };
+}

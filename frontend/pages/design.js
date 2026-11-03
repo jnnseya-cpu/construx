@@ -766,7 +766,11 @@ export async function design(root) {
                                   style="width:118px;margin-right:6px" />`
                               : ''
                           }<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
-                            <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>`,
+                            <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>${
+                              entry.contentType === 'application/pdf'
+                                ? html` <button class="btn quiet sm" data-scan="${entry.hash}" data-name="${entry.description}">Scan bundle</button>`
+                                : ''
+                            }`,
                         ]),
                         empty: evidence?.storeConfigured
                           ? 'No drawing files are held yet. A hash on its own cannot be read.'
@@ -774,6 +778,7 @@ export async function design(root) {
                       })
                     : ''
                 }
+                <div data-bundle-scan style="padding:0 17px"></div>
                 ${
                   openDrafts.length > 0
                     ? html`<div style="padding:0 17px 15px">
@@ -2126,6 +2131,76 @@ export async function design(root) {
         toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
         read.disabled = false;
         read.textContent = read.dataset.read === 'TITLE_BLOCK' ? 'Title block' : 'Quantities';
+      }
+      return;
+    }
+
+    // Scan a bundle into its sections, so the drawings in a 360-page pack can be
+    // found without hunting page numbers. The scan reads only — it charges
+    // nothing — and the person measures the sections they choose.
+    const scan = event.target.closest('[data-scan]');
+    if (scan) {
+      const panel = root.querySelector('[data-bundle-scan]');
+      scan.disabled = true;
+      scan.textContent = 'Scanning…';
+      try {
+        const result = await api.post(`/v1/projects/${projectId}/perception/bundle-scan`, { hash: scan.dataset.hash });
+        const sections = result.sections ?? [];
+        if (panel) {
+          panel.innerHTML = resolveHtml(html`
+            <div class="notice" style="margin-top:12px">
+              <div><b>${scan.dataset.name}</b> — ${result.pageCount} pages${
+                result.hasOutline ? ', read from the document’s own bookmarks' : ', inferred from the pages (no bookmarks in this file)'
+              }. Measure the sections that hold drawings; a text section is read, not measured.</div>
+            </div>
+            ${
+              sections.length === 0
+                ? html`<div class="metric-sub" style="padding:8px 0">No sections were found. Enter a page range beside the file instead.</div>`
+                : table({
+                    headers: ['Section', 'Pages', 'Reads as', ''],
+                    rows: sections.map((section) => [
+                      section.title,
+                      `${section.fromPage}–${section.toPage} (${section.pages})`,
+                      section.kind === 'DRAWINGS'
+                        ? badge('drawings', 'ok')
+                        : section.kind === 'MIXED'
+                          ? badge('mixed', 'info')
+                          : badge('text', 'warn'),
+                      section.kind === 'TEXT'
+                        ? html`<span class="metric-sub">read, not measured</span>`
+                        : html`<button class="btn quiet sm" data-measure data-measure-hash="${scan.dataset.hash}"
+                            data-from="${section.fromPage}" data-to="${section.toPage}">Measure quantities</button>`,
+                    ]),
+                  })
+            }`);
+        }
+      } catch (error) {
+        toast('Not scanned', error.message, 'err');
+      } finally {
+        scan.disabled = false;
+        scan.textContent = 'Scan bundle';
+      }
+      return;
+    }
+
+    // Measure one scanned section — the page-range take-off, pointed at the pages
+    // the scan found rather than at a range typed by hand.
+    const measure = event.target.closest('[data-measure]');
+    if (measure) {
+      measure.disabled = true;
+      measure.textContent = 'Reading…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/take-off`, {
+          hash: measure.dataset.measureHash,
+          fromPage: Number(measure.dataset.from),
+          toPage: Number(measure.dataset.to),
+        });
+        toast('Measured', 'A take-off draft is waiting below to confirm.', 'ok');
+        await draw();
+      } catch (error) {
+        toast('Not measured', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        measure.disabled = false;
+        measure.textContent = 'Measure quantities';
       }
       return;
     }
