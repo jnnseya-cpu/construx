@@ -541,11 +541,14 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
       </h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
         Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)}${
-          analysis.estimatedValueMinor === undefined || analysis.durationWeeks === undefined
+          analysis.estimatedValueMinor === undefined
             ? ' — no contract value or programme set yet, so the commercial-term risk below is carried but not yet sized. ' +
-              'It sizes itself once you price the job and set the programme.'
-            : ` against ${money(analysis.estimatedValueMinor)} over ${analysis.durationWeeks} weeks — every exposure below ` +
-              'is computed against those two figures, so a matrix read months later still shows what it was judged on.'
+              'It sizes itself from your take-off estimate as soon as you price the job.'
+            : analysis.sizedFrom === 'ESTIMATE'
+              ? ` — commercial-term risk sized against your take-off estimate of ${money(analysis.estimatedValueMinor)}` +
+                `${analysis.durationWeeks === undefined ? '' : ` over ${analysis.durationWeeks} weeks`}. It updates as the estimate firms up.`
+              : ` against ${money(analysis.estimatedValueMinor)}${analysis.durationWeeks === undefined ? '' : ` over ${analysis.durationWeeks} weeks`} — every exposure below ` +
+                'is computed against those figures, so a matrix read months later still shows what it was judged on.'
         }
       </p>
 

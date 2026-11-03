@@ -994,3 +994,88 @@ describe('A matrix can be built before the job is priced', () => {
     assert.equal(sized.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000');
   });
 });
+
+describe('Commercial-term risk sizes itself from the take-off, with no value entered', () => {
+  const admin = () => seed.users.admin!.auth;
+  const freshTenderProject = (name: string): string =>
+    structure.createProject(platform.context(admin(), `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId: platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId,
+      name,
+      sectorType: 'RMI',
+      assetType: 'Residential adaptation',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 500_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+
+  // An analysis confirmed with NO value, carrying a retention term, committed
+  // directly so the scenario is reproduced without the phase-gated take-off.
+  const seedAnalysis = (projectId: string, analysisId: string) => {
+    const ctx = platform.context(seed.users.qs!.auth, projectId, { source: 'WEB' });
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: 'size-from-estimate-test',
+      eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId,
+        reference: 'ITT-SIZE-01',
+        clientName: 'South Holland District Council',
+        returnBy: '2026-11-20',
+        // No estimatedValueMinor, no durationWeeks — confirmed before pricing.
+        commercialTerms: { contractForm: 'JCT D&B 2016', retentionPercent: 5 },
+        matrix: [
+          { reference: 'R1', category: 'QUALIFICATION', requirement: 'Confirm you meet the specification', mandatory: true, owner: 'OWNER', evidenceRequired: 'Confirmation', status: 'UNKNOWN' },
+        ],
+        mandatoryGaps: [],
+        weightings: { stated: 0, complete: false },
+        terms: [{ term: 'Retention', stated: '5%', assessment: 'Sized once a contract value is set.', severity: 'ROUTINE', exposureKind: 'CASH' }],
+        bars: [],
+        quantifiedExposureMinor: 0,
+        committedCapacityMinor: 0,
+        clarifications: [],
+        readyToPrice: true,
+        analysedAt: new Date().toISOString(),
+        analysedBy: ctx.auth.actorId,
+      },
+    });
+    return ctx;
+  };
+
+  it('carries the term unsized when there is no estimate yet', () => {
+    const projectId = freshTenderProject('A&A — read, not yet priced');
+    const ctx = seedAnalysis(projectId, 'analysis-size-none');
+    const read = itt.complianceMatrix(ctx, 'analysis-size-none');
+    assert.equal(read.sizedFrom, 'NONE');
+    assert.equal(read.estimatedValueMinor, undefined);
+    assert.equal(read.terms.find((t) => t.term === 'Retention')!.exposureMinor, undefined);
+  });
+
+  it('sizes the term from the latest complete take-off estimate, labelled ESTIMATE', () => {
+    const projectId = freshTenderProject('A&A — read, then priced');
+    const ctx = seedAnalysis(projectId, 'analysis-size-estimate');
+    // A complete take-off estimate on the project: £1,000,000 over 20 weeks.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB',
+      correlationId: 'size-from-estimate-test',
+      eventType: 'ESTIMATE_CREATED',
+      entity: { refType: 'Estimate', refId: 'est-size-01' },
+      nextState: { id: 'est-size-01', status: 'DRAFT', totalMinor: 1_000_000_00, durationWeeks: 20, omissions: [] },
+    });
+
+    const read = itt.complianceMatrix(ctx, 'analysis-size-estimate');
+    assert.equal(read.sizedFrom, 'ESTIMATE', 'the terms are sized from the take-off, not left blank');
+    assert.equal(read.estimatedValueMinor, 1_000_000_00, 'the value is the estimate total');
+    assert.equal(read.durationWeeks, 20, 'the duration is the estimate programme');
+    const retention = read.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(retention.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000, sized with no value entered');
+  });
+});

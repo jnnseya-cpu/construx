@@ -450,6 +450,161 @@ function declaredWeightings(
  * actually is — the same rule the radar follows. A term is not severe in the
  * abstract; it is severe relative to a margin, a PI limit or a balance sheet.
  */
+/**
+ * The commercial-term risk, sized against a contract value and a programme.
+ *
+ * Factored out of analyseITT so one rule sizes the terms in both places they are
+ * sized: on the day, against the value entered at confirm (if any), and on read,
+ * against the take-off estimate and programme once they exist. Where no value is
+ * known the terms are still assessed — their structural severity holds (an
+ * uncapped damages clause is severe whatever the job is worth) — and only the
+ * cash and capacity figures wait, omitted rather than computed against a zero.
+ */
+function assessCommercialTerms(input: {
+  terms: CommercialTerms;
+  value?: number;
+  duration?: number;
+  marginMinor?: number;
+  profile: CompanyProfile;
+}): { terms: TermAssessment[]; bars: string[]; clarifications: string[] } {
+  const { terms: source, value, duration, marginMinor, profile } = input;
+  const terms: TermAssessment[] = [];
+  const bars: string[] = [];
+  const clarifications: string[] = [];
+
+  const lads = source.liquidatedDamages;
+  if (lads) {
+    const cappedMinor = lads.capPercent !== undefined && value !== undefined ? Math.round(value * (lads.capPercent / 100)) : undefined;
+    const uncappedOverRun = duration !== undefined ? lads.perWeekMinor * duration : undefined;
+    const exposure = cappedMinor ?? uncappedOverRun;
+    const vsMargin = (figure: number): string =>
+      marginMinor !== undefined && marginMinor > 0 ? `, which is ${(figure / marginMinor).toFixed(1)}× the expected margin` : '';
+
+    terms.push({
+      term: 'Liquidated damages',
+      stated: `${gbp(lads.perWeekMinor)} per week${lads.capPercent !== undefined ? `, capped at ${lads.capPercent}%` : ', uncapped'}`,
+      assessment:
+        lads.capPercent === undefined
+          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}${vsMargin(lads.perWeekMinor * 10)}. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
+          : cappedMinor !== undefined
+            ? `Capped at ${gbp(cappedMinor)}${marginMinor !== undefined ? `${vsMargin(cappedMinor)} of ${gbp(marginMinor)}` : ''}.`
+            : `Capped at ${lads.capPercent}% of the contract value — the cash figure is sized once a contract value is set.`,
+      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor !== undefined && marginMinor !== undefined && cappedMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(exposure !== undefined ? { exposureMinor: exposure } : {}),
+      exposureKind: 'CASH',
+    });
+    if (lads.capPercent === undefined) {
+      clarifications.push('Will the buyer accept a cap on liquidated damages, expressed as a percentage of the contract sum?');
+    }
+  }
+
+  if (source.designLiability === 'FITNESS_FOR_PURPOSE') {
+    const pi = profile.insurances.find((i) => /professional indemnity/i.test(i.type));
+    terms.push({
+      term: 'Design liability',
+      stated: 'Fitness for purpose',
+      assessment: `Fitness for purpose is excluded by almost every professional indemnity policy in the market, including the ${pi ? `${gbp(pi.limitMinor)} policy on file` : 'cover this business holds'}. The obligation would sit with the company uninsured, for the statutory limitation period.`,
+      severity: 'SEVERE',
+    });
+    clarifications.push(
+      'Will the buyer amend the design obligation to reasonable skill and care? Fitness for purpose is uninsurable under standard professional indemnity cover.',
+    );
+  } else if (source.designLiability === 'REASONABLE_SKILL_AND_CARE') {
+    terms.push({
+      term: 'Design liability',
+      stated: 'Reasonable skill and care',
+      assessment: 'The insurable standard. Professional indemnity cover responds to it.',
+      severity: 'ROUTINE',
+    });
+  }
+
+  if (source.parentCompanyGuaranteeRequired) {
+    terms.push({
+      term: 'Parent company guarantee',
+      stated: 'Required',
+      assessment:
+        'A parent company guarantee can only be given by a parent. For a business without one this is a bar to entry rather than a term to negotiate, and the alternative the buyer will accept is usually a bond at a cost.',
+      severity: 'BAR',
+    });
+    bars.push('Parent company guarantee required');
+    clarifications.push('Will the buyer accept a performance bond in place of a parent company guarantee, and at what percentage?');
+  }
+
+  if (source.performanceBondPercent !== undefined) {
+    const bondMinor = value === undefined ? undefined : Math.round(value * (source.performanceBondPercent / 100));
+    terms.push({
+      term: 'Performance bond',
+      stated: `${source.performanceBondPercent}% of contract value`,
+      assessment:
+        bondMinor !== undefined
+          ? `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`
+          : `A bond of ${source.performanceBondPercent}% of the contract value — the facility committed is sized once a contract value is set. Bonding capacity is finite and shared across every live job.`,
+      severity: bondMinor !== undefined && bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
+      ...(bondMinor !== undefined ? { exposureMinor: bondMinor } : {}),
+      exposureKind: 'CAPACITY',
+    });
+  }
+
+  if (source.retentionPercent !== undefined) {
+    const retentionMinor = value === undefined ? undefined : Math.round(value * (source.retentionPercent / 100));
+    terms.push({
+      term: 'Retention',
+      stated: `${source.retentionPercent}%`,
+      assessment:
+        retentionMinor !== undefined
+          ? `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`
+          : `${source.retentionPercent}% withheld — the cash figure is sized once a contract value is set. This is cash the business funds, not a discount, and the second half is often years away.`,
+      severity: retentionMinor !== undefined && marginMinor !== undefined && retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(retentionMinor !== undefined ? { exposureMinor: retentionMinor } : {}),
+      exposureKind: 'CASH',
+    });
+  }
+
+  if (source.paymentConditionalOnThirdParty) {
+    terms.push({
+      term: 'Payment conditional on the buyer being paid',
+      stated: 'Pay when paid',
+      assessment:
+        'Ineffective under section 113 of the Construction Act, except where the third party is insolvent. The ' +
+        'obligation to pay does not depend on the buyer being paid, whatever the clause says, and it is not a cash ' +
+        'risk to price for. It is worth asking why it is in the document.',
+      severity: 'MATERIAL',
+    });
+    clarifications.push(
+      'The payment clause is conditional on the buyer receiving payment from a third party. Section 113 of the ' +
+        'Construction Act makes that ineffective except on that party’s insolvency — will the buyer confirm the ' +
+        'clause is not relied on, or delete it?',
+    );
+  }
+
+  if (source.paymentDays !== undefined) {
+    terms.push({
+      term: 'Payment terms',
+      stated: `${source.paymentDays} days`,
+      assessment:
+        source.paymentDays > 45
+          ? `${source.paymentDays} days is materially longer than the 30 days most subcontractors expect. The difference is funded by this business, and the cash model should be run before the price is committed.`
+          : `${source.paymentDays} days. Run the cash model against subcontract terms before committing to it.`,
+      severity: source.paymentDays > 45 ? 'MATERIAL' : 'ROUTINE',
+    });
+  }
+
+  if (source.sectionalCompletions !== undefined && source.sectionalCompletions > 0) {
+    terms.push({
+      term: 'Sectional completion',
+      stated: `${source.sectionalCompletions} section${source.sectionalCompletions === 1 ? '' : 's'}`,
+      assessment: `Each section carries its own completion date and, usually, its own damages. ${source.sectionalCompletions} sections means ${source.sectionalCompletions} separate chances to be late rather than one.`,
+      severity: 'MATERIAL',
+    });
+  }
+
+  for (const other of source.other ?? []) {
+    terms.push({ term: 'Stated in the invitation', stated: other, assessment: 'Carried verbatim; not assessed by the platform.', severity: 'ROUTINE' });
+  }
+
+  return { terms, bars, clarifications };
+}
+
 export function analyseITT(
   ctx: EngineContext,
   input: {
@@ -518,161 +673,13 @@ export function analyseITT(
   const statedTotal = declared.reduce((sum, entry) => sum + entry.percent, 0);
 
   // --- Commercial terms -----------------------------------------------------
-  const terms: TermAssessment[] = [];
-  const bars: string[] = [];
-  const clarifications: string[] = [];
-
-  const { liquidatedDamages: lads } = input.terms;
-  if (lads) {
-    // The honest exposure is the cap where there is one, and the whole
-    // programme where there is not — because uncapped means uncapped. Each
-    // needs a figure the matrix may not have yet: the cap needs a value, the
-    // overrun needs a duration. Where it is missing the clause is still carried
-    // with its structural severity, and the cash figure is sized later.
-    const cappedMinor = lads.capPercent !== undefined && value !== undefined ? Math.round(value * (lads.capPercent / 100)) : undefined;
-    const uncappedOverRun = duration !== undefined ? lads.perWeekMinor * duration : undefined;
-    const exposure = cappedMinor ?? uncappedOverRun;
-    const vsMargin = (figure: number): string =>
-      marginMinor !== undefined && marginMinor > 0 ? `, which is ${(figure / marginMinor).toFixed(1)}× the expected margin` : '';
-
-    terms.push({
-      term: 'Liquidated damages',
-      stated: `${gbp(lads.perWeekMinor)} per week${lads.capPercent !== undefined ? `, capped at ${lads.capPercent}%` : ', uncapped'}`,
-      assessment:
-        lads.capPercent === undefined
-          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}${vsMargin(lads.perWeekMinor * 10)}. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
-          : cappedMinor !== undefined
-            ? `Capped at ${gbp(cappedMinor)}${marginMinor !== undefined ? `${vsMargin(cappedMinor)} of ${gbp(marginMinor)}` : ''}.`
-            : `Capped at ${lads.capPercent}% of the contract value — the cash figure is sized once a contract value is set.`,
-      // Uncapped is severe by its structure, value or no value. A capped clause
-      // is judged against margin where both are known, and is otherwise carried
-      // as ROUTINE until a value sizes it.
-      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor !== undefined && marginMinor !== undefined && cappedMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      ...(exposure !== undefined ? { exposureMinor: exposure } : {}),
-      exposureKind: 'CASH',
-    });
-    if (lads.capPercent === undefined) {
-      clarifications.push('Will the buyer accept a cap on liquidated damages, expressed as a percentage of the contract sum?');
-    }
-  }
-
-  if (input.terms.designLiability === 'FITNESS_FOR_PURPOSE') {
-    // This is the one that catches people. It is not a pricing question.
-    const pi = profile.insurances.find((i) => /professional indemnity/i.test(i.type));
-    terms.push({
-      term: 'Design liability',
-      stated: 'Fitness for purpose',
-      assessment: `Fitness for purpose is excluded by almost every professional indemnity policy in the market, including the ${pi ? `${gbp(pi.limitMinor)} policy on file` : 'cover this business holds'}. The obligation would sit with the company uninsured, for the statutory limitation period.`,
-      severity: 'SEVERE',
-    });
-    clarifications.push(
-      'Will the buyer amend the design obligation to reasonable skill and care? Fitness for purpose is uninsurable under standard professional indemnity cover.',
-    );
-  } else if (input.terms.designLiability === 'REASONABLE_SKILL_AND_CARE') {
-    terms.push({
-      term: 'Design liability',
-      stated: 'Reasonable skill and care',
-      assessment: 'The insurable standard. Professional indemnity cover responds to it.',
-      severity: 'ROUTINE',
-    });
-  }
-
-  if (input.terms.parentCompanyGuaranteeRequired) {
-    // An SME with no parent cannot provide one at any price.
-    terms.push({
-      term: 'Parent company guarantee',
-      stated: 'Required',
-      assessment:
-        'A parent company guarantee can only be given by a parent. For a business without one this is a bar to entry rather than a term to negotiate, and the alternative the buyer will accept is usually a bond at a cost.',
-      severity: 'BAR',
-    });
-    bars.push('Parent company guarantee required');
-    clarifications.push('Will the buyer accept a performance bond in place of a parent company guarantee, and at what percentage?');
-  }
-
-  if (input.terms.performanceBondPercent !== undefined) {
-    const bondMinor = value === undefined ? undefined : Math.round(value * (input.terms.performanceBondPercent / 100));
-    terms.push({
-      term: 'Performance bond',
-      stated: `${input.terms.performanceBondPercent}% of contract value`,
-      assessment:
-        bondMinor !== undefined
-          ? `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`
-          : `A bond of ${input.terms.performanceBondPercent}% of the contract value — the facility committed is sized once a contract value is set. Bonding capacity is finite and shared across every live job.`,
-      severity: bondMinor !== undefined && bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
-      // Facility committed, not money spent.
-      ...(bondMinor !== undefined ? { exposureMinor: bondMinor } : {}),
-      exposureKind: 'CAPACITY',
-    });
-  }
-
-  if (input.terms.retentionPercent !== undefined) {
-    const retentionMinor = value === undefined ? undefined : Math.round(value * (input.terms.retentionPercent / 100));
-    terms.push({
-      term: 'Retention',
-      stated: `${input.terms.retentionPercent}%`,
-      assessment:
-        retentionMinor !== undefined
-          ? `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`
-          : `${input.terms.retentionPercent}% withheld — the cash figure is sized once a contract value is set. This is cash the business funds, not a discount, and the second half is often years away.`,
-      severity: retentionMinor !== undefined && marginMinor !== undefined && retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      ...(retentionMinor !== undefined ? { exposureMinor: retentionMinor } : {}),
-      exposureKind: 'CASH',
-    });
-  }
-
-  if (input.terms.paymentConditionalOnThirdParty) {
-    // Section 113 of the Housing Grants, Construction and Regeneration Act
-    // 1996. A clause making payment conditional on the payer receiving payment
-    // from a third party is ineffective — with one exception, which is that
-    // third party's insolvency.
-    //
-    // This is stated as a *term assessment* rather than a bar, and deliberately.
-    // The clause does not stop the bid and does not need negotiating out to
-    // make the job safe: it is already void. What it does is tell the bidder
-    // something about the buyer, and stop them pricing a cash risk they do not
-    // carry — which is the expensive mistake, because the money is priced in
-    // and the competitor who read the Act does not price it.
-    terms.push({
-      term: 'Payment conditional on the buyer being paid',
-      stated: 'Pay when paid',
-      assessment:
-        'Ineffective under section 113 of the Construction Act, except where the third party is insolvent. The ' +
-        'obligation to pay does not depend on the buyer being paid, whatever the clause says, and it is not a cash ' +
-        'risk to price for. It is worth asking why it is in the document.',
-      severity: 'MATERIAL',
-    });
-    clarifications.push(
-      'The payment clause is conditional on the buyer receiving payment from a third party. Section 113 of the ' +
-        'Construction Act makes that ineffective except on that party’s insolvency — will the buyer confirm the ' +
-        'clause is not relied on, or delete it?',
-    );
-  }
-
-  if (input.terms.paymentDays !== undefined) {
-    terms.push({
-      term: 'Payment terms',
-      stated: `${input.terms.paymentDays} days`,
-      assessment:
-        input.terms.paymentDays > 45
-          ? `${input.terms.paymentDays} days is materially longer than the 30 days most subcontractors expect. The difference is funded by this business, and the cash model should be run before the price is committed.`
-          : `${input.terms.paymentDays} days. Run the cash model against subcontract terms before committing to it.`,
-      severity: input.terms.paymentDays > 45 ? 'MATERIAL' : 'ROUTINE',
-    });
-  }
-
-  if (input.terms.sectionalCompletions !== undefined && input.terms.sectionalCompletions > 0) {
-    terms.push({
-      term: 'Sectional completion',
-      stated: `${input.terms.sectionalCompletions} section${input.terms.sectionalCompletions === 1 ? '' : 's'}`,
-      assessment: `Each section carries its own completion date and, usually, its own damages. ${input.terms.sectionalCompletions} sections means ${input.terms.sectionalCompletions} separate chances to be late rather than one.`,
-      severity: 'MATERIAL',
-    });
-  }
-
-  for (const other of input.terms.other ?? []) {
-    terms.push({ term: 'Stated in the invitation', stated: other, assessment: 'Carried verbatim; not assessed by the platform.', severity: 'ROUTINE' });
-  }
+  // Sized against the value entered at confirm, if any. Where none was given
+  // the terms are still assessed and the cash figures wait — complianceMatrix
+  // sizes them later against the take-off estimate and the programme.
+  const assessed = assessCommercialTerms({ terms: input.terms, value, duration, marginMinor, profile });
+  const terms = assessed.terms;
+  const bars = assessed.bars;
+  const clarifications = [...assessed.clarifications];
 
   // --- Submission readiness -------------------------------------------------
   for (const gap of mandatoryGaps) {
@@ -716,6 +723,9 @@ export function analyseITT(
       // value at all rather than a zero that later reads as "priced at nothing".
       ...(value === undefined ? {} : { estimatedValueMinor: value }),
       ...(duration === undefined ? {} : { durationWeeks: duration }),
+      // The raw terms, so the read can re-size the exposures against the take-off
+      // estimate and programme when the analysis itself carries no value.
+      commercialTerms: input.terms,
       matrix,
       mandatoryGaps: mandatoryGaps.map((g) => g.reference),
       weightings: { stated: statedTotal, complete: statedTotal === 100 },
@@ -770,10 +780,18 @@ export type StoredITTAnalysis = ITTAnalysis & {
   /**
    * The value and duration the exposure figures were computed against — absent
    * when the analysis was confirmed before the job was priced. A reader shows
-   * "not yet sized" rather than £0.
+   * "not yet sized" rather than £0. On read these are the effective figures: the
+   * ones entered, or the ones derived from the take-off estimate.
    */
   estimatedValueMinor?: number;
   durationWeeks?: number;
+  /**
+   * Where the value the terms were sized against came from, set on read:
+   * ENTERED at confirm, ESTIMATE from the take-off, or NONE (not yet sized).
+   */
+  sizedFrom?: 'ENTERED' | 'ESTIMATE' | 'NONE';
+  /** The raw commercial terms, kept so the read can re-size them. */
+  commercialTerms?: CommercialTerms;
   analysedAt: string;
   analysedBy: string;
   /** The project the analysis was run on, which is the tender's own project. */
@@ -843,6 +861,10 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
     // known, so a reader can say "not yet sized" instead of "£0".
     ...(state.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: Number(state.estimatedValueMinor) }),
     ...(state.durationWeeks === undefined ? {} : { durationWeeks: Number(state.durationWeeks) }),
+    ...(state.commercialTerms ? { commercialTerms: state.commercialTerms as CommercialTerms } : {}),
+    // The default; complianceMatrix overrides it to ESTIMATE when it sizes the
+    // terms from the take-off.
+    sizedFrom: state.estimatedValueMinor === undefined ? 'NONE' : 'ENTERED',
     analysedAt: String(state.analysedAt ?? ''),
     analysedBy: String(state.analysedBy ?? ''),
     projectId: record.projectId,
@@ -922,11 +944,52 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
     return next;
   });
 
-  return {
+  const base = {
     ...stored,
     matrix,
     mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
   };
+
+  // Where the analysis was confirmed with no contract value, the commercial-term
+  // risk was carried but not sized. Rather than leave the estimator to type a
+  // value, the platform sizes it from its own work: the latest complete take-off
+  // estimate on this project gives the contract value and the programme gives the
+  // duration. The terms re-size against those figures, labelled ESTIMATE, and
+  // update as the estimate firms up. Nothing is invented — if there is no
+  // complete estimate yet, the terms stay unsized (NONE) and say so.
+  if (stored.estimatedValueMinor === undefined && stored.commercialTerms) {
+    const estimates = ctx.ledger.list(ctx.projectId, 'Estimate').map((entry) => entry.state);
+    const complete = estimates.filter((estimate) => ((estimate.omissions as unknown[] | undefined) ?? []).length === 0);
+    const latest = complete.at(-1);
+    const derivedValue = latest?.totalMinor === undefined ? undefined : Number(latest.totalMinor);
+    const derivedDuration = latest?.durationWeeks === undefined ? undefined : Number(latest.durationWeeks);
+
+    if (derivedValue !== undefined) {
+      const marginMinor = Math.round(derivedValue * (profile.targetMarginPercent.min / 100));
+      const resized = assessCommercialTerms({
+        terms: stored.commercialTerms,
+        value: derivedValue,
+        duration: derivedDuration,
+        marginMinor,
+        profile,
+      });
+      const SEVERITY_ORDER = { BAR: 0, SEVERE: 1, MATERIAL: 2, ROUTINE: 3 } as const;
+      const terms = [...resized.terms].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+      const sumOf = (kind: 'CASH' | 'CAPACITY'): number =>
+        terms.reduce((total, term) => total + (term.exposureKind === kind ? (term.exposureMinor ?? 0) : 0), 0);
+      return {
+        ...base,
+        terms,
+        quantifiedExposureMinor: sumOf('CASH'),
+        committedCapacityMinor: sumOf('CAPACITY'),
+        estimatedValueMinor: derivedValue,
+        ...(derivedDuration === undefined ? {} : { durationWeeks: derivedDuration }),
+        sizedFrom: 'ESTIMATE',
+      };
+    }
+  }
+
+  return base;
 }
 
 /**
