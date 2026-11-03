@@ -27098,15 +27098,24 @@ export const ROUTES: Route[] = [
       schema: {
         type: 'object',
         required: ['hash'],
-        properties: { hash: stringField },
+        // `fromPage`/`toPage` carve a page range out of a bundled PDF before it
+        // is read — both or neither; the engine refuses a range on a non-PDF or
+        // outside the document.
+        properties: { hash: stringField, fromPage: { type: 'integer', minimum: 1 }, toPage: { type: 'integer', minimum: 1 } },
         additionalProperties: false,
       },
       ai: { engine: definition.engine, taskType: definition.taskType, capability: 'PERCEPTION' },
-      handler: (platform, ctx) =>
-        perception.extract(projectContext(platform, ctx), platform.evidence, {
-          ...body<{ hash: string }>(ctx),
+      handler: (platform, ctx) => {
+        const { hash, fromPage, toPage } = body<{ hash: string; fromPage?: number; toPage?: number }>(ctx);
+        if ((fromPage === undefined) !== (toPage === undefined)) {
+          throw new DomainError('PERCEPTION_PAGE_RANGE', 'A page range needs both a first and a last page.', 422);
+        }
+        return perception.extract(projectContext(platform, ctx), platform.evidence, {
+          hash,
           task,
-        }),
+          ...(fromPage !== undefined && toPage !== undefined ? { pages: { from: fromPage, to: toPage } } : {}),
+        });
+      },
     })),
   {
     method: 'POST',

@@ -759,7 +759,13 @@ export async function design(root) {
                         rows: readable.slice(0, 12).map((entry) => [
                           entry.description,
                           entry.contentType,
-                          html`<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
+                          html`${
+                            entry.contentType === 'application/pdf'
+                              ? html`<input data-pages-for="${entry.hash}" placeholder="pages e.g. 7-19"
+                                  title="For a bundled PDF, the pages to read — a range like 7-19, a single page like 7, or blank for the whole file. A 360-page tender pack is read a few sheets at a time."
+                                  style="width:118px;margin-right:6px" />`
+                              : ''
+                          }<button class="btn quiet sm" data-read="TITLE_BLOCK" data-hash="${entry.hash}">Title block</button>
                             <button class="btn quiet sm" data-read="DRAWING_TAKEOFF" data-hash="${entry.hash}">Quantities</button>`,
                         ]),
                         empty: evidence?.storeConfigured
@@ -2094,10 +2100,25 @@ export async function design(root) {
         read.dataset.read === 'TITLE_BLOCK'
           ? `/v1/projects/${projectId}/perception/title-block`
           : `/v1/projects/${projectId}/perception/take-off`;
+      // A page range, where one was typed beside this file. "7-19" reads those
+      // sheets; "7" reads one; blank reads the whole file, as before. Carving
+      // the pages out before the read is what lets a 360-page bundle be measured
+      // at all — the whole of it is refused on its token count.
+      const pagesInput = read.closest('tr')?.querySelector(`[data-pages-for="${read.dataset.hash}"]`);
+      const typed = (pagesInput?.value ?? '').trim();
+      let pageRange = {};
+      if (typed) {
+        const match = /^(\d+)\s*(?:[-–]\s*(\d+))?$/.exec(typed);
+        if (!match) {
+          toast('Pages not understood', 'Type a range like 7-19, a single page like 7, or leave it blank to read the whole file.', 'warn');
+          return;
+        }
+        pageRange = { fromPage: Number(match[1]), toPage: match[2] ? Number(match[2]) : Number(match[1]) };
+      }
       read.disabled = true;
       read.textContent = 'Reading…';
       try {
-        await api.post(path, { hash: read.dataset.hash });
+        await api.post(path, { hash: read.dataset.hash, ...pageRange });
         await draw();
       } catch (error) {
         // A refusal here is usually a true statement about the file or the

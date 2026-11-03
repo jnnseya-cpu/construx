@@ -30956,3 +30956,53 @@ rewritten as `"confirms without a value or a duration, and invents neither"`:
 the reading confirms into a matrix, the terms are still assessed (a
 fitness-for-purpose bar still ends the bid), and `complianceMatrix` reports
 `sizedFrom: 'NONE'` with no invented value or duration.
+
+## 2026-11 page-range take-off — reading one bundle a few sheets at a time
+
+A real tender does not arrive as a folder of drawings. SHDC's came as four
+files, and the one that carries every drawing — "ITT Appendix A – Focus
+Consultants Tender Documentation" — is a single **360-page** PDF: pre-construction
+information, a CCTV drainage survey, the Structural Engineer's Report, an asbestos
+survey, planning documents, manufacturer details. The foundation detail the
+take-off needed was 600mm mass concrete strip at 2.0m, stated on three sheets of
+the SE Report inside that bundle.
+
+The take-off could not read it, and was right not to try. A PDF is sized at
+2,000 tokens a page (`remote.ts`), so 360 pages is ~720k tokens — past every
+cleared model's window but one, and `adapterFor` refuses it with
+`AI_INPUT_TOO_LARGE` rather than send it. On the one model large enough it would
+have been worse: a measurement hunted across 360 unrelated pages. The scope was
+not missed because the reader failed; it was never handed the pages.
+
+**`extractPdfPages(bytes, from, to)` (`pdftext.ts`)** carves a page range out of a
+bundle into a new, smaller PDF. It rebuilds rather than overlays — an incremental
+update that leaves the other 357 pages physically present is refused by a provider
+that counts a file's pages by what it contains, not by what its catalogue reaches.
+The kept pages are copied with the transitive closure of everything they
+reference (fonts, images, form XObjects, colour spaces), their inherited MediaBox
+and Resources inlined so they still render once lifted out of the tree, every
+reference renumbered, `/Length` made literal, and a clean xref written. It reuses
+the existing parser (`PdfFile`, now with `pageObjectNumbers`, `catalogEntry`,
+`inheritedAttrs`); it does not decrypt, and it refuses an encrypted file, a file
+with no page tree, or a range outside the document by name (`PdfPageError`).
+Proved in `pdfpages.test.ts` against a multi-page fixture with inherited geometry,
+a shared font and an image: the slice holds exactly the selected pages and the
+resources they use, and nothing else.
+
+**The take-off takes an optional page range.** `perception.extract` accepts
+`pages: { from, to }`; for a PDF it slices first and sends — and sizes — only the
+slice, so a bundle whose whole is refused is read a few sheets at a time. The
+source hash still names the file the pages came from, and the range is recorded in
+the draft's payload. The perception route gained `fromPage`/`toPage` (both or
+neither), and the design-page take-off list shows a page box beside every held
+PDF ("pages e.g. 7-19", blank for the whole file). A range on a non-PDF, or
+outside the document, is `PERCEPTION_PAGE_RANGE`, refused before anything is
+charged. Covered in `perception.test.ts`: the provider receives only the selected
+pages, the whole file when no range is given, and neither a bad range nor a
+non-PDF reaches a charge.
+
+The cost not paid down: the slice is sent whole to the provider, so a range out
+of an 18MB bundle still sends a slim file built from those pages, not the 18MB.
+What is not built is automatic bundle-splitting at ingest — a person names the
+pages, because the person knows which appendix holds the foundations and the
+platform, today, does not.

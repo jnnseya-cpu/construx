@@ -13,6 +13,7 @@ import type {
 } from '../src/ai/providers/types.ts';
 import { ingestFile, ingestedFiles, ingestionPosition } from '../src/evidence/pipeline.ts';
 import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
+import { readPdfText } from '../src/evidence/pdftext.ts';
 import * as perception from '../src/engines/perception.ts';
 import { registerDrawing } from '../src/engines/bim.ts';
 import type { EngineContext } from '../src/engines/context.ts';
@@ -552,6 +553,94 @@ describe('a scan is transcribed by a model and confirmed into the ingestion reco
  * Declared after use on purpose — it is the least interesting thing in the file
  * and reads as noise at the top.
  */
+/** A four-page PDF, a distinct word on each, standing in for a bundled drawing set. */
+function fourPagePdf(): Buffer {
+  const pageStream = (word: string): string => {
+    const content = `BT /F1 12 Tf 72 700 Td (Sheet ${word}) Tj ET`;
+    return `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}\nendstream`;
+  };
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 /MediaBox [0 0 595 842] /Resources << /Font << /F1 7 0 R >> >> >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 8 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 9 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 10 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /Contents 11 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
+    pageStream('alpha'),
+    pageStream('bravo'),
+    pageStream('charlie'),
+    pageStream('delta'),
+  ];
+  let out = '%PDF-1.5\n';
+  const offsets: number[] = [];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out +=
+    `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` +
+    offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('') +
+    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, 'latin1');
+}
+
+describe('a take-off reads a page range out of a bundle', () => {
+  const PDF = fourPagePdf();
+  const PDF_HASH = hashBytes(PDF);
+  const TAKEOFF = { items: [{ description: 'Mass concrete to foundations', unit: 'm3', quantity: 12 }] };
+
+  before(async () => {
+    await buildFixture(multimodalStub(TAKEOFF));
+    registerEvidenceFor(ctxFor('qs'), PDF_HASH, 'TENDER_DOCUMENT');
+    store.put(seed.tenantId, PDF_HASH, PDF, 'application/pdf');
+  });
+
+  it('sends only the selected pages to the provider', async () => {
+    lastRequest = undefined;
+    await perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 2, to: 3 } });
+    const seen = lastRequest as ProviderRequest | undefined;
+    assert.ok(seen?.media, 'the provider was never handed the file');
+    assert.equal(seen.media.pages, 2, 'the whole bundle was sent instead of the page range');
+    const reading = readPdfText(Buffer.from(seen.media.base64, 'base64'));
+    assert.equal(reading.pages, 2);
+    assert.match(reading.text, /bravo/);
+    assert.match(reading.text, /charlie/);
+    assert.doesNotMatch(reading.text, /alpha|delta/);
+    // The source hash still names the file the pages came from.
+    assert.equal(seen.media.hash, PDF_HASH);
+    assert.deepEqual((seen.payload as { pages?: unknown }).pages, { from: 2, to: 3 });
+  });
+
+  it('sends the whole file when no range is given', async () => {
+    lastRequest = undefined;
+    await perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF' });
+    const seen = lastRequest as ProviderRequest | undefined;
+    assert.equal(seen?.media?.pages, 4);
+  });
+
+  it('refuses a range outside the document without charging for it', async () => {
+    const before = platform.wallet(seed.tenantId).snapshot();
+    await rejectsCode(
+      () => perception.extract(ctxFor('qs'), store, { hash: PDF_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 3, to: 9 } }),
+      'PERCEPTION_PAGE_RANGE',
+    );
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.heldMinor, before.heldMinor);
+    assert.equal(after.balanceMinor, before.balanceMinor);
+  });
+
+  it('refuses a page range on a file that is not a PDF', async () => {
+    registerEvidenceFor(ctxFor('qs'), DRAWING_HASH, 'DRAWING_FILE');
+    store.put(seed.tenantId, DRAWING_HASH, DRAWING, 'image/png');
+    await rejectsCode(
+      () => perception.extract(ctxFor('qs'), store, { hash: DRAWING_HASH, task: 'DRAWING_TAKEOFF', pages: { from: 1, to: 1 } }),
+      'PERCEPTION_PAGE_RANGE',
+    );
+  });
+});
+
 function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): void {
   ctx.ledger.commit({
     tenantId: ctx.tenantId,

@@ -553,6 +553,70 @@ class PdfFile {
     }
     return found;
   }
+
+  /** The catalog object, by number, or nothing where the file has none. */
+  catalogEntry(): { number: number; dict: string } | undefined {
+    for (const [number, object] of this.objects) {
+      if (/\/Type\s*\/Catalog\b/.test(object.dict)) return { number, dict: object.dict };
+    }
+    return undefined;
+  }
+
+  /**
+   * Page object numbers in reading order — the same tree walk `pages()` does,
+   * returning which object each page is rather than its text. The page extractor
+   * needs the numbers to carve a range out; the text reader never did.
+   */
+  pageObjectNumbers(): number[] {
+    const found: number[] = [];
+    const seen = new Set<number>();
+    const walk = (token: string, depth: number): void => {
+      const { number, object } = this.objectOf(token);
+      if (number === undefined || !object || seen.has(number) || depth > 64) return;
+      seen.add(number);
+      if (/\/Type\s*\/Pages\b/.test(object.dict)) {
+        for (const kid of elements(this.resolve(get(object.dict, 'Kids')) ?? '')) walk(kid, depth + 1);
+      } else if (/\/Type\s*\/Page\b/.test(object.dict) || get(object.dict, 'Contents') !== undefined) {
+        found.push(number);
+      }
+    };
+    const catalog = this.catalogEntry();
+    const root = catalog ? get(catalog.dict, 'Pages') : undefined;
+    if (root) walk(root, 0);
+    if (found.length === 0) {
+      for (const [number, object] of [...this.objects].sort((a, b) => a[0] - b[0])) {
+        if (seen.has(number) || !/\/Type\s*\/Page\b/.test(object.dict)) continue;
+        found.push(number);
+      }
+    }
+    return found;
+  }
+
+  /**
+   * The attributes a page inherits from its place in the tree — MediaBox,
+   * Resources, CropBox, Rotate — as the raw token each resolves to (a literal
+   * array, or a `N 0 R` reference left as-is so it still points at the object
+   * that holds it). Own value wins over an inherited one; the walk stops at the
+   * first it finds for each key. A page carved out of the tree keeps nothing of
+   * its parents, so these have to travel with it or the page renders blank.
+   */
+  inheritedAttrs(pageNumber: number): { MediaBox?: string; Resources?: string; CropBox?: string; Rotate?: string } {
+    const keys = ['MediaBox', 'Resources', 'CropBox', 'Rotate'] as const;
+    const result: { MediaBox?: string; Resources?: string; CropBox?: string; Rotate?: string } = {};
+    const seen = new Set<number>();
+    let number: number | undefined = pageNumber;
+    while (number !== undefined && !seen.has(number)) {
+      seen.add(number);
+      const object = this.objects.get(number);
+      if (!object) break;
+      for (const key of keys) if (result[key] === undefined) {
+        const value = get(object.dict, key);
+        if (value !== undefined) result[key] = value;
+      }
+      number = this.objectOf(get(object.dict, 'Parent')).number;
+    }
+    return result;
+  }
 }
 
 /** PNG predictors, which xref and object streams commonly carry. */
@@ -1277,4 +1341,215 @@ export function readPdfText(bytes: Buffer): PdfReading {
   } catch {
     return empty;
   }
+}
+
+/** A page range could not be carved out of a PDF, and why. */
+export class PdfPageError extends Error {
+  readonly code: 'PDF_ENCRYPTED' | 'PDF_NO_PAGES' | 'PDF_PAGE_RANGE';
+  constructor(code: 'PDF_ENCRYPTED' | 'PDF_NO_PAGES' | 'PDF_PAGE_RANGE', message: string) {
+    super(message);
+    this.name = 'PdfPageError';
+    this.code = code;
+  }
+}
+
+/** Every indirect-object number a dictionary value refers to. */
+function refsIn(value: string): number[] {
+  const out: number[] = [];
+  const reference = /(\d+)\s+\d+\s+R\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = reference.exec(value))) out.push(Number(match[1]));
+  return out;
+}
+
+/** Rewrite indirect references under an old→new numbering; an unmapped one becomes `null`. */
+function remapRefs(value: string, map: Map<number, number>): string {
+  return value.replace(/(\d+)\s+\d+\s+R\b/g, (_whole, number) => {
+    const to = map.get(Number(number));
+    return to === undefined ? 'null' : `${to} 0 R`;
+  });
+}
+
+/**
+ * Carve a page range out of a PDF into a new, smaller PDF — pages `fromPage` to
+ * `toPage`, 1-indexed and inclusive.
+ *
+ * A real tender arrives as one bundled PDF: a 360-page "tender documentation"
+ * file whose structural report is three sheets buried in the middle. No vision
+ * model reads 360 pages in one call — the request is refused on its token count
+ * before it is sent — and a model that *did* take the whole bundle would be
+ * hunting a foundation detail across hundreds of unrelated pages. So the take-off
+ * needs to be pointed at the pages that matter, which means producing a document
+ * that *is* only those pages.
+ *
+ * This rebuilds rather than overlays. An incremental update that leaves the other
+ * 357 pages physically in the file is refused by a provider that counts a PDF's
+ * pages by what it contains, not by what its catalogue reaches — so the kept
+ * pages are copied into a fresh file with everything they transitively reference
+ * (fonts, images, form XObjects, colour spaces), their inherited MediaBox and
+ * Resources inlined so they still render, every reference renumbered, and a clean
+ * xref written. What the kept pages do not touch does not come across.
+ *
+ * It does not decrypt, and it does not guess: an encrypted file, a file with no
+ * readable page tree, or a range outside the document is refused by name rather
+ * than returned half-built.
+ */
+export function extractPdfPages(bytes: Buffer, fromPage: number, toPage: number): Buffer {
+  const raw = bytes.toString('latin1');
+  if (/\/Encrypt\s*(\d+\s+\d+\s+R|<<)/.test(raw)) {
+    throw new PdfPageError(
+      'PDF_ENCRYPTED',
+      'This PDF is encrypted, so a page range cannot be taken from it. Supply an unprotected copy.',
+    );
+  }
+
+  const file = new PdfFile(raw);
+  const order = file.pageObjectNumbers();
+  if (order.length === 0) {
+    throw new PdfPageError(
+      'PDF_NO_PAGES',
+      'No page tree could be read from this PDF, so a page range cannot be taken from it.',
+    );
+  }
+  if (
+    !Number.isInteger(fromPage) ||
+    !Number.isInteger(toPage) ||
+    fromPage < 1 ||
+    toPage < fromPage ||
+    toPage > order.length
+  ) {
+    throw new PdfPageError(
+      'PDF_PAGE_RANGE',
+      `This PDF has ${order.length} page${order.length === 1 ? '' : 's'}; pages ${fromPage}–${toPage} cannot be taken from it.`,
+    );
+  }
+
+  const selected = order.slice(fromPage - 1, toPage);
+  const selectedSet = new Set(selected);
+
+  // The kept pages, as key/value pairs with the structural keys dropped (the
+  // tree is rebuilt) and the inherited geometry and resources inlined.
+  const STRIP = new Set(['Parent', 'Annots', 'B', 'PieceInfo', 'Tabs', 'StructParents', 'Thumb']);
+  const INHERITABLE = ['MediaBox', 'Resources', 'CropBox', 'Rotate'] as const;
+  const pageKept = new Map<number, Array<[string, string]>>();
+  const closure = new Set<number>();
+  const queue: number[] = [];
+  const see = (value: string): void => {
+    for (const reference of refsIn(value)) if (!selectedSet.has(reference) && !closure.has(reference)) {
+      closure.add(reference);
+      queue.push(reference);
+    }
+  };
+
+  for (const pageNumber of selected) {
+    const object = file.objects.get(pageNumber);
+    if (!object) continue;
+    const kept: Array<[string, string]> = [];
+    const have = new Set<string>();
+    for (const [key, value] of entries(object.dict)) {
+      if (STRIP.has(key)) continue;
+      kept.push([key, value]);
+      have.add(key);
+      see(value);
+    }
+    const inherited = file.inheritedAttrs(pageNumber);
+    for (const key of INHERITABLE) {
+      if (!have.has(key) && inherited[key] !== undefined) {
+        kept.push([key, inherited[key]!]);
+        see(inherited[key]!);
+      }
+    }
+    pageKept.set(pageNumber, kept);
+  }
+
+  // Everything the kept pages reach, and everything those reach in turn.
+  while (queue.length > 0) {
+    const number = queue.shift()!;
+    const object = file.objects.get(number);
+    if (!object) continue;
+    for (const [, value] of entries(object.dict)) see(value);
+  }
+
+  // Renumber: 1 catalog, 2 pages node, then the pages, then the closure.
+  const map = new Map<number, number>();
+  let next = 3;
+  for (const pageNumber of selected) {
+    map.set(pageNumber, next);
+    next += 1;
+  }
+  const closureSorted = [...closure].sort((a, b) => a - b);
+  for (const number of closureSorted) {
+    map.set(number, next);
+    next += 1;
+  }
+
+  const emitted: Array<{ number: number; body: string; stream?: Buffer }> = [];
+  emitted.push({ number: 1, body: '<< /Type /Catalog /Pages 2 0 R >>' });
+
+  const firstPage = file.objects.get(selected[0]!);
+  const firstMediaBox =
+    (firstPage ? get(firstPage.dict, 'MediaBox') : undefined) ??
+    file.inheritedAttrs(selected[0]!).MediaBox ??
+    '[0 0 612 792]';
+  const kids = selected.map((pageNumber) => `${map.get(pageNumber)} 0 R`).join(' ');
+  emitted.push({
+    number: 2,
+    body: `<< /Type /Pages /Kids [${kids}] /Count ${selected.length} /MediaBox ${remapRefs(firstMediaBox, map)} >>`,
+  });
+
+  for (const pageNumber of selected) {
+    const kept = pageKept.get(pageNumber) ?? [];
+    const hasType = kept.some(([key]) => key === 'Type');
+    const body = kept.map(([key, value]) => `/${key} ${remapRefs(value, map)}`).join(' ');
+    emitted.push({
+      number: map.get(pageNumber)!,
+      body: `<< ${hasType ? '' : '/Type /Page '}/Parent 2 0 R ${body} >>`,
+    });
+  }
+
+  for (const number of closureSorted) {
+    const object = file.objects.get(number)!;
+    const newNumber = map.get(number)!;
+    if (object.stream) {
+      // The raw stream bytes travel verbatim, so the filter stays valid; only the
+      // dictionary is renumbered, and /Length is made literal so a length that
+      // was an indirect object does not have to be carried too.
+      const pairs = entries(object.dict).filter(([key]) => key !== 'Length');
+      const body = `<< ${pairs.map(([key, value]) => `/${key} ${remapRefs(value, map)}`).join(' ')} /Length ${object.stream.length} >>`;
+      emitted.push({ number: newNumber, body, stream: object.stream });
+    } else {
+      emitted.push({ number: newNumber, body: remapRefs(object.dict, map) });
+    }
+  }
+
+  emitted.sort((a, b) => a.number - b.number);
+  const chunks: Buffer[] = [];
+  const header = Buffer.from('%PDF-1.7\n%âãÏÓ\n', 'latin1');
+  chunks.push(header);
+  let offset = header.length;
+  const offsets = new Map<number, number>();
+  for (const object of emitted) {
+    offsets.set(object.number, offset);
+    if (object.stream) {
+      const head = Buffer.from(`${object.number} 0 obj\n${object.body}\nstream\n`, 'latin1');
+      const tail = Buffer.from('\nendstream\nendobj\n', 'latin1');
+      chunks.push(head, object.stream, tail);
+      offset += head.length + object.stream.length + tail.length;
+    } else {
+      const whole = Buffer.from(`${object.number} 0 obj\n${object.body}\nendobj\n`, 'latin1');
+      chunks.push(whole);
+      offset += whole.length;
+    }
+  }
+
+  const size = emitted[emitted.length - 1]!.number + 1;
+  const xrefOffset = offset;
+  let xref = `xref\n0 ${size}\n0000000000 65535 f \n`;
+  for (let number = 1; number < size; number += 1) {
+    xref += `${String(offsets.get(number) ?? 0).padStart(10, '0')} 00000 n \n`;
+  }
+  xref += `trailer\n<< /Size ${size} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  chunks.push(Buffer.from(xref, 'latin1'));
+
+  return Buffer.concat(chunks);
 }

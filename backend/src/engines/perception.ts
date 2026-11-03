@@ -6,6 +6,7 @@ import { config } from '../config.ts';
 import type { EvidenceStore } from '../evidence/store.ts';
 import { findByHash } from '../evidence/registry.ts';
 import { extractText } from '../evidence/ingest.ts';
+import { extractPdfPages, PdfPageError } from '../evidence/pdftext.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import { submitProgress } from '../domain/progressverification.ts';
@@ -880,7 +881,7 @@ export type PerceptionDraft = {
 export async function extract(
   ctx: EngineContext,
   store: EvidenceStore,
-  input: { hash: string; task: PerceptionTask },
+  input: { hash: string; task: PerceptionTask; pages?: { from: number; to: number } },
 ): Promise<{ draftId: string; task: PerceptionTask; extraction: Record<string, unknown>; confidence?: number; acuConsumed: number }> {
   const definition = PERCEPTION_TASKS[input.task];
   if (!definition) throw new DomainError('PERCEPTION_TASK_UNKNOWN', `No perception task "${input.task}"`);
@@ -911,10 +912,32 @@ export async function extract(
       415,
     );
   }
-  if (file.bytes.length > config.ai.perceptionMaxBytes) {
+  // A page range carves the wanted pages out of a bundle before anything is
+  // sent — the real case being a 360-page "tender documentation" PDF whose three
+  // structural sheets a model cannot find, and whose whole is refused on its
+  // token count. The slice is what travels and what is sized; the source hash
+  // still names the file it came from.
+  let mediaBytes = file.bytes;
+  if (input.pages) {
+    if (file.contentType !== 'application/pdf') {
+      throw new DomainError(
+        'PERCEPTION_PAGE_RANGE',
+        `A page range can only be taken from a PDF; this evidence is ${file.contentType}.`,
+        422,
+      );
+    }
+    try {
+      mediaBytes = extractPdfPages(file.bytes, input.pages.from, input.pages.to);
+    } catch (error) {
+      if (error instanceof PdfPageError) throw new DomainError('PERCEPTION_PAGE_RANGE', error.message, 422);
+      throw error;
+    }
+  }
+  if (mediaBytes.length > config.ai.perceptionMaxBytes) {
     throw new DomainError(
       'PERCEPTION_FILE_TOO_LARGE',
-      `A file over ${Math.round(config.ai.perceptionMaxBytes / 1_048_576)}MB cannot be sent to a provider in one request.`,
+      `A file over ${Math.round(config.ai.perceptionMaxBytes / 1_048_576)}MB cannot be sent to a provider in one request.` +
+        (input.pages ? '' : ' A bundle this size is read a page range at a time.'),
       413,
     );
   }
@@ -941,12 +964,17 @@ export async function extract(
     request: {
       task: definition.prompt,
       // The hash travels in the payload as well as on the media, so the answer
-      // is traceable to the exact bytes that produced it.
-      payload: { evidenceHash: input.hash, contentType: file.contentType },
+      // is traceable to the exact bytes that produced it — and, where a page
+      // range was taken, which pages of that file it was read from.
+      payload: {
+        evidenceHash: input.hash,
+        contentType: file.contentType,
+        ...(input.pages ? { pages: input.pages } : {}),
+      },
       responseSchema: definition.responseSchema,
       media: {
         contentType: file.contentType,
-        base64: file.bytes.toString('base64'),
+        base64: mediaBytes.toString('base64'),
         hash: input.hash,
         /*
          * Pages, where the file has them.
@@ -968,7 +996,7 @@ export async function extract(
          */
         ...(file.contentType === 'application/pdf'
           ? (() => {
-              const pages = extractText(file.bytes, file.contentType).pages;
+              const pages = extractText(mediaBytes, file.contentType).pages;
               return pages ? { pages } : {};
             })()
           : {}),
