@@ -1355,14 +1355,18 @@ export async function confirm(
     });
     result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
   } else if (draft.task === 'ITT_REQUIREMENTS') {
-    if (!input.invitationId || input.estimatedValueMinor === undefined || input.durationWeeks === undefined) {
+    if (!input.invitationId) {
       throw new DomainError(
         'PERCEPTION_TARGET_REQUIRED',
-        'A read invitation is filed against the invitation it came from, and needs the value this business ' +
-          'expects to price and the duration it is priced over. Neither is stated in an ITT about the bidder, ' +
-          'so neither is read from one.',
+        'A read invitation is filed against the invitation it came from. Choose which invitation this reading ' +
+          'belongs to.',
       );
     }
+    // The value and duration are no longer required here. The matrix needs
+    // neither, and an estimator cannot give a contract value before the take-off.
+    // Where they are given the commercial-term exposures are sized against them;
+    // where they are not, the terms are still read and the cash figures are sized
+    // later, once the job is priced.
 
     const read = extraction as {
       reference?: unknown;
@@ -1441,8 +1445,8 @@ export async function confirm(
       ),
       clientName: String(read.clientName ?? 'Not stated in the invitation'),
       returnBy: String(read.returnBy ?? ''),
-      estimatedValueMinor: input.estimatedValueMinor,
-      durationWeeks: input.durationWeeks,
+      ...(input.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: input.estimatedValueMinor }),
+      ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
       requirements,
       terms: commercial,
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),

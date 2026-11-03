@@ -962,3 +962,35 @@ describe('A matrix reflects evidence recorded after the analysis', () => {
     radar.setCompanyProfile(qs(), before);
   });
 });
+
+describe('A matrix can be built before the job is priced', () => {
+  it('analyses with no value or duration, carries the terms unsized, and sizes them once a value is set', () => {
+    // No contract value and no programme: the matrix still builds, and a term
+    // that needs a figure is carried with its structural severity but no cash
+    // figure — sized later, not computed against a misleading zero.
+    const unpriced = analyse({
+      reference: 'ITT-UNPRICED-01',
+      estimatedValueMinor: undefined,
+      durationWeeks: undefined,
+      requirements: [requirement({ reference: 'R1' })],
+      terms: { contractForm: 'JCT D&B 2016', retentionPercent: 5, liquidatedDamages: { perWeekMinor: 500_00 } },
+    });
+    const retention = unpriced.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(retention.exposureMinor, undefined, 'retention carries no cash figure without a value');
+    assert.match(retention.assessment, /sized once a contract value is set/);
+    const lad = unpriced.terms.find((t) => t.term === 'Liquidated damages')!;
+    assert.equal(lad.severity, 'SEVERE', 'an uncapped LD is severe by its structure, value or not');
+    assert.equal(unpriced.quantifiedExposureMinor, 0, 'nothing is summed from unsized terms');
+
+    // The same invitation, confirmed with a value, sizes the exposures.
+    const priced = analyse({
+      reference: 'ITT-PRICED-01',
+      estimatedValueMinor: 1_000_000_00,
+      durationWeeks: 20,
+      requirements: [requirement({ reference: 'R1' })],
+      terms: { contractForm: 'JCT D&B 2016', retentionPercent: 5, liquidatedDamages: { perWeekMinor: 500_00 } },
+    });
+    const sized = priced.terms.find((t) => t.term === 'Retention')!;
+    assert.equal(sized.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000');
+  });
+});

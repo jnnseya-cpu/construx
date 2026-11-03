@@ -881,7 +881,10 @@ const stringField = { type: 'string', minLength: 1 } as const;
  */
 const ITT_ANALYSIS_SCHEMA = {
   type: 'object',
-  required: ['reference', 'clientName', 'returnBy', 'estimatedValueMinor', 'durationWeeks', 'requirements', 'terms'],
+  // estimatedValueMinor and durationWeeks are optional: the matrix needs neither,
+  // and an estimator cannot give a contract value before the take-off. Omitted,
+  // the commercial-term exposures are sized later once a value exists.
+  required: ['reference', 'clientName', 'returnBy', 'requirements', 'terms'],
   properties: {
     reference: stringField,
     clientName: stringField,

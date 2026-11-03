@@ -456,9 +456,19 @@ export function analyseITT(
     reference: string;
     clientName: string;
     returnBy: string;
-    /** Value the contractor expects to price, for exposure arithmetic. */
-    estimatedValueMinor: number;
-    durationWeeks: number;
+    /**
+     * Value the contractor expects to price, for exposure arithmetic — OPTIONAL.
+     *
+     * The matrix (requirements, weightings, ownership, evidence) needs none of
+     * this; only the commercial-term exposures do. An estimator cannot honestly
+     * give a contract value before the take-off, so forcing it at confirm was
+     * friction that bought nothing on a tender whose ITT states no damages,
+     * retention or bond — which is most of them. Left out, the terms are still
+     * read and carried, and the cash/capacity figures are sized later, once a
+     * value exists (the take-off estimate, or a value entered by hand).
+     */
+    estimatedValueMinor?: number;
+    durationWeeks?: number;
     requirements: ITTRequirement[];
     terms: CommercialTerms;
     /** Expected margin percentage, so exposure can be set against it. */
@@ -472,7 +482,13 @@ export function analyseITT(
   }
 
   const profile = companyProfile(ctx);
-  const marginMinor = Math.round(input.estimatedValueMinor * ((input.targetMarginPercent ?? profile.targetMarginPercent.min) / 100));
+  // Undefined when no value was given — every exposure below is then carried as
+  // "sized once a value is set" rather than computed against a zero that would
+  // read as "no risk".
+  const value = input.estimatedValueMinor;
+  const duration = input.durationWeeks;
+  const marginMinor =
+    value === undefined ? undefined : Math.round(value * ((input.targetMarginPercent ?? profile.targetMarginPercent.min) / 100));
 
   // --- The matrix -----------------------------------------------------------
   const matrix: MatrixLine[] = input.requirements.map((requirement) => {
@@ -509,20 +525,30 @@ export function analyseITT(
   const { liquidatedDamages: lads } = input.terms;
   if (lads) {
     // The honest exposure is the cap where there is one, and the whole
-    // programme where there is not — because uncapped means uncapped.
-    const cappedMinor = lads.capPercent !== undefined ? Math.round(input.estimatedValueMinor * (lads.capPercent / 100)) : undefined;
-    const uncappedOverRun = lads.perWeekMinor * input.durationWeeks;
+    // programme where there is not — because uncapped means uncapped. Each
+    // needs a figure the matrix may not have yet: the cap needs a value, the
+    // overrun needs a duration. Where it is missing the clause is still carried
+    // with its structural severity, and the cash figure is sized later.
+    const cappedMinor = lads.capPercent !== undefined && value !== undefined ? Math.round(value * (lads.capPercent / 100)) : undefined;
+    const uncappedOverRun = duration !== undefined ? lads.perWeekMinor * duration : undefined;
     const exposure = cappedMinor ?? uncappedOverRun;
+    const vsMargin = (figure: number): string =>
+      marginMinor !== undefined && marginMinor > 0 ? `, which is ${(figure / marginMinor).toFixed(1)}× the expected margin` : '';
 
     terms.push({
       term: 'Liquidated damages',
       stated: `${gbp(lads.perWeekMinor)} per week${lads.capPercent !== undefined ? `, capped at ${lads.capPercent}%` : ', uncapped'}`,
       assessment:
         lads.capPercent === undefined
-          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}, which is ${(marginMinor > 0 ? (lads.perWeekMinor * 10) / marginMinor : 0).toFixed(1)}× the expected margin. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
-          : `Capped at ${gbp(cappedMinor!)}, which is ${(marginMinor > 0 ? cappedMinor! / marginMinor : 0).toFixed(1)}× the expected margin of ${gbp(marginMinor)}.`,
-      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor! > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      exposureMinor: exposure,
+          ? `Uncapped. Ten weeks late is ${gbp(lads.perWeekMinor * 10)}${vsMargin(lads.perWeekMinor * 10)}. An uncapped damages clause on a programme the contractor does not fully control is the single most common way a profitable job becomes a loss.`
+          : cappedMinor !== undefined
+            ? `Capped at ${gbp(cappedMinor)}${marginMinor !== undefined ? `${vsMargin(cappedMinor)} of ${gbp(marginMinor)}` : ''}.`
+            : `Capped at ${lads.capPercent}% of the contract value — the cash figure is sized once a contract value is set.`,
+      // Uncapped is severe by its structure, value or no value. A capped clause
+      // is judged against margin where both are known, and is otherwise carried
+      // as ROUTINE until a value sizes it.
+      severity: lads.capPercent === undefined ? 'SEVERE' : cappedMinor !== undefined && marginMinor !== undefined && cappedMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(exposure !== undefined ? { exposureMinor: exposure } : {}),
       exposureKind: 'CASH',
     });
     if (lads.capPercent === undefined) {
@@ -565,26 +591,32 @@ export function analyseITT(
   }
 
   if (input.terms.performanceBondPercent !== undefined) {
-    const bondMinor = Math.round(input.estimatedValueMinor * (input.terms.performanceBondPercent / 100));
+    const bondMinor = value === undefined ? undefined : Math.round(value * (input.terms.performanceBondPercent / 100));
     terms.push({
       term: 'Performance bond',
       stated: `${input.terms.performanceBondPercent}% of contract value`,
-      assessment: `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`,
-      severity: bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
-      exposureMinor: bondMinor,
+      assessment:
+        bondMinor !== undefined
+          ? `${gbp(bondMinor)} of bonding facility committed for the contract period and usually beyond it. Bonding capacity is finite and shared across every live job, so this is capacity taken from the next bid as well as this one.`
+          : `A bond of ${input.terms.performanceBondPercent}% of the contract value — the facility committed is sized once a contract value is set. Bonding capacity is finite and shared across every live job.`,
+      severity: bondMinor !== undefined && bondMinor > profile.netAssetsMinor * 0.5 ? 'SEVERE' : 'MATERIAL',
       // Facility committed, not money spent.
+      ...(bondMinor !== undefined ? { exposureMinor: bondMinor } : {}),
       exposureKind: 'CAPACITY',
     });
   }
 
   if (input.terms.retentionPercent !== undefined) {
-    const retentionMinor = Math.round(input.estimatedValueMinor * (input.terms.retentionPercent / 100));
+    const retentionMinor = value === undefined ? undefined : Math.round(value * (input.terms.retentionPercent / 100));
     terms.push({
       term: 'Retention',
       stated: `${input.terms.retentionPercent}%`,
-      assessment: `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`,
-      severity: retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
-      exposureMinor: retentionMinor,
+      assessment:
+        retentionMinor !== undefined
+          ? `${gbp(retentionMinor)} withheld, typically half released at completion and half after the defects period. This is cash the business funds, not a discount, and the second half is often years away.`
+          : `${input.terms.retentionPercent}% withheld — the cash figure is sized once a contract value is set. This is cash the business funds, not a discount, and the second half is often years away.`,
+      severity: retentionMinor !== undefined && marginMinor !== undefined && retentionMinor > marginMinor ? 'MATERIAL' : 'ROUTINE',
+      ...(retentionMinor !== undefined ? { exposureMinor: retentionMinor } : {}),
       exposureKind: 'CASH',
     });
   }
@@ -680,8 +712,10 @@ export function analyseITT(
       reference: input.reference,
       clientName: input.clientName,
       returnBy: input.returnBy,
-      estimatedValueMinor: input.estimatedValueMinor,
-      durationWeeks: input.durationWeeks,
+      // Stored only when given, so an analysis run before the take-off carries no
+      // value at all rather than a zero that later reads as "priced at nothing".
+      ...(value === undefined ? {} : { estimatedValueMinor: value }),
+      ...(duration === undefined ? {} : { durationWeeks: duration }),
       matrix,
       mandatoryGaps: mandatoryGaps.map((g) => g.reference),
       weightings: { stated: statedTotal, complete: statedTotal === 100 },
@@ -733,9 +767,13 @@ export function analyseITT(
 
 /** What the stored record carries beyond the analysis itself. */
 export type StoredITTAnalysis = ITTAnalysis & {
-  /** The value and duration the exposure figures were computed against. */
-  estimatedValueMinor: number;
-  durationWeeks: number;
+  /**
+   * The value and duration the exposure figures were computed against — absent
+   * when the analysis was confirmed before the job was priced. A reader shows
+   * "not yet sized" rather than £0.
+   */
+  estimatedValueMinor?: number;
+  durationWeeks?: number;
   analysedAt: string;
   analysedBy: string;
   /** The project the analysis was run on, which is the tender's own project. */
@@ -801,8 +839,10 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
         : Number(state.committedCapacityMinor),
     clarifications: (state.clarifications as string[] | undefined) ?? [],
     readyToPrice: Boolean(state.readyToPrice),
-    estimatedValueMinor: Number(state.estimatedValueMinor ?? 0),
-    durationWeeks: Number(state.durationWeeks ?? 0),
+    // Undefined — not zero — when the analysis was confirmed before a value was
+    // known, so a reader can say "not yet sized" instead of "£0".
+    ...(state.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: Number(state.estimatedValueMinor) }),
+    ...(state.durationWeeks === undefined ? {} : { durationWeeks: Number(state.durationWeeks) }),
     analysedAt: String(state.analysedAt ?? ''),
     analysedBy: String(state.analysedBy ?? ''),
     projectId: record.projectId,

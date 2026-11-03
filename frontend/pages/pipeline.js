@@ -540,9 +540,13 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
         ${analysis.readyToPrice ? badge('ready to price', 'ok') : badge('not ready to price', 'bad')}
       </h2>
       <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-        Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)} against
-        ${money(analysis.estimatedValueMinor)} over ${analysis.durationWeeks} weeks — every exposure below is computed
-        against those two figures, so a matrix read months later still shows what it was judged on.
+        Returns ${date(analysis.returnBy)}. Analysed ${date(analysis.analysedAt)}${
+          analysis.estimatedValueMinor === undefined || analysis.durationWeeks === undefined
+            ? ' — no contract value or programme set yet, so the commercial-term risk below is carried but not yet sized. ' +
+              'It sizes itself once you price the job and set the programme.'
+            : ` against ${money(analysis.estimatedValueMinor)} over ${analysis.durationWeeks} weeks — every exposure below ` +
+              'is computed against those two figures, so a matrix read months later still shows what it was judged on.'
+        }
       </p>
 
       <div class="grid g4" style="padding:13px 17px 0">
@@ -3337,17 +3341,18 @@ export async function pipeline(root) {
         await recordCompanyFacts();
         return;
       }
-      // Three figures the analyst needs and no invitation states, because none
-      // of them is about the buyer: what this business expects to price, over
-      // how long, and at what margin. Asked here rather than guessed, because
-      // every exposure figure in the matrix is computed against them.
+      // Only the invitation is required. The value, duration and margin are
+      // optional: the matrix needs none of them, and an estimator cannot give a
+      // contract value before the take-off. Left blank, the commercial-term risk
+      // (damages, retention, bond) is sized later once the job is priced; filled
+      // in, it is sized now.
       const accepted = await command({
         title: 'Confirm what the AI read',
         intent:
           'Confirming files the reading through the same commands as typing the requirements in by hand — the ' +
-          'analyst, its authorisation and its ACU cost are unchanged. The three figures below are not in the ' +
-          'invitation: an ITT states what the buyer wants, not what this business expects to price it at, and ' +
-          'every exposure in the matrix is set against them.',
+          'analyst, its authorisation and its ACU cost are unchanged. Only the invitation is needed. The three ' +
+          'figures below are optional and are not in the invitation — leave them blank if you have not priced the ' +
+          'job yet, and the contract-term risk is sized once you have.',
         path: () => `/v1/projects/${projectId}/perception/${confirmIt.dataset.confirmItt}/confirm`,
         submitLabel: 'Confirm and build the matrix',
         fields: [
@@ -3360,15 +3365,17 @@ export async function pipeline(root) {
           },
           {
             name: 'estimatedValue',
-            label: 'What we expect to price (£)',
+            label: 'What we expect to price (£) — optional',
             type: 'number',
             step: '1',
-            hint: 'The contract value this business is bidding, not the buyer’s published budget.',
+            required: false,
+            hint: 'Leave blank until you have priced the job. Only used to size damages, retention and bond risk.',
           },
-          { name: 'durationWeeks', label: 'Priced over (weeks)', type: 'number', step: '1' },
+          { name: 'durationWeeks', label: 'Priced over (weeks) — optional', type: 'number', step: '1', required: false,
+            hint: 'Leave blank until the programme is set.' },
           {
             name: 'targetMarginPercent',
-            label: 'Target margin (%)',
+            label: 'Target margin (%) — optional',
             type: 'number',
             step: '0.1',
             required: false,
@@ -3377,10 +3384,12 @@ export async function pipeline(root) {
         ],
         transform: (v) => ({
           invitationId: v.invitationId,
-          // Pounds in the form, minor units on the wire. Asking a bid manager
-          // for pennies is how a value lands two orders of magnitude out.
-          estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100),
-          durationWeeks: Number(v.durationWeeks),
+          // Pounds in the form, minor units on the wire. Omitted when blank, so a
+          // value nobody has yet is absent rather than a misleading zero.
+          ...(v.estimatedValue !== '' && v.estimatedValue !== undefined
+            ? { estimatedValueMinor: Math.round(Number(v.estimatedValue) * 100) }
+            : {}),
+          ...(v.durationWeeks !== '' && v.durationWeeks !== undefined ? { durationWeeks: Number(v.durationWeeks) } : {}),
           ...(v.targetMarginPercent ? { targetMarginPercent: Number(v.targetMarginPercent) } : {}),
         }),
       });
