@@ -30921,3 +30921,38 @@ remains as a named follow-up vertical.
   `activateOperations` refuses with `ACCEPTANCE_CONDITIONS_LAPSED` (naming the
   expired conditions and saying to re-decide) rather than raising maintenance
   obligations off a lapsed acceptance. Covered in `handoveracceptance.test.ts`.
+
+## 2026-11 live-use fix — command forms that posted their path parameter
+
+A real subscriber recording a client's clarification answer hit `"clarificationId
+is not a permitted property"` and could not save. The cause was a whole class of
+defect, not one form. A command form in `frontend/pages/*.js` builds its request
+body from every `fields[]` entry (`frontend/lib/command.js`, `collect` →
+`api.post`), unless a `transform` reshapes it. Several forms carry a `select`
+field whose only job is to name the entity in the URL — `clarificationId`,
+`planId` — and those routes are locked with `additionalProperties: false`,
+listing only the real body fields. With no `transform` to strip the id, the form
+posted it in the body and the route rejected the whole request before anything
+saved. The feature worked in every test, because the tests call the domain
+functions directly and never send the offending body.
+
+A JS-token-aware sweep of all 190 function-path forms found three missing the
+strip (the other 187 already destructure their path param out):
+
+- **`Record the client's answer`** and **`Withdraw a clarification`**
+  (`procurement.js`) — leaked `clarificationId` to
+  `…/tender-clarifications/:id/record-answer` and `…/withdraw`. Both now
+  `transform` it out, exactly as the neighbouring `Issue answer` form already
+  did. This is what blocked the SHDC TQ-01…TQ-06 answers.
+- **`Agree an inspection and test plan`** (`construction.js`) — leaked `planId`
+  to `…/quality/plans/:planId/approve`. Same one-line `transform`.
+
+No backend or schema change: the routes were already correct to refuse an
+unexpected property. The matching regression gap was in `ittreading.test.ts` —
+`"refuses to confirm without the value and the duration"` still asserted the old
+contract, from before value/duration were made optional on the perception
+confirm (the estimator cannot give a contract value before the take-off). It is
+rewritten as `"confirms without a value or a duration, and invents neither"`:
+the reading confirms into a matrix, the terms are still assessed (a
+fitness-for-purpose bar still ends the bid), and `complianceMatrix` reports
+`sizedFrom: 'NONE'` with no invented value or duration.

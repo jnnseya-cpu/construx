@@ -12,6 +12,7 @@ import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { ingestFile, ingestedFiles, ittFromFile } from '../src/evidence/pipeline.ts';
 import { projectRegister } from '../src/evidence/registry.ts';
 import * as perception from '../src/engines/perception.ts';
+import { complianceMatrix } from '../src/domain/itt.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { grantEnvelope } from '../src/agents/mandate.ts';
 import { runAgents, runAgentsForChanges } from '../src/agents/runtime.ts';
@@ -301,19 +302,27 @@ describe('what the invitation does not say about the bidder', () => {
     await store.put(seed.tenantId, ITT_HASH, ITT_FILE, 'application/pdf');
   });
 
-  it('refuses to confirm without the value and the duration', async () => {
+  it('confirms without a value or a duration, and invents neither', async () => {
     // An ITT names its return date and its contract form. It does not name what
-    // this business expects to price the job at, and a model that produced one
-    // would be inventing the number the whole bid turns on.
+    // this business expects to price the job at. The reading does not demand that
+    // number up front — it cannot be known before the take-off — and it does not
+    // invent one. The matrix is filed unsized; the commercial terms are still
+    // read, and their cash figures size themselves later, once the job is priced.
     const draft = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
 
-    await assert.rejects(
-      () => perception.confirm(ctx('qs'), { draftId: draft.draftId, invitationId }),
-      (error: Error & { code?: string }) => {
-        assert.equal(error.code, 'PERCEPTION_TARGET_REQUIRED');
-        return true;
-      },
-    );
+    const confirmed = await perception.confirm(ctx('qs'), { draftId: draft.draftId, invitationId });
+    const result = confirmed.result as { analysisId: string; requirements: number; bars: string[] };
+    assert.ok(result.analysisId, 'the reading was not confirmed into a matrix without a value or duration');
+    assert.equal(result.requirements, 3, 'the requirements the model read did not reach the matrix');
+    // The terms are assessed even unsized — a fitness-for-purpose bar does not
+    // depend on the contract value, and must still end the bid.
+    assert.ok(result.bars.length > 0, 'a fitness-for-purpose obligation was not raised as a bar');
+
+    // No number was invented for what the invitation does not state.
+    const matrix = complianceMatrix(ctx('qs'), result.analysisId);
+    assert.equal(matrix.sizedFrom, 'NONE', 'the matrix reported a size it was never given');
+    assert.equal(matrix.estimatedValueMinor, undefined, 'a contract value the invitation does not state was invented');
+    assert.equal(matrix.durationWeeks, undefined, 'a duration the invitation does not state was invented');
   });
 });
 

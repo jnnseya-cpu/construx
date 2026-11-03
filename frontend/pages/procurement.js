@@ -3529,6 +3529,10 @@ export async function procurement(root) {
         { name: 'reason', label: 'Why it is being withdrawn', type: 'textarea', rows: 2,
           hint: 'e.g. “Answered by Appendix B, Section 3 — strip foundations priced per the SE report.”' },
       ],
+      // `clarificationId` is the path param, not a body field the route accepts
+      // (`additionalProperties: false`, reason only). Strip it so the body is
+      // just the reason.
+      transform: ({ clarificationId, ...rest }) => rest,
       report: (res) => ({ title: `${res.reference} withdrawn`, message: 'It is off the open register, with the reason on the record.', tone: 'ok' }),
     },
     'clarification-answer': {
@@ -3551,6 +3555,14 @@ export async function procurement(root) {
         { name: 'answer', label: 'The client’s answer, in their words', type: 'textarea', rows: 3 },
         { name: 'answeredOn', label: 'Date answered', type: 'date', required: false },
       ],
+      // `clarificationId` names the question in the path, so it is not part of
+      // the body the route accepts (`additionalProperties: false`, answer only).
+      // Strip it here, exactly as `issueClarification` strips its own path param,
+      // and carry the date only when one was entered.
+      transform: ({ clarificationId, answeredOn, ...rest }) => ({
+        ...rest,
+        ...(String(answeredOn ?? '').trim() ? { answeredOn } : {}),
+      }),
       report: (res) => ({ title: `${res.reference} answered`, message: 'The client’s answer is on the record; the question is closed.', tone: 'ok' }),
     },
     'close-tender': {
