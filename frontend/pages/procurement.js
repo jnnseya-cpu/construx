@@ -606,6 +606,28 @@ export async function procurement(root) {
   const adjudication = b.Adjudication.at(-1);
   const subcontract = b.Subcontract.at(-1);
   const estimate = b.Estimate.at(-1);
+  // The commercial inputs of the last estimate, so "Price the bill" opens with
+  // them filled rather than blank — re-pricing after a change should not mean
+  // re-typing the overhead, profit, programme and weekly prelims every time.
+  // Money is stored in minor and the form's money fields take pounds, so these
+  // divide by 100; a missing value falls back to an empty field.
+  const priorModel = estimate?.model ?? {};
+  const priorHead = (list, head, key) => {
+    const found = (list ?? []).find((entry) => entry.head === head);
+    return found && found[key] != null ? found[key] : undefined;
+  };
+  const priorWeekly = (head) => {
+    const minor = priorHead(priorModel.timeRelated, head, 'weeklyRateMinor');
+    return minor == null ? '' : minor / 100;
+  };
+  const priorSum = (head) => {
+    const minor = priorHead(priorModel.quantified, head, 'rateMinor');
+    return minor == null ? '' : minor / 100;
+  };
+  const priorFee = (head) => {
+    const minor = priorHead(priorModel.fees, head, 'lumpSumMinor');
+    return minor == null ? '' : minor / 100;
+  };
   const funding = b.FundingModel.at(-1);
   const maturity = b.DesignMaturityAssessment.at(-1);
   const pack = b.TenderPackage.at(-1);
@@ -2335,6 +2357,7 @@ export async function procurement(root) {
           label: 'Construction period (weeks)',
           type: 'number',
           step: '1',
+          value: priorModel.durationWeeks ?? estimate?.durationWeeks ?? '',
           hint: 'Drives every time-related head. Not in the drawings, and not guessed at here.',
         },
         {
@@ -2342,14 +2365,16 @@ export async function procurement(root) {
           label: 'Overhead (%)',
           type: 'number',
           step: '0.1',
+          value: priorModel.margin?.overheadPercent ?? '',
           hint: 'What this business carries, on the cost beneath it.',
         },
-        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1' },
+        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1', value: priorModel.margin?.profitPercent ?? '' },
         {
           name: 'basisOfEstimate',
           label: 'Basis of the estimate',
           type: 'textarea',
           rows: 2,
+          value: estimate?.basisOfEstimate ?? '',
           hint: 'What it was built from and what it assumes. It travels with the estimate and into the quotation.',
         },
         {
@@ -2358,6 +2383,7 @@ export async function procurement(root) {
           type: 'textarea',
           rows: 3,
           required: false,
+          value: Array.isArray(estimate?.assumptions) ? estimate.assumptions.join('\n') : '',
           hint: 'Each becomes a stated assumption on the estimate rather than something a reader has to infer.',
         },
         // The site-wide heads a small job actually carries. Priced on their own
@@ -2369,6 +2395,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('PRELIMINARIES'),
           hint: 'Set-up, welfare, accommodation, utilities. Multiplied by the period above, so a longer job costs more.',
         },
         {
@@ -2377,6 +2404,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('SITE_MANAGEMENT'),
           hint: 'A visiting or resident manager — the site-staff establishment, by the week. Price it here rather than excluding it.',
         },
         {
@@ -2385,6 +2413,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('HEALTH_AND_SAFETY'),
           hint: 'Safety advice, inductions, PPE, monitoring.',
         },
         {
@@ -2393,6 +2422,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('LOGISTICS'),
           hint: 'Gate, marshalling, hoists, cranage, deliveries — by the week.',
         },
         {
@@ -2401,6 +2431,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorWeekly('QUALITY'),
           hint: 'Inspection, ITP administration, snagging and handover evidence — by the week.',
         },
         {
@@ -2409,6 +2440,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('TEMPORARY_WORKS'),
           hint: 'Design-and-check plus hire — scaffold, props, support. A CDM duty, not a percentage allowance.',
         },
         {
@@ -2417,6 +2449,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('TESTING'),
           hint: 'Materials, structural and systems testing against the ITP.',
         },
         {
@@ -2425,6 +2458,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('COMMISSIONING'),
           hint: 'Systems commissioning, witnessing and demonstration.',
         },
         {
@@ -2433,6 +2467,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorSum('WASTE'),
           hint: 'Skips, muck away and gate fees for the whole job.',
         },
         {
@@ -2441,6 +2476,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorFee('DESIGN'),
           hint: 'The contractor-designed portion, per the design responsibility matrix.',
         },
         {
@@ -2449,6 +2485,7 @@ export async function procurement(root) {
           type: 'number',
           money: true,
           required: false,
+          value: priorFee('PROFESSIONAL_FEES'),
           hint: 'External consultants, surveys, statutory and planning fees.',
         },
         {
@@ -2457,6 +2494,7 @@ export async function procurement(root) {
           type: 'number',
           step: '0.01',
           required: false,
+          value: priorModel.insurance?.policies?.[0]?.percentOfContractValue ?? '',
           hint: 'Contract works and liability premiums, on the value they insure.',
         },
         // The other half of honesty about a head. A head neither priced nor
@@ -2468,6 +2506,7 @@ export async function procurement(root) {
           label: 'Heads not included in this price',
           type: 'multiselect',
           required: false,
+          value: (priorModel.exclusions ?? []).map((exclusion) => exclusion.head),
           options: (costHeads?.heads ?? []).map((head) => ({ value: head.head, label: `${head.label} — ${head.note}` })),
           hint:
             'Each becomes a stated exclusion carried into the quotation. Contingency belongs here unless the risk ' +
@@ -2478,6 +2517,7 @@ export async function procurement(root) {
           label: 'Why those are excluded',
           type: 'text',
           required: false,
+          value: (priorModel.exclusions ?? [])[0]?.reason ?? '',
           placeholder: 'Not included in this offer; by others',
         },
         // One rate field per measured line. The quantities are what came off

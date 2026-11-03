@@ -146,11 +146,22 @@ function control(field) {
     // convenience here; it is the difference between amending an authority and
     // replacing it by accident.
     const chosen = new Set((Array.isArray(field.value) ? field.value : field.value == null ? [] : [field.value]).map(String));
-    return `<select id="${id}" name="${esc(field.name)}" multiple size="${Math.min(10, Math.max(4, (field.options ?? []).length))}" ${required}>
+    // Tick-boxes, not a native `<select multiple>`. A multi-select needs
+    // Ctrl-click to add a second choice and drops the first on a plain click —
+    // a trap nobody outside a keyboard-shortcut habit knows, which had a user
+    // unable to exclude four cost heads at once. A column of checkboxes is one
+    // click each, and the chosen set and the submitted shape are unchanged.
+    return `<div id="${id}" class="cmd-checkset" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
       ${(field.options ?? [])
-        .map((o) => `<option value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' selected' : ''}>${esc(o.label)}</option>`)
+        .map(
+          (o) =>
+            `<label style="display:flex;gap:7px;align-items:flex-start;font-weight:400;cursor:pointer">
+              <input type="checkbox" name="${esc(field.name)}" value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' checked' : ''} style="margin-top:3px;flex:none" />
+              <span>${esc(o.label)}</span>
+            </label>`,
+        )
         .join('')}
-    </select>`;
+    </div>`;
   }
 
   if (field.type === 'checkbox') {
@@ -334,7 +345,11 @@ async function collect(host, fields, files = [], say) {
     if (!el) continue;
 
     if (field.type === 'multiselect') {
-      const chosen = [...el.selectedOptions].map((option) => option.value);
+      // Rendered as a column of checkboxes sharing the field name, so the chosen
+      // set is every ticked box rather than a `<select>`'s selectedOptions.
+      const chosen = [...host.querySelectorAll(`input[type="checkbox"][name="${CSS.escape(field.name)}"]`)]
+        .filter((box) => box.checked)
+        .map((box) => box.value);
       // An empty required multiselect is a refusal, not an empty array: the
       // endpoint would reject it anyway, and refusing here names the field.
       if (chosen.length === 0) {
