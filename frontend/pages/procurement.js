@@ -651,6 +651,12 @@ export async function procurement(root) {
   // one, named below". A builder does not type this as a package name; and were it
   // ever chosen as a real name, the backend would snap it to any match anyway.
   const NEW_PACKAGE = '__CONSTRUX_NEW_PACKAGE__';
+  // Lines measured at zero quantity — placeholders that price at nothing and that
+  // the estimate already flags as a defect. Clearing them is one click rather than
+  // ticking them out of a list of fifty, because they are an exact, machine-known
+  // set: every live line whose quantity is zero.
+  const emptyLines = (boq?.items ?? []).filter((item) => Number(item.quantity) === 0);
+  const emptyLineIds = emptyLines.map((item) => item.boqItemId);
 
   // Stage six: both routes converge and the sum that goes out is assembled.
   // The arithmetic is trivial; what matters is scope priced by nobody, which is
@@ -1675,6 +1681,22 @@ export async function procurement(root) {
                             : 'There is only one package, so there is nothing to move between.',
                       },
                       /*
+                       * The common case made one click. A line measured at zero
+                       * prices at nothing and the estimate flags it; the set is
+                       * exact, so clearing all of them is one decision rather than
+                       * ticking each out of a long list. Offered only when there
+                       * is at least one such line.
+                       */
+                      {
+                        id: 'clear-empty-lines',
+                        label: `Clear the lines priced at nothing${emptyLines.length ? ` (${emptyLines.length})` : ''}`,
+                        permitted: can('BOQ_TAKEOFF', 'U') && emptyLines.length > 0,
+                        reason:
+                          emptyLines.length === 0
+                            ? 'No line is measured at zero, so there is nothing priced at nothing to clear.'
+                            : blockedReason('BOQ_TAKEOFF', 'U'),
+                      },
+                      /*
                        * Retiring a package is too blunt once a job is one
                        * package: a few stale lines — an empty placeholder left
                        * when the real line was measured under another code, a
@@ -1996,6 +2018,32 @@ export async function procurement(root) {
           hint: 'Somebody reading the bill in a year needs to know whether two readings of one job were merged or a line was re-scoped — the two lead to different questions.',
         },
       ],
+    },
+    'clear-empty-lines': {
+      title: 'Clear the lines priced at nothing',
+      intent:
+        emptyLines.length > 0
+          ? `Retires the ${emptyLines.length} line${emptyLines.length === 1 ? '' : 's'} measured at zero quantity, which ` +
+            `price at nothing and which the estimate flags as a defect: ${emptyLines
+              .map((item) => item.costCode)
+              .join(', ')}. They stay on the record with a reason against them; nothing else on the bill is touched. ` +
+            'Clear them before pricing so the quotation does not carry an empty line.'
+          : 'No line is measured at zero quantity. There is nothing priced at nothing to clear.',
+      path: `/v1/projects/${projectId}/tender/boq/retire-items`,
+      submitLabel: `Clear ${emptyLines.length} line${emptyLines.length === 1 ? '' : 's'}`,
+      fields: [
+        {
+          name: 'reason',
+          label: 'Why they no longer stand',
+          type: 'textarea',
+          rows: 2,
+          value: 'Placeholder lines measured at zero quantity — the real scope is measured on other lines of the bill.',
+          hint: 'Recorded against each retired line. Edit it if these zeros were something other than placeholders.',
+        },
+      ],
+      // The lines are the exact zero-quantity set, computed here rather than ticked
+      // out of a list — the same retire-items endpoint, a determined selection.
+      transform: (v) => ({ boqItemIds: emptyLineIds, reason: v.reason }),
     },
     'retire-items': {
       title: 'Retire specific lines',

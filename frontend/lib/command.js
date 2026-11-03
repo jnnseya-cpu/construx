@@ -151,13 +151,21 @@ function control(field) {
     // a trap nobody outside a keyboard-shortcut habit knows, which had a user
     // unable to exclude four cost heads at once. A column of checkboxes is one
     // click each, and the chosen set and the submitted shape are unchanged.
-    return `<div id="${id}" class="cmd-checkset" style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
+    // Each row's <label> and its <span> carry explicit type and colour, because
+    // the form's `.field label` rule (tiny, uppercase, dim, letter-spaced — right
+    // for a field *caption*) otherwise cascades onto these option labels and
+    // renders the whole list as a near-invisible void of faint checkboxes. The
+    // row label is readable body text, in the normal case, at full contrast.
+    const rowLabel =
+      'display:flex;gap:8px;align-items:flex-start;cursor:pointer;' +
+      'font-size:13px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--text);margin-bottom:0';
+    return `<div id="${id}" class="cmd-checkset" style="display:flex;flex-direction:column;gap:7px;max-height:260px;overflow:auto;padding:4px 2px">
       ${(field.options ?? [])
         .map(
           (o) =>
-            `<label style="display:flex;gap:7px;align-items:flex-start;font-weight:400;cursor:pointer">
-              <input type="checkbox" name="${esc(field.name)}" value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' checked' : ''} style="margin-top:3px;flex:none" />
-              <span>${esc(o.label)}</span>
+            `<label style="${rowLabel}">
+              <input type="checkbox" name="${esc(field.name)}" value="${esc(o.value)}"${chosen.has(String(o.value)) ? ' checked' : ''} style="margin-top:2px;flex:none;width:16px;height:16px" />
+              <span style="font-size:13px;letter-spacing:0;text-transform:none;color:var(--text)">${esc(o.label)}</span>
             </label>`,
         )
         .join('')}

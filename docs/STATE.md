@@ -31108,3 +31108,21 @@ quantity) so the stale ones are ticked off. Refuses an empty selection
 where nothing still stands (`NOTHING_TO_SUPERSEDE`). Covered in
 `estimating.test.ts`: two zero-quantity placeholders retired out of a three-line
 package leave the one real line standing, and retiring them again finds nothing.
+
+### Multiselect labels were invisible, and a one-click clear for zero-quantity lines
+
+Two fixes to the retire-lines flow found in real use:
+
+- **Multiselect labels rendered as a near-invisible void.** A checkbox list's row
+  `<label>`/`<span>` inherited the form's `.field label` rule (9.5px, uppercase,
+  letter-spaced, dim `--text-3`) — right for a field *caption*, wrong for an option
+  label — so a 49-line checklist read as an empty box with faint boxes in it. The
+  multiselect rows now carry explicit body type and full-contrast colour
+  (`command.js`), so every checklist (the cost-head exclusions as well) is legible.
+- **Clearing the £0 lines is now one click.** Ticking six placeholders out of a
+  fifty-line checklist is the wrong tool for an exact, machine-known set. "Clear the
+  lines priced at nothing (N)" on the bill retires every live line measured at zero
+  quantity in one action, with a pre-filled reason and the affected cost codes named
+  in the panel; it reuses the `retire-items` endpoint with the zero-quantity set
+  computed in the browser. The general "Retire specific lines" checklist stays for
+  the non-zero cases.
