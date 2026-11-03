@@ -293,6 +293,28 @@ export type MatrixLine = {
 };
 
 /**
+ * The status of one requirement against the company's current facts.
+ *
+ * Shared by `analyseITT` (which stores it on the day) and `complianceMatrix`
+ * (which re-derives it on every read), so the two rules cannot drift — and, the
+ * reason this exists, so a line reflects evidence recorded *after* the analysis.
+ * The stored status is the state on the day the ITT was read; the read status is
+ * the state now. Recording an insurance or an accreditation therefore clears its
+ * gap the moment it is saved, instead of staying a gap until somebody re-reads
+ * the whole invitation. Reported on SHDC 000189: four insurances recorded, every
+ * insurance line still "Gap — nothing on file", because the matrix was showing
+ * the status frozen at the 30 Oct analysis.
+ */
+function statusAgainstProfile(
+  profile: CompanyProfile,
+  req: { requirement: string; evidenceRequired: string },
+): { status: MatrixStatus; evidenceHeld?: string } {
+  const probe = PROBES.find((p) => p.match.test(req.requirement) || p.match.test(req.evidenceRequired));
+  const held = probe?.find(profile, req as ITTRequirement) ?? null;
+  return held ? { status: 'SATISFIED', evidenceHeld: held } : { status: probe ? 'GAP' : 'UNKNOWN' };
+}
+
+/**
  * Who owns each kind of requirement.
  *
  * A matrix without an owner is a list, and a list is what gets to the day
@@ -454,8 +476,9 @@ export function analyseITT(
 
   // --- The matrix -----------------------------------------------------------
   const matrix: MatrixLine[] = input.requirements.map((requirement) => {
-    const probe = PROBES.find((p) => p.match.test(requirement.requirement) || p.match.test(requirement.evidenceRequired));
-    const held = probe?.find(profile, requirement) ?? null;
+    // A requirement the platform cannot probe is UNKNOWN, not a gap. Marking it
+    // a gap would bury the real gaps under everything nobody automated.
+    const probed = statusAgainstProfile(profile, requirement);
 
     return {
       reference: requirement.reference,
@@ -465,10 +488,8 @@ export function analyseITT(
       weightingPercent: requirement.weightingPercent,
       owner: OWNER_BY_CATEGORY[requirement.category],
       evidenceRequired: requirement.evidenceRequired,
-      evidenceHeld: held ?? undefined,
-      // A requirement the platform cannot probe is UNKNOWN, not a gap. Marking
-      // it a gap would bury the real gaps under everything nobody automated.
-      status: held ? 'SATISFIED' : probe ? 'GAP' : 'UNKNOWN',
+      evidenceHeld: probed.evidenceHeld,
+      status: probed.status,
       dueBy: requirement.dueBy,
       responseLimit: requirement.responseLimit,
     };
@@ -838,7 +859,34 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
   if (!record || record.tenantId !== ctx.tenantId) {
     throw new DomainError('ITT_ANALYSIS_NOT_FOUND', `No compliance matrix ${analysisId}`, 404);
   }
-  return readAnalysis(record);
+  const stored = readAnalysis(record);
+
+  // The status column is re-derived against the company's CURRENT facts, not
+  // read back frozen. The requirements, weightings and exposures are the
+  // analysis as of the day it was run; whether a requirement is satisfied is a
+  // fact about what the company holds *now*, and it changes as insurances,
+  // accreditations and references are recorded. Re-deriving on read is what makes
+  // "record your insurances" clear the insurance gaps immediately, rather than
+  // leaving them a gap until the invitation is read again. The same shared rule
+  // `analyseITT` used, so the day's status and today's status are computed the
+  // same way.
+  const profile = companyProfile(ctx);
+  const matrix = stored.matrix.map((line) => {
+    const probed = statusAgainstProfile(profile, line);
+    // Only set evidenceHeld when the probe now finds something — never write an
+    // explicit `undefined`, so a line the probe does not answer keeps exactly the
+    // shape the record stored (the JSON has no such key), and a read with an
+    // unchanged profile is byte-for-byte what was written.
+    const next: MatrixLine = { ...line, status: probed.status };
+    if (probed.evidenceHeld !== undefined) next.evidenceHeld = probed.evidenceHeld;
+    return next;
+  });
+
+  return {
+    ...stored,
+    matrix,
+    mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
+  };
 }
 
 /**

@@ -8,6 +8,7 @@ import * as evidence from '../src/domain/evidenceclaim.ts';
 import * as tenderintel from '../src/domain/tenderintel.ts';
 import * as costintel from '../src/domain/costintel.ts';
 import * as structure from '../src/domain/structure.ts';
+import * as radar from '../src/domain/radar.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -919,5 +920,45 @@ describe('A compliance matrix stays readable after the session that produced it'
       () => itt.complianceMatrix(platform.context(seed.users.regulator!.auth, seed.projectId, { source: 'WEB' }), full().analysisId),
       'ACCESS_DENIED',
     );
+  });
+});
+
+// Placed last: it changes the tenant's company profile, and keeping it at the
+// end means nothing after it reads the profile. It restores the profile anyway.
+describe('A matrix reflects evidence recorded after the analysis', () => {
+  it('clears an insurance gap once the insurance is recorded, without re-reading the ITT', () => {
+    // The field failure: four insurances recorded, every insurance line still
+    // "Gap — nothing on file", because the matrix showed the status frozen at the
+    // day it was analysed. Status is a fact about what the company holds now, so
+    // it is re-derived on read.
+    const before = radar.companyProfile(qs());
+
+    // Analysed while the company holds no insurance: the line is a gap.
+    radar.setCompanyProfile(qs(), { ...before, insurances: [] });
+    const written = analyse({
+      reference: 'ITT-LIVE-STATUS-01',
+      requirements: [
+        requirement({
+          reference: 'INS-EL',
+          category: 'INSURANCE',
+          requirement: 'Employers Liability £10 million',
+          evidenceRequired: 'Certificate of employers liability insurance',
+        }),
+      ],
+    });
+    const gap = itt.complianceMatrix(qs(), written.analysisId).matrix.find((l) => l.reference === 'INS-EL')!;
+    assert.equal(gap.status, 'GAP', 'with no insurance recorded, the line is a gap');
+
+    // Record the insurance. The SAME analysis, read again, now shows it satisfied
+    // — no re-analysis, no second ITT read.
+    radar.setCompanyProfile(qs(), {
+      ...before,
+      insurances: [{ type: 'Employers Liability', limitMinor: 1_000_000_000, expiresOn: '2027-03-31' }],
+    });
+    const cleared = itt.complianceMatrix(qs(), written.analysisId).matrix.find((l) => l.reference === 'INS-EL')!;
+    assert.equal(cleared.status, 'SATISFIED', 'recording the insurance clears the gap on the next read');
+    assert.ok(cleared.evidenceHeld, 'and the line now names what covers it');
+
+    radar.setCompanyProfile(qs(), before);
   });
 });
