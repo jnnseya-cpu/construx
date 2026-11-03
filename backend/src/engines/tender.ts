@@ -159,6 +159,72 @@ export function supersedeMeasure(
 }
 
 /**
+ * Retire named measured lines, rather than a whole package.
+ *
+ * `supersedeMeasure` retires everything in a package, which is right when a
+ * drawing is reissued and the package is measured again. It is too blunt for the
+ * other case: a bill where a few lines are stale — an empty placeholder left
+ * behind when the real line was measured under a different code, or a line
+ * entered twice — and the rest of the package is exactly the measure. Once a job
+ * is consolidated into one package, retiring the package to clear six bad lines
+ * would take the forty good ones with it.
+ *
+ * Same event and same rule as the package-level retirement: the items stay on
+ * the chain, marked no longer the measure, with a reason and a name against them.
+ * Nothing is deleted.
+ */
+export function supersedeItems(
+  ctx: EngineContext,
+  input: { boqItemIds: string[]; reason: string },
+): { superseded: string[] } {
+  authorise(ctx, 'BOQ_TAKEOFF', 'U');
+
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new DomainError(
+      'SUPERSEDE_REASON_REQUIRED',
+      'Say why these lines no longer stand. Somebody reading the bill in a year needs to know whether they were ' +
+        'duplicates, placeholders or re-scoped — the three lead to different questions.',
+      422,
+    );
+  }
+
+  const wanted = new Set(input.boqItemIds);
+  if (wanted.size === 0) {
+    throw new DomainError('NO_ITEMS_SELECTED', 'Pick at least one line to retire.', 422);
+  }
+
+  const live = ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .filter((record) => wanted.has(record.refId) && String(record.state.status ?? 'LIVE') !== 'SUPERSEDED');
+
+  if (live.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_SUPERSEDE',
+      'None of those lines still stands. Nothing to retire.',
+      409,
+    );
+  }
+
+  const supersededAt = new Date().toISOString();
+  for (const record of live) {
+    write(ctx, {
+      eventType: 'BOQITEM_SUPERSEDED',
+      entity: { refType: 'BoQItem', refId: record.refId },
+      nextState: {
+        ...record.state,
+        status: 'SUPERSEDED',
+        supersededAt,
+        supersededBy: ctx.auth.actorId,
+        supersededReason: reason,
+      },
+    });
+  }
+
+  return { superseded: live.map((record) => record.refId) };
+}
+
+/**
  * Move every live measured line from one package into another.
  *
  * The package an item is filed under is a free-typed name, and two readings of

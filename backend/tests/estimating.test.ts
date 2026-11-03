@@ -1005,4 +1005,50 @@ describe('One job, one package — a same-looking name never splits the bill', (
       'SAME_PACKAGE',
     );
   });
+
+  it('retires named lines without taking the rest of the package with them', async () => {
+    const ctx = qsCtx();
+    const pkg = `Consolidated job ${ulid()}`;
+    // One package holding the real measure and two stale placeholder lines — the
+    // state a bill is in after a job is consolidated but the empty placeholders
+    // from an earlier attempt are still on it.
+    await tender.runTakeoff(ctx, {
+      packageId: pkg,
+      costCodePrefix: 'E20',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-1' }],
+      items: [
+        { description: 'Blockwork skin', unit: 'm2', quantity: 44 },
+        { description: 'Foundation concrete placeholder', unit: 'm3', quantity: 0 },
+        { description: 'Drainage placeholder', unit: 'm', quantity: 0 },
+      ],
+      measuredBy: 'PERSON',
+    });
+    assert.equal(liveIn(ctx, pkg).length, 3);
+
+    // The two zero-quantity placeholders are E20.002 and E20.003.
+    const stale = liveIn(ctx, pkg)
+      .filter((r) => Number(r.state.quantity) === 0)
+      .map((r) => r.refId);
+    assert.equal(stale.length, 2);
+
+    throwsCode(() => tender.supersedeItems(ctx, { boqItemIds: stale, reason: 'no' }), 'SUPERSEDE_REASON_REQUIRED');
+    throwsCode(() => tender.supersedeItems(ctx, { boqItemIds: [], reason: 'Nothing picked here.' }), 'NO_ITEMS_SELECTED');
+
+    const retired = tender.supersedeItems(ctx, {
+      boqItemIds: stale,
+      reason: 'Empty placeholders from an earlier attempt; the real lines were measured under SUB codes.',
+    });
+    assert.equal(retired.superseded.length, 2);
+
+    // The real line stands; the placeholders do not.
+    const remaining = liveIn(ctx, pkg);
+    assert.equal(remaining.length, 1, 'retiring two lines took more or fewer than two');
+    assert.equal(String(remaining[0]!.state.description), 'Blockwork skin');
+
+    // Retiring the same lines again finds nothing standing.
+    throwsCode(
+      () => tender.supersedeItems(ctx, { boqItemIds: stale, reason: 'Trying to retire what is already retired.' }),
+      'NOTHING_TO_SUPERSEDE',
+    );
+  });
 });

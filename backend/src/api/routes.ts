@@ -13191,6 +13191,25 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/boq/retire-items',
+    description:
+      'Retire named measured lines rather than a whole package: for a bill where a few lines are stale — an empty ' +
+      'placeholder, a duplicate — and the rest of the package is the measure. The items stay on the record with a ' +
+      'reason against them, same as retiring a package. Nothing is deleted',
+    schema: {
+      type: 'object',
+      required: ['boqItemIds', 'reason'],
+      properties: {
+        boqItemIds: { type: 'array', items: stringField, minItems: 1 },
+        reason: { type: 'string', minLength: 5, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.supersedeItems(projectContext(platform, ctx), body<{ boqItemIds: string[]; reason: string }>(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/boq/move',
     description:
       'Move a package’s measured lines into another package. Two readings of one job can be filed under names that read ' +

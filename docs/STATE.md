@@ -31091,3 +31091,20 @@ and `typecheck` stay green.
 What is not changed: an estimate still prices one package, which is correct — one
 job is one package. The fix makes one job *stay* one package, and gives a way back
 when an older bill did not.
+
+### Per-line retirement — clearing a few stale lines without nuking the package
+
+Once a job is consolidated into one package, "Retire a package's measure" became
+too blunt: a bill holding the real measure plus a few stale lines — an empty
+placeholder left when the real line was measured under another cost code, or a
+line entered twice — could not be cleared line by line, because retiring the
+package would take the good lines with it. `supersedeItems` (`tender.ts`) retires
+named lines by `boqItemId` using the same `BOQITEM_SUPERSEDED` event and the same
+append-only rule; everything not named is left standing. Route
+`POST …/tender/boq/retire-items` (`boqItemIds[]` + reason); on the bill, "Retire
+specific lines" opens a checklist of the live lines (code · description ·
+quantity) so the stale ones are ticked off. Refuses an empty selection
+(`NO_ITEMS_SELECTED`), a missing reason (`SUPERSEDE_REASON_REQUIRED`) and a set
+where nothing still stands (`NOTHING_TO_SUPERSEDE`). Covered in
+`estimating.test.ts`: two zero-quantity placeholders retired out of a three-line
+package leave the one real line standing, and retiring them again finds nothing.

@@ -1674,6 +1674,23 @@ export async function procurement(root) {
                             ? blockedReason('BOQ_TAKEOFF', 'U')
                             : 'There is only one package, so there is nothing to move between.',
                       },
+                      /*
+                       * Retiring a package is too blunt once a job is one
+                       * package: a few stale lines — an empty placeholder left
+                       * when the real line was measured under another code, a
+                       * line entered twice — cannot be cleared without taking the
+                       * whole measure with them. This retires the named lines and
+                       * leaves the rest standing.
+                       */
+                      {
+                        id: 'retire-items',
+                        label: 'Retire specific lines',
+                        permitted: can('BOQ_TAKEOFF', 'U') && (boq?.items ?? []).length > 0,
+                        reason:
+                          (boq?.items ?? []).length === 0
+                            ? 'Nothing is measured, so there is no line to retire.'
+                            : blockedReason('BOQ_TAKEOFF', 'U'),
+                      },
                     ]),
                   )}
                 </div>
@@ -1977,6 +1994,35 @@ export async function procurement(root) {
           type: 'textarea',
           rows: 2,
           hint: 'Somebody reading the bill in a year needs to know whether two readings of one job were merged or a line was re-scoped — the two lead to different questions.',
+        },
+      ],
+    },
+    'retire-items': {
+      title: 'Retire specific lines',
+      intent:
+        'For a bill where a few lines are stale — an empty placeholder left behind when the real line was measured ' +
+        'under another code, or a line entered twice — and the rest of the package is the measure. The chosen lines ' +
+        'stop being the current measure and stay on the record with a reason against them; nothing is deleted, and ' +
+        'everything you do not tick is left exactly as it stands.',
+      path: `/v1/projects/${projectId}/tender/boq/retire-items`,
+      submitLabel: 'Retire these lines',
+      fields: [
+        {
+          name: 'boqItemIds',
+          label: 'Lines to retire',
+          type: 'multiselect',
+          options: (boq?.items ?? []).map((item) => ({
+            value: item.boqItemId,
+            label: `${item.costCode} · ${item.description} (${item.quantity} ${item.unit})`,
+          })),
+          hint: 'Tick each line that no longer stands. A placeholder priced at nothing, or a duplicate of a line measured elsewhere, is the usual case.',
+        },
+        {
+          name: 'reason',
+          label: 'Why they no longer stand',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Somebody reading the bill in a year needs to know whether they were duplicates, placeholders or re-scoped — the three lead to different questions.',
         },
       ],
     },
