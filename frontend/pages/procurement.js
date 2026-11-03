@@ -632,6 +632,26 @@ export async function procurement(root) {
   const maturity = b.DesignMaturityAssessment.at(-1);
   const pack = b.TenderPackage.at(-1);
 
+  // Two packages can read identically on screen and differ only by a character
+  // nobody can see — a dash variant, a stray space — so a dropdown of their
+  // names alone cannot be chosen between. Annotating each with the number of
+  // live lines it holds makes "…South · 43 items" and "…South · 6 items"
+  // tellable apart, which is the whole point of offering a move between them.
+  const packLineCount = {};
+  (boq?.items ?? []).forEach((item) => {
+    const id = String(item.packageId ?? '');
+    if (id) packLineCount[id] = (packLineCount[id] ?? 0) + 1;
+  });
+  const packLabel = (id) => {
+    const n = packLineCount[id] ?? 0;
+    return `${id} · ${n} item${n === 1 ? '' : 's'}`;
+  };
+  const packageOptions = () => (boq?.packages ?? []).map((id) => ({ value: id, label: packLabel(id) }));
+  // The sentinel the "Work package" select uses to mean "not one of these — a new
+  // one, named below". A builder does not type this as a package name; and were it
+  // ever chosen as a real name, the backend would snap it to any match anyway.
+  const NEW_PACKAGE = '__CONSTRUX_NEW_PACKAGE__';
+
   // Stage six: both routes converge and the sum that goes out is assembled.
   // The arithmetic is trivial; what matters is scope priced by nobody, which is
   // invisible in a spreadsheet that sums what is there.
@@ -1635,6 +1655,25 @@ export async function procurement(root) {
                             ? 'Nothing is measured, so there is nothing to retire.'
                             : blockedReason('BOQ_TAKEOFF', 'U'),
                       },
+                      /*
+                       * The bill splitting into two packages for one job is the
+                       * other way a measure goes wrong: a name keyed by hand that
+                       * reads the same as one a model confirmed, differing by a
+                       * dash or a space nobody can see. An estimate prices one
+                       * package at a time, so a line in the second is dropped
+                       * from the price silently. This re-files those lines under
+                       * the package they belong to. It is only offered when there
+                       * is more than one package to move between.
+                       */
+                      {
+                        id: 'move-measure',
+                        label: 'Move a measure to another package',
+                        permitted: can('BOQ_TAKEOFF', 'U') && (boq?.packages ?? []).length > 1,
+                        reason:
+                          (boq?.packages ?? []).length > 1
+                            ? blockedReason('BOQ_TAKEOFF', 'U')
+                            : 'There is only one package, so there is nothing to move between.',
+                      },
                     ]),
                   )}
                 </div>
@@ -1896,8 +1935,8 @@ export async function procurement(root) {
           name: 'packageId',
           label: 'Package',
           type: 'select',
-          options: (boq?.packages ?? []).map((name) => ({ value: name, label: name })),
-          hint: 'Every item still standing against this package is retired together — a half-retired measure is not a measure.',
+          options: packageOptions(),
+          hint: 'Every item still standing against this package is retired together — a half-retired measure is not a measure. The item count tells two same-named packages apart.',
         },
         {
           name: 'reason',
@@ -1905,6 +1944,39 @@ export async function procurement(root) {
           type: 'textarea',
           rows: 2,
           hint: 'Somebody reading the bill in a year needs to know whether the drawing changed or the run was repeated — the two lead to different questions.',
+        },
+      ],
+    },
+    'move-measure': {
+      title: 'Move a measure to another package',
+      intent:
+        'Two readings of one job can end up filed under names that read the same but differ by a dash or a space nobody ' +
+        'can see, so the bill holds two packages for one job — and because an estimate prices one package at a time, the ' +
+        'lines in the second are left out of the price with nothing to show them missing. This re-files them under the ' +
+        'package they belong to, keeping their quantities and cost codes. Nothing is created and nothing is deleted.',
+      path: `/v1/projects/${projectId}/tender/boq/move`,
+      submitLabel: 'Move these lines',
+      fields: [
+        {
+          name: 'fromPackageId',
+          label: 'Move from',
+          type: 'select',
+          options: packageOptions(),
+          hint: 'The package to empty. Every line still standing against it moves together. Use the item count to pick the stray one.',
+        },
+        {
+          name: 'toPackageId',
+          label: 'Move into',
+          type: 'select',
+          options: packageOptions(),
+          hint: 'The package they belong to — usually the one holding the rest of the job.',
+        },
+        {
+          name: 'reason',
+          label: 'Why they are moving',
+          type: 'textarea',
+          rows: 2,
+          hint: 'Somebody reading the bill in a year needs to know whether two readings of one job were merged or a line was re-scoped — the two lead to different questions.',
         },
       ],
     },
@@ -2252,12 +2324,35 @@ export async function procurement(root) {
       path: `/v1/projects/${projectId}/tender/takeoff/measured`,
       submitLabel: 'Record the measurement',
       fields: [
+        // When packages already exist, this is a real dropdown of them — not a
+        // free-typed box. A typed box let the browser's own autofill offer a name
+        // the person had keyed once with a stray space or a different dash, and
+        // the bill split into two packages for one job that an estimate then
+        // priced one at a time. Picking an existing package reuses its exact id;
+        // a genuinely new one is opened through the last option and named below.
+        (boq?.packages ?? []).length > 0
+          ? {
+              name: 'packageId',
+              label: 'Work package',
+              type: 'select',
+              options: [
+                ...packageOptions(),
+                { value: NEW_PACKAGE, label: '＋ A new package — name it below' },
+              ],
+              hint: 'Pick the package these quantities belong to; the item count tells two same-named packages apart. Choose the last option only to open a genuinely new package.',
+            }
+          : {
+              name: 'packageId',
+              label: 'Work package',
+              type: 'text',
+              hint: 'Name the package these quantities belong to — this opens the first one. Use the same name when you price them.',
+            },
         {
-          name: 'packageId',
-          label: 'Work package',
+          name: 'newPackageName',
+          label: 'New package name',
           type: 'text',
-          suggestions: boq?.packages ?? [],
-          hint: 'The package these quantities belong to. Use the same name when you price them.',
+          required: false,
+          hint: 'Only if you chose “a new package” above. Otherwise leave this blank.',
         },
         { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on.' },
         { name: 'discipline', label: 'Discipline', type: 'text', placeholder: 'STRUCTURES' },
@@ -2273,7 +2368,9 @@ export async function procurement(root) {
         },
       ],
       transform: (v) => ({
-        packageId: v.packageId,
+        // A new package takes the name typed below; otherwise the chosen package's
+        // exact id is used, so re-measuring into an existing package never forks it.
+        packageId: v.packageId === NEW_PACKAGE ? String(v.newPackageName ?? '').trim() : v.packageId,
         costCodePrefix: v.costCodePrefix,
         sources: [{ discipline: v.discipline, sheetId: v.sheetId }],
         items: String(v.items ?? '')
@@ -2349,8 +2446,8 @@ export async function procurement(root) {
           name: 'packageId',
           label: 'Work package',
           type: 'select',
-          options: (boq?.packages ?? []).map((id) => ({ value: id, label: id })),
-          hint: 'The package whose measured lines are being priced.',
+          options: packageOptions(),
+          hint: 'The package whose measured lines are being priced. The item count tells two same-named packages apart — if the job split into two, move them into one package first.',
         },
         {
           name: 'durationWeeks',

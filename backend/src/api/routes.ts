@@ -13191,6 +13191,30 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/boq/move',
+    description:
+      'Move a package’s measured lines into another package. Two readings of one job can be filed under names that read ' +
+      'identically but differ by a character a human cannot see, splitting the bill into two packages an estimate prices ' +
+      'one at a time. This re-files the lines under the package they belong to, keeping their quantities and cost codes, ' +
+      'with a reason against the move. Nothing is created and nothing is destroyed',
+    schema: {
+      type: 'object',
+      required: ['fromPackageId', 'toPackageId', 'reason'],
+      properties: {
+        fromPackageId: stringField,
+        toPackageId: stringField,
+        reason: { type: 'string', minLength: 5, maxLength: 500 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tender.movePackageMeasure(
+        projectContext(platform, ctx),
+        body<{ fromPackageId: string; toPackageId: string; reason: string }>(ctx),
+      ),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
     description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
     schema: {

@@ -670,6 +670,23 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * on the other side of it, and no agent mandate reaches it.
    */
   def('BOQITEM_SUPERSEDED', 'BoQItem', 'UPDATE', 'PROCUREMENT'),
+  /*
+   * A measured item moved from one package to another.
+   *
+   * It exists because the package an item is filed under is a free-typed name,
+   * and two readings of the same job entered at different times — one off a
+   * drawing confirmed by a model, one keyed by hand — could be filed under names
+   * that read identically but differ by a dash, a stray space or a capital. The
+   * bill then held two packages for one job, and an estimate prices one package
+   * at a time, so a line measured into the second package was silently left out
+   * of the price. This re-files those lines under the package they belong to,
+   * keeping the same items, quantities and cost codes, with a reason and a name
+   * against the move. Nothing is created and nothing is destroyed.
+   *
+   * `aiAllowed: false`: deciding which package a priced line belongs to is a
+   * commercial judgement, and no agent mandate reaches it.
+   */
+  def('BOQITEM_REPACKAGED', 'BoQItem', 'UPDATE', 'PROCUREMENT'),
   // T-WF-03. The schedule opens and takes items under one event, because its
   // whole life is the audit trail of how it was measured.
   def('BOQ_IMPORTED', 'MeasurementSchedule', 'UPDATE', 'PROCUREMENT', { creates: true, aiAllowed: true }),

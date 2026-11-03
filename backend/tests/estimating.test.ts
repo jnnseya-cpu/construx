@@ -897,3 +897,112 @@ describe('a job with weeks on site and nothing priced by the week', () => {
     assert.ok(!priced.warnings.some((warning) => warning.includes('weeks on site')));
   });
 });
+
+// ── One job, one package ─────────────────────────────────────────────────────
+
+/*
+ * The bill holding two packages for one job, because the package is a free-typed
+ * name and two readings entered at different times were filed under names that
+ * read identically but differ by a character a human cannot see. An estimate
+ * prices one package at a time, so a line in the second package is dropped from
+ * the price with nothing to show it is missing. Two guards together: the second
+ * reading snaps to the first package's id rather than forking, and a bill that
+ * already forked can be put back into one package without losing a line.
+ */
+describe('One job, one package — a same-looking name never splits the bill', () => {
+  const liveIn = (ctx: ReturnType<typeof qsCtx>, pkg: string) =>
+    ctx.ledger
+      .list(seed.projectId, 'BoQItem')
+      .filter((r) => String(r.state.packageId) === pkg && String(r.state.status ?? 'LIVE') !== 'SUPERSEDED');
+
+  it('snaps a package name that differs only by dash, space or case to the one already measured', async () => {
+    const ctx = qsCtx();
+    const base = `Single-storey extension & adaptations — ${ulid()}`;
+    const first = await tender.runTakeoff(ctx, {
+      packageId: base,
+      costCodePrefix: 'E20',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-100' }],
+      items: [{ description: 'Blockwork skin', unit: 'm2', quantity: 40 }],
+      measuredBy: 'PERSON',
+    });
+
+    // The same name keyed again: the em dash typed as a hyphen, a trailing space,
+    // a lower-case first letter. Invisible on screen; a different string outright.
+    const variant = `${base.replace('—', '-').replace('Single', 'single')} `;
+    assert.notEqual(variant, base, 'the variant was not actually a different string');
+    const second = await tender.runTakeoff(ctx, {
+      packageId: variant,
+      costCodePrefix: 'SUB',
+      sources: [{ discipline: 'STRUCTURES', sheetId: 'S-101' }],
+      items: [{ description: 'Damp-proof membrane', unit: 'm2', quantity: 22 }],
+      measuredBy: 'PERSON',
+    });
+
+    const ids = new Set([...first.boqItemIds, ...second.boqItemIds]);
+    const packs = new Set(
+      ctx.ledger
+        .list(seed.projectId, 'BoQItem')
+        .filter((r) => ids.has(r.refId))
+        .map((r) => String(r.state.packageId)),
+    );
+    assert.equal(packs.size, 1, `the two readings forked into ${packs.size} packages`);
+    assert.equal([...packs][0], base, 'the second reading did not snap to the first package id');
+    assert.equal(liveIn(ctx, base).length, 2, 'both readings should sit in the one package');
+  });
+
+  it('moves a stray package into the one the job belongs to, keeping every line', async () => {
+    const ctx = qsCtx();
+    const home = `Groundworks home ${ulid()}`;
+    // A genuinely different name, so it does not snap and really does open a
+    // second package — the state this repair exists for.
+    const stray = `Groundworks stray ${ulid()}`;
+    await tender.runTakeoff(ctx, {
+      packageId: home,
+      costCodePrefix: 'D20',
+      sources: [{ discipline: 'CIVILS', sheetId: 'C-1' }],
+      items: [{ description: 'Bulk excavation', unit: 'm3', quantity: 14 }],
+      measuredBy: 'PERSON',
+    });
+    await tender.runTakeoff(ctx, {
+      packageId: stray,
+      costCodePrefix: 'D21',
+      sources: [{ discipline: 'CIVILS', sheetId: 'C-2' }],
+      items: [{ description: 'Below-ground drainage', unit: 'm', quantity: 12 }],
+      measuredBy: 'PERSON',
+    });
+    assert.equal(liveIn(ctx, home).length, 1);
+    assert.equal(liveIn(ctx, stray).length, 1);
+
+    // A move needs a reason, same as a retirement does.
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: stray, toPackageId: home, reason: 'no' }),
+      'MOVE_REASON_REQUIRED',
+    );
+
+    const moved = tender.movePackageMeasure(ctx, {
+      fromPackageId: stray,
+      toPackageId: home,
+      reason: 'Two readings of one groundworks job; merging the stray drainage line into the package.',
+    });
+    assert.equal(moved.moved.length, 1);
+    assert.equal(liveIn(ctx, stray).length, 0, 'the stray package still holds a live line after the move');
+    assert.equal(liveIn(ctx, home).length, 2, 'the moved line did not land in the home package');
+
+    // The line kept its quantity and its cost code — it was re-filed, not redrawn.
+    const drainage = liveIn(ctx, home).find((r) => String(r.state.description) === 'Below-ground drainage')!;
+    assert.ok(drainage, 'the moved line is not in the home package by description');
+    assert.equal(Number(drainage.state.quantity), 12);
+    assert.equal(String(drainage.state.costCode), 'D21.001');
+    assert.equal(String(drainage.state.repackagedFrom), stray);
+
+    // Nothing to move twice, and a package cannot be moved into itself.
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: stray, toPackageId: home, reason: 'Trying again when it is already empty.' }),
+      'NOTHING_TO_MOVE',
+    );
+    throwsCode(
+      () => tender.movePackageMeasure(ctx, { fromPackageId: home, toPackageId: home, reason: 'Into itself makes no sense.' }),
+      'SAME_PACKAGE',
+    );
+  });
+});

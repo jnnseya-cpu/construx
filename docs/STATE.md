@@ -31029,3 +31029,65 @@ What is still the person's call, by design: *which* sections to measure. The sca
 proposes; the governance rule that a human owns the numbers means it does not
 measure the whole bundle on its own. What is not built is automatic
 bundle-splitting at ingest.
+
+## 2026-11 one job, one package — a same-looking name never splits the bill
+
+**The defect.** A work package is a free-typed name, and the bill filed items
+under whatever string was entered. Two readings of one job entered at different
+times — one confirmed off a model, one keyed by hand — were filed under names
+that read identically on screen but differed by a character a human cannot see: a
+hyphen typed for an em dash, a trailing or non-breaking space, a different
+capital. The bill then held *two* packages for one job, and because an estimate
+prices one package at a time (`item.packageId === v.packageId`), every line in the
+second package was left out of the price with nothing to show it missing — a
+£62.4k estimate that silently omitted six measured lines, and a "Work package"
+dropdown showing the same name twice with no way to tell them apart.
+
+**The mechanism, found in the field.** The "Enter measured quantities" package
+field was a text input with a `<datalist>` of existing packages. The browser's own
+autofill ("Saved data") rendered *over* that datalist and offered the forked
+variants the person had typed before, so the platform's real list never appeared
+("there is nothing in the drop list") and the person picked a near-identical
+browser-remembered string. Autofill was the fork's actual engine.
+
+Fixed at three levels, so it is solved and cannot recur:
+
+1. **Prevented at entry (UI).** When any package exists, "Enter measured
+   quantities" offers a real `<select>` of the live packages — each labelled with
+   its live item count, so two same-named packages read as "… · 43 items" and
+   "… · 6 items" — plus one "＋ A new package — name it below" option and a
+   companion name field. A `<select>` cannot be populated by autofill. Browser
+   autofill is also switched off on every command input, select and textarea
+   (`autocomplete="off"` in `command.js`), so "Saved data" never again sits over a
+   platform list. The first package on an empty bill is still a plain text field.
+
+2. **Prevented at the source (engine).** `resolvePackageId` (`tender.ts`) snaps a
+   requested package name to an existing live package when it matches after
+   normalising the differences a human cannot see (`normaliseKey`: dash variants
+   → hyphen, any whitespace run incl. NBSP → one space, trimmed, lower-cased).
+   `runTakeoff` resolves `input.packageId` through it before writing, so *every*
+   entry path — the manual form and the model-confirm path alike — reuses the
+   exact existing id rather than forking. A genuinely new name still opens a new
+   package.
+
+3. **Repaired where it already forked.** `movePackageMeasure` (`tender.ts`) re-files
+   every live line of one package under another, keeping quantities and cost
+   codes, with a reason against the move — a new `BOQITEM_REPACKAGED` event
+   (`UPDATE`, `aiAllowed: false`: which package a priced line belongs to is a
+   commercial judgement). Route `POST …/tender/boq/move`; on the bill it is "Move
+   a measure to another package", offered only when more than one package exists,
+   with count-annotated source/destination dropdowns. Nothing is created or
+   deleted — the same append-only rule as retiring a measure. Refuses an empty
+   source (`NOTHING_TO_MOVE`), a move into itself (`SAME_PACKAGE`) and a missing
+   reason (`MOVE_REASON_REQUIRED`).
+
+Covered in `estimating.test.ts` ("One job, one package"): a second reading whose
+name differs only by dash, space and case snaps to the first package rather than
+forking; a genuinely-different stray package is moved into the home package with
+its line's quantity and cost code intact, and moving twice, or into itself, or
+without a reason, is refused. `pricingline.test.ts` (the BoQ routes end to end)
+and `typecheck` stay green.
+
+What is not changed: an estimate still prices one package, which is correct — one
+job is one package. The fix makes one job *stay* one package, and gives a way back
+when an older bill did not.

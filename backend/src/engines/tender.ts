@@ -47,6 +47,44 @@ export type TakeoffItem = {
   measurementRule?: string;
 };
 
+/*
+ * A package is filed under a free-typed name, so two readings of the same job
+ * entered at different times can end up under names that read identically but
+ * differ by a dash variant, a stray or non-breaking space, or a capital. The
+ * bill then holds two packages for one job and an estimate, which prices one
+ * package at a time, silently drops half the lines. `normaliseKey` collapses the
+ * differences that are invisible to a human reading the name.
+ */
+function normaliseKey(value: string): string {
+  return value
+    // Every dash variant — hyphen, figure dash, en, em, horizontal bar, minus —
+    // reads as the same stroke on screen.
+    .replace(/[-‒–—―−]/g, '-')
+    // Any run of whitespace, including the non-breaking space, is one space.
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The exact package id an input should be filed under.
+ *
+ * If the name given matches a package that already holds a live measured line —
+ * after normalising the differences a human cannot see — the existing id is
+ * returned so the two never fork into separate packages. Otherwise the trimmed
+ * name is taken as given, which is how a genuinely new package is opened.
+ */
+export function resolvePackageId(ctx: EngineContext, requested: string): string {
+  const want = normaliseKey(requested);
+  if (!want) return requested.trim();
+  for (const record of ctx.ledger.list(ctx.projectId, 'BoQItem')) {
+    if (String(record.state.status ?? 'LIVE') === 'SUPERSEDED') continue;
+    const existing = String(record.state.packageId ?? '');
+    if (existing && normaliseKey(existing) === want) return existing;
+  }
+  return requested.trim();
+}
+
 /**
  * Retire a package's measure, because it is no longer what the job is.
  *
@@ -121,6 +159,87 @@ export function supersedeMeasure(
 }
 
 /**
+ * Move every live measured line from one package into another.
+ *
+ * The package an item is filed under is a free-typed name, and two readings of
+ * the same job — one confirmed off a model, one keyed by hand — can be filed
+ * under names that read identically but differ by a character a human cannot
+ * see. The bill then holds two packages for one job, and because an estimate
+ * prices one package at a time, a line in the second package is left out of the
+ * price with nothing to show it is missing.
+ *
+ * `resolvePackageId` stops this happening going forward; this repairs a bill
+ * where it already has. The items keep their quantities and cost codes and are
+ * re-filed under the destination package, with a reason and a name against the
+ * move. Nothing is created and nothing is destroyed — the same append-only rule
+ * as every other act on the bill.
+ */
+export function movePackageMeasure(
+  ctx: EngineContext,
+  input: { fromPackageId: string; toPackageId: string; reason: string },
+): { moved: string[]; fromPackageId: string; toPackageId: string } {
+  // Re-filing what the bill already holds. Not `C` — no new measure is created —
+  // and not `D`, because nothing is destroyed.
+  authorise(ctx, 'BOQ_TAKEOFF', 'U');
+
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw new DomainError(
+      'MOVE_REASON_REQUIRED',
+      'Say why these lines are moving package. Somebody reading the bill in a year needs to know whether two readings ' +
+        'of one job were merged or a line was genuinely re-scoped — the two lead to different questions.',
+      422,
+    );
+  }
+
+  // Snap the destination to the exact id it already uses, so moving into a
+  // package does not itself open a third one by a hair's-width difference.
+  const to = resolvePackageId(ctx, input.toPackageId);
+  const from = input.fromPackageId.trim();
+
+  if (normaliseKey(from) === normaliseKey(to)) {
+    throw new DomainError(
+      'SAME_PACKAGE',
+      'The source and destination are the same package. There is nothing to move.',
+      409,
+    );
+  }
+
+  const live = ctx.ledger
+    .list(ctx.projectId, 'BoQItem')
+    .filter(
+      (record) =>
+        String(record.state.packageId ?? '') === from && String(record.state.status ?? 'LIVE') !== 'SUPERSEDED',
+    );
+
+  if (live.length === 0) {
+    throw new DomainError(
+      'NOTHING_TO_MOVE',
+      `${from} holds no measured item that still stands. Nothing to move.`,
+      409,
+    );
+  }
+
+  const movedAt = new Date().toISOString();
+  for (const record of live) {
+    write(ctx, {
+      eventType: 'BOQITEM_REPACKAGED',
+      entity: { refType: 'BoQItem', refId: record.refId },
+      nextState: {
+        ...record.state,
+        packageId: to,
+        repackagedAt: movedAt,
+        repackagedFrom: from,
+        repackagedBy: ctx.auth.actorId,
+        repackagedReason: reason,
+      },
+    });
+  }
+
+  return { moved: live.map((record) => record.refId), fromPackageId: from, toPackageId: to };
+}
+
+/**
  * Drawing-to-estimate bridge: extract measurable quantities from 2D sheets or a
  * model. Most contractors still price from 2D long before a model is usable, so
  * this path is first-class rather than a fallback.
@@ -164,6 +283,12 @@ export async function runTakeoff(
   if (input.items.length === 0) {
     throw new DomainError('TAKEOFF_EMPTY', 'A take-off must contain at least one measured item');
   }
+
+  // File these lines under the package they belong to. If the name given reads
+  // the same as a package already measured — bar a dash, a stray space or a
+  // capital — the existing id is reused, so one job never splits into two
+  // packages that an estimate would then price one at a time.
+  input.packageId = resolvePackageId(ctx, input.packageId);
 
   const takeoffId = ulid();
   const evidence = registerEvidence(ctx, {

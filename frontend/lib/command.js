@@ -124,7 +124,7 @@ function control(field) {
         ? `<optgroup label="${esc(o.label)}">${o.options.map(option).join('')}</optgroup>`
         : `<option value="${esc(o.value)}"${String(o.value) === String(field.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`;
 
-    return `<select id="${id}" name="${esc(field.name)}" ${required}>
+    return `<select id="${id}" name="${esc(field.name)}" autocomplete="off" ${required}>
       ${field.placeholder ? `<option value="">${esc(field.placeholder)}</option>` : ''}
       ${(field.options ?? []).map(option).join('')}
     </select>`;
@@ -175,7 +175,7 @@ function control(field) {
   }
 
   if (field.type === 'textarea') {
-    return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" ${required}
+    return `<textarea id="${id}" name="${esc(field.name)}" rows="${field.rows ?? 3}" autocomplete="off" ${required}
       placeholder="${esc(field.placeholder ?? '')}">${esc(field.value ?? '')}</textarea>`;
   }
 
@@ -238,8 +238,15 @@ function control(field) {
   // calendar's greyed-out days in the right place — and never the enforcement:
   // the API refuses a future notice date whatever the browser allowed.
   const max = field.max !== undefined ? ` max="${esc(field.max)}"` : '';
+  // Browser autofill is switched off on command inputs, not as a nicety. A
+  // free-typed field the browser had seen before — a work-package name — came
+  // back as a "Saved data" dropdown that sat *over* the platform's own datalist,
+  // so the person picked a value they had typed once with a stray space or a
+  // different dash instead of the package already on the bill, and the bill
+  // split into two packages for one job. The platform's suggestions are the only
+  // list that should appear here.
   return `<input id="${id}" name="${esc(field.name)}" type="${type}" value="${esc(field.value ?? '')}"
-    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} ${required}>${datalist}`;
+    placeholder="${esc(field.placeholder ?? '')}"${step}${min}${max}${list} autocomplete="off" ${required}>${datalist}`;
 }
 
 /**
