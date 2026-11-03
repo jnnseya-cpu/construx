@@ -858,4 +858,28 @@ describe('typing a document from its ISO 19650 reference', () => {
     });
     assert.equal(dwg.kind, 'DRAWING', `a drawing was typed ${dwg.kind} (${dwg.signals.join('; ')})`);
   });
+
+  it('types a pricing-schedule spreadsheet as a schedule, not a drawing it quotes', () => {
+    // The pricing schedule quotes drawing revisions in its item descriptions, and
+    // was out-scored into DRAWING and offered "measure quantities". A spreadsheet
+    // is a schedule, full stop.
+    const xlsx = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const sched = classify({
+      actualType: xlsx,
+      filename: 'ITT Appendix B - Pricing Schedule Schedule of Rates.xlsx',
+      text: 'Item, Description, Unit, Rate\nE20.001, Foundation trench to R4780-010 rev P02 at scale 1:50, m,\n',
+    });
+    assert.equal(sched.kind, 'SCHEDULE', `a pricing schedule was typed ${sched.kind} (${sched.signals.join('; ')})`);
+  });
+
+  it('does not let the bare word "revision" type a document as a drawing', () => {
+    // "revision" appears in the prose of ITTs, contracts and schedules; only a
+    // revision CODE (P02, C1) is a drawing marker.
+    const prose = classify({
+      actualType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      filename: 'Instructions.docx',
+      text: 'This document is subject to revision. Any revision of the specification will be issued to all tenderers.',
+    });
+    assert.notEqual(prose.kind, 'DRAWING', `prose mentioning "revision" was typed ${prose.kind}`);
+  });
 });

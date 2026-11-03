@@ -450,7 +450,13 @@ const KIND_SIGNALS: ReadonlyArray<{
   {
     kind: 'DRAWING',
     says: 'the text carries a scale, a revision or a title block',
-    content: /\b(scale\s*1\s*[:/]\s*\d|do not scale|title block|rev(ision)?\s*[a-z0-9]{1,3}\b)/i,
+    // The revision alternative requires a revision *code* (a letter or two then
+    // digits, like P02 or C1), not the bare word "revision". The old
+    // `rev(ision)?\s*[a-z0-9]{1,3}` matched "revision of", "revision to" and
+    // "revision history" — words that appear in the prose of an ITT, a contract
+    // and a schedule of rates — and was a large part of why documents that merely
+    // mention drawings were typed as drawings themselves.
+    content: /\b(scale\s*1\s*[:/]\s*\d|do not scale|title block|rev(?:ision)?\.?\s*[a-z]{0,2}\d{1,3}\b)/i,
   },
   { kind: 'SPECIFICATION', says: 'the filename says specification', name: /(spec|specification|nbs)/i },
   {
@@ -495,6 +501,21 @@ const KIND_SIGNALS: ReadonlyArray<{
   },
   { kind: 'MODEL', says: 'the extension is a model format', name: /\.(ifc|rvt|nwd|nwc|dgn|skp)$/i },
   { kind: 'SCHEDULE', says: 'the extension is a spreadsheet', name: /\.(xlsx|xls|csv)$/i },
+  // A spreadsheet is a schedule of data, never a drawing. The MIME type is a
+  // second, authoritative signal beside the extension, so a pricing schedule
+  // that quotes drawing revisions in its item descriptions ("foundation to
+  // R4780 rev P02") cannot be out-scored into DRAWING by that one incidental
+  // marker — reported on SHDC's Appendix B pricing schedule, typed "drawing"
+  // and offered "measure quantities".
+  {
+    kind: 'SCHEDULE',
+    says: 'the file is a spreadsheet',
+    types: [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/csv',
+    ],
+  },
   { kind: 'SCHEDULE', says: 'the text is delimited into columns', content: /^[^\n]*,[^\n]*,[^\n]*,/ },
   {
     kind: 'CORRESPONDENCE',
