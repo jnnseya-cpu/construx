@@ -824,4 +824,38 @@ describe('typing a document from its ISO 19650 reference', () => {
     assert.equal(classify({ actualType: 'application/pdf', filename: 'Footpath Widening Layout.pdf' }).kind, 'DRAWING');
     assert.equal(classify({ actualType: 'application/pdf', filename: 'Retaining Wall Calculations.pdf' }).kind, 'CALCULATION');
   });
+
+  it('types an invitation to tender as the invitation, not a drawing it quotes', () => {
+    // An ITT quotes drawing revisions and scales, and with no rule for the
+    // invitation itself those incidental markers typed it DRAWING — which told
+    // the screen the invitation "states no tender requirements" and offered to
+    // measure quantities off it instead of reading it for requirements.
+    const docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    const itt = classify({
+      actualType: docx,
+      filename: 'SHDC ITT - Aids and Adaptations Railway Lane.docx',
+      text:
+        'Invitation to Tender. Instructions to tenderers: all tender returns must be sent via the In-Tend system. ' +
+        'The tender response deadline is 20 November 2026. Evaluation criteria: Quality 60%, Social Value 5%, ' +
+        'Price 35%. Drawings R4780-010 rev P02 at scale 1:50 are provided for information.',
+    });
+    assert.equal(itt.kind, 'CORRESPONDENCE', `an ITT was typed ${itt.kind} (${itt.signals.join('; ')})`);
+    // And it identifies even without the "ITT" in the filename, off the text alone.
+    const byText = classify({
+      actualType: docx,
+      filename: 'Instructions to Tenderers.docx',
+      text: 'Instructions to tenderers. The closing date for submissions is noon. Award criteria are set out below. ' +
+        'Section drawings at scale 1:100 with revision markers are attached.',
+    });
+    assert.equal(byText.kind, 'CORRESPONDENCE', `an ITT by text was typed ${byText.kind} (${byText.signals.join('; ')})`);
+  });
+
+  it('still types a real drawing as a drawing, not an invitation', () => {
+    const dwg = classify({
+      actualType: 'application/pdf',
+      filename: 'Wall Foundation Detail.pdf',
+      text: 'Do not scale off this drawing. Scale 1:20 at A1. Revision P02. Title block below.',
+    });
+    assert.equal(dwg.kind, 'DRAWING', `a drawing was typed ${dwg.kind} (${dwg.signals.join('; ')})`);
+  });
 });

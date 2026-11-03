@@ -506,6 +506,44 @@ const KIND_SIGNALS: ReadonlyArray<{
     says: 'the text is written as a letter',
     content: /\b(dear sir|yours faithfully|we write to|further to your)\b/i,
   },
+  /*
+   * A tender invitation — the instructions to tenderers, the ITT itself.
+   *
+   * This file set had no rule for the one document a tender is read FROM, so an
+   * ITT that quotes drawing revisions and scales (as every ITT does — "drawings
+   * R4780 rev P02 at scale 1:50 are provided") was out-scored by those
+   * incidental drawing markers and typed DRAWING. The screen then told the
+   * bidder the invitation "states no tender requirements" and offered to measure
+   * quantities off it, steering them away from the reasoning read that produces
+   * the compliance matrix.
+   *
+   * Four specific signals, so a genuine ITT fires several and comfortably
+   * out-scores the one stray drawing marker, while a real drawing (which carries
+   * none of these phrases) is untouched. Mapped to CORRESPONDENCE — the kind
+   * this set already treats as the invitation (the ISO 19650 `LT` letter above)
+   * and which is not in CANNOT_BE_AN_INVITATION, so the file is read as an
+   * invitation rather than measured.
+   */
+  {
+    kind: 'CORRESPONDENCE',
+    says: 'the filename names an invitation to tender',
+    name: /(^|[-_\s])(itt|invitation[-_\s]?to[-_\s]?tender|tender[-_\s]?invitation)([-_\s]|\.|$)/i,
+  },
+  {
+    kind: 'CORRESPONDENCE',
+    says: 'the text is an invitation to tender — the invitation, instructions to tenderers',
+    content: /\b(invitation to tender|instructions? to tenderers?)\b/i,
+  },
+  {
+    kind: 'CORRESPONDENCE',
+    says: 'the text sets a tender return — a submission deadline or closing date',
+    content: /\b(return (?:your )?(?:tender|submission|response) by|tender (?:response )?deadline|closing date for (?:tenders|submissions)|deadline for (?:tender )?(?:returns|submissions))\b/i,
+  },
+  {
+    kind: 'CORRESPONDENCE',
+    says: 'the text states how the tender is evaluated — award or evaluation criteria',
+    content: /\b(evaluation (?:criteria|methodology)|award criteria|quality questionnaire|most economically advantageous)\b/i,
+  },
 ];
 
 /**
