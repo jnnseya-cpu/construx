@@ -793,7 +793,14 @@ export async function design(root) {
                                 ? `${(draft.extraction.items ?? []).length} measured item(s)`
                                 : String(draft.extraction.transcript ?? '').slice(0, 70),
                             draft.confidence !== undefined && draft.confidence !== null ? pct(draft.confidence * 100) : '—',
-                            html`<button class="btn sm" data-confirm="${draft.id}">Confirm</button>
+                            html`${
+                              draft.task === 'DRAWING_TAKEOFF'
+                                ? html`<input data-pkg-for="${draft.id}" placeholder="work package e.g. Substructure"
+                                    title="The work package these measured items belong to. Use the same name when you price them." style="width:150px;margin-right:4px" />
+                                  <input data-code-for="${draft.id}" placeholder="code e.g. SUB"
+                                    title="Cost code prefix — the measured items are numbered SUB.001, SUB.002 and so on." style="width:92px;margin-right:4px" /> `
+                                : ''
+                            }<button class="btn sm" data-confirm="${draft.id}" data-task="${draft.task}">Confirm</button>
                               <button class="btn quiet sm" data-discard="${draft.id}">Reject</button>`,
                           ]),
                         })}
@@ -2209,9 +2216,27 @@ export async function design(root) {
 
     const confirmDraft = event.target.closest('[data-confirm]');
     if (confirmDraft) {
+      const draftId = confirmDraft.dataset.confirm;
+      // A measured take-off is filed against a work package under a cost code, so
+      // the quantities land somewhere an estimator can find and price them. The
+      // other reads (a title block, a transcript) need neither.
+      let payload = {};
+      if (confirmDraft.dataset.task === 'DRAWING_TAKEOFF') {
+        const packageId = root.querySelector(`[data-pkg-for="${draftId}"]`)?.value?.trim();
+        const costCodePrefix = root.querySelector(`[data-code-for="${draftId}"]`)?.value?.trim();
+        if (!packageId || !costCodePrefix) {
+          toast(
+            'Package and cost code needed',
+            'A measured take-off is filed against a work package under a cost code — e.g. “Substructure” / “SUB”. Fill both beside this draft, then Confirm.',
+            'warn',
+          );
+          return;
+        }
+        payload = { packageId, costCodePrefix };
+      }
       confirmDraft.disabled = true;
       try {
-        await api.post(`/v1/projects/${projectId}/perception/${confirmDraft.dataset.confirm}/confirm`, {});
+        await api.post(`/v1/projects/${projectId}/perception/${draftId}/confirm`, payload);
         toast('Confirmed', 'Filed through the same command as entering it by hand', 'ok');
         await draw();
       } catch (error) {
