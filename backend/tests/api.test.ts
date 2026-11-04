@@ -366,6 +366,42 @@ describe('authorisation is enforced at the edge, not only in the engines', () =>
   });
 });
 
+describe('the guided journey endpoint', () => {
+  it('answers a project user from the tenancy facts, with or without a job named', async () => {
+    const reply = await call('GET', '/v1/journey', { token: tokenFor('owner') });
+    assert.equal(reply.status, 200);
+    assert.ok(Array.isArray(reply.body.stages) && reply.body.stages.length >= 2, 'the setup stages are always present');
+    assert.equal(typeof reply.body.hasProfile, 'boolean');
+    assert.equal(typeof reply.body.hasProject, 'boolean');
+    // The demo workspace has its company facts on file, so the first setup stage is done.
+    assert.equal(reply.body.hasProfile, true);
+    assert.ok('nowDo' in reply.body, 'the one-next-step field is always carried');
+  });
+
+  it('folds in the named job’s own road', async () => {
+    const reply = await call('GET', `/v1/journey?projectId=${seed.projectId}`, { token: tokenFor('owner') });
+    assert.equal(reply.status, 200);
+    assert.ok(reply.body.road === 'PRICE' || reply.body.road === 'BID', `a job on a road, got ${reply.body.road}`);
+    assert.ok(reply.body.stages.some((s: any) => s.group === 'WIN'), 'the job’s flow steps are folded in');
+  });
+
+  it('degrades to setup guidance for an unreadable job rather than failing', async () => {
+    const reply = await call('GET', '/v1/journey?projectId=does-not-exist', { token: tokenFor('owner') });
+    // Advisory guidance: a stale or forbidden project id must not 404 or 500 the
+    // whole strip — it falls back to the tenancy's own setup stages.
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.road, null);
+    assert.ok(reply.body.stages.some((s: any) => s.group === 'SETUP'), 'setup stages survive the degrade');
+    assert.ok(!reply.body.stages.some((s: any) => s.group === 'WIN'), 'no job road is folded in when the job is unreadable');
+  });
+
+  it('is refused to the platform operator, who runs the estate rather than a bid', async () => {
+    const reply = await call('GET', '/v1/journey', { token: tokenFor('operator') });
+    assert.equal(reply.status, 403);
+    assert.equal(reply.body.title, 'ACCOUNT_LAYER_SEPARATION');
+  });
+});
+
 describe('tenant isolation on the generic entity read', () => {
   /**
    * The endpoint that can return any record in the system is the one worth

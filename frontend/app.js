@@ -5,6 +5,7 @@ import { wireDrill } from './lib/drill.js';
 import { maybeShowActivation } from './lib/activation.js';
 import { armInstallPrompt } from './lib/install.js';
 import { mountOfflineBar } from './lib/offline.js';
+import { guideStrip, loadJourney } from './lib/guide.js';
 import * as outbox from './lib/outbox.js';
 import { PAGES } from './pages/index.js';
 
@@ -1527,6 +1528,7 @@ async function draw() {
       ${sidebar(page)}
       <main class="main">
         ${topbar()}
+        <div id="guide"></div>
         <div class="view" id="view"><div class="grid g4">
           <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
         </div></div>
@@ -1551,11 +1553,25 @@ async function draw() {
       root,
       html`<div class="shell">
         ${sidebar(page)}
-        <main class="main">${topbar()}<div class="view" id="view"></div></main>
+        <main class="main">${topbar()}<div id="guide"></div><div class="view" id="view"></div></main>
       </div>`,
     );
     bindSignOut();
     void api.hydrateImages(document.querySelector('.topbar'));
+
+    // The guided walkthrough, above the view on every screen. Mounted here —
+    // before the no-project and not-authorised guards below can return early —
+    // because a brand-new account with no job open is exactly where it is most
+    // needed, and that path is one of the early returns. Operators have no
+    // journey (they run the estate, not a bid), so it is not drawn for them.
+    // Fire-and-forget: the strip renders into its own slot when the read lands,
+    // and a later navigation that rebuilds the shell simply draws its own.
+    if (!isOperator()) {
+      void loadJourney(state.session?.projectId).then((journey) => {
+        const slot = document.getElementById('guide');
+        if (slot && journey) render(slot, guideStrip(journey, { here: page }));
+      });
+    }
     // A paying account with no payment method authorised is asked, once per
     // session, how it will pay going forward. Never an operator, and never a
     // company covered by its group — the position says so and the popup stays

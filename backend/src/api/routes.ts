@@ -250,6 +250,7 @@ import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
+import { guidedJourney } from '../domain/journey.ts';
 import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
 import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
@@ -13041,6 +13042,33 @@ export const ROUTES: Route[] = [
       'Where this job is on the road from an enquiry to a price or a submission, which road it is on and why, and the ' +
       'one thing to do next — computed from the record rather than from a checklist anybody ticks',
     handler: (platform, ctx) => bidFlow(platform, projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/journey',
+    readOnly: true,
+    description:
+      'The whole guided walkthrough for this workspace — set the company up, open a job, then the road to a priced, ' +
+      'submitted bid — with the one thing to do next, computed from the record rather than a checklist anybody ticks. ' +
+      'Tenant-scoped so it answers on a brand-new account with no job open; pass ?projectId to fold in that job’s own flow.',
+    handler: (platform, ctx) => {
+      // The open job, where the browser knows one. A guide is advisory, so a
+      // project the caller cannot read (no access, a stale id) degrades to the
+      // setup stages rather than failing the whole strip — but only those two
+      // refusals are swallowed; any other error is a real fault and is rethrown.
+      const requested = ctx.query.get('projectId');
+      const projectId = requested && requested.length > 0 ? requested : null;
+      let projectFlow: ReturnType<typeof bidFlow> | null = null;
+      if (projectId) {
+        try {
+          projectFlow = bidFlow(platform, projectContext(platform, ctx, projectId));
+        } catch (error) {
+          if (!(error instanceof NotFoundError || error instanceof ForbiddenError)) throw error;
+          projectFlow = null;
+        }
+      }
+      return guidedJourney(tenantContext(platform, ctx), { projectFlow, projectId });
+    },
   },
   {
     method: 'POST',

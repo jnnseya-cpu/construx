@@ -25615,9 +25615,48 @@ for the compliance matrix is told this job does not want one, instead of finding
 a screen that refuses without explaining.
 
 **Every outstanding step names what to do**, not only what is missing, and which
-screen does it; a test fails if one does not. The panel is on Pipeline & Bids
-and Tender & Procurement, reading one endpoint, holding no rule of its own — the
-same reason the console holds no copy of the permission matrix.
+screen does it; a test fails if one does not. The detailed panel is on Pipeline &
+Bids and Tender & Procurement, reading one endpoint, holding no rule of its own —
+the same reason the console holds no copy of the permission matrix.
+
+### The guided walkthrough, on every screen and from an empty account
+
+`bidflow.ts` answered "what now?" well, but only on the four screens a job's road
+runs through, and only once a job existed. The person who most needs the map —
+a brand-new subscriber with no company facts and no job — saw nothing, because
+there was no project for the flow to read, and the panel sat two-thirds of the
+way down pages they had no reason to be on. *"There but not enough"* was the
+verdict.
+
+`domain/journey.ts` (`guidedJourney`) wraps `bidflow.ts` rather than restating
+it. Two stages come first, and they are facts about the **tenancy**, not the
+project: is the company's own record filled in, and is there a job open to work
+on. Once a job is open its `bidFlow` steps are folded in unchanged — one
+implementation of the pricing-and-submission road, one thing to drift — so the
+journey only adds the stretch of road before that road begins. Setting the
+company up is the matrix's prerequisite, so it stays the next step even when a
+job is already open and unmatrixed.
+
+`GET /v1/journey` is tenant-scoped, so it answers on a brand-new account with no
+job; pass `?projectId` and that job's flow is folded in, computed against the
+job's own context. A stale or forbidden project id does not fail the strip — the
+route swallows only `NotFoundError`/`ForbiddenError` and degrades to the setup
+stages, because advisory guidance that 500s is worse than guidance that narrows.
+The operator layer is barred (`ACCOUNT_LAYER_SEPARATION`): an operator runs the
+estate, not a bid.
+
+The frontend mounts a slim accent-washed strip (`lib/guide.js`, `guideStrip` +
+`loadJourney`) above the view in the shell, on **every** screen, before the
+no-project and not-authorised guards can return early — which is exactly the
+zero-state where it is most needed. It shows the one next step with the button's
+own words and a "Go to …" control that navigates by the same `data-nav`
+delegation the sidebar uses, and expands to the whole journey. It holds no rule;
+every step, its screen and its door are server-computed. Covered by
+`journey.test.ts` (the engine: empty account → company facts → open a job → the
+job's folded-in road, and the degrade) and `api.test.ts` (the endpoint through
+real HTTP: setup-only, job folded in, degrade on an unreadable id, operator
+refused). The per-screen detailed panel on the two flow screens stays, with the
+strip as the always-present header above it.
 
 ### Naming the step and not the door
 
