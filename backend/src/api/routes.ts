@@ -253,7 +253,7 @@ import { bidFlow } from '../domain/bidflow.ts';
 import { guidedJourney } from '../domain/journey.ts';
 import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
-import { quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
+import { pricingSchedule, quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
@@ -13042,6 +13042,16 @@ export const ROUTES: Route[] = [
       'Where this job is on the road from an enquiry to a price or a submission, which road it is on and why, and the ' +
       'one thing to do next — computed from the record rather than from a checklist anybody ticks',
     handler: (platform, ctx) => bidFlow(platform, projectContext(platform, ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/tender/pricing-schedule',
+    readOnly: true,
+    description:
+      'The priced take-off as a pricing schedule — every measured line with the tender total apportioned across it, the ' +
+      'same arithmetic the quotation uses, for transcribing into the buyer’s Appendix B or attaching as the priced ' +
+      'breakdown. Reads the latest complete estimate and refuses an incomplete one rather than exporting a wrong total',
+    handler: (platform, ctx) => pricingSchedule(projectContext(platform, ctx)),
   },
   {
     method: 'GET',

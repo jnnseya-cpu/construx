@@ -25358,6 +25358,27 @@ measured line with no rate against it is **named in the warnings** rather than
 priced at nothing, which was the silence that made the whole flow able to
 produce a confident, wrong number.
 
+**The priced take-off exported as a pricing schedule.** `pricingSchedule(ctx)`
+(same file, `GET /v1/projects/:projectId/tender/pricing-schedule`, read-only)
+returns the same priced lines `quoteFromEstimate` composes — every measured line
+with the tender total apportioned across it, reusing `lineNetCostMinor` and the
+identical apportionment so the schedule and the quotation can never disagree —
+but as data rather than a legal instrument, for transcribing into a buyer's own
+pricing schedule (an "Appendix B") or attaching as the priced breakdown. It
+reads the latest *complete* estimate and refuses an incomplete one
+(`NO_COMPLETE_ESTIMATE`) rather than exporting a total built on an unpriced head.
+Its console door is a **"Copy pricing schedule (for Appendix B)"** button under
+the bill on Tender & Procurement (`frontend/pages/procurement.js`), which puts the
+apportioned lines, the total and the qualifications on the clipboard with a note
+naming what the take-off does not cover. Covered by `pricingschedule.test.ts`: the
+lines sum to the tender total to the penny, the assumptions and non-margin
+exclusions carry as qualifications, and the refusal fires where no complete
+estimate exists. It answers the gap a real bidder
+hit — the platform priced the building fabric but had no way to hand that pricing
+out into the buyer's own schedule, which also asks for M&E fix, external works
+and provisional sums the take-off does not itself contain; those remain the
+bidder's to price, and the export is honest about carrying only what was measured.
+
 The estimate route's schema also required `basisOfEstimate`, which its engine
 took and the schema never listed: a caller could produce an estimate whose
 stated basis was `undefined`, and the basis is the one thing an estimate is read

@@ -1720,6 +1720,11 @@ export async function procurement(root) {
                       },
                     ]),
                   )}
+                  ${
+                    (boq?.items ?? []).length > 0
+                      ? html`<button class="btn quiet sm" data-copy-schedule="1" style="margin-top:9px">Copy pricing schedule (for Appendix B)</button>`
+                      : ''
+                  }
                 </div>
               </div>
             </div>`
@@ -4047,6 +4052,40 @@ export async function procurement(root) {
    * a fresh element on every `draw()`, so listeners cannot stack.
    */
   root.addEventListener('click', async (event) => {
+    // The priced take-off, exported for the buyer's own pricing schedule
+    // ("Appendix B"). It is a read, not a command, so it is handled here rather
+    // than through the command dispatcher: fetch the apportioned lines the
+    // platform already computes and put them on the clipboard to transcribe.
+    const copySchedule = event.target.closest('[data-copy-schedule]');
+    if (copySchedule) {
+      try {
+        const sched = await api.get(`/v1/projects/${projectId}/tender/pricing-schedule`);
+        const lines = (sched.lines ?? []).map(
+          (l) => `${l.n}. ${l.description} — ${Number(l.quantity).toLocaleString('en-GB')} ${l.unit} — ${money(l.amountMinor)}`,
+        );
+        const quals = [
+          ...(sched.assumptions ?? []).map((a) => `Assumed: ${a}`),
+          ...(sched.exclusions ?? []).map((e) => `Not included — ${e.label}: ${e.reason}`),
+        ];
+        const text = [
+          `PRICING SCHEDULE (priced take-off) — ${sched.projectName}${sched.packageId ? ` · ${sched.packageId}` : ''}`,
+          `Period on site: ${sched.durationWeeks} weeks`,
+          '',
+          ...lines,
+          '',
+          `TOTAL (excluding VAT): ${money(sched.totalMinor)}`,
+          ...(quals.length ? ['', 'Qualifications:', ...quals] : []),
+          '',
+          'NOTE: these are the measured works only. On the buyer’s Appendix B also add the £5,000 contingency, the provisional sums (soakaway, plumbing, asbestos) and any M&E fix / external works the take-off does not itself cover.',
+        ].join('\n');
+        await navigator.clipboard.writeText(text);
+        toast('Copied', `${(sched.lines ?? []).length} priced lines on your clipboard — paste them into your Appendix B.`, 'ok');
+      } catch (error) {
+        toast('Could not export the schedule', error?.message ?? 'No complete estimate to export yet — finish pricing the bill first.', 'err');
+      }
+      return;
+    }
+
     const button = event.target.closest('[data-command]');
     if (!button) return;
     const spec = COMMANDS[button.dataset.command];

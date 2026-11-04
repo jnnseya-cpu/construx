@@ -231,3 +231,114 @@ export function quoteFromEstimate(
 
   return { document, totalMinor, currency, lines: lines.length };
 }
+
+/** One priced line of the pricing schedule — a measured item with its apportioned price. */
+export type PricingScheduleLine = {
+  n: number;
+  description: string;
+  quantity: number;
+  unit: string;
+  amountMinor: number;
+};
+
+/**
+ * The priced take-off as a pricing schedule — the buyer's "Appendix B" from the record.
+ *
+ * A formal tender wants its price on the buyer's own elemental schedule, and the
+ * only way to produce one was to read every measured line off the bill by hand and
+ * retype its price into the buyer's form — the exact "quotation from memory" the
+ * quotation composer was built to end, just pointed at a different document.
+ *
+ * This returns the same priced lines the quotation composes — every measured line
+ * with the tender total apportioned across it in proportion to its cost, the
+ * rounding remainder carried onto the last line so the lines sum to the total
+ * exactly — but as data rather than a legal instrument, so the console can hand it
+ * to a person to transcribe into the buyer's Appendix B (or attach as the priced
+ * breakdown). It reuses `lineNetCostMinor` and the same apportionment as
+ * `quoteFromEstimate`, so the schedule and the quotation can never disagree.
+ *
+ * It reads the latest *complete* estimate — one with every cost head priced or
+ * excluded. An incomplete estimate has no defensible total to apportion, so rather
+ * than export a schedule that is wrong it refuses and names what to finish.
+ */
+export type PricingSchedule = {
+  estimateId: string;
+  projectName: string;
+  packageId: string;
+  currency: string;
+  durationWeeks: number;
+  lines: PricingScheduleLine[];
+  totalMinor: number;
+  /** False where every rate was excluded: the works stand as one sum, not apportioned. */
+  apportioned: boolean;
+  assumptions: string[];
+  exclusions: Array<{ label: string; reason: string }>;
+};
+
+export function pricingSchedule(ctx: EngineContext): PricingSchedule {
+  authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const estimates = ctx.ledger.list(ctx.projectId, 'Estimate').map((record) => record.state);
+  const complete = estimates.filter(
+    (estimate) =>
+      ((estimate.omissions as string[] | undefined) ?? []).length === 0 && Number(estimate.totalMinor ?? 0) > 0,
+  );
+  const estimate = complete.at(-1);
+  if (!estimate) {
+    throw new DomainError(
+      'NO_COMPLETE_ESTIMATE',
+      'No complete, priced estimate to build a pricing schedule from. Finish an estimate — price or exclude every cost ' +
+        'head so it reads DRAFT rather than INCOMPLETE — before exporting the schedule.',
+      409,
+    );
+  }
+
+  const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId });
+  const currency = String(project?.state.currency ?? 'GBP');
+  const projectName = String(project?.state.name ?? ctx.projectId);
+
+  const measuredLines = (estimate.lines as MeasuredLine[] | undefined) ?? [];
+  const totalMinor = Number(estimate.totalMinor ?? 0);
+  const netTotal = measuredLines.reduce((sum, line) => sum + lineNetCostMinor(line), 0);
+  const apportioned = netTotal > 0;
+
+  let allocated = 0;
+  const lines: PricingScheduleLine[] = measuredLines.map((line, index) => {
+    const share = !apportioned
+      ? 0
+      : index === measuredLines.length - 1
+        ? totalMinor - allocated
+        : Math.round((totalMinor * lineNetCostMinor(line)) / netTotal);
+    allocated += share;
+    return {
+      n: index + 1,
+      description: String(line.description),
+      quantity: Number(line.quantity),
+      unit: String(line.unit),
+      amountMinor: share,
+    };
+  });
+
+  const assumptions = ((estimate.assumptions as string[] | undefined) ?? []).filter(Boolean);
+  // The same rule the quotation holds: a margin head is never printed on an offer,
+  // so an excluded overhead or profit head is not carried onto the schedule either.
+  const exclusions = ((estimate.exclusions as Array<{ label?: string; head?: string; reason?: string }> | undefined) ?? [])
+    .filter((exclusion) => costHead(String(exclusion.head ?? ''))?.basis !== 'MARGIN')
+    .map((exclusion) => ({
+      label: String(exclusion.label ?? exclusion.head ?? ''),
+      reason: String(exclusion.reason ?? 'Excluded'),
+    }));
+
+  return {
+    estimateId: String(estimate.id ?? ''),
+    projectName,
+    packageId: String(estimate.packageId ?? ''),
+    currency,
+    durationWeeks: Number(estimate.durationWeeks ?? 0),
+    lines,
+    totalMinor,
+    apportioned,
+    assumptions,
+    exclusions,
+  };
+}
