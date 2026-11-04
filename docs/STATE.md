@@ -25367,10 +25367,26 @@ but as data rather than a legal instrument, for transcribing into a buyer's own
 pricing schedule (an "Appendix B") or attaching as the priced breakdown. It
 reads the latest *complete* estimate and refuses an incomplete one
 (`NO_COMPLETE_ESTIMATE`) rather than exporting a total built on an unpriced head.
-Its console door is a **"Copy pricing schedule (for Appendix B)"** button under
-the bill on Tender & Procurement (`frontend/pages/procurement.js`), which puts the
-apportioned lines, the total and the qualifications on the clipboard with a note
-naming what the take-off does not cover. Covered by `pricingschedule.test.ts`: the
+Its console doors on Tender & Procurement (`frontend/pages/procurement.js`) are a
+**"Download pricing schedule (PDF)"** button and a **"Copy for Appendix B"**
+button under the bill. The copy puts the apportioned lines, the total and the
+qualifications on the clipboard; the download produces a **branded PDF/DOCX** from
+the same data.
+
+**Downloadable, branded, in the platform — never finished outside it.** A tender
+whose price or answers can only be copied out and pasted into another tool is a
+tender being *completed out* of the platform, which the brief ruled out from the
+start. Both tender outputs now render through the existing branded-export engine
+(`platform.exports.document()` + `renderAndCharge`, the same path as the project
+report), so each downloads as a branded PDF or DOCX produced in the platform:
+`POST /v1/projects/:projectId/tender/pricing-schedule.pdf` (the priced schedule,
+from `pricingScheduleBlocks`) and
+`POST /v1/projects/:projectId/bid-responses/:packId/submission.pdf` (every answer
+under its question). The bid reader on Pipeline & Bids carries a **"Download
+submission (PDF)"** button beside "Copy all answers". The governing rule this
+serves: **every project must be deliverable end-to-end inside the platform,
+regardless of stage — nothing is produced here that can only be finished
+elsewhere.** Covered by `pricingschedule.test.ts`: the
 lines sum to the tender total to the penny, the assumptions and non-margin
 exclusions carry as qualifications, and the refusal fires where no complete
 estimate exists. It answers the gap a real bidder

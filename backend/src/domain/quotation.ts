@@ -1,6 +1,7 @@
 import { DomainError, NotFoundError } from '../core/errors.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
 import { costHead, lineNetCostMinor, type MeasuredLine } from '../engines/maths/costModel.ts';
+import type { DocumentBlock } from '../export/exporter.ts';
 import { createDraft, type DocumentBody, type LifecycleDocument } from '../group/issuance.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
@@ -341,4 +342,55 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
     assumptions,
     exclusions,
   };
+}
+
+/**
+ * The pricing schedule as document blocks, for a branded, downloadable PDF/DOCX.
+ *
+ * The domain builds the blocks and the exporter does branding, the content hash
+ * and the two ledger events that make the document provable — the seam every
+ * generated document on the platform uses. This is what turns the priced
+ * take-off from a number on a screen into a file a bidder downloads and submits,
+ * rather than something copied out and finished in another tool.
+ */
+export function pricingScheduleBlocks(schedule: PricingSchedule): DocumentBlock[] {
+  const blocks: DocumentBlock[] = [];
+  const head: Array<{ label: string; value: string }> = [];
+  if (schedule.packageId) head.push({ label: 'Work package', value: schedule.packageId });
+  head.push({ label: 'Period on site', value: `${schedule.durationWeeks} week${schedule.durationWeeks === 1 ? '' : 's'}` });
+  blocks.push({ kind: 'KEY_VALUES', rows: head });
+
+  blocks.push({
+    kind: 'TABLE',
+    caption: 'Priced schedule — measured works',
+    headers: ['Item', 'Description', 'Quantity', 'Unit', 'Amount'],
+    rows: schedule.lines.map((line) => [
+      String(line.n),
+      line.description,
+      Number(line.quantity).toLocaleString('en-GB'),
+      line.unit,
+      formatMoney(line.amountMinor, schedule.currency),
+    ]),
+  });
+
+  blocks.push({ kind: 'KEY_VALUES', rows: [{ label: 'Total, excluding VAT', value: formatMoney(schedule.totalMinor, schedule.currency) }] });
+
+  if (schedule.assumptions.length > 0) {
+    blocks.push({ kind: 'HEADING', level: 2, text: 'Assumptions' });
+    blocks.push({ kind: 'LIST', ordered: false, items: schedule.assumptions });
+  }
+  if (schedule.exclusions.length > 0) {
+    blocks.push({ kind: 'HEADING', level: 2, text: 'Exclusions' });
+    blocks.push({ kind: 'LIST', ordered: false, items: schedule.exclusions.map((exclusion) => `${exclusion.label}: ${exclusion.reason}`) });
+  }
+
+  blocks.push({
+    kind: 'PARAGRAPH',
+    text:
+      'This schedule carries the measured works only. A buyer’s own pricing schedule may also require a contingency sum, ' +
+      'provisional sums (for example soakaway, plumbing and asbestos) and any mechanical, electrical or external works not ' +
+      'contained in this take-off; those are priced separately and are not included in the total above.',
+  });
+
+  return blocks;
 }

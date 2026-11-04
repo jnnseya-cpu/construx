@@ -1722,7 +1722,8 @@ export async function procurement(root) {
                   )}
                   ${
                     (boq?.items ?? []).length > 0
-                      ? html`<button class="btn quiet sm" data-copy-schedule="1" style="margin-top:9px">Copy pricing schedule (for Appendix B)</button>`
+                      ? html`<button class="btn sm" data-download-schedule="1" style="margin-top:9px">Download pricing schedule (PDF)</button>
+                          <button class="btn quiet sm" data-copy-schedule="1" style="margin-top:9px">Copy for Appendix B</button>`
                       : ''
                   }
                 </div>
@@ -4052,6 +4053,20 @@ export async function procurement(root) {
    * a fresh element on every `draw()`, so listeners cannot stack.
    */
   root.addEventListener('click', async (event) => {
+    // The priced take-off as a branded, downloadable file — the end-to-end
+    // answer: a tender's pricing is produced and downloaded in the platform, not
+    // copied out and finished elsewhere.
+    const downloadSchedule = event.target.closest('[data-download-schedule]');
+    if (downloadSchedule) {
+      try {
+        await api.download(`/v1/projects/${projectId}/tender/pricing-schedule.pdf`, { format: 'PDF' });
+        toast('Downloaded', 'Your pricing schedule PDF has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Finish pricing the bill first — there is no complete estimate to export.', 'err');
+      }
+      return;
+    }
+
     // The priced take-off, exported for the buyer's own pricing schedule
     // ("Appendix B"). It is a read, not a command, so it is handled here rather
     // than through the command dispatcher: fetch the apportioned lines the

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
-import { pricingSchedule } from '../src/domain/quotation.ts';
+import { pricingSchedule, pricingScheduleBlocks } from '../src/domain/quotation.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
@@ -87,6 +87,22 @@ describe('the pricing schedule export', () => {
       assert.ok(!schedule.exclusions.some((e) => e.label.toLowerCase().includes(forbidden)), `a margin head leaked: ${forbidden}`);
     }
     assert.ok(printed.length > 0);
+  });
+
+  it('builds document blocks a branded export can render — a table of the lines and the total', () => {
+    completeEstimate();
+    const schedule = pricingSchedule(qsCtx());
+    const blocks = pricingScheduleBlocks(schedule);
+
+    const table = blocks.find((block) => block.kind === 'TABLE');
+    assert.ok(table && table.kind === 'TABLE', 'the schedule renders as a table');
+    assert.equal(table.rows.length, schedule.lines.length, 'every priced line is a row');
+    assert.deepEqual(table.headers, ['Item', 'Description', 'Quantity', 'Unit', 'Amount']);
+
+    // The total is on the document, and the measured-works-only note too.
+    const printed = JSON.stringify(blocks);
+    assert.match(printed, /Total, excluding VAT/);
+    assert.match(printed, /measured works only/i);
   });
 
   it('refuses rather than exporting a wrong total where no complete estimate exists', () => {

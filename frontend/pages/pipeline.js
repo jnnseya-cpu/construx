@@ -1517,7 +1517,10 @@ export async function pipeline(root) {
                               </span>
                               ${
                                 sections.some((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0)
-                                  ? html`<button class="btn quiet sm" data-copy-pack="${pack.id}" style="flex:none">Copy all answers</button>`
+                                  ? html`<span style="flex:none;display:flex;gap:7px;flex-wrap:wrap">
+                                      <button class="btn sm" data-download-pack="${pack.id}">Download submission (PDF)</button>
+                                      <button class="btn quiet sm" data-copy-pack="${pack.id}">Copy all answers</button>
+                                    </span>`
                                   : ''
                               }
                             </div>
@@ -3684,6 +3687,24 @@ export async function pipeline(root) {
         toast('Copied', 'The answer is on your clipboard.', 'ok');
       } catch {
         toast('Could not copy', 'Your browser blocked the clipboard — select the text and copy it by hand.', 'err');
+      }
+      return;
+    }
+
+    // The whole submission as a branded, downloadable file — the end-to-end
+    // answer: the submission is produced and downloaded in the platform, not
+    // copied out and finished elsewhere. The clipboard copy below stays as the
+    // quick option for pasting into a portal's own text boxes.
+    const downloadPackBtn = event.target.closest('[data-download-pack]');
+    if (downloadPackBtn) {
+      try {
+        await api.download(
+          `/v1/projects/${state.session.projectId}/bid-responses/${downloadPackBtn.dataset.downloadPack}/submission.pdf`,
+          { format: 'PDF' },
+        );
+        toast('Downloaded', 'Your submission PDF has been saved.', 'ok');
+      } catch (error) {
+        toast('Could not download', error?.message ?? 'Could not generate the submission PDF.', 'err');
       }
       return;
     }

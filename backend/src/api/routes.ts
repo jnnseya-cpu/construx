@@ -253,7 +253,8 @@ import { bidFlow } from '../domain/bidflow.ts';
 import { guidedJourney } from '../domain/journey.ts';
 import * as bidrun from '../domain/bidrun.ts';
 import * as pricingroute from '../domain/pricingroute.ts';
-import { pricingSchedule, quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
+import { pricingSchedule, pricingScheduleBlocks, quoteFromEstimate, type QuotationInput } from '../domain/quotation.ts';
+import type { DocumentBlock } from '../export/exporter.ts';
 import * as settlement from '../domain/settlement.ts';
 import * as documents from '../documents/generate.ts';
 import * as stagegate from '../domain/stagegate.ts';
@@ -13052,6 +13053,80 @@ export const ROUTES: Route[] = [
       'same arithmetic the quotation uses, for transcribing into the buyer’s Appendix B or attaching as the priced ' +
       'breakdown. Reads the latest complete estimate and refuses an incomplete one rather than exporting a wrong total',
     handler: (platform, ctx) => pricingSchedule(projectContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/pricing-schedule.pdf',
+    binary: true,
+    description:
+      'The priced take-off as a branded, downloadable pricing schedule (PDF or DOCX) — the same apportioned lines as the ' +
+      'quotation, produced in the platform for the buyer’s own schedule or as the priced breakdown, so a tender is never ' +
+      'finished outside it',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const schedule = pricingSchedule(projectContext(platform, ctx));
+      const document = platform.exports.document(actor, projectId, {
+        title: 'Pricing Schedule',
+        subtitle: schedule.projectName,
+        blocks: pricingScheduleBlocks(schedule),
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/submission.pdf',
+    binary: true,
+    description:
+      'The bid response pack as a branded, downloadable submission document (PDF or DOCX) — every answer under its ' +
+      'question, exactly as edited on the record, produced in the platform for attaching to the buyer’s portal',
+    schema: {
+      type: 'object',
+      properties: { format: { type: 'string', enum: ['PDF', 'DOCX'] } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const projectId = ctx.params.projectId as string;
+      const actor = auth(ctx);
+      const chosen: RenderableFormat = body<{ format?: RenderableFormat }>(ctx).format ?? 'PDF';
+      const pack = bidresponse.bidResponsePack(projectContext(platform, ctx), ctx.params.packId as string);
+      const blocks: DocumentBlock[] = [];
+      for (const section of pack.sections) {
+        blocks.push({ kind: 'HEADING', level: 2, text: `${section.key} — ${section.title}` });
+        const paras = (section.body ?? []) as string[];
+        if (paras.length > 0) for (const paragraph of paras) blocks.push({ kind: 'PARAGRAPH', text: String(paragraph) });
+        else blocks.push({ kind: 'PARAGRAPH', text: '[Not written yet]' });
+      }
+      const document = platform.exports.document(actor, projectId, {
+        title: `Tender Submission — ${pack.clientName}`,
+        subtitle: pack.reference,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.spendingWalletFor(actor, projectId).wallet,
+        document,
+        { format: chosen, projectId, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
   },
   {
     method: 'GET',
