@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 import { throwsCode } from './helpers.ts';
 import { pricingSchedule, pricingScheduleBlocks } from '../src/domain/quotation.ts';
+import { priceEstimate } from '../src/engines/maths/costModel.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
 import { Platform } from '../src/platform.ts';
@@ -103,6 +104,66 @@ describe('the pricing schedule export', () => {
     const printed = JSON.stringify(blocks);
     assert.match(printed, /Total, excluding VAT/);
     assert.match(printed, /measured works only/i);
+  });
+
+  it('adds fixed and provisional sums after margin — never marked up', () => {
+    const base = {
+      durationWeeks: 4,
+      lines: WALL_LINES,
+      quantified: [{ head: 'WASTE', description: 'Skips and gate fees', unit: 'sum', quantity: 1, rateMinor: 45_000 }],
+      exclusions: [{ head: 'PLANT', reason: 'Scaffold by others' }],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+    } as Parameters<typeof priceEstimate>[0];
+
+    const without = priceEstimate(base);
+    const sums = 275_000 + 25_000;
+    const withSums = priceEstimate({
+      ...base,
+      fixedSums: [
+        { label: 'Soakaway', amountMinor: 275_000, provisional: true },
+        { label: 'Asbestos survey review', amountMinor: 25_000 },
+      ],
+    });
+
+    // The cost the margin is applied to, and the margin itself, are identical:
+    // the sums are not in it. Marking up a sum that already carries a margin
+    // would charge the client twice.
+    assert.equal(withSums.subtotals.totalCostMinor, without.subtotals.totalCostMinor);
+    assert.equal(withSums.subtotals.overheadMinor, without.subtotals.overheadMinor);
+    assert.equal(withSums.subtotals.profitMinor, without.subtotals.profitMinor);
+    // The tender total is the old total plus the sums, to the penny.
+    assert.equal(withSums.tenderTotalMinor, without.tenderTotalMinor + sums);
+    assert.equal(withSums.subtotals.fixedSumsMinor, sums);
+    // You do not profit on a provisional sum, so the overall margin falls.
+    assert.ok(withSums.marginPercent < without.marginPercent, 'margin should fall when provisional sums are added');
+  });
+
+  it('carries fixed sums onto the schedule beside the works, and the whole thing still sums to the total', () => {
+    const estimate = tender.buildEstimate(qsCtx(), {
+      packageId: 'WALL',
+      durationWeeks: 4,
+      lines: WALL_LINES,
+      quantified: [{ head: 'WASTE', description: 'Skips and gate fees', unit: 'sum', quantity: 1, rateMinor: 45_000 }],
+      insurance: { policies: [{ type: 'Contract works and liability', percentOfContractValue: 0.9 }] },
+      exclusions: [{ head: 'PLANT', reason: 'Access from a tower scaffold provided by the church' }],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+      basisOfEstimate: 'Measured off the drawings.',
+      assumptions: [],
+      fixedSums: [
+        { label: 'Soakaway', amountMinor: 275_000, provisional: true },
+        { label: 'Asbestos survey review', amountMinor: 25_000 },
+      ],
+    } as Parameters<typeof tender.buildEstimate>[1]);
+
+    const schedule = pricingSchedule(qsCtx());
+    assert.equal(schedule.estimateId, estimate.estimateId);
+    assert.equal(schedule.fixedSumsMinor, 300_000);
+    // Three measured lines plus two fixed-sum lines.
+    assert.equal(schedule.lines.length, WALL_LINES.length + 2);
+    assert.ok(schedule.lines.some((line) => /Soakaway \(provisional sum\)/.test(line.description)));
+    // The property that must never break: every line still sums to the total.
+    const summed = schedule.lines.reduce((total, line) => total + line.amountMinor, 0);
+    assert.equal(summed, schedule.totalMinor);
   });
 
   it('refuses rather than exporting a wrong total where no complete estimate exists', () => {

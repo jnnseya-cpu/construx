@@ -118,7 +118,15 @@ export function quoteFromEstimate(
   const assumptions = ((estimate.assumptions as string[] | undefined) ?? []).filter(Boolean);
   const exclusions = (estimate.exclusions as Array<{ label?: string; head?: string; reason?: string }> | undefined) ?? [];
 
-  const rows = 9 + lines.length + assumptions.length + exclusions.length;
+  // Fixed and provisional sums are carried after margin, so the measured lines
+  // are apportioned the works total only and these print under their own labels.
+  const fixedSumsList = ((estimate.fixedSums as Array<{ label?: string; amountMinor?: number; provisional?: boolean }> | undefined) ?? [])
+    .map((sum) => ({ label: String(sum.label ?? 'Fixed sum'), amountMinor: Math.round(Number(sum.amountMinor) || 0), provisional: Boolean(sum.provisional) }))
+    .filter((sum) => sum.amountMinor > 0);
+  const fixedSumsMinor = fixedSumsList.reduce((total, sum) => total + sum.amountMinor, 0);
+  const worksTotal = totalMinor - fixedSumsMinor;
+
+  const rows = 9 + lines.length + fixedSumsList.length + assumptions.length + exclusions.length;
   if (rows > BODY_ROW_LIMIT) {
     throw new DomainError(
       'QUOTATION_TOO_LONG',
@@ -170,9 +178,15 @@ export function quoteFromEstimate(
       return;
     }
     const share =
-      index === lines.length - 1 ? totalMinor - allocated : Math.round((totalMinor * lineNetCostMinor(line)) / netTotal);
+      index === lines.length - 1 ? worksTotal - allocated : Math.round((worksTotal * lineNetCostMinor(line)) / netTotal);
     allocated += share;
     body[label] = `${measured} — ${formatMoney(share, currency)}`;
+  });
+
+  // The fixed and provisional sums, each under its own label, after the works —
+  // listed, never marked up, so the lines still sum to the total.
+  fixedSumsList.forEach((sum, index) => {
+    body[`Item ${lines.length + index + 1}`] = `${sum.label}${sum.provisional ? ' (provisional sum)' : ''} — ${formatMoney(sum.amountMinor, currency)}`;
   });
 
   body['Total, excluding VAT'] = formatMoney(totalMinor, currency);
@@ -270,6 +284,8 @@ export type PricingSchedule = {
   durationWeeks: number;
   lines: PricingScheduleLine[];
   totalMinor: number;
+  /** The portion of the total that is fixed/provisional sums, listed but not marked up. */
+  fixedSumsMinor: number;
   /** False where every rate was excluded: the works stand as one sum, not apportioned. */
   apportioned: boolean;
   assumptions: string[];
@@ -300,6 +316,16 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
 
   const measuredLines = (estimate.lines as MeasuredLine[] | undefined) ?? [];
   const totalMinor = Number(estimate.totalMinor ?? 0);
+  // Fixed and provisional sums are carried after margin, so they are listed
+  // beside the measured works rather than apportioned into them: the measured
+  // lines share the works total only, and the fixed sums sit under their own
+  // labels. Together they still sum to the tender total exactly.
+  const fixedSumsList = ((estimate.fixedSums as Array<{ label?: string; amountMinor?: number; provisional?: boolean }> | undefined) ?? [])
+    .map((sum) => ({ label: String(sum.label ?? 'Fixed sum'), amountMinor: Math.round(Number(sum.amountMinor) || 0), provisional: Boolean(sum.provisional) }))
+    .filter((sum) => sum.amountMinor > 0);
+  const fixedSumsMinor = fixedSumsList.reduce((total, sum) => total + sum.amountMinor, 0);
+  const worksTotal = totalMinor - fixedSumsMinor;
+
   const netTotal = measuredLines.reduce((sum, line) => sum + lineNetCostMinor(line), 0);
   const apportioned = netTotal > 0;
 
@@ -308,8 +334,8 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
     const share = !apportioned
       ? 0
       : index === measuredLines.length - 1
-        ? totalMinor - allocated
-        : Math.round((totalMinor * lineNetCostMinor(line)) / netTotal);
+        ? worksTotal - allocated
+        : Math.round((worksTotal * lineNetCostMinor(line)) / netTotal);
     allocated += share;
     return {
       n: index + 1,
@@ -318,6 +344,17 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
       unit: String(line.unit),
       amountMinor: share,
     };
+  });
+
+  // The fixed and provisional sums, each as their own line, after the works.
+  fixedSumsList.forEach((sum, index) => {
+    lines.push({
+      n: measuredLines.length + index + 1,
+      description: sum.provisional ? `${sum.label} (provisional sum)` : sum.label,
+      quantity: 1,
+      unit: 'sum',
+      amountMinor: sum.amountMinor,
+    });
   });
 
   const assumptions = ((estimate.assumptions as string[] | undefined) ?? []).filter(Boolean);
@@ -338,6 +375,7 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
     durationWeeks: Number(estimate.durationWeeks ?? 0),
     lines,
     totalMinor,
+    fixedSumsMinor,
     apportioned,
     assumptions,
     exclusions,
@@ -387,9 +425,13 @@ export function pricingScheduleBlocks(schedule: PricingSchedule): DocumentBlock[
   blocks.push({
     kind: 'PARAGRAPH',
     text:
-      'This schedule carries the measured works only. A buyer’s own pricing schedule may also require a contingency sum, ' +
-      'provisional sums (for example soakaway, plumbing and asbestos) and any mechanical, electrical or external works not ' +
-      'contained in this take-off; those are priced separately and are not included in the total above.',
+      schedule.fixedSumsMinor > 0
+        ? 'Provisional and fixed sums are listed above under their own labels and are not marked up. A buyer’s own ' +
+          'pricing schedule may require a separate contingency sum and show VAT; confirm any scope not measured or ' +
+          'listed here is priced before submission.'
+        : 'This schedule carries the measured works only. A buyer’s own pricing schedule may also require a contingency ' +
+          'sum, provisional sums (for example soakaway, plumbing and asbestos) and any mechanical, electrical or external ' +
+          'works not contained in this take-off; those are priced separately and are not included in the total above.',
   });
 
   return blocks;

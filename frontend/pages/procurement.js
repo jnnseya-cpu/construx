@@ -2588,6 +2588,20 @@ export async function procurement(root) {
           value: Array.isArray(estimate?.assumptions) ? estimate.assumptions.join('\n') : '',
           hint: 'Each becomes a stated assumption on the estimate rather than something a reader has to infer.',
         },
+        {
+          name: 'fixedSums',
+          label: 'Provisional and fixed sums (one per line, as "label: amount")',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          value: Array.isArray(estimate?.fixedSums)
+            ? estimate.fixedSums.map((s) => `${s.label}: ${(Number(s.amountMinor) / 100).toFixed(2)}`).join('\n')
+            : '',
+          hint:
+            'All-in sums the contractor does not mark up — provisional sums (soakaway, asbestos) and nominated allowances. ' +
+            'Each is added to the tender total AFTER margin, never marked up, so a sum that already carries its own overhead ' +
+            'and profit is not charged twice. Enter the amount in pounds, e.g. "Soakaway: 2750".',
+        },
         // The site-wide heads a small job actually carries. Priced on their own
         // basis — by the week, or as their own sum — never as a percentage of
         // the works, which is the mistake the cost model exists to refuse.
@@ -2827,6 +2841,24 @@ export async function procurement(root) {
             ? { head: 'PROFESSIONAL_FEES', description: 'Consultants, surveys and statutory fees', lumpSumMinor: Number(v.professionalFeesMinor) }
             : null,
         ].filter(Boolean);
+        // Provisional and fixed sums, one per line as "label: amount" in pounds.
+        // Converted to minor here and added after margin by the cost model — not
+        // marked up, because they already carry their own.
+        const fixedSums = String(v.fixedSums ?? '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => {
+            const split = line.lastIndexOf(':');
+            const label = (split >= 0 ? line.slice(0, split) : line).trim();
+            const amount = Number(String(split >= 0 ? line.slice(split + 1) : '').replace(/[^0-9.]/g, ''));
+            return {
+              label: label || 'Fixed sum',
+              amountMinor: Math.round((Number.isFinite(amount) ? amount : 0) * 100),
+              provisional: /provisional|soakaway|asbestos|allowance|contingen/i.test(label),
+            };
+          })
+          .filter((sum) => sum.amountMinor > 0);
         return {
           packageId: v.packageId,
           durationWeeks: weeks,
@@ -2842,6 +2874,7 @@ export async function procurement(root) {
           ...(excluded.length > 0
             ? { exclusions: excluded.map((head) => ({ head, reason: v.exclusionReason || 'Not included in this offer' })) }
             : {}),
+          ...(fixedSums.length > 0 ? { fixedSums } : {}),
           // Measured, confirmed, and handed back as measured — with the rate
           // the estimator put against each one.
           lines: (boq?.items ?? [])

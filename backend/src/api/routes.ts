@@ -13403,6 +13403,9 @@ export const ROUTES: Route[] = [
         inflation: { type: 'object' },
         margin: { type: 'object' },
         exclusions: { type: 'array', items: { type: 'object' } },
+        // Fixed and provisional sums added after margin — the same open shape as
+        // the heads above, validated by the cost model that reads them.
+        fixedSums: { type: 'array', items: { type: 'object' } },
       },
     },
     handler: (platform, ctx) => tender.buildEstimate(projectContext(platform, ctx), body(ctx)),

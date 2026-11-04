@@ -25373,6 +25373,26 @@ button under the bill. The copy puts the apportioned lines, the total and the
 qualifications on the clipboard; the download produces a **branded PDF/DOCX** from
 the same data.
 
+**Fixed and provisional sums the contractor does not mark up.** A buyer's pricing
+schedule asks for provisional sums (a soakaway, an asbestos allowance) and
+nominated sums, and a contractor pricing all-in lump sums that already carry their
+own overhead and profit must not have them marked up again — `costModel.ts` took
+every input into the cost the margin was applied to, so there was no way to add a
+sum *after* margin. `CostModelInput.fixedSums` now carries them: each is added to
+the tender total after overhead and profit, never into the cost they are computed
+from (`fixedSumsMinor` on the subtotals, `fixedSums` on the priced estimate). The
+margin percent falls accordingly — you do not profit on a provisional sum — and
+the weekly burn, prelims percentage and contingency, all about the works, do not
+move. It is strictly additive: absent, the tender total is cost plus overhead plus
+profit exactly as before, and all 8,000+ existing tests pass unchanged. The
+quotation and the pricing schedule apportion the *works* total across the measured
+lines and list the fixed sums beside them under their own labels, so the lines
+still sum to the tender total to the penny (`pricingschedule.test.ts` pins both the
+no-markup property and the sum). Entered on "Price the bill" as "label: amount" per
+line (`frontend/pages/procurement.js`). This is what lets the platform hold the
+*complete* tender — measured works plus all-in allowances — so the download is the
+whole price, not just the fabric.
+
 **Downloadable, branded, in the platform — never finished outside it.** A tender
 whose price or answers can only be copied out and pasted into another tool is a
 tender being *completed out* of the platform, which the brief ruled out from the

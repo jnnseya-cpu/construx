@@ -557,6 +557,10 @@ export function buildEstimate(
       exclusions: priced.exclusions,
       warnings: priced.warnings,
       breakdown,
+      // The fixed and provisional sums carried after margin, normalised — read by
+      // the quotation and the pricing schedule so the measured lines are
+      // apportioned the works total only and these sit beside them, not inside.
+      fixedSums: priced.fixedSums,
       totalMinor: priced.tenderTotalMinor,
       marginPercent: priced.marginPercent,
     },
