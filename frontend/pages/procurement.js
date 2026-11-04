@@ -323,6 +323,11 @@ export async function procurement(root) {
     'BoQItem',
     'FundingModel',
     'MasterPricing',
+    // Without this, the "Answer clarification" question picker read `b.Clarification`,
+    // which was never fetched, so it was always empty and the form showed "nothing
+    // to act on" even with open bidder queries on file — a buyer could never answer
+    // a TQ from the screen. The entities exist on the ledger; they just weren't read.
+    'Clarification',
   ]);
 
   const rfq = b.RFQ.at(-1);

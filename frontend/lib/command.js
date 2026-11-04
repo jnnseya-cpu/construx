@@ -514,6 +514,13 @@ export function command({
   submitLabel = 'Submit',
   transform,
   aiCost = false,
+  // `ai: true` is the short form some modules (the Bid-On studio among them)
+  // declare on a command that reaches a provider. It means the same thing as
+  // `aiCost` — quote the cost before anything is spent — and was being ignored,
+  // so a whole studio of AI actions (drafting an answer, scoring it, reading
+  // evidence) opened with no price on screen and no affordability gate, the one
+  // rule the panel exists to enforce. Both switch the cost block on.
+  ai = false,
   method = 'POST',
   /**
    * A rule the form can check for itself, before anything is sent.
@@ -601,7 +608,7 @@ export function command({
             </div>`,
           )
           .join('')}
-        ${aiCost ? '<div class="cost-slot"></div>' : ''}
+        ${aiCost || ai ? '<div class="cost-slot"></div>' : ''}
       </div>
       <div class="foot">
         <button type="button" class="btn quiet" data-close>Cancel</button>
@@ -831,7 +838,7 @@ export function command({
     document.body.append(host);
     host.querySelector('input, select, textarea')?.focus();
 
-    if (aiCost) {
+    if (aiCost || ai) {
       const slot = host.querySelector('.cost-slot');
       // The path may depend on fields the person has not filled in yet, so the
       // quote is taken against the path as declared. Every quotable route is
