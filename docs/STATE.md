@@ -9540,6 +9540,18 @@ everything else in it is spent for nothing. A section marked drafted carrying an
 empty body counts as unanswered: a heading with no answer under it is the
 deliverable being unanswered.
 
+**Getting the submission out.** The reader that shows every drafted section in
+full (each with Edit and Copy) now also carries a **"Copy all answers"** button
+per pack. It assembles the whole pack in order — each answer under its question
+key and title, exactly as edited on the record — onto the clipboard, for the
+person at the portal who has to attach one document rather than fill thirteen
+boxes. An unwritten section is named `[Not written yet]` in the paste so a gap
+is a stated fact rather than a surprise on the return date. It is the same
+record the per-section Copy reads, so the attached document and the platform
+cannot disagree (`frontend/pages/pipeline.js`, `data-copy-pack`). The price does
+not go in this document: it belongs on the buyer's own Annex 1 / pricing
+schedule, drawn from Tender & Procurement.
+
 Planning and issuing are decisions and neither is an event an agent may author;
 only the section write carries `aiAllowed`. Drafting is refused outright on the
 local stand-in, before the charge, because prose from an adapter that reasons

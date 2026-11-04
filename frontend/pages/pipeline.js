@@ -1510,9 +1510,16 @@ export async function pipeline(root) {
                         .filter((fp) => fp.sections.length > 0)
                         .map(
                           ({ pack, sections }) => html`<div class="card pad0" style="margin-bottom:10px">
-                            <div style="padding:11px 14px">
-                              <b>${pack.reference}</b> · ${pack.clientName} —
-                              ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
+                            <div style="padding:11px 14px;display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+                              <span>
+                                <b>${pack.reference}</b> · ${pack.clientName} —
+                                ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
+                              </span>
+                              ${
+                                sections.some((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0)
+                                  ? html`<button class="btn quiet sm" data-copy-pack="${pack.id}" style="flex:none">Copy all answers</button>`
+                                  : ''
+                              }
                             </div>
                             ${sections.map(
                               (section) => html`<div style="border-top:1px solid var(--line);padding:11px 14px">
@@ -3677,6 +3684,34 @@ export async function pipeline(root) {
         toast('Copied', 'The answer is on your clipboard.', 'ok');
       } catch {
         toast('Could not copy', 'Your browser blocked the clipboard — select the text and copy it by hand.', 'err');
+      }
+      return;
+    }
+
+    // The whole submission in one paste — for the person at the portal who has
+    // to attach a single document rather than fill thirteen boxes. It assembles
+    // exactly what is on the pack, in order, each answer under its question, so
+    // the attached document and the platform's record say the same thing. Only
+    // written sections are included; an unwritten one is named so a gap in the
+    // paste is a fact rather than a surprise on the return date.
+    const copyPackBtn = event.target.closest('[data-copy-pack]');
+    if (copyPackBtn) {
+      const found = fullPacks.find((fp) => fp.pack.id === copyPackBtn.dataset.copyPack);
+      if (!found) return;
+      const blocks = found.sections.map((section) => {
+        const heading = `${section.key} — ${section.title}`;
+        const body =
+          section.status === 'DRAFTED' && (section.body ?? []).length > 0
+            ? section.body.join('\n\n')
+            : '[Not written yet]';
+        return `${heading}\n\n${body}`;
+      });
+      const text = `${found.pack.reference} — ${found.pack.clientName}\n\n${blocks.join('\n\n\n')}\n`;
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied', `All ${found.sections.length} answers are on your clipboard — paste them into your submission document.`, 'ok');
+      } catch {
+        toast('Could not copy', 'Your browser blocked the clipboard — open each answer and copy it by hand.', 'err');
       }
       return;
     }
