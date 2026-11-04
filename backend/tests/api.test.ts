@@ -402,6 +402,48 @@ describe('the guided journey endpoint', () => {
   });
 });
 
+describe('the paid plain-English explanation', () => {
+  it('is a quotable, metered AI action', async () => {
+    const reply = await call('POST', '/v1/ai/quote', {
+      token: tokenFor('owner'),
+      body: { method: 'POST', path: `/v1/projects/${seed.projectId}/ask/explain` },
+    });
+    assert.equal(reply.status, 200);
+    assert.equal(reply.body.engine, 'GUIDE');
+    assert.equal(reply.body.taskType, 'guide_explain');
+    assert.ok(reply.body.estimatedChargeMinor > 0, 'a paid action must carry a cost before anybody commits to it');
+  });
+
+  it('refuses the local stand-in before charging a single ACU', async () => {
+    // The whole point of "paid on request": a plain-English explanation
+    // attributed to reasoning that never happened is dishonest, so on a
+    // deployment with no provider the run releases its hold and refuses rather
+    // than billing for the stand-in's output.
+    const before = platform.wallet(seed.tenantId).snapshot();
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/ask/explain`, {
+      token: tokenFor('owner'),
+      body: { question: 'How do I price the bill?' },
+    });
+    assert.equal(reply.status, 503);
+    assert.equal(reply.body.title, 'NO_REASONING_PROVIDER');
+
+    const after = platform.wallet(seed.tenantId).snapshot();
+    assert.equal(after.balanceMinor, before.balanceMinor, 'a refused run must not spend the balance');
+    assert.equal(after.heldMinor, before.heldMinor, 'a refused run must release its hold');
+  });
+
+  it('answers the same question for free, from state, with no provider needed', async () => {
+    // The free grounded answer is always there — that is the "free first" half.
+    const reply = await call('POST', `/v1/projects/${seed.projectId}/ask`, {
+      token: tokenFor('owner'),
+      body: { question: 'How do I price the bill?' },
+    });
+    assert.equal(reply.status, 201);
+    assert.equal(reply.body.acuConsumed, 0, 'answering from project state spends nothing');
+    assert.ok(typeof reply.body.answer === 'string' && reply.body.answer.length > 0);
+  });
+});
+
 describe('tenant isolation on the generic entity read', () => {
   /**
    * The endpoint that can return any record in the system is the one worth

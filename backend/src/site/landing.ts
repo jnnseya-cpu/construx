@@ -62,6 +62,11 @@ export const ENGINES = [
   // built, contracted, running, and advertised nowhere. `docfacts.test.ts` now
   // asserts every engine `ENGINE_CONTRACTS` holds is named here.
   ['Executive', 'What across the portfolio needs a decision this week, ranked with the reason and the exposure behind it.'],
+  // The ninth: plain-English help on the step you are on, grounded in the
+  // record and charged to your own wallet on request. It owns no arithmetic —
+  // it explains what the others compute — but it runs, bills and is contracted
+  // like any engine, so it is named here too.
+  ['Guide', 'Plain-English help on the step you are on, grounded in the record and charged to your own ACU wallet only when you ask for it.'],
 ];
 
 /**

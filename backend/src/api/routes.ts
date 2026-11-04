@@ -1,5 +1,5 @@
 import { CHANGE_ORIGIN, CONTINENT, CONTRACT_FORM, COUNTRY, DELAY_CAUSE, NOTICE_TYPE, SECTOR, SITE_OBSERVATION_CATEGORY, WEATHER_CONDITION, values } from '../../../shared/vocabulary.js';
-import { ask } from '../ai/conversation.ts';
+import { ask, explainPlainly } from '../ai/conversation.ts';
 import * as storage from '../billing/storage.ts';
 import * as stripe from '../billing/stripe.ts';
 import * as koda from '../billing/koda.ts';
@@ -23147,6 +23147,22 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => ask(projectContext(platform, ctx), body<{ question: string }>(ctx).question),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ask/explain',
+    description:
+      'The same question answered in plain English — a paid rewrite on request, for a first-timer still stuck after the ' +
+      'free grounded answer. Grounded on that answer so it invents no fact; charged to the tenancy wallet, reserved and ' +
+      'only debited on success, and refused rather than charged when no reasoning provider is configured',
+    ai: { engine: 'GUIDE', taskType: 'guide_explain', capability: 'REASONING' },
+    schema: {
+      type: 'object',
+      required: ['question'],
+      properties: { question: { type: 'string', minLength: 2, maxLength: 2000 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => explainPlainly(projectContext(platform, ctx), body<{ question: string }>(ctx).question),
   },
 
   // ------------------------------------------------- offline field execution

@@ -691,6 +691,18 @@ document.addEventListener('click', (event) => {
   goTo(target.dataset.goto, target.dataset.gotoProject || undefined);
 });
 
+// `data-ask-seed` carries a question from the guided walkthrough's "Ask for
+// help" into the Copilot, so a stuck person arrives with the step they were on
+// already asked rather than facing a blank box. Set before navigating; the
+// Copilot reads and clears it on load.
+document.addEventListener('click', (event) => {
+  const el = event.target.closest('[data-ask-seed]');
+  if (!el) return;
+  event.preventDefault();
+  state.askSeed = el.dataset.askSeed;
+  navigate('copilot');
+});
+
 // Every KPI opens to the events behind it. Wired once for the whole
 // application: each screen re-renders its own root on every draw, so a listener
 // bound per tile would be re-attached on each one.

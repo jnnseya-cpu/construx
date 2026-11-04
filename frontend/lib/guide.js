@@ -70,6 +70,11 @@ export function guideStrip(journey, { here } = {}) {
           ? html`<button class="btn guide-go" data-nav="${now.screen}">Go to ${SCREEN[now.screen]} →</button>`
           : ''
       }
+      ${
+        now
+          ? html`<button class="btn guide-help" data-ask-seed="I'm stuck on this step: ${now.title}. What exactly do I do?">Stuck? Ask for help</button>`
+          : ''
+      }
     </div>
     <details class="guide-all">
       <summary>Show the whole journey · ${done} of ${steps.length} done</summary>

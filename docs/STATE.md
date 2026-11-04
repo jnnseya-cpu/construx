@@ -25658,6 +25658,41 @@ real HTTP: setup-only, job folded in, degrade on an unreadable id, operator
 refused). The per-screen detailed panel on the two flow screens stays, with the
 strip as the always-present header above it.
 
+### Ask for help — free first, paid on request
+
+*"If struggled, user can ask this guide and it supports them, using their own
+ACUs."* The guide strip now carries a **"Stuck? Ask for help"** button beside
+the next step. It seeds the existing **Copilot** (`pages/copilot.js`,
+`POST /v1/projects/:projectId/ask`) with the step the person is on — `app.js`
+stashes the seed on `state.askSeed` and the Copilot reads and clears it on load
+— so a stuck subscriber arrives with their question already asked rather than a
+blank box. Nothing new was built for the free answer: the Copilot was already
+wired, grounded in project state, and **free** (`acuConsumed: 0`, no provider
+called).
+
+The paid half is `conversation.explainPlainly` behind
+`POST /v1/projects/:projectId/ask/explain` (`ai: GUIDE/guide_explain/REASONING`,
+so `/v1/ai/quote` prices it). It grounds on the free answer first — the model is
+handed the facts the platform already derived and the next step it already
+chose, and told to explain **those** in plain English, so it invents no figure
+or deadline. It runs through `runAI`, which reserves, runs and only then debits
+the tenancy's own ACU wallet; a run that fails is never charged. On a deployment
+with no reasoning provider it refuses with `NO_REASONING_PROVIDER` **before**
+charging — a plain-English explanation attributed to reasoning that never
+happened is the same dishonesty the bid drafter refuses — and the free grounded
+answer is there regardless. A new `GUIDE` engine (`name: 'Guide'`,
+`ALL_PHASES`) was added to the orchestrator's `Engine` union, `ROUTING_MATRIX`
+and `ENGINE_CONTRACTS` for it to route and price through.
+
+The console offers the paid rewrite (`pages/copilot.js`, an "Explain this in
+plain English (uses ACUs)" chip under each answer) **only** outside `AI_MODE=local`,
+so it is never a button that would always refuse. Covered by `api.test.ts`: the
+action is quotable and metered (`estimatedChargeMinor > 0`), the stand-in is
+refused before a single ACU is spent (wallet balance and held both unchanged),
+and the same question is answered for free from state (`acuConsumed: 0`). The
+live-provider prose path cannot be exercised in this environment and is not
+claimed as tested — only the refuse-before-charge and quote paths are.
+
 ### Naming the step and not the door
 
 *"There is not do this Price the bill anywhere."* The flow panel named the

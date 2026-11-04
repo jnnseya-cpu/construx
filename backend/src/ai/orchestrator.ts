@@ -43,7 +43,8 @@ export type Engine =
   | 'BIM_TWIN'
   | 'CONTRACTS_CLAIMS'
   | 'HANDOVER_OM'
-  | 'EXECUTIVE';
+  | 'EXECUTIVE'
+  | 'GUIDE';
 
 /**
  * The routing matrix. Perception observes the physical world; reasoning decides
@@ -81,6 +82,10 @@ export const ROUTING_MATRIX: Record<Engine, { perception: string[]; reasoning: s
   EXECUTIVE: {
     perception: [],
     reasoning: ['Portfolio scenario modelling', 'Executive briefing'],
+  },
+  GUIDE: {
+    perception: [],
+    reasoning: ['Plain-English explanation of a platform step', 'How-to guidance'],
   },
 };
 
@@ -197,6 +202,15 @@ export const ENGINE_CONTRACTS: Record<Engine, EngineContract> = {
     activeInPhases: ALL_PHASES,
     inputs: ['Every project position', 'Agent findings', 'Wallet and commercial state'],
     outputs: ['Ranked actions with reasons', 'Portfolio exposure'],
+  },
+  GUIDE: {
+    name: 'Guide',
+    purpose: 'Explain the step you are on in plain English and the exact action to take in the platform',
+    // Everywhere: a person can be stuck on any screen at any phase, and the
+    // guided walkthrough that calls this runs from an empty account onward.
+    activeInPhases: ALL_PHASES,
+    inputs: ['Where this job is on the guided journey', 'The step you are stuck on', 'What the platform has already recorded'],
+    outputs: ['A plain-English explanation of the step', 'The next action, named as the button that does it'],
   },
 };
 

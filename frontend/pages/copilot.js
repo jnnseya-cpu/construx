@@ -1,7 +1,7 @@
 import { api } from '../lib/api.js';
 import { aiModeNotice } from '../lib/insight.js';
 import { heatmap, pieChart } from '../lib/charts.js';
-import { badge, esc, html, humanise, raw, render, table, toast } from '../lib/ui.js';
+import { badge, esc, exact, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
 
 /**
@@ -45,6 +45,11 @@ export async function copilot(root) {
   const plane = await api.get('/v1/ai/control-plane').catch(() => null);
   const contracts = plane?.engineContracts ?? {};
   const phase = state.project?.phase;
+  // A provider is actually called only outside `local` mode. The paid
+  // plain-English explanation is offered only then — a button that would always
+  // refuse (because no provider is configured) is worse than no button, and the
+  // free grounded answer is there either way.
+  const providerLive = Boolean(plane && plane.mode && plane.mode !== 'local');
 
   const modes = Object.entries(contracts).map(([engine, contract]) => ({
     engine,
@@ -223,7 +228,14 @@ export async function copilot(root) {
         .map((line) => `<div>${escapeHtml(line)}</div>`)
         .join('');
 
-      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}`;
+      // The paid, plain-English rewrite — offered only where a provider can
+      // actually write it, and clearly marked as spending ACUs. The free answer
+      // above is always there; this is the "paid on request" half.
+      const explainChip = providerLive
+        ? `<div class="chips"><button class="chip explain" data-explain="${escapeHtml(question)}">Explain this in plain English (uses ACUs)</button></div>`
+        : '';
+
+      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}${explainChip}`;
     } catch (error) {
       pending.classList.add('err');
       pending.textContent = error.message;
@@ -231,6 +243,35 @@ export async function copilot(root) {
     }
     chat.scrollIntoView({ block: 'end' });
   }
+
+  // The paid plain-English rewrite of a question already answered for free. It
+  // spends the tenancy's own ACUs; the server reserves, runs and only then
+  // debits, and refuses before charging where no provider can write it.
+  async function explain(question, trigger) {
+    if (trigger) trigger.disabled = true;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ai';
+    bubble.textContent = 'Writing a plain-English explanation…';
+    chat.append(bubble);
+    bubble.scrollIntoView({ block: 'end' });
+    try {
+      const res = await api.post(`/v1/projects/${state.session.projectId}/ask/explain`, { question });
+      const paras = (res.explanation ?? []).map((line) => `<div>${escapeHtml(line)}</div>`).join('');
+      const spent = res.acuConsumed != null ? ` · spent ${escapeHtml(exact(res.acuConsumed))} ACU` : '';
+      bubble.innerHTML = `<div class="src" style="margin-bottom:7px"><b>Guide</b> · plain English${spent}</div>${paras}`;
+    } catch (error) {
+      bubble.classList.add('err');
+      bubble.textContent = error.message;
+      toast('Explanation unavailable', error.message, 'err');
+    }
+    if (trigger) trigger.disabled = false;
+    chat.scrollIntoView({ block: 'end' });
+  }
+
+  chat.addEventListener('click', (event) => {
+    const btn = event.target.closest('[data-explain]');
+    if (btn) explain(btn.dataset.explain, btn);
+  });
 
   document.getElementById('ask').addEventListener('click', () => ask(input.value));
   input.addEventListener('keydown', (event) => {
@@ -241,8 +282,17 @@ export async function copilot(root) {
     if (chip) ask(chip.dataset.q);
   });
 
-  // Open with something on screen rather than an empty panel.
-  await ask(SUGGESTIONS[0]);
+  // Open with the step a stuck person came in asking about, where the guided
+  // walkthrough sent them here with one; otherwise with a sensible default so
+  // the panel is never empty. The seed is read once and cleared, so a later
+  // visit to the Copilot does not resurrect an old question.
+  const seed = state.askSeed;
+  if (seed) {
+    state.askSeed = undefined;
+    await ask(seed);
+  } else {
+    await ask(SUGGESTIONS[0]);
+  }
 }
 
 /*
