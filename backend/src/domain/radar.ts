@@ -59,6 +59,13 @@ export type CompanyProfile = {
   insurances: InsuranceCover[];
   accreditations: string[];
   references: CompanyReference[];
+  /**
+   * Whether the business holds enhanced DBS checks for personnel who enter
+   * occupied homes — a mandatory requirement on social-housing and adaptation
+   * work. Optional so profiles recorded before this field read it as absent
+   * rather than failing to load; the DBS probe treats absent as "not held".
+   */
+  dbs?: { held: boolean; detail?: string };
   /** Trades delivered in-house rather than bought. */
   selfDeliveredTrades: string[];
   targetMarginPercent: { min: number; max: number };

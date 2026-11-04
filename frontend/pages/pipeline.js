@@ -3767,6 +3767,17 @@ export async function pipeline(root) {
             'e.g. "Employers Liability | 10000000 | 2027-03-31". The compliance matrix reads these against the ' +
             'insurance an ITT demands, so a line here is what turns an insurance requirement from a gap to satisfied. ' +
             'Clearing the box removes them.' },
+        { name: 'references', label: 'Project references (your experience)', type: 'textarea', rows: 4, required: false,
+          value: (held?.references ?? [])
+            .map((r) => `${r.clientName} | ${r.projectName} | ${r.sector} | ${r.valueMinor / 100} | ${r.completedYear}`)
+            .join('\n'),
+          hint:
+            'One per line: client | project | sector | value in £ | year completed. ' +
+            'e.g. "South Holland DC | Level-access wet room, 14 Elm Rd | Residential | 18000 | 2024". ' +
+            'These are the past projects you stand behind — the matrix reads them against a references/experience ' +
+            'requirement, and the radar matches them to opportunities. Clearing the box removes them.' },
+        { name: 'dbsHeld', label: 'Enhanced DBS checks in place for staff entering occupied homes', type: 'checkbox',
+          value: !!held?.dbs?.held },
         { name: 'trades', label: 'Trades delivered in-house', required: false, value: asList(held?.selfDeliveredTrades) },
         { name: 'concurrent', label: 'Sites the business can run at once', type: 'number', value: held?.capacity?.concurrentProjects ?? '' },
         {
@@ -3804,7 +3815,24 @@ export async function pipeline(root) {
               ...(parts[2] ? { expiresOn: parts[2] } : {}),
             })),
           accreditations: list(v.accreditations),
-          references: held?.references ?? [],
+          // Parsed from the textarea, mirroring insurances: "client | project |
+          // sector | value£ | year" per line. A reference the business types here
+          // is one it stands behind, so it is recorded verified — that is what the
+          // experience probe and the radar count. A malformed line (no client or
+          // project) is dropped rather than written half-formed.
+          references: String(v.references || '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts[0] && parts[1])
+            .map((parts) => ({
+              clientName: parts[0],
+              projectName: parts[1],
+              sector: parts[2] || (Array.isArray(v.sectors) ? v.sectors[0] : v.sectors) || 'Residential',
+              valueMinor: Math.round(Number(parts[3] || 0) * 100),
+              completedYear: Number(parts[4]) || new Date().getFullYear(),
+              verified: true,
+            })),
+          dbs: { held: !!v.dbsHeld },
           selfDeliveredTrades: list(v.trades),
           targetMarginPercent: { min: Number(v.marginMin || 0), max: Number(v.marginMax || 0) },
           capacity: { concurrentProjects: Number(v.concurrent || 0), committedProjects: Number(v.committed || 0) },

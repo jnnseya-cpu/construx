@@ -258,6 +258,15 @@ const PROBES: EvidenceProbe[] = [
     find: (p) => (p.accreditations.length > 0 ? `Held: ${p.accreditations.join(', ')}` : null),
   },
   {
+    // Enhanced DBS for personnel entering occupied homes — a mandatory
+    // requirement on social-housing and adaptation work. Satisfied by holding
+    // the checks, so it is evidenced here and left out of the drafting queue,
+    // never written as a method statement. Absent (an older profile, or a
+    // business that does not hold them) reads as a gap, not a pass.
+    match: /\bdbs\b|disclosure and barring|enhanced disclosure|basic disclosure|barring service/i,
+    find: (p) => (p.dbs?.held ? `Enhanced DBS checks confirmed in place${p.dbs.detail ? ` — ${p.dbs.detail}` : ''}` : null),
+  },
+  {
     match: /turnover|accounts|financial standing/i,
     find: (p) =>
       p.turnoverMinorByYear.length > 0

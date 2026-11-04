@@ -3953,6 +3953,15 @@ export const ROUTES: Route[] = [
         insurances: { type: 'array', items: { type: 'object' } },
         accreditations: { type: 'array', items: { type: 'string' } },
         references: { type: 'array', items: { type: 'object' } },
+        // Enhanced DBS for personnel entering occupied homes. Optional, so a
+        // profile saved before this field still validates; the matrix reads it to
+        // evidence a DBS requirement rather than leaving it a gap.
+        dbs: {
+          type: 'object',
+          required: ['held'],
+          properties: { held: { type: 'boolean' }, detail: { type: 'string' } },
+          additionalProperties: false,
+        },
         selfDeliveredTrades: { type: 'array', items: { type: 'string' } },
         // A range, not a number. `CompanyProfile.targetMarginPercent` is
         // `{ min, max }` and the radar reads both — `profile.targetMarginPercent.max`

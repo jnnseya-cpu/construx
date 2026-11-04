@@ -177,6 +177,39 @@ describe('A named certificate is matched to the one the invitation asks for', ()
   });
 });
 
+// Enhanced DBS is a mandatory requirement on work in occupied homes — satisfied
+// by holding the checks, so it belongs in the evidence queue, never written as a
+// scored method statement. The field is optional on the profile, so a business
+// that has not recorded it reads as a gap rather than crashing or false-passing.
+describe('Enhanced DBS is evidenced from the profile, not drafted as prose', () => {
+  const dbsLine = () =>
+    analyse({
+      requirements: [
+        requirement({
+          reference: 'D1',
+          category: 'HEALTH_AND_SAFETY',
+          requirement: 'Evidence of enhanced DBS checks for personnel entering occupied homes',
+          evidenceRequired: 'DBS certificates',
+        }),
+      ],
+    }).matrix[0]!;
+
+  it('is a gap when the business has not recorded holding them', () => {
+    const line = dbsLine();
+    assert.equal(line.status, 'GAP');
+    assert.equal(line.evidenceHeld, undefined);
+  });
+
+  it('is satisfied once recorded, and carries the detail through', () => {
+    const current = radar.companyProfile(qs());
+    radar.setCompanyProfile(qs(), { ...current, dbs: { held: true, detail: 'enhanced DBS for all site operatives' } });
+    const line = dbsLine();
+    assert.equal(line.status, 'SATISFIED');
+    assert.ok(line.evidenceHeld?.includes('Enhanced DBS'), `evidence was: ${line.evidenceHeld}`);
+    assert.ok(line.evidenceHeld?.includes('all site operatives'));
+  });
+});
+
 // ── Held evidence read against the matrix ─────────────────────────────────────
 
 describe('Held evidence is read against the matrix and proposed, never invented', () => {
