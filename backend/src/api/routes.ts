@@ -4504,6 +4504,24 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-responses/:packId/sections/:key/revise',
+    description:
+      'Replace one section’s prose with what a person wrote or edited — to put real project names into an experience answer or a named site manager into a team answer, which the drafter leaves for a person. Marked human-authored; no model is called',
+    schema: {
+      type: 'object',
+      required: ['body'],
+      properties: { body: { type: 'array', minItems: 1, items: { type: 'string' } } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      bidresponse.reviseSection(projectContext(platform, ctx), {
+        packId: ctx.params.packId as string,
+        key: ctx.params.key as string,
+        body: body<{ body: string[] }>(ctx).body,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-responses/:packId/issue',
     description:
       'Issue the pack. Refused unless every deliverable has a response, every stated deadline is dated and the assurance review clears it — a submission missing a mandatory response is rejected, not marked down',

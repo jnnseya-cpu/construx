@@ -369,3 +369,43 @@ describe('the completeness answer is read, never stored', () => {
     assert.deepEqual(undated.undated, ['Site visit']);
   });
 });
+
+// The last mile: a person reads a drafted section back and rewrites it in their
+// own words — putting the real project names and team in, which the drafter
+// leaves for them. No model is called, so this works even on a deployment with no
+// reasoning provider, and the result is recorded as the person's, not the model's.
+describe('a person can write a section in their own words, without the model', () => {
+  it('writes the body, marks it theirs, drops the AI attribution, and refuses an empty or unknown section', () => {
+    const analysisId = itt.analyseITT(asQS(), {
+      reference: 'ITT-BIDPACK-REVISE',
+      clientName: 'South Holland District Council',
+      returnBy: '2026-11-20',
+      estimatedValueMinor: 7_200_000,
+      durationWeeks: 12,
+      requirements: [REQUIREMENTS[0]!],
+      terms: { contractForm: 'JCT Minor Works' },
+    }).analysisId;
+    const pack = bidresponse.planBidResponse(asQS(), { analysisId }).pack;
+    const key = pack.sections[0]!.key;
+
+    const result = bidresponse.reviseSection(asQS(), {
+      packId: pack.id,
+      key,
+      body: [
+        'We completed a comparable single-storey extension at Perry Barr in 2025 for £64,000.',
+        'It was handed over on time and to budget, the resident remaining in occupation throughout.',
+      ],
+    });
+    assert.equal(result.written.status, 'DRAFTED');
+    assert.equal(result.written.authorship, 'HUMAN');
+    assert.equal(result.written.body!.length, 2);
+    assert.equal(result.written.provider, undefined, 'a person-written section must not claim a model wrote it');
+    assert.ok(result.written.words! > 0);
+
+    const after = bidresponse.bidResponsePack(asQS(), pack.id);
+    assert.equal(after.sections.find((s) => s.key === key)!.authorship, 'HUMAN');
+
+    throwsCode(() => bidresponse.reviseSection(asQS(), { packId: pack.id, key, body: [' ', ''] }), 'BID_SECTION_EMPTY');
+    throwsCode(() => bidresponse.reviseSection(asQS(), { packId: pack.id, key: 'NOPE', body: ['x'] }), 'BID_SECTION_NOT_FOUND');
+  });
+});

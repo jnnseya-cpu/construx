@@ -404,6 +404,72 @@ export async function writeNextSection(
 }
 
 /**
+ * Replace a section's prose with what a person wrote or edited.
+ *
+ * The drafter writes a first version and the shortener cuts one to length, but
+ * until this existed there was no way to *read back and refine* a drafted
+ * answer — to put the real project names into an experience answer, or the named
+ * site manager into a team answer, both of which the drafter deliberately leaves
+ * for a person because it will not invent them. A submission nobody can edit is
+ * a submission nobody can make their own.
+ *
+ * The result is marked `HUMAN`, and the AI attribution is dropped, because once
+ * a person has rewritten it the prose is theirs and the record should not claim a
+ * model wrote what a person did.
+ */
+export function reviseSection(
+  ctx: EngineContext,
+  input: { packId: string; key: string; body: string[] },
+): { pack: BidResponsePack; written: BidSection } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { lifecyclePhase: currentPhase(ctx) });
+
+  const pack = requirePack(ctx, input.packId);
+  if (pack.status === 'ISSUED') {
+    throw new DomainError(
+      'BID_RESPONSE_ISSUED',
+      `${pack.reference} has been issued. Editing a submission after it has gone to the buyer is not a draft change, ` +
+        'and the record of what was sent must stay what was sent.',
+      409,
+    );
+  }
+
+  const section = pack.sections.find((entry) => entry.key === input.key);
+  if (!section) {
+    throw new DomainError('BID_SECTION_NOT_FOUND', `${pack.reference} has no section ${input.key}`, 404);
+  }
+
+  const body = (Array.isArray(input.body) ? input.body : []).map((line) => String(line).trim()).filter(Boolean);
+  if (body.length === 0) {
+    throw new DomainError('BID_SECTION_EMPTY', 'A section needs at least one line of text. Clearing it is not editing it.', 422);
+  }
+
+  // Drop the AI attribution: a person has rewritten it, so the record must not
+  // say a model did.
+  const { provider: _provider, modelClass: _modelClass, ...base } = section;
+  const written: BidSection = {
+    ...base,
+    status: 'DRAFTED',
+    body,
+    words: body.join(' ').split(/\s+/).filter(Boolean).length,
+    authorship: 'HUMAN',
+    writtenAt: new Date().toISOString(),
+  };
+
+  const next_: BidResponsePack = {
+    ...pack,
+    sections: pack.sections.map((entry) => (entry.key === input.key ? written : entry)),
+  };
+
+  write(ctx, {
+    eventType: 'BID_RESPONSE_SECTION_WRITTEN',
+    entity: { refType: 'BidResponsePack', refId: pack.id },
+    nextState: next_ as unknown as Record<string, unknown>,
+  });
+
+  return { pack: next_, written };
+}
+
+/**
  * Cut one section to the length the buyer stated.
  *
  * This exists because the gate below needs a way forward. A check that refuses

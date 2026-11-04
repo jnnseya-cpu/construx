@@ -966,25 +966,29 @@ export async function pipeline(root) {
    * submission that has already gone.
    */
   const openPacks = (bidPacks?.packs ?? []).filter((pack) => pack.status !== 'ISSUED');
-  const packSections = projectId
+  // The full pack, sections and all, fetched once and kept — so the submission
+  // can be read and edited on this screen rather than only counted. The register
+  // above carries counts; this carries the prose.
+  const fullPacks = projectId
     ? (
         await Promise.all(
           openPacks.map((pack) =>
             api
               .get(`/v1/projects/${projectId}/bid-responses/${pack.id}`)
-              .then((full) =>
-                (full.sections ?? []).map((section) => ({
-                  value: `${pack.id}::${section.key}`,
-                  label: `${pack.reference} · ${section.key} — ${section.title}`,
-                })),
-              )
-              // A pack that will not open is left out rather than offered as an
-              // option that cannot be submitted.
-              .catch(() => []),
+              .then((full) => ({ pack, sections: full.sections ?? [] }))
+              // A pack that will not open is carried with no sections rather than
+              // dropped, so the register and the reader agree on what exists.
+              .catch(() => ({ pack, sections: [] })),
           ),
         )
-      ).flat()
+      )
     : [];
+  const packSections = fullPacks.flatMap(({ pack, sections }) =>
+    sections.map((section) => ({
+      value: `${pack.id}::${section.key}`,
+      label: `${pack.reference} · ${section.key} — ${section.title}`,
+    })),
+  );
 
   // Why the reader cannot run here, in the platform's own words rather than a
   // rule copied into the browser: `blockedReason` reads the published
@@ -1485,6 +1489,58 @@ export async function pipeline(root) {
                   })()
                 }
               `}
+              ${
+                /*
+                 * The submission, read back and made editable. Until this, a
+                 * section could be drafted and counted but never seen — so the
+                 * real project names an experience answer needs, and the named
+                 * site manager a team answer needs, had nowhere to go. Each
+                 * drafted section shows in full, with Edit (rewrite it as yours)
+                 * and Copy. An edited section is marked yours, not the model's.
+                 */
+                fullPacks.some((fp) => fp.sections.length > 0)
+                  ? html`<div style="margin:16px 17px 4px">
+                      <h2 style="font-size:14px;margin:0 0 4px">Read and edit the drafted answers</h2>
+                      <p class="metric-sub" style="margin:0 0 11px">
+                        Every section the drafter has written, in full. Edit one to put your real project names, your team
+                        or your figures in — the drafter writes the method and leaves those for you, because it will not
+                        invent them. An edited section is recorded as yours, not the model’s.
+                      </p>
+                      ${fullPacks
+                        .filter((fp) => fp.sections.length > 0)
+                        .map(
+                          ({ pack, sections }) => html`<div class="card pad0" style="margin-bottom:10px">
+                            <div style="padding:11px 14px">
+                              <b>${pack.reference}</b> · ${pack.clientName} —
+                              ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
+                            </div>
+                            ${sections.map(
+                              (section) => html`<div style="border-top:1px solid var(--line);padding:11px 14px">
+                                <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+                                  <b style="font-size:13px">${section.key} — ${section.title}</b>
+                                  <span style="flex:none">${
+                                    section.status === 'DRAFTED'
+                                      ? badge(
+                                          `${section.words ?? 0} words · ${section.authorship === 'HUMAN' ? 'yours' : 'AI draft'}`,
+                                          section.authorship === 'HUMAN' ? 'ok' : 'info',
+                                        )
+                                      : badge('not written', '')
+                                  }</span>
+                                </div>
+                                ${section.status === 'DRAFTED' && (section.body ?? []).length > 0
+                                  ? html`<div style="margin-top:7px;font-size:13px;line-height:1.55;white-space:pre-wrap">${(section.body ?? []).join('\n\n')}</div>
+                                      <div style="margin-top:9px;display:flex;gap:7px">
+                                        <button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Edit this answer</button>
+                                        <button class="btn quiet sm" data-copy-section="${pack.id}::${section.key}">Copy</button>
+                                      </div>`
+                                  : html`<div class="metric-sub" style="margin-top:6px">Not written yet — use “Write the next section” above.</div>`}
+                              </div>`,
+                            )}
+                          </div>`,
+                        )}
+                    </div>`
+                  : ''
+              }
       </section>
 
       ${!projectId || assurance?.error
@@ -3564,6 +3620,65 @@ export async function pipeline(root) {
       toast('Not cut', error.detail ?? error.message ?? 'The section is unchanged.', 'err');
       button.disabled = false;
       button.textContent = 'Cut it to length';
+    }
+  });
+
+  /*
+   * Read-and-edit, the last mile of the submission. A drafted section could be
+   * counted but never seen or changed until this; now Edit opens the answer
+   * pre-filled so the real project names and team go in, and Copy lifts it out.
+   */
+  root.addEventListener('click', async (event) => {
+    const reviseBtn = event.target.closest('[data-revise]');
+    if (reviseBtn && projectId) {
+      const [packId, key] = String(reviseBtn.dataset.revise).split('::');
+      const found = fullPacks.find((fp) => fp.pack.id === packId);
+      const section = found?.sections.find((s) => s.key === key);
+      const current = (section?.body ?? []).join('\n\n');
+      const result = await command({
+        title: `Edit — ${section?.title ?? key}`,
+        intent:
+          'Rewrite this answer in your own words: put your real project names, your team and your figures in. A blank ' +
+          'line starts a new paragraph. Saving records it as yours, not the model’s, and calls no provider.',
+        path: `/v1/projects/${projectId}/bid-responses/${packId}/sections/${encodeURIComponent(key)}/revise`,
+        submitLabel: 'Save this answer',
+        fields: [
+          {
+            name: 'text',
+            label: 'The answer, as the buyer will read it',
+            type: 'textarea',
+            rows: 16,
+            value: current,
+            hint: 'One blank line between paragraphs. Nothing here is sent to a model — this is your text.',
+          },
+        ],
+        transform: (v) => ({
+          body: String(v.text || '')
+            .split(/\n\s*\n/)
+            .map((p) => p.replace(/[ \t]+/g, ' ').trim())
+            .filter(Boolean),
+        }),
+      });
+      if (result) {
+        toast('Saved', 'Your version is recorded against the pack.', 'ok');
+        await draw();
+      }
+      return;
+    }
+
+    const copyBtn = event.target.closest('[data-copy-section]');
+    if (copyBtn) {
+      const [packId, key] = String(copyBtn.dataset.copySection).split('::');
+      const found = fullPacks.find((fp) => fp.pack.id === packId);
+      const section = found?.sections.find((s) => s.key === key);
+      const text = (section?.body ?? []).join('\n\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast('Copied', 'The answer is on your clipboard.', 'ok');
+      } catch {
+        toast('Could not copy', 'Your browser blocked the clipboard — select the text and copy it by hand.', 'err');
+      }
+      return;
     }
   });
 
