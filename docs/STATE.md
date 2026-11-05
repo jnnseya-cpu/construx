@@ -9076,6 +9076,44 @@ first pass and produced the two tests that were missing: a permit that ran out
 last week and was never handed back, and a question whose only match is a plural
 word.
 
+#### The platform teaches how it works — a step-by-step guide
+
+The copilot answers from project *state* and is told to invent no mechanics,
+which keeps it honest about figures but leaves it unable to explain the one
+thing a first-timer most needs: how CONSTRUX itself works — which screen, which
+button, in what order, and what each step produces. A model asked that from
+general knowledge would make the platform up.
+
+So the mechanics are a curated knowledge base, `backend/src/ai/platformguide.ts`
+— the step-by-step road from an empty account to a won, delivered job, grouped
+the way the work happens (set up · find work · work a tender · price, assemble
+and submit · win and deliver · how it works). Every topic is true by
+construction: it names a real console screen (an `AREA_CONSOLE_PAGE` value, which
+a test pins), the real buttons, the real order the engines enforce, what you get,
+and the traps worth naming — one tender has one matrix, a reading cannot land on
+a closed tender, the construction duration comes from the priced works and not
+from the ITT text, "issue the pack" is not "record the award".
+
+One copy, two surfaces, so neither can drift from it. The **Copilot page**
+(`frontend/pages/copilot.js`) renders it in full as "How CONSTRUX works — step by
+step": deterministic content from `GET /v1/guide/topics`, so it is there on every
+deployment, provider or not, with an "Explain this with AI" hand-off on each
+topic that seeds the copilot. And the copilot's paid explanation
+(`explainPlainly`) folds the topics relevant to a question into its grounding
+(`relevantGuideTopics` scores keywords, title and summary; `guideGroundingLines`
+flattens them), so when a reasoning provider is live Claude explains the real
+platform — screen, button, order — instead of a plausible invention of it, while
+still barred from stating any figure or project detail not on the record. The
+knowledge base is all the AI knows about the platform; there is no second copy in
+the browser. Eight tests pin that every topic is well-formed and points at a real
+screen, that the relevance scorer lands a "how long does the job take" question
+on pricing-the-works (not the ITT) and a "mixing tenders" question on the focus
+topic, and that a question matching nothing returns nothing rather than guessing.
+
+There is no per-topic read route: the page reads the whole guide at once and the
+grounding runs in-process, so a `/v1/guide/topics/:id` endpoint would have been a
+read nothing reached — the door invariant in `doors.test.ts` is what caught it.
+
 ---
 
 ### The project on site now has a site record

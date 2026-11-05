@@ -44,6 +44,11 @@ export async function copilot(root) {
   // general assistant, so the specialism was invisible at the point of use.
   const plane = await api.get('/v1/ai/control-plane').catch(() => null);
   const contracts = plane?.engineContracts ?? {};
+  // The platform's own step-by-step guide — how CONSTRUX works, end to end.
+  // Deterministic content from the server knowledge base, so it is here in full
+  // even on a deployment with no provider configured; the copilot above reasons
+  // over the same knowledge when a provider is live.
+  const guide = await api.get('/v1/guide/topics').catch(() => null);
   const phase = state.project?.phase;
   // A provider is actually called only outside `local` mode. The paid
   // plain-English explanation is offered only then — a button that would always
@@ -92,6 +97,8 @@ export async function copilot(root) {
       <div class="chips" style="margin-bottom:20px" id="suggestions">
         ${SUGGESTIONS.map((s) => html`<button class="chip" data-q="${s}" style="cursor:pointer">${s}</button>`)}
       </div>
+
+      ${guidebookSection(guide)}
 
       ${copilotCharts(modes, phase)}
 
@@ -277,7 +284,10 @@ export async function copilot(root) {
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') ask(input.value);
   });
-  document.getElementById('suggestions').addEventListener('click', (event) => {
+  // Delegated across the whole page, not just the suggestion row, so a
+  // "data-q" chip anywhere — a suggestion, or an "Explain this with AI" in the
+  // step-by-step guidebook below — asks the copilot the question it carries.
+  root.addEventListener('click', (event) => {
     const chip = event.target.closest('[data-q]');
     if (chip) ask(chip.dataset.q);
   });
@@ -329,6 +339,66 @@ const escapeHtml = esc;
  * talking to you afterwards. The footnote says so, because a grid of lit and
  * unlit cells reads as "available" and "unavailable" unless it is told not to.
  */
+/**
+ * The step-by-step guidebook, from the platform's own knowledge base.
+ *
+ * This is the detailed "how CONSTRUX works" the copilot alone could never give:
+ * the copilot is grounded on project state and must invent no mechanics, so the
+ * screens, buttons and order live server-side as curated content and are shown
+ * here in full. It is deterministic — present on every deployment, provider or
+ * not — and each topic offers a one-press hand-off to the AI, which reasons over
+ * the same knowledge when a provider is live.
+ *
+ * Collapsed by default, grouped the way the work happens, so it reads as a
+ * walkthrough top to bottom and any one topic answers "how do I do this bit".
+ */
+function guidebookSection(guide) {
+  const groups = guide?.groups ?? [];
+  if (groups.length === 0) return '';
+  return html`<div class="card pad0" style="margin-bottom:20px">
+    <h2 style="padding:15px 17px 0">How CONSTRUX works — step by step</h2>
+    <p class="metric-sub" style="padding:4px 17px 0">
+      The whole road from an empty account to a won, delivered job. Every step names the screen and the button. Open
+      any step, follow it, or press <b>Explain this with AI</b> to have the copilot walk you through it in plain English.
+    </p>
+    <div style="padding:8px 17px 16px">
+      ${groups.map(
+        (group) => html`<div style="margin-top:10px">
+          <div style="font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3);margin-bottom:4px">
+            ${group.title}
+          </div>
+          ${group.topics.map(
+            (topic) => html`<details class="guide-topic" style="border-top:1px solid var(--line);padding:9px 0">
+              <summary style="cursor:pointer;font-weight:600;font-size:13.5px">${topic.title}</summary>
+              <div style="padding:7px 0 2px">
+                <div class="metric-sub" style="margin-bottom:7px">${topic.summary}</div>
+                <ol style="margin:0 0 8px;padding-left:20px;font-size:13px;line-height:1.5">
+                  ${topic.steps.map(
+                    (step) => html`<li style="margin-bottom:3px">${step.do}${
+                      step.detail ? html`<span class="metric-sub" style="display:block">${step.detail}</span>` : ''
+                    }</li>`,
+                  )}
+                </ol>
+                <div style="font-size:12.5px;margin-bottom:6px"><b>You get:</b> ${topic.youGet}</div>
+                ${
+                  (topic.watchOut ?? []).length > 0
+                    ? html`<div class="notice" style="margin-bottom:8px">
+                        ${topic.watchOut.map((w) => html`<div>⚠ ${w}</div>`)}
+                      </div>`
+                    : ''
+                }
+                <button class="chip" data-q="Walk me through this step by step, in plain English: ${topic.title}." style="cursor:pointer">
+                  Explain this with AI
+                </button>
+              </div>
+            </details>`,
+          )}
+        </div>`,
+      )}
+    </div>
+  </div>`;
+}
+
 function copilotCharts(modes, phase) {
   if (modes.length === 0) return '';
 

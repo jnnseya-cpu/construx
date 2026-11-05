@@ -1,4 +1,5 @@
 import { AREA_CONSOLE_PAGE } from '../../../shared/vocabulary.js';
+import { guideGroundingLines, relevantGuideTopics } from './platformguide.ts';
 import { ENGINE_CONTRACTS } from './orchestrator.ts';
 import { config } from '../config.ts';
 import { abbreviateMoney } from '../domain/locale.ts';
@@ -417,6 +418,14 @@ export async function explainPlainly(
   const grounded = ask(ctx, question);
   const nextAction = grounded.suggestedActions[0];
 
+  // The curated platform knowledge relevant to the question — the real screens,
+  // buttons and order. Handed to the model as mechanics it may rely on, the way
+  // the project facts are, so a plain-English answer names how CONSTRUX actually
+  // works instead of inventing it. Empty when the question matches no topic, in
+  // which case the model falls back to the grounded answer and next step alone.
+  const guideTopics = relevantGuideTopics(question);
+  const howThePlatformWorks = guideGroundingLines(guideTopics);
+
   const result = await runAI(ctx, {
     engine: 'GUIDE',
     taskType: 'guide_explain',
@@ -433,10 +442,16 @@ export async function explainPlainly(
         whatThePlatformSays: grounded.answer,
         factsOnRecord: grounded.grounding.map((fact) => `${fact.label}: ${fact.value}`),
         theNextStep: nextAction ? `${nextAction.label} — taken on the ${nextAction.goTo} screen` : 'none suggested',
+        // How the platform works, from the curated guide — true mechanics, not
+        // project figures. The model may describe these steps, screens and
+        // buttons; it still may not state a figure or project detail.
+        howThePlatformWorks,
         constraint:
-          'Use only the facts given above. State no figure, deadline, price or project detail that is not in them — an ' +
-          'invented fact in guidance is worse than none. Write in British English, short sentences, first person plural ' +
-          'where natural, and name the button to press rather than describing where to scroll. Do not restate the question.',
+          'Use only the facts and the platform steps given above. You may describe the screens, buttons and order in ' +
+          '“howThePlatformWorks”, because those are how the platform works. But state no figure, deadline, price or ' +
+          'project detail that is not in the facts on record — an invented fact in guidance is worse than none. Write ' +
+          'in British English, short sentences, first person plural where natural, and name the button to press rather ' +
+          'than describing where to scroll. Do not restate the question.',
       },
     },
     // Advisory: nothing is persisted as state. The ACU charge is recorded by

@@ -121,6 +121,7 @@ import * as siteCommand from '../domain/etablix/commandcentre.ts';
 import * as siteWorkflow from '../domain/etablix/workflow.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
+import * as platformguide from '../ai/platformguide.ts';
 import * as programmereview from '../domain/programmereview.ts';
 import * as resources from '../domain/resources.ts';
 import * as responsibility from '../domain/responsibility.ts';
@@ -23224,6 +23225,12 @@ export const ROUTES: Route[] = [
     },
   },
 
+  {
+    method: 'GET',
+    pattern: '/v1/guide/topics',
+    description: 'The platform step-by-step guide — how CONSTRUX works, from an empty account to a won job. Deterministic content; no provider is called',
+    handler: (platform, ctx) => platformguide.guideTopics(tenantContext(platform, ctx)),
+  },
   {
     method: 'POST',
     pattern: '/v1/projects/:projectId/ask',
