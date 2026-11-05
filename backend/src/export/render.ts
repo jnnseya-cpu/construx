@@ -57,6 +57,48 @@ const CONTENT_TYPE: Record<RenderableFormat, string> = {
 const EXTENSION: Record<RenderableFormat, string> = { PDF: 'pdf', DOCX: 'docx' };
 
 /**
+ * What the saved file is called.
+ *
+ * The reference is the traceable code — it is printed on the cover and in every
+ * footer, and it is what a dispute is argued over. It is not a name a person
+ * recognises in a downloads folder, and when a tenancy has not configured its
+ * own reference prefix it inherits the project's name, so a tender submission
+ * came down the wire as `RFX1000209 - EPC Assessments-00002.pdf` — the name of
+ * an unrelated project with a sequence number on it.
+ *
+ * The document's `title` is the human name the person asked for the thing to be
+ * — "Tender Submission — South Holland District Council", "Pricing Schedule" —
+ * and the subtitle distinguishes one project's schedule from another's. That is
+ * what the file should be called. The reference stays inside the document, where
+ * traceability belongs; it does not need to be the filename as well.
+ */
+function downloadFilename(document: ExportDocument, format: RenderableFormat): string {
+  const title = (document.title ?? '').trim();
+  const subtitle = (document.subtitle ?? '').trim();
+  // The subtitle earns its place only when it says something the title does not
+  // already — the project behind a bare "Pricing Schedule", not a repeat of a
+  // client already named in the title.
+  const composed = subtitle && !title.toLowerCase().includes(subtitle.toLowerCase()) ? `${title} - ${subtitle}` : title;
+
+  // Fold to a name a filesystem and a bare `filename="…"` Content-Disposition
+  // header can both carry: ASCII only, no characters a filesystem forbids. The
+  // dashes and quotation marks in the domain text are kept as their plain
+  // equivalents rather than dropped, so the name still reads as written.
+  const stem = (composed || document.reference)
+    .replace(/[‒-―−]/g, '-') // figure/en/em dash, horizontal bar, minus → hyphen
+    .replace(/[‘’‚‛]/g, "'") // single quotation marks → apostrophe
+    .replace(/[“”„‟]/g, '"') // double quotation marks → straight quote
+    .replace(/[\\/:*?"<>|]/g, ' ') // characters a filesystem or the header cannot carry
+    .replace(/[^\x20-\x7e]/g, ' ') // anything else outside printable ASCII
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150)
+    .trim();
+
+  return `${stem.length > 0 ? stem : 'document'}.${EXTENSION[format]}`;
+}
+
+/**
  * What a render will cost, without doing one.
  *
  * The console quotes before it offers the button, exactly as it does for an AI
@@ -132,7 +174,7 @@ export function renderAndCharge(
 
   return {
     contentType: CONTENT_TYPE[input.format],
-    filename: `${document.reference}.${EXTENSION[input.format]}`,
+    filename: downloadFilename(document, input.format),
     bytes,
     chargedMinor: entry.billedMinor,
   };

@@ -314,7 +314,7 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
   const currency = String(project?.state.currency ?? 'GBP');
   const projectName = String(project?.state.name ?? ctx.projectId);
 
-  const measuredLines = (estimate.lines as MeasuredLine[] | undefined) ?? [];
+  const allMeasured = (estimate.lines as MeasuredLine[] | undefined) ?? [];
   const totalMinor = Number(estimate.totalMinor ?? 0);
   // Fixed and provisional sums are carried after margin, so they are listed
   // beside the measured works rather than apportioned into them: the measured
@@ -326,8 +326,15 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
   const fixedSumsMinor = fixedSumsList.reduce((total, sum) => total + sum.amountMinor, 0);
   const worksTotal = totalMinor - fixedSumsMinor;
 
-  const netTotal = measuredLines.reduce((sum, line) => sum + lineNetCostMinor(line), 0);
+  const netTotal = allMeasured.reduce((sum, line) => sum + lineNetCostMinor(line), 0);
   const apportioned = netTotal > 0;
+  // A measured line that carries no cost apportions to nothing, and "£0.00"
+  // against an item on a buyer's schedule reads as work left unpriced or a
+  // duplicate — which is exactly what a placeholder line removed from the
+  // take-off but lingering in the estimate is. Drop the zero-cost lines where
+  // there is a cost to apportion; where nothing is apportioned (every rate
+  // excluded) the works stand as one sum and the lines are left as drawn.
+  const measuredLines = apportioned ? allMeasured.filter((line) => lineNetCostMinor(line) > 0) : allMeasured;
 
   let allocated = 0;
   const lines: PricingScheduleLine[] = measuredLines.map((line, index) => {

@@ -145,6 +145,22 @@ describe('the text is actually in it', () => {
   });
 });
 
+describe('the cover names a person, not an id', () => {
+  it('shows the resolved generator name where there is one', () => {
+    // A client-facing instrument that named its generator `01M1S26DD4K6R0…`
+    // told the recipient nothing and read as unfinished. The exporter resolves
+    // the name; the cover prints it.
+    const text = latin1(renderPdf(sampleDocument({ generatedBy: '01M1S26DD4K6R0TS92AK8CHBX4', generatedByName: 'Awa Njie' })));
+    assert.ok(text.includes('(Awa Njie) Tj'), 'the generator name is on the cover');
+    assert.ok(!text.includes('(01M1S26DD4K6R0TS92AK8CHBX4) Tj'), 'the raw id was printed instead of the name');
+  });
+
+  it('falls back to the id rather than a blank when no name is resolved', () => {
+    const text = latin1(renderPdf(sampleDocument({ generatedBy: 'user-7' })));
+    assert.ok(text.includes('(user-7) Tj'), 'a traceable generator is still better than a blank');
+  });
+});
+
 describe('running out of page', () => {
   const longDocument = sampleDocument({
     blocks: [
@@ -272,6 +288,20 @@ describe('through the platform', () => {
     const text = latin1(bytes);
     assert.ok(text.includes(`(${document.reference}) Tj`));
     assert.ok(text.includes('(Ashworth Water Treatment Works \\227 Phase 2) Tj'), 'the em dash survives');
+  });
+
+  it('resolves the generator to a person, not the actor id', () => {
+    // End to end: the exporter reads the tenancy's user directory and the cover
+    // prints the name. A real submission named `01M1S26…` as its generator,
+    // which is the id and not a person.
+    const document = platform.exports.projectReport(seed.users.pm!.auth, seed.projectId, {
+      audience: 'ADJUDICATOR',
+      format: 'PDF',
+      correlationId: 'pdf-test-generator',
+    });
+    assert.ok(document.generatedByName && document.generatedByName.length > 0, 'no generator name was resolved');
+    assert.notEqual(document.generatedByName, document.generatedBy, 'the name is still the raw actor id');
+    assert.ok(latin1(platform.exports.toPdf(document)).includes(`(${document.generatedByName}) Tj`), 'the name is not on the cover');
   });
 
   it('shows money in the project currency rather than in minor units', () => {

@@ -166,6 +166,38 @@ describe('the pricing schedule export', () => {
     assert.equal(summed, schedule.totalMinor);
   });
 
+  it('leaves a zero-cost line off the schedule rather than printing £0.00 against it', () => {
+    // A placeholder line removed from the take-off but lingering in the estimate
+    // apportions to nothing, and "£0.00" against an item on a buyer's schedule
+    // reads as work left unpriced or a duplicate. It is dropped; the priced
+    // lines still sum to the total.
+    tender.buildEstimate(qsCtx(), {
+      packageId: 'WALL',
+      durationWeeks: 4,
+      lines: [
+        ...WALL_LINES,
+        { description: 'Below-ground masonry below DPC', unit: 'm2', quantity: 0, labourRateMinor: 0, materialRateMinor: 0 },
+        { description: 'Electrical / M&E distribution', unit: 'nr', quantity: 0, labourRateMinor: 0, materialRateMinor: 0 },
+      ],
+      quantified: [{ head: 'WASTE', description: 'Skips and gate fees', unit: 'sum', quantity: 1, rateMinor: 45_000 }],
+      insurance: { policies: [{ type: 'Contract works and liability', percentOfContractValue: 0.9 }] },
+      exclusions: [{ head: 'PLANT', reason: 'Scaffold by others' }],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+      basisOfEstimate: 'Measured off the drawings.',
+      assumptions: [],
+    } as Parameters<typeof tender.buildEstimate>[1]);
+
+    const schedule = pricingSchedule(qsCtx());
+    assert.equal(schedule.lines.length, WALL_LINES.length, 'the zero-cost lines were not dropped');
+    assert.ok(!schedule.lines.some((line) => /Below-ground masonry|M&E distribution/.test(line.description)), 'a £0 placeholder line reached the schedule');
+    assert.ok(schedule.lines.every((line) => line.amountMinor > 0), 'a line priced at nothing is still on the schedule');
+    // The property that must never break: the remaining lines still sum to the total.
+    const summed = schedule.lines.reduce((total, line) => total + line.amountMinor, 0);
+    assert.equal(summed, schedule.totalMinor);
+    // The numbering is contiguous — no gap where a dropped line used to be.
+    schedule.lines.forEach((line, index) => assert.equal(line.n, index + 1));
+  });
+
   it('refuses rather than exporting a wrong total where no complete estimate exists', () => {
     // A brand-new project with nothing priced on it.
     const gov = platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });

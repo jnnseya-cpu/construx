@@ -197,6 +197,15 @@ export type ExportDocument = {
   format: ExportFormat;
   generatedAt: string;
   generatedBy: string;
+  /**
+   * The name of the person who generated it, resolved from the tenancy's user
+   * directory, for the cover — a client-facing instrument that named its
+   * generator by a raw id told the recipient nothing and read as unfinished.
+   * Falls back to the id where a name cannot be resolved, because a traceable
+   * generator is still worth more than a blank. Not part of `contentHash`: it
+   * is provenance on the page, not content, exactly as `generatedBy` already is.
+   */
+  generatedByName?: string;
   projectId: string;
   blocks: DocumentBlock[];
   /** Hash over the branded content — this is what proves the document later. */
@@ -445,6 +454,23 @@ export class ExportService {
     return branding;
   }
 
+  /**
+   * The display name of a user in a tenancy, from the governance-scoped user
+   * directory — the same place `documents/engine.ts` reads people from, so a
+   * document's cover and a permit name the same person the same way. Returns
+   * the id unchanged where no name is on record: a traceable generator beats a
+   * blank one.
+   */
+  #personName(tenantId: string, actorId: string): string {
+    for (const record of this.#ledger.list(`${tenantId}-governance`, 'User')) {
+      if (String(record.state.id ?? record.refId) !== actorId) continue;
+      const name = typeof record.state.name === 'string' ? record.state.name.trim() : '';
+      if (name.length > 0) return name;
+      break;
+    }
+    return actorId;
+  }
+
   /** Build, hash and record an export. Returns the document model. */
   #finalise(
     auth: AuthContext,
@@ -492,6 +518,7 @@ export class ExportService {
       format: input.format,
       generatedAt: new Date().toISOString(),
       generatedBy: auth.actorId,
+      generatedByName: this.#personName(auth.tenantId, auth.actorId),
       projectId,
       blocks,
       contentHash,
