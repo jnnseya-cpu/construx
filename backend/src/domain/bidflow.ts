@@ -117,13 +117,39 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
    */
   const project = ctx.ledger.get({ refType: 'Project', refId: ctx.projectId })?.state;
   const originOpportunityId = project?.originOpportunityId ? String(project.originOpportunityId) : null;
+  const governanceInvitations = ctx.ledger
+    .list(`${ctx.tenantId}-governance`, 'TenderInvitation')
+    .map((record) => record.state);
+  const projectName = String(project?.name ?? '').toLowerCase().trim();
   const invitation =
+    // 1. Recorded directly against the project — somebody put it there on purpose.
     ctx.ledger.list(ctx.projectId, 'TenderInvitation').map((record) => record.state).at(-1) ??
+    // 2. The invitation on the opportunity this project was converted from.
     (originOpportunityId
-      ? ctx.ledger
-          .list(`${ctx.tenantId}-governance`, 'TenderInvitation')
-          .map((record) => record.state)
-          .filter((state) => String(state.opportunityId ?? '') === originOpportunityId)
+      ? governanceInvitations.filter((state) => String(state.opportunityId ?? '') === originOpportunityId).at(-1)
+      : undefined) ??
+    // 3. A project created outside "convert a won opportunity into a project"
+    //    carries no originOpportunityId, so it has no stored link to the
+    //    invitation that lives on the opportunity. That left the flow telling
+    //    the user to "Record an ITT" for an invitation already recorded — a
+    //    dead-end loop, going in a circle. The flow is advisory and commits
+    //    nothing, so it is safe to find the invitation by the strongest signal
+    //    on the record: the buyer's name or the tender reference naming this
+    //    project (a job named "South Holland District Council" is the one the
+    //    "South Holland District Council" invitation belongs to). A guess here
+    //    can only change guidance, never the ledger.
+    (projectName.length > 2
+      ? governanceInvitations
+          .filter((state) => {
+            const client = String(state.clientName ?? '').toLowerCase().trim();
+            const reference = String(state.reference ?? '').toLowerCase().trim();
+            const title = String(state.title ?? '').toLowerCase().trim();
+            return (
+              (client.length > 2 && (projectName.includes(client) || client.includes(projectName))) ||
+              (reference.length > 2 && projectName.includes(reference)) ||
+              (title.length > 2 && (projectName.includes(title) || title.includes(projectName)))
+            );
+          })
           .at(-1)
       : undefined);
   const analyses = ctx.ledger.list(ctx.projectId, 'ITTAnalysis');
