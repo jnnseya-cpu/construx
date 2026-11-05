@@ -25301,6 +25301,19 @@ distinguishes a title block's worth of text from a substantial document that
 genuinely contains none. Each task carries its own `absent` wording, so no
 refusal prints a schema field name at somebody.
 
+And the heading over that body no longer contradicts it. A bidder reading a
+highways framework uploaded the two reference schedules — 167,690 and 171,730
+characters of street names and road designations — and the reader correctly
+found no requirements in them and said so: *"the text came through, so this is a
+document that does not contain them rather than one that could not be read."* But
+the toast over it was titled **"Not read"**, in red, which is the one thing the
+body says is not true — and the bidder read it as the reader being broken on a
+file it had in fact read perfectly. `pipeline.js` now titles a
+`PERCEPTION_NOT_LEGIBLE` outcome **"No requirements in this file"** in the warning
+tone, not "Not read" in the error tone: a file that read cleanly and holds no
+requirements is an answer, not a failure. A genuine read failure, and a provider
+that was unavailable, still read as what they are.
+
 ### A customer could read this platform's margin from their own browser
 
 Reported as *"USERS DON'T NEED TO SEE ALL OF THESE"*, against a billing screen

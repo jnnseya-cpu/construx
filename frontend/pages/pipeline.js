@@ -3317,7 +3317,16 @@ export async function pipeline(root) {
         await api.post(`/v1/projects/${projectId}/ingestion/${readText.dataset.readIttText}/itt`, {});
         await draw();
       } catch (error) {
-        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        // A file that read fine and simply holds no requirements — a streets
+        // schedule, a drawing register — is not a read failure, and titling it
+        // "Not read" over a body that says "the text came through" is the exact
+        // contradiction that makes a bidder think the reader is broken when it
+        // is telling the truth. Said as what it is instead.
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
         /*
          * Redrawn on the failure too, because the failure wrote something.
          *
@@ -3348,7 +3357,16 @@ export async function pipeline(root) {
       } catch (error) {
         // A refusal here is usually a true statement about the file, the
         // deployment or the wallet, so it is shown as it was given.
-        toast('Not read', error.message, error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err');
+        // A file that read fine and simply holds no requirements — a streets
+        // schedule, a drawing register — is not a read failure, and titling it
+        // "Not read" over a body that says "the text came through" is the exact
+        // contradiction that makes a bidder think the reader is broken when it
+        // is telling the truth. Said as what it is instead.
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No requirements in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
         readIt.disabled = false;
         readIt.textContent = 'Read it with a model that can see';
       }
