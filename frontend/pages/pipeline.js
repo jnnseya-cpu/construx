@@ -1134,6 +1134,36 @@ export async function pipeline(root) {
         `${missing.length > 0 ? ` · ${missing.join(', ')}` : ' · complete'}`,
     }));
 
+  /*
+   * The live actions, scoped to the tender in focus.
+   *
+   * The focus narrows what the page *shows*; this narrows what it *does*. When
+   * the page is focused on one tender, a command that takes an invitation, a
+   * return or a matrix offers only that tender's — so a focused page acts on
+   * nothing but the job in hand, and the wrong-tender slip a tenant-wide
+   * dropdown invites (confirming a reading onto the wrong invitation, the
+   * mistake that started this) cannot happen from here. Off focus, every live
+   * tender is offered, exactly as before — the lists are the same objects.
+   *
+   * A return's chooser carries the invitation in its value (`id::ref`), so it
+   * is filtered on the invitation split back out of it, not on the value whole.
+   */
+  const focusInvitationIds = new Set(focusTenders.map((t) => t.invitationId));
+  const scopedInvitationOptions = focused
+    ? invitationOptions.filter((o) => focusInvitationIds.has(o.value))
+    : invitationOptions;
+  const scopedBiddableOptions = focused
+    ? biddableOptions.filter((o) => focusInvitationIds.has(o.value))
+    : biddableOptions;
+  const scopedReturnOptions = focused
+    ? returnOptions.filter((o) => focusInvitationIds.has(splitReturnTarget(o.value).invitationId))
+    : returnOptions;
+  // Why a focused command is empty, in place of the tenant-wide "record one
+  // first": the invitation is not missing, it is the focus — it is simply not
+  // live to this action (a won or closed tender opened for its costs). Only
+  // reached when focused and the scoped list came back empty.
+  const focusEmptyReason = `The tender in focus (${focusLabel}) has no live invitation to act on here — use “Show all tenders” to act on another.`;
+
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
 
@@ -1194,9 +1224,9 @@ export async function pipeline(root) {
               { id: 'invitation', label: 'Record an ITT', tone: '',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'quote-only', label: 'It only asks for a price',
-                permitted: can('ESTIMATE_TENDER', 'U') && invitationOptions.length > 0,
-                reason: invitationOptions.length === 0
-                  ? 'No invitation is recorded, so there is nothing to record a return against.'
+                permitted: can('ESTIMATE_TENDER', 'U') && scopedInvitationOptions.length > 0,
+                reason: scopedInvitationOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'No invitation is recorded, so there is nothing to record a return against.')
                   : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               /*
                * The step everything after it needs, and the one that had no
@@ -1212,9 +1242,9 @@ export async function pipeline(root) {
                * saying what to do about it.
                */
               { id: 'requirements', label: 'Read the invitation into a matrix', tone: '',
-                permitted: can('ESTIMATE_TENDER', 'C', TENANT) && invitationOptions.length > 0,
-                reason: invitationOptions.length === 0
-                  ? 'Record the ITT first — a compliance matrix is bound to the invitation it was read from.'
+                permitted: can('ESTIMATE_TENDER', 'C', TENANT) && scopedInvitationOptions.length > 0,
+                reason: scopedInvitationOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'Record the ITT first — a compliance matrix is bound to the invitation it was read from.')
                   : blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
               { id: 'deliverable', label: 'Add a deliverable',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
@@ -1226,9 +1256,9 @@ export async function pipeline(root) {
                * reading filed blocked the decision to bid for ever.
                */
               { id: 'assign-deliverable', label: 'Assign a return',
-                permitted: can('ESTIMATE_TENDER', 'U', TENANT) && returnOptions.length > 0,
-                reason: returnOptions.length === 0
-                  ? 'No invitation has a return register yet. Read one, or add the return items one at a time.'
+                permitted: can('ESTIMATE_TENDER', 'U', TENANT) && scopedReturnOptions.length > 0,
+                reason: scopedReturnOptions.length === 0
+                  ? (focused ? focusEmptyReason : 'No invitation has a return register yet. Read one, or add the return items one at a time.')
                   : blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'addendum', label: 'Record an addendum',
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
@@ -1445,7 +1475,7 @@ export async function pipeline(root) {
         projectName: state.project?.name ?? '',
         blocked: readBlocked,
         tenderProjects,
-        invitationOptions,
+        invitationOptions: scopedInvitationOptions,
       })}
 
       <section class="card" style="margin-bottom:14px" aria-labelledby="pl-bid-h">
@@ -2351,7 +2381,7 @@ export async function pipeline(root) {
           name: 'analysisId',
           label: 'Compliance matrix',
           type: 'select',
-          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
           /*
            * Why there is none, not merely that there is none.
            *
@@ -2512,7 +2542,7 @@ export async function pipeline(root) {
       submitLabel: 'Record',
       fields: [
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'kind', label: 'What kind of rule', type: 'select',
           options: [
             { value: 'REQUIRED_DOCUMENT', label: 'A document that must be in the submission' },
@@ -2569,7 +2599,7 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Locked bid pack', type: 'text',
           hint: 'The pack the receipt will be bound to. Only a locked pack has a hash to bind to.' },
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: shownAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'adapterId', label: 'Through', type: 'select',
           options: (portalPort?.adapters ?? []).filter((adapter) => adapter.live).map((adapter) => ({ value: adapter.id, label: adapter.name })) },
         { name: 'returnBy', label: 'Returns by', type: 'datetime-local',
@@ -3004,7 +3034,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
       submitLabel: 'Record it',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         {
           name: 'owner',
           label: 'Who produces it',
@@ -3062,7 +3092,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/requirements`,
       submitLabel: 'Read it',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Their reference', type: 'text', hint: 'As the invitation prints it.' },
         { name: 'clientName', label: 'Client', type: 'text' },
         { name: 'returnBy', label: 'Return by', type: 'date', iso: true },
@@ -3136,7 +3166,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables`,
       submitLabel: 'Add',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Reference', type: 'text', placeholder: 'D-01' },
         { name: 'title', label: 'What has to be returned', type: 'text', placeholder: 'Priced pricing schedule' },
         { name: 'mandatory', label: 'Pass / fail?', type: 'select',
@@ -3195,7 +3225,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${splitReturnTarget(v.target).invitationId}/deliverables/assign`,
       submitLabel: 'Assign',
       fields: [
-        { name: 'target', label: 'Which return', type: 'select', options: returnOptions,
+        { name: 'target', label: 'Which return', type: 'select', options: scopedReturnOptions,
           hint: 'The ones blocking a bid are at the top, each with what it is missing.' },
         { name: 'owner', label: 'Owner', type: 'select', options: roleOptions, required: false,
           hint: 'The role that owns producing it. Required on anything mandatory.' },
@@ -3232,7 +3262,7 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/addenda`,
       submitLabel: 'Record',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: invitationOptions },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedInvitationOptions },
         { name: 'reference', label: 'Addendum reference', type: 'text', placeholder: 'ADD-01' },
         { name: 'issuedAt', label: 'Issued', type: 'datetime-local' },
         { name: 'summary', label: 'What it changed', type: 'textarea', rows: 3 },
@@ -3255,8 +3285,10 @@ export async function pipeline(root) {
       path: (v) => `/v1/pipeline/tenders/${v.invitationId}/programme`,
       submitLabel: 'Build',
       fields: [
-        { name: 'invitationId', label: 'Invitation', type: 'select', options: biddableOptions,
-          hint: biddableOptions.length === 0 ? 'Nothing has been decided as a bid yet' : 'Only invitations decided as a bid appear here' },
+        { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedBiddableOptions,
+          hint: scopedBiddableOptions.length === 0
+            ? (focused ? 'The tender in focus has not been decided as a bid yet' : 'Nothing has been decided as a bid yet')
+            : 'Only invitations decided as a bid appear here' },
       ],
       transform: () => ({}),
     },
@@ -3591,7 +3623,7 @@ export async function pipeline(root) {
             name: 'invitationId',
             label: 'Against which invitation',
             type: 'select',
-            options: invitationOptions,
+            options: scopedInvitationOptions,
             hint: 'The reading is filed against the invitation it came from.',
           },
           {

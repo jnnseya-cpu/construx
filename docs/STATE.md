@@ -15990,6 +15990,19 @@ everything exactly as before, never a board blanked behind a bar. The analytics
 further down (win rate, the decided pipeline) stay tenant-wide, because they read
 *across* bids and narrowing them to one would be a lie (`frontend/pages/pipeline.js`).
 
+The focus narrows what the page *does*, not only what it shows. A focused page's
+commands — read the invitation, record a price-only return, assign a return,
+plan a response pack, set submission rules, confirm what the AI read — offer only
+the focused tender's invitation, returns and matrix, built as `scoped*` lists
+filtered by the focused invitation ids. So the wrong-tender slip a tenant-wide
+dropdown invites (confirming a reading onto the wrong invitation — the mistake
+that started this) cannot happen from a focused page. When the focused tender has
+nothing live to act on — a won or lost tender opened for its costs — the command
+is disabled with a reason that says so and points at **Show all tenders**, rather
+than the tenant-wide "record one first" that would be a lie. Off focus the
+`scoped*` lists are the originals unchanged, so nothing about the unfocused screen
+moves.
+
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
 them, which terms are a **bar** rather than a negotiation, the quantified
