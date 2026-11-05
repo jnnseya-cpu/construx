@@ -1031,6 +1031,17 @@ export async function pipeline(root) {
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
+  // One matrix per tender. A tender's requirements now merge into a single
+  // analysis as its documents are read, but every superseded fragment stays on
+  // the append-only ledger — so a tender read one document at a time had a dozen
+  // analyses on file, all mixed together. The list and the pickers show only the
+  // matrix each live invitation currently points to; the rest are the history
+  // behind it, counted but not listed. Where nothing is bound yet, nothing is
+  // hidden, so a first analysis is never swallowed.
+  const currentAnalysisIds = new Set(board.map((t) => t.analysisId).filter(Boolean));
+  const allAnalyses = matrices.analyses ?? [];
+  const liveAnalyses = currentAnalysisIds.size > 0 ? allAnalyses.filter((a) => currentAnalysisIds.has(a.analysisId)) : allAnalyses;
+  const supersededAnalyses = allAnalyses.length - liveAnalyses.length;
   /*
    * The trades the register knows, grouped the way it groups them.
    *
@@ -1662,14 +1673,15 @@ export async function pipeline(root) {
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          ${matrices.summary} Every analysis stays readable after the session that produced it — rerunning one to see it
-          again would spend AI budget re-deriving a record the platform already holds, and would write a second analysis
-          of the same invitation into the record.
+          One matrix per tender: each live invitation’s current matrix, the one its documents merge into as they are read.
+          ${supersededAnalyses > 0
+            ? `${supersededAnalyses} superseded ${supersededAnalyses === 1 ? 'matrix is' : 'matrices are'} kept on the record behind them but not listed here.`
+            : ''}
         </p>
         ${table({
           headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', 'To ask', 'Exposure', 'Worst term', 'Verdict', ''],
           align: ['', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
-          rows: (matrices.analyses ?? []).map((a) => [
+          rows: liveAnalyses.map((a) => [
             a.reference,
             a.clientName,
             date(a.returnBy),
@@ -2256,7 +2268,7 @@ export async function pipeline(root) {
           name: 'analysisId',
           label: 'Compliance matrix',
           type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
+          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })),
           /*
            * Why there is none, not merely that there is none.
            *
@@ -2417,7 +2429,7 @@ export async function pipeline(root) {
       submitLabel: 'Record',
       fields: [
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'kind', label: 'What kind of rule', type: 'select',
           options: [
             { value: 'REQUIRED_DOCUMENT', label: 'A document that must be in the submission' },
@@ -2474,7 +2486,7 @@ export async function pipeline(root) {
         { name: 'packId', label: 'Locked bid pack', type: 'text',
           hint: 'The pack the receipt will be bound to. Only a locked pack has a hash to bind to.' },
         { name: 'analysisId', label: 'Compliance matrix', type: 'select',
-          options: (matrices.analyses ?? []).map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
+          options: liveAnalyses.map((a) => ({ value: a.analysisId, label: `${a.reference} · ${a.clientName}` })) },
         { name: 'adapterId', label: 'Through', type: 'select',
           options: (portalPort?.adapters ?? []).filter((adapter) => adapter.live).map((adapter) => ({ value: adapter.id, label: adapter.name })) },
         { name: 'returnBy', label: 'Returns by', type: 'datetime-local',

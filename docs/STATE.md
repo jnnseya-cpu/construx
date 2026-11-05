@@ -15961,6 +15961,15 @@ so the next reading has something to merge into. Proven end to end in
 five requirements, the ITT's terms intact and both readings' returns present;
 `itt.test.ts` pins the union, the dedup, the term-keep and the matrix round-trip.
 
+The screen shows it the same way. Every analysis stays on the append-only ledger,
+so a tender read one document at a time before this had a dozen `ITT_ANALYSED`
+records, all listed together — "it is mixing everything." "Compliance matrices
+on file", and the pickers that plan a pack or set submission rules against one,
+now show only the matrix each live invitation currently points to — the one its
+documents merge into — with the superseded fragments counted but not listed.
+Where nothing is bound yet, nothing is hidden, so a first analysis is never
+swallowed (`frontend/pages/pipeline.js`).
+
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
 them, which terms are a **bar** rather than a negotiation, the quantified
