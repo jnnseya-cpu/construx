@@ -5,6 +5,7 @@ import {
   complianceMatrix,
   liveWaivers,
   type MatrixLine,
+  type RequirementCategory,
   type RequirementWaiver,
   type ResponseLimit,
   type StoredITTAnalysis,
@@ -149,8 +150,45 @@ export type BidResponsePack = {
  * exists is how a submission acquires a paragraph contradicting its own
  * appendix. Those lines stay in the checklist and out of the drafting queue.
  */
-function needsProse(line: MatrixLine): boolean {
-  return line.evidenceHeld === undefined || line.evidenceHeld === '';
+/**
+ * The categories whose answer an evaluator reads as written prose — the quality
+ * side of a submission. A requirement outside these, and not separately scored,
+ * is satisfied some other way and is not an essay: the price lives in the priced
+ * schedule (Appendix B), the submission logistics are process, qualification and
+ * insurance are satisfied by the company's recorded facts and its evidence, and
+ * the commercial terms sit in the quotation.
+ */
+const NARRATIVE_CATEGORIES: ReadonlySet<RequirementCategory> = new Set([
+  'QUALITY',
+  'TECHNICAL',
+  'SOCIAL_VALUE',
+  'ENVIRONMENTAL',
+  'PROGRAMME',
+  'HEALTH_AND_SAFETY',
+]);
+
+/**
+ * Whether this requirement needs a written answer drafted for it.
+ *
+ * It used to be "anything with no evidence attached", and that is what turned a
+ * priced schedule and a page of submission logistics into a stack of blank essay
+ * questions: a pricing-schedule line, an In-Tend-portal line and a return-deadline
+ * line all have no evidence held against them, and none of them is answered by
+ * prose — the price is in Appendix B, the portal is the portal, the date is a
+ * date. A bidder faced with twenty-six "write an answer" sections for a schedule
+ * they had already priced is a bidder who stops trusting the tool, and rightly.
+ *
+ * A requirement needs prose when it is a written answer an evaluator reads and
+ * marks: a scored question whatever its category, or an unscored requirement in
+ * one of the narrative categories above — and only when the platform does not
+ * already hold a document that answers it. Everything else is satisfied by the
+ * price, the evidence, the company's facts, the quotation or the portal, and is
+ * not dragged into the essay pack.
+ */
+export function needsProse(line: MatrixLine): boolean {
+  if (line.evidenceHeld !== undefined && line.evidenceHeld !== '') return false;
+  if (line.weightingPercent !== undefined && line.weightingPercent > 0) return true;
+  return NARRATIVE_CATEGORIES.has(line.category);
 }
 
 function titleFor(line: MatrixLine): string {

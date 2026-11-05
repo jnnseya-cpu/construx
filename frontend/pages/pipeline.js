@@ -1588,6 +1588,14 @@ export async function pipeline(root) {
                     permitted: can('ESTIMATE_TENDER', 'U'), reason: blockedReason('ESTIMATE_TENDER', 'U') },
                   { id: 'finding-dispose', label: 'Record a decision on a finding',
                     permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
+                  // Issue the pack, repeated here where the findings are decided.
+                  // It is the step after the last decision, and it lived only in
+                  // the pack bar two sections up — so a bidder who had just
+                  // cleared the red team could not find it from where they were.
+                  // Same command id, same gate; it refuses unless the pack is
+                  // complete and the review clears.
+                  { id: 'bid-issue', label: 'Issue the pack',
+                    permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
                 ]),
               )}
             </div>

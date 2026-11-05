@@ -409,3 +409,53 @@ describe('a person can write a section in their own words, without the model', (
     throwsCode(() => bidresponse.reviseSection(asQS(), { packId: pack.id, key: 'NOPE', body: ['x'] }), 'BID_SECTION_NOT_FOUND');
   });
 });
+
+/**
+ * Which requirements become a written answer, and which do not.
+ *
+ * The defect a first bidder hit: a pack planned from the whole ITT demanded a
+ * written answer for every line with no evidence attached — so a priced schedule
+ * (flat roof, provisional sums), the submission logistics (the portal, file
+ * formats), the dates and the payment terms all arrived as blank essay
+ * questions. None of those is answered by prose. These pin the rule that an
+ * essay section is drawn only for a written answer an evaluator reads and marks.
+ */
+describe('needsProse — only the written answers become sections', () => {
+  const line = (over: Partial<itt.MatrixLine>): itt.MatrixLine => ({
+    reference: 'X1',
+    category: 'QUALITY',
+    requirement: 'A requirement',
+    mandatory: true,
+    owner: 'QS',
+    evidenceRequired: '',
+    status: 'GAP',
+    ...over,
+  });
+
+  it('draws an essay for a scored question, whatever its category', () => {
+    assert.equal(bidresponse.needsProse(line({ category: 'QUALITY', weightingPercent: 20 })), true);
+    // A scored commercial question is still a written answer — the weighting wins.
+    assert.equal(bidresponse.needsProse(line({ category: 'COMMERCIAL', weightingPercent: 10 })), true);
+  });
+
+  it('draws an essay for an unscored narrative requirement', () => {
+    assert.equal(bidresponse.needsProse(line({ category: 'TECHNICAL', weightingPercent: undefined })), true);
+    assert.equal(bidresponse.needsProse(line({ category: 'SOCIAL_VALUE', weightingPercent: undefined })), true);
+    assert.equal(bidresponse.needsProse(line({ category: 'HEALTH_AND_SAFETY', weightingPercent: undefined })), true);
+  });
+
+  it('does not draw an essay for a priced, logistical, commercial or qualification line', () => {
+    // A pricing-schedule item the AI filed as COMMERCIAL — the price is in Appendix B.
+    assert.equal(bidresponse.needsProse(line({ category: 'COMMERCIAL', requirement: 'SECTION 3: PRICING SCHEDULE - flat roof' })), false);
+    // Submission logistics — the portal, the file formats, the return deadline.
+    assert.equal(bidresponse.needsProse(line({ category: 'SUBMISSION', requirement: 'Submission requirement - In-Tend portal' })), false);
+    // Qualification and insurance — satisfied by the company's facts and evidence.
+    assert.equal(bidresponse.needsProse(line({ category: 'QUALIFICATION' })), false);
+    assert.equal(bidresponse.needsProse(line({ category: 'INSURANCE' })), false);
+  });
+
+  it('never draws an essay where the platform already holds the document', () => {
+    assert.equal(bidresponse.needsProse(line({ category: 'QUALITY', weightingPercent: 20, evidenceHeld: 'ISO 9001 certificate on file' })), false);
+    assert.equal(bidresponse.needsProse(line({ category: 'TECHNICAL', evidenceHeld: 'Method statement attached' })), false);
+  });
+});

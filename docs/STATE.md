@@ -25577,6 +25577,38 @@ on a submission that has already gone. `frontend/pages/pipeline.js`; the
 `submission.pdf` route never gated on status, so the download works for an issued
 pack as-is.
 
+And the button to issue was in the wrong place to find. "Issue the pack" lived
+only in the response-pack command bar, two sections above the red team — but the
+red team is where a bidder spends the last hour, deciding each high finding, and
+when the last one is cleared the step after it is to issue. From there the button
+was off-screen, and a bidder who had done everything right could not find the one
+control that finishes it. "Issue the pack" is now repeated in the red-team command
+bar, next to "Record a decision on a finding" — same command id, same gate, so it
+still refuses unless the pack is complete and the review clears. The page's
+command dispatch is view-wide delegation over `[data-command]`, so the repeated
+button needs no new wiring.
+
+**And the pack stopped demanding an essay for things that are not essays.** This
+was the real failure, and a first bidder named it exactly: "a pure distraction
+and time waster [that] will make no one … pay to suffer." Planning a response
+pack turned *every* compliance-matrix line with no evidence attached into a
+"write an answer" section — so a priced schedule (flat roof, provisional sums),
+the submission logistics (the In-Tend portal, the file formats, the return
+deadline) and the commercial terms (the payment schedule) all arrived as blank
+essay questions, twenty-six of them on one pack, for a tender that was already
+priced and submitted. None of those is answered by prose: the price is in the
+priced schedule (Appendix B), the portal is the portal, the date is a date, the
+commercial terms are in the quotation. `needsProse` no longer means "has no
+evidence"; it means "is a written answer an evaluator reads and marks" — a scored
+question whatever its category, or an unscored requirement in one of the
+narrative categories (quality, technical, social value, environmental,
+programme, health & safety) — and still only where the platform does not already
+hold a document that answers it. A submission, qualification, insurance or
+unscored commercial line is satisfied by its own mechanism and is not dragged
+into the pack. `bidresponse.test.ts` pins each case; the whole suite is unchanged
+and green, because the existing fixtures answer scored questions, which still
+draw a section.
+
 **A job issues one quotation, not five.** A tender goes out as a single priced
 offer, but nothing stopped drawing up another and issuing it, so the first real
 bidder ended up with five numbered quotations for one job. `quoteFromEstimate`
