@@ -25541,6 +25541,27 @@ look. So fixing one finding and re-running no longer discards the rest
 (`redteam.test.ts`: a decision recorded on a finding is still there after a
 re-run, with who made it).
 
+That exact-title match carries every *deterministic* finding — their titles are
+templated and do not drift — but not a *model-raised* one, and on a live
+deployment with a reasoning provider that was most of the churn still felt. A
+fresh adversarial pass re-words the same concern every time ("Insurance
+certificates and CAR sum-insured not evidenced" becomes "No evidence of insurance
+or CAR sum insured"), so the exact key changes while the finding does not, and
+the decision on it was lost on every re-run. `carryForwardDispositions` now also
+carries a model finding's decision by what does *not* drift — the section and the
+severity — but **only on a section whose prose has not been edited since the last
+review**, and **only where the pairing is one-to-one** (exactly one decided and
+one new model finding for that section and severity). A section the bidder *did*
+edit is deliberately excluded: there the model may be raising something new, and
+a fresh look is right. The fingerprint that tells an edited section from an
+untouched one is `sectionDigests` on the review — a `sha256` of each drafted
+section's prose, absent on reviews written before this and falling back to
+exact-match there, which is safe rather than wrong. The decision between the two
+is a pure, exported function with its own tests (`redteam.test.ts`
+`carryForwardDispositions`: a re-worded model finding carries on an untouched
+section, gets a fresh look on an edited one, and is never guessed when two share
+a section and severity).
+
 **A job issues one quotation, not five.** A tender goes out as a single priced
 offer, but nothing stopped drawing up another and issuing it, so the first real
 bidder ended up with five numbered quotations for one job. `quoteFromEstimate`

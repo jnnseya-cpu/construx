@@ -1,3 +1,4 @@
+import { sha256 } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
@@ -186,6 +187,18 @@ export type AssuranceReview = {
   /** What this review cannot tell you. Stated on the record, not in a footnote. */
   limits: string[];
   summary: string;
+  /**
+   * A fingerprint of each drafted section's prose at the moment this review ran.
+   *
+   * Carried so a re-run can tell which sections were edited since and which were
+   * not. A model finding is re-worded on every adversarial pass, so its exact
+   * title cannot be matched across runs — but a decision recorded against a
+   * section whose prose has not changed is still the person's decision about the
+   * same concern, and this is what lets `carryForwardDispositions` carry it.
+   * Absent on reviews written before this was added; the carry then falls back
+   * to exact-title matching, which is the safe behaviour, not a wrong one.
+   */
+  sectionDigests?: Record<string, string>;
 };
 
 /**
@@ -679,6 +692,105 @@ export function scoreFrom(
   return { percent: Math.round((awarded / weight) * 1000) / 10, basis };
 }
 
+/** A fingerprint of each drafted section's prose, for telling an edited section from one left alone. */
+export function draftedSectionDigests(pack: BidResponsePack): Record<string, string> {
+  const digests: Record<string, string> = {};
+  for (const section of pack.sections) {
+    if (section.status === 'DRAFTED' && (section.body ?? []).length > 0) {
+      digests[section.key] = sha256((section.body ?? []).join('\n'));
+    }
+  }
+  return digests;
+}
+
+/** The sections whose prose is identical to what the prior review saw — the ones nobody has touched. */
+export function unchangedSections(
+  prior: AssuranceReview | undefined,
+  currentDigests: Record<string, string>,
+): Set<string> {
+  const unchanged = new Set<string>();
+  const priorDigests = prior?.sectionDigests;
+  if (!priorDigests) return unchanged; // No fingerprints to compare: nothing is known-unchanged, which is the safe answer.
+  for (const [sectionKey, digest] of Object.entries(currentDigests)) {
+    if (priorDigests[sectionKey] === digest) unchanged.add(sectionKey);
+  }
+  return unchanged;
+}
+
+/**
+ * Carry a person's recorded decisions forward onto a freshly rebuilt review, in
+ * place.
+ *
+ * A re-run rebuilds every finding from scratch with a new id, so a decision
+ * keyed by finding id would be lost on every re-run — which is the busywork that
+ * made a bidder re-decide 27 findings to clear one critical, and stop trusting
+ * the tool. A decision carries where the finding is the *same concern*, and that
+ * is judged two ways:
+ *
+ * - **Exact match.** Same severity, reference, section and title. Every
+ *   deterministic finding has a templated title that does not drift, so this
+ *   carries all of them; a model finding the challenge happened to word
+ *   identically carries here too.
+ * - **Same concern on an untouched section.** A model challenge re-words the
+ *   same finding on every pass, so its exact title changes between runs while
+ *   the concern does not. On a section whose prose has not been edited since the
+ *   last review, a decision about that section's model finding is still the
+ *   person's decision about the same thing — so it carries, keyed on what does
+ *   not drift: the section and the severity. Only where the pairing is
+ *   unambiguous — exactly one decided model finding and one new model finding
+ *   for that section and severity — so a decision is never silently applied to a
+ *   concern the person did not actually see. A section the person *did* edit is
+ *   deliberately excluded: there the model may be raising something new, and a
+ *   fresh look is right.
+ */
+export function carryForwardDispositions(
+  prior: AssuranceReview | undefined,
+  findings: AssuranceFinding[],
+  unchanged: Set<string>,
+): void {
+  if (!prior) return;
+
+  const exactKey = (entry: AssuranceFinding): string =>
+    `${entry.severity}\u0000${entry.reference ?? ''}\u0000${entry.sectionKey ?? ''}\u0000${entry.title}`;
+  const sectionKey = (entry: AssuranceFinding): string => `${entry.sectionKey ?? ''}\u0000${entry.severity}`;
+
+  const decidedExact = new Map<string, FindingDisposition>();
+  const priorModel = new Map<string, FindingDisposition[]>();
+  for (const earlier of prior.findings) {
+    if (!earlier.disposition) continue;
+    decidedExact.set(exactKey(earlier), earlier.disposition);
+    if (earlier.raisedBy === 'MODEL' && earlier.sectionKey && unchanged.has(earlier.sectionKey)) {
+      const list = priorModel.get(sectionKey(earlier)) ?? [];
+      list.push(earlier.disposition);
+      priorModel.set(sectionKey(earlier), list);
+    }
+  }
+
+  // How many new model findings fall on each (section, severity), so the
+  // section-and-severity carry is only taken when it is one-to-one.
+  const newModelCount = new Map<string, number>();
+  for (const entry of findings) {
+    if (entry.raisedBy === 'MODEL' && entry.sectionKey && unchanged.has(entry.sectionKey)) {
+      newModelCount.set(sectionKey(entry), (newModelCount.get(sectionKey(entry)) ?? 0) + 1);
+    }
+  }
+
+  for (const entry of findings) {
+    if (entry.disposition) continue;
+    const exact = decidedExact.get(exactKey(entry));
+    if (exact) {
+      entry.disposition = exact;
+      continue;
+    }
+    if (entry.raisedBy === 'MODEL' && entry.sectionKey && unchanged.has(entry.sectionKey)) {
+      const candidates = priorModel.get(sectionKey(entry));
+      if (candidates && candidates.length === 1 && newModelCount.get(sectionKey(entry)) === 1) {
+        entry.disposition = candidates[0]!;
+      }
+    }
+  }
+}
+
 /**
  * Attack the pack.
  *
@@ -801,22 +913,12 @@ export async function challengeSubmission(
   // this, fixing one critical finding and re-running would discard the recorded
   // decision on every other finding — forcing the whole review to be decided
   // again, 27 times over, which is exactly the busywork that makes a reviewer
-  // stop trusting the tool. A disposition carries onto a finding that comes back
-  // unchanged — same requirement, same severity, same title — because the
-  // decision that was true a minute ago is still true. A finding that was edited
-  // into a different one does not match, so it gets a fresh look, which is right.
+  // stop trusting the tool. `carryForwardDispositions` carries a decision onto a
+  // finding that is the same concern, and the two ways it decides that are below.
   const prior = latestReview(ctx, pack.id);
-  if (prior) {
-    const key = (entry: AssuranceFinding): string =>
-      `${entry.severity}\u0000${entry.reference ?? ''}\u0000${entry.sectionKey ?? ''}\u0000${entry.title}`;
-    const decided = new Map<string, FindingDisposition>();
-    for (const earlier of prior.findings) if (earlier.disposition) decided.set(key(earlier), earlier.disposition);
-    for (const entry of findings) {
-      if (entry.disposition) continue;
-      const carried = decided.get(key(entry));
-      if (carried) entry.disposition = carried;
-    }
-  }
+  const sectionDigests = draftedSectionDigests(pack);
+  const unchanged = unchangedSections(prior, sectionDigests);
+  carryForwardDispositions(prior, findings, unchanged);
 
   const id = ulid();
   const counts = (severity: FindingSeverity): number => findings.filter((entry) => entry.severity === severity).length;
@@ -834,6 +936,7 @@ export async function challengeSubmission(
     qualityFloorPercent: floorPercent,
     modelChallenge: challenge,
     limits,
+    sectionDigests,
     summary:
       findings.length === 0
         ? `Nothing found against ${pack.reference}. ${percent}% of the weighted marks are findable.`

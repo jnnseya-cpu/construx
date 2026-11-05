@@ -926,3 +926,115 @@ describe('the quality floor', () => {
     );
   });
 });
+
+/**
+ * Carrying a decision forward across a re-run — the pure core of it.
+ *
+ * The full-flow test above proves the deterministic findings carry, because the
+ * local challenge raises none of its own. These exercise the part that cannot be
+ * driven from a deployment with no reasoning provider: a model-raised finding,
+ * re-worded on every pass, whose decision must still stick where the section it
+ * is on was not edited — and must not stick where it was.
+ */
+describe('carryForwardDispositions', () => {
+  const decided = (decision: redteam.FindingDisposition['decision'] = 'ACCEPTED') => ({
+    decision,
+    note: 'Decided with a real reason recorded here.',
+    by: 'owner',
+    at: '2027-01-01T00:00:00.000Z',
+  });
+
+  const finding = (over: Partial<redteam.AssuranceFinding>): redteam.AssuranceFinding => ({
+    id: Math.random().toString(36).slice(2),
+    lens: 'EVALUATOR',
+    severity: 'HIGH',
+    title: 'A finding',
+    detail: 'detail',
+    remedy: 'remedy',
+    raisedBy: 'CHECK',
+    ...over,
+  });
+
+  const review = (findings: redteam.AssuranceFinding[], sectionDigests: Record<string, string>): redteam.AssuranceReview => ({
+    id: 'prior',
+    reference: 'ASR-0001',
+    packId: 'pack',
+    analysisId: 'analysis',
+    packPasses: 1,
+    runAt: '2027-01-01T00:00:00.000Z',
+    runBy: 'qs',
+    findings,
+    findableScorePercent: 50,
+    scoreBasis: [],
+    qualityFloorPercent: 80,
+    modelChallenge: { ran: true, findings: findings.filter((f) => f.raisedBy === 'MODEL').length },
+    limits: [],
+    sectionDigests,
+    summary: 'prior',
+  });
+
+  it('carries an exact deterministic finding, whatever changed elsewhere', () => {
+    const prior = review(
+      [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'Q1 is below the 80% quality floor', disposition: decided('ACCEPTED') })],
+      { Q1: 'digest-a' },
+    );
+    const fresh = [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'Q1 is below the 80% quality floor' })];
+    // Q1 was edited (digest differs), yet the deterministic finding still carries
+    // by exact title — the content change does not weaken the exact match.
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q1: 'digest-b' }));
+    assert.equal(fresh[0]!.disposition?.decision, 'ACCEPTED');
+  });
+
+  it('carries a re-worded model finding on a section nobody edited', () => {
+    const prior = review(
+      [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Insurance certificates and CAR sum-insured not evidenced', disposition: decided('WAIVED') })],
+      { Q3: 'same' },
+    );
+    // Same section, same severity, different wording — the fresh adversarial pass.
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'No evidence of insurance or CAR sum insured' })];
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'same' }));
+    assert.equal(fresh[0]!.disposition?.decision, 'WAIVED', 'the decision on an untouched section was lost');
+  });
+
+  it('gives a model finding a fresh look where its section was edited', () => {
+    const prior = review(
+      [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Insurance not evidenced', disposition: decided('WAIVED') })],
+      { Q3: 'before' },
+    );
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Something else about Q3 entirely' })];
+    // Q3's prose changed, so a model finding on it may be a new concern: no carry.
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'after' }));
+    assert.equal(fresh[0]!.disposition, undefined, 'a decision was applied to a concern on an edited section');
+  });
+
+  it('does not guess when two model findings share a section and severity', () => {
+    const prior = review(
+      [
+        finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'First concern', disposition: decided('ACCEPTED') }),
+        finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Second concern', disposition: decided('WAIVED') }),
+      ],
+      { Q3: 'same' },
+    );
+    const fresh = [
+      finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Re-worded first' }),
+      finding({ raisedBy: 'MODEL', sectionKey: 'Q3', reference: 'Q3', title: 'Re-worded second' }),
+    ];
+    redteam.carryForwardDispositions(prior, fresh, redteam.unchangedSections(prior, { Q3: 'same' }));
+    assert.equal(fresh[0]!.disposition, undefined, 'carried an ambiguous model decision');
+    assert.equal(fresh[1]!.disposition, undefined, 'carried an ambiguous model decision');
+  });
+
+  it('does nothing with no prior review, and falls back to exact match with no digests', () => {
+    const fresh = [finding({ raisedBy: 'MODEL', sectionKey: 'Q3', title: 'anything' })];
+    redteam.carryForwardDispositions(undefined, fresh, new Set());
+    assert.equal(fresh[0]!.disposition, undefined);
+
+    // A prior review from before digests existed: exact match still works, the
+    // section-and-severity path simply finds nothing unchanged.
+    const prior = review([finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'T', disposition: decided() })], {});
+    delete (prior as { sectionDigests?: unknown }).sectionDigests;
+    const again = [finding({ raisedBy: 'CHECK', reference: 'Q1', sectionKey: 'Q1', title: 'T' })];
+    redteam.carryForwardDispositions(prior, again, redteam.unchangedSections(prior, { Q1: 'x' }));
+    assert.equal(again[0]!.disposition?.decision, 'ACCEPTED');
+  });
+});
