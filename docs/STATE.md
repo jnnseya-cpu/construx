@@ -25562,6 +25562,21 @@ is a pure, exported function with its own tests (`redteam.test.ts`
 section, gets a fresh look on an edited one, and is never guessed when two share
 a section and severity).
 
+**Issuing the pack no longer hides the thing you issued.** The submission reader
+on the pipeline screen — where the drafted answers are read, copied and, most of
+all, *downloaded as the branded PDF* — was built from the open packs only, and
+"open" excludes an issued one. So the workflow dead-ended at its last step: click
+"Issue the pack", and the pack dropped out of the reader and the "Download
+submission (PDF)" button vanished with it — at the exact moment somebody needs
+the clean, frozen record of what was sent. The reader now includes issued packs,
+marked `issued · read-only`: the prose can be read, copied and downloaded, the
+per-section **Edit** button is withheld (the backend refuses an edit on an issued
+pack anyway), and the section *chooser* that offers an answer to write to or
+record a use against still excludes issued packs — an answer cannot first go out
+on a submission that has already gone. `frontend/pages/pipeline.js`; the
+`submission.pdf` route never gated on status, so the download works for an issued
+pack as-is.
+
 **A job issues one quotation, not five.** A tender goes out as a single priced
 offer, but nothing stopped drawing up another and issuing it, so the first real
 bidder ended up with five numbered quotations for one job. `quoteFromEstimate`

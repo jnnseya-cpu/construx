@@ -954,25 +954,21 @@ export async function pipeline(root) {
           .catch(() => null)
       : null;
 
-  /*
-   * The sections a library answer can be recorded against.
-   *
-   * The pack register carries counts, not sections, so recording a use would
-   * otherwise mean typing a matrix reference — and a typed reference is how one
-   * section becomes two rows that no median can be taken across. The packs
-   * still open are read in full instead, so the chooser can only offer a
-   * section that exists. There are rarely more than two or three open at once,
-   * and an issued pack is excluded: an answer cannot first go out on a
-   * submission that has already gone.
-   */
-  const openPacks = (bidPacks?.packs ?? []).filter((pack) => pack.status !== 'ISSUED');
   // The full pack, sections and all, fetched once and kept — so the submission
-  // can be read and edited on this screen rather than only counted. The register
-  // above carries counts; this carries the prose.
+  // can be read, edited and downloaded on this screen rather than only counted.
+  // The register above carries counts; this carries the prose.
+  //
+  // **Issued packs are included here, deliberately.** They used to be excluded,
+  // and that made the whole workflow a dead-end at its last step: the moment the
+  // record was frozen — which is exactly when somebody needs the clean PDF of
+  // what was sent — the pack dropped out of this list and the "Download
+  // submission (PDF)" button vanished with it. An issued pack is read-only
+  // below (the Edit button is withheld; the backend refuses an edit either way),
+  // but it can still be read, copied and downloaded.
   const fullPacks = projectId
     ? (
         await Promise.all(
-          openPacks.map((pack) =>
+          (bidPacks?.packs ?? []).map((pack) =>
             api
               .get(`/v1/projects/${projectId}/bid-responses/${pack.id}`)
               .then((full) => ({ pack, sections: full.sections ?? [] }))
@@ -983,7 +979,19 @@ export async function pipeline(root) {
         )
       )
     : [];
-  const packSections = fullPacks.flatMap(({ pack, sections }) =>
+  /*
+   * The sections a library answer can be recorded against, or the next one to
+   * write — the chooser the two command forms below read from.
+   *
+   * An issued pack is excluded: an answer cannot first go out on a submission
+   * that has already gone, so its sections are not offered to write to or record
+   * a use against. That is the chooser's rule, not the reader's — the reader
+   * above shows an issued pack so it can be downloaded; this does not offer its
+   * sections for editing.
+   */
+  const packSections = fullPacks
+    .filter(({ pack }) => pack.status !== 'ISSUED')
+    .flatMap(({ pack, sections }) =>
     sections.map((section) => ({
       value: `${pack.id}::${section.key}`,
       label: `${pack.reference} · ${section.key} — ${section.title}`,
@@ -1514,6 +1522,7 @@ export async function pipeline(root) {
                               <span>
                                 <b>${pack.reference}</b> · ${pack.clientName} —
                                 ${sections.filter((s) => s.status === 'DRAFTED').length} of ${sections.length} written
+                                ${pack.status === 'ISSUED' ? badge('issued · read-only', 'good') : ''}
                               </span>
                               ${
                                 sections.some((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0)
@@ -1540,7 +1549,9 @@ export async function pipeline(root) {
                                 ${section.status === 'DRAFTED' && (section.body ?? []).length > 0
                                   ? html`<div style="margin-top:7px;font-size:13px;line-height:1.55;white-space:pre-wrap">${(section.body ?? []).join('\n\n')}</div>
                                       <div style="margin-top:9px;display:flex;gap:7px">
-                                        <button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Edit this answer</button>
+                                        ${pack.status === 'ISSUED'
+                                          ? ''
+                                          : html`<button class="btn quiet sm" data-revise="${pack.id}::${section.key}">Edit this answer</button>`}
                                         <button class="btn quiet sm" data-copy-section="${pack.id}::${section.key}">Copy</button>
                                       </div>`
                                   : html`<div class="metric-sub" style="margin-top:6px">Not written yet — use “Write the next section” above.</div>`}
