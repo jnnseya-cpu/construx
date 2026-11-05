@@ -554,6 +554,27 @@ export const config = {
      */
     heartbeatUrl: str('OPS_HEARTBEAT_URL', ''),
     heartbeatIntervalSeconds: num('OPS_HEARTBEAT_INTERVAL_SECONDS', 60),
+    /**
+     * The tender-deadline reminder sweep.
+     *
+     * A bid lost because nobody watched the clock is the one loss no amount of
+     * pricing skill prevents. The platform already holds every recorded
+     * invitation's return deadline, resolved to a single instant; this is the
+     * timer that reads them and tells the company's own people, through the same
+     * outbox every other notice uses, before the window closes.
+     *
+     * `tenderReminderLeadDays` is how many days before the deadline the reminder
+     * fires — the "5 days before" a bidder asked for, as a default a deployment
+     * can change. One reminder per invitation per deadline in force: an addendum
+     * that moves the deadline is a new deadline and earns a fresh reminder; a
+     * sweep that runs four times a day does not send four emails. Enabled by
+     * default, because a deadline nobody is reminded of is the failure it exists
+     * to stop; where no SMTP host is configured it is recorded, not sent, exactly
+     * as every other notice is.
+     */
+    tenderReminderEnabled: bool('TENDER_REMINDER_ENABLED', true),
+    tenderReminderLeadDays: num('TENDER_REMINDER_LEAD_DAYS', 5),
+    tenderReminderIntervalMinutes: num('TENDER_REMINDER_INTERVAL_MINUTES', 360),
   },
 
   /**

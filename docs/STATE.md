@@ -4543,6 +4543,36 @@ mandatory deliverable is recorded and the Owner's decision to bid is refused,
 naming it; an addendum moves the deadline and the board shows the re-review. The
 panel and the command are screenshotted.
 
+**The deadline now reminds the company, instead of waiting to be looked at.**
+Every recorded invitation's deadline was in the record and resolved to a single
+instant, and nothing read it on a clock — a bid lost on the date is the one loss
+pricing skill cannot save, and it was the one the platform was best placed to
+catch and did not. `backend/src/ops/tenderreminders.ts` is the sweep that closes
+that: on a timer (`TENDER_REMINDER_INTERVAL_MINUTES`, every six hours by default)
+it reads every invitation's deadline in force and, a set number of days before it
+(`TENDER_REMINDER_LEAD_DAYS`, five by default — the "five days before" a first
+bidder asked for), tells the company's own owners and administrators through the
+same durable outbox every other notice uses. It is **not a new delivery path** —
+the catalogue gains one event, `tender.deadline_approaching` (EMAIL + in-app,
+not mandatory, so a pursuit somebody has set down can be muted), and everything
+after it is the existing `notify` → outbox → SMTP pipeline, branded with the
+tenant's own identity. Where no SMTP host is configured it is recorded, not sent,
+exactly as every other notice is.
+
+**One reminder per deadline, and the memory is the outbox, not this process.**
+The sweep runs on its own clock and must not email the same person every few
+hours; it skips an invitation whose current deadline already has a queued
+`tender.deadline_approaching` notice, read back from the ledger-backed outbox —
+so a restart does not re-send, which a process-local flag would. The idempotency
+key is the invitation *and the instant in force*, so an addendum that moves the
+deadline is a new instant and earns a fresh reminder on its own schedule; the old
+one stays on the record as what was true then. A deadline already past, a pursuit
+decided a no-bid or already converted to a won project, and the platform's own
+tenancy are each skipped and the skip is named. Primary only — a follower that
+also swept would double every reminder. Four tests in `tenderreminders.test.ts`:
+inside the window it reminds and names the days remaining, past it it does not,
+a second sweep the same day sends nothing, and a no-bid is left alone.
+
 ### The settlement meeting, and the bridge that has to reconcile
 
 T-WF-07. `backend/src/domain/settlement.ts`, six routes, 23 tests.

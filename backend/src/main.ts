@@ -25,6 +25,7 @@ import { attachViewJournal, viewJournalPath } from './site/views.ts';
 import { startMarketingSchedule } from './site/visibility.ts';
 import { startAssurance } from './ops/assurance.ts';
 import { startConsistencySweep, stopConsistencySweep } from './ops/consistencysweep.ts';
+import { startTenderReminderSweep } from './ops/tenderreminders.ts';
 import { armRepair, startRepair } from './ops/repair.ts';
 import { egressConfigured, startEgress } from './ops/otlp.ts';
 import { checkSelfReach, rememberSelfReach, type SelfReach } from './ops/selfreach.ts';
@@ -685,6 +686,13 @@ startHygiene(HYGIENE_INTERVAL_MS, platform.evidence);
 // the next time somebody looks, which on a quiet project is never.
 if (!follower) startConsistencySweep(platform);
 
+// The tender return clock. Every recorded invitation's deadline is in the
+// record and nothing read it on a timer; this tells the company's own people a
+// set number of days before it closes, through the same outbox every other
+// notice uses. Primary only — a follower that also sent it would double every
+// reminder — and idempotent through the outbox, so a restart does not re-send.
+const tenderReminderTimer = follower ? (): void => undefined : startTenderReminderSweep(platform);
+
 // Auto-repair, bounded to restart and reroute. Handed a function rather than a
 // timer handle, so it can re-arm the real drain rather than clear one it could
 // not replace.
@@ -867,6 +875,7 @@ const shutdown = (signal: string): void => {
   outboxTimer();
   webhookTimer();
   watchTimer();
+  tenderReminderTimer();
   heartbeatTimer();
   backupTimer();
   snapshotTimer();
