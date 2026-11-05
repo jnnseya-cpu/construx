@@ -586,6 +586,34 @@ export function extractRequirements(
 }
 
 /**
+ * Point a tender at its compliance matrix without touching the return register.
+ *
+ * `extractRequirements` binds the matrix *and* files the deliverables, and
+ * refuses an empty register — which is right when a reading found return items.
+ * But a reading can legitimately find requirements and no deliverables (a
+ * questionnaire, a social-value appendix), and that reading still produces part
+ * of the tender's one matrix. This binds the analysis so the next reading can
+ * merge into it, and leaves the deliverables exactly as they were.
+ */
+export function bindAnalysis(ctx: EngineContext, invitationId: string, analysisId: string): void {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireInvitation(ctx, invitationId);
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'TENDER_REQUIREMENTS_EXTRACTED',
+    entity: { refType: 'TenderInvitation', refId: invitationId },
+    nextState: {
+      ...record.state,
+      analysisId,
+      requirementsExtracted: true,
+      extractedAt: new Date().toISOString(),
+      extractedBy: ctx.auth.actorId,
+    },
+  });
+}
+
+/**
  * Add one deliverable to the register.
  *
  * The bulk call above is the agent's path: it reads the whole invitation and

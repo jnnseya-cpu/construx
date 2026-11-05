@@ -68,6 +68,25 @@ function multimodalStub(output: Record<string, unknown>): AIProviderAdapter {
   };
 }
 
+/** A provider that returns a different reading on each call, for the merge path. */
+function sequencingStub(outputs: Record<string, unknown>[]): AIProviderAdapter {
+  let call = 0;
+  return {
+    name: 'GEMINI',
+    capability: 'PERCEPTION',
+    multimodal: true,
+    transmits: true,
+    estimateCostMinor: () => 40,
+    healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      lastRequest = request;
+      const output = outputs[Math.min(call, outputs.length - 1)]!;
+      call += 1;
+      return { provider: 'GEMINI', modelClass: 'perception-standard', output, rawCostMinor: 40, latencyMs: 8, confidence: 0.9 };
+    },
+  };
+}
+
 /** What a bid manager would recognise coming back off a real ITT. */
 const ITT_READING = {
   reference: 'YW/2026/SPILLWAY/014',
@@ -140,6 +159,33 @@ const ITT_READING = {
 
 const ITT_FILE = Buffer.from('PDF-ish bytes standing in for an invitation to tender', 'utf8');
 const ITT_HASH = hashBytes(ITT_FILE);
+
+/** A second document of the same tender — a social-value appendix with its own requirements and no commercial terms. */
+const APPENDIX_READING = {
+  reference: 'YW/2026/SPILLWAY/014 — Appendix D Social Value',
+  clientName: 'Yorkshire Water Services Limited',
+  returnBy: '2026-11-20',
+  requirements: [
+    {
+      reference: 'SV 1',
+      category: 'SOCIAL_VALUE',
+      requirement: 'Apprenticeship weeks committed over the works duration.',
+      mandatory: false,
+      weightingPercent: 5,
+      evidenceRequired: 'TOMs schedule',
+    },
+    {
+      reference: 'SV 2',
+      category: 'ENVIRONMENTAL',
+      requirement: 'Carbon reduction plan for the works.',
+      mandatory: false,
+      evidenceRequired: 'Carbon reduction plan',
+    },
+  ],
+  deliverables: [{ reference: 'RD-04', title: 'Social value schedule', mandatory: true, channel: 'PORTAL' }],
+  // An appendix states no commercial terms of its own.
+  terms: { contractForm: 'Not stated in the invitation' },
+};
 
 /**
  * A project at TENDER, walked through the gates.
@@ -292,6 +338,53 @@ describe('the invitation is read rather than typed', () => {
     const stored = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
     assert.equal(stored.requirementsExtracted, true);
     assert.ok(stored.analysisId, 'the invitation does not name the analysis produced from it');
+  });
+});
+
+describe('one matrix per tender — a second reading merges in', () => {
+  it('adds a second document’s requirements to the one matrix, keeps the terms, merges the returns', async () => {
+    await buildFixture(sequencingStub([ITT_READING, APPENDIX_READING]));
+    registerEvidenceFor(ctx('qs'), ITT_HASH, 'TENDER_DOCUMENT');
+    await store.put(seed.tenantId, ITT_HASH, ITT_FILE, 'application/pdf');
+
+    // First reading: the ITT itself — three requirements, the NEC4 terms, three returns.
+    const first = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
+    const firstConfirmed = await perception.confirm(ctx('qs'), { draftId: first.draftId, invitationId });
+    assert.equal((firstConfirmed.result as { requirements: number }).requirements, 3);
+
+    // Second reading of the same tender — a social-value appendix, two new
+    // requirements and one new return, stating no commercial terms of its own.
+    const second = await perception.extract(ctx('qs'), store, { hash: ITT_HASH, task: 'ITT_REQUIREMENTS' });
+    const secondConfirmed = await perception.confirm(ctx('qs'), { draftId: second.draftId, invitationId });
+    assert.equal(
+      (secondConfirmed.result as { requirements: number }).requirements,
+      5,
+      'the second reading minted a fresh matrix instead of merging into the one on the tender',
+    );
+
+    // The tender holds one matrix, carrying both readings.
+    const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    const analysis = platform.ledger.require({ refType: 'ITTAnalysis', refId: invitation.analysisId as string }).state as {
+      matrix: Array<{ reference: string }>;
+      commercialTerms?: { contractForm?: string };
+    };
+    assert.deepEqual(
+      analysis.matrix.map((line) => line.reference).sort(),
+      ['AW 2.4', 'SQ 4.1', 'SQ 6.2', 'SV 1', 'SV 2'],
+      'the one matrix does not carry both readings’ requirements',
+    );
+    // The appendix stated no terms, so the ITT terms are kept rather than wiped.
+    assert.equal(
+      analysis.commercialTerms?.contractForm,
+      'NEC4 Option A with Z-clauses',
+      'a later reading with no terms wiped the tender’s commercial terms',
+    );
+    // The returns are merged, not replaced: the ITT’s three plus the appendix’s one.
+    assert.deepEqual(
+      (invitation.deliverables as Array<{ reference: string }>).map((deliverable) => deliverable.reference).sort(),
+      ['RD-01', 'RD-02', 'RD-03', 'RD-04'],
+      'a later reading wiped the tender’s return register',
+    );
   });
 });
 

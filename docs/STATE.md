@@ -15940,6 +15940,27 @@ own observer.
 have run — same authorisation, same ACU cost, same events. Machine-read data
 still gets no private door into the register.
 
+**One tender, one matrix — a second reading merges in.** This was the failure a
+first bidder hit hardest, and named precisely: a highways framework came as a
+dozen documents — the ITT, the NEC templates, the specification, Appendix C, D,
+E — and reading each of them minted a *separate* `ITT_ANALYSED`, so the tender
+had a dozen fragments and nothing to price from. `analyseITT` still only knows a
+requirement list, but confirming a reading now first recovers the requirements
+already on the tender (from its bound matrix, via `requirementsFromMatrix`) and
+`mergeRequirements` unions the new ones in by reference — a reference read again
+updates its line rather than duplicating it, and order is kept. The result is one
+matrix per tender that grows as its documents are read. Two guards make the merge
+safe rather than lossy: `mergeCommercialTerms` keeps the tender's stated terms
+(the damages, retention and bond it is priced against) when a later document — an
+appendix — states none, replacing them only when the new reading states its own;
+and the return register is merged, not replaced, so a re-read never wipes the
+owner, date and source a person assigned to a deliverable. A reading that finds
+requirements but no returns still binds its matrix to the tender (`bindAnalysis`),
+so the next reading has something to merge into. Proven end to end in
+`ittreading.test.ts`: two readings of one invitation leave it with one matrix of
+five requirements, the ITT's terms intact and both readings' returns present;
+`itt.test.ts` pins the union, the dedup, the term-keep and the matrix round-trip.
+
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
 them, which terms are a **bar** rather than a negotiation, the quantified

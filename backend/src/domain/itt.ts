@@ -766,6 +766,80 @@ export function analyseITT(
   };
 }
 
+// --- Merging readings into one matrix per tender -----------------------------
+
+/**
+ * Recover the requirements a stored matrix was built from.
+ *
+ * `analyseITT` takes `ITTRequirement[]` and produces `MatrixLine[]`, keeping
+ * every field the requirement carried and adding the owner, the held evidence
+ * and the status it derived against the company profile. To merge a second
+ * reading into the matrix already on a tender, the first reading's requirements
+ * are recovered from its lines — dropping the derived fields, which the re-run
+ * re-derives — and combined with the new ones.
+ */
+export function requirementsFromMatrix(matrix: MatrixLine[]): ITTRequirement[] {
+  return matrix.map((line) => ({
+    reference: line.reference,
+    category: line.category,
+    requirement: line.requirement,
+    mandatory: line.mandatory,
+    ...(line.weightingPercent !== undefined ? { weightingPercent: line.weightingPercent } : {}),
+    evidenceRequired: line.evidenceRequired,
+    ...(line.dueBy !== undefined ? { dueBy: line.dueBy } : {}),
+    ...(line.responseLimit !== undefined ? { responseLimit: line.responseLimit } : {}),
+  }));
+}
+
+/**
+ * Combine the requirements already on a tender with those a new reading found.
+ *
+ * One tender, one matrix: reading its ITT, then its questionnaire, then its
+ * social-value appendix adds each document's requirements to the one matrix
+ * rather than minting a third analysis — which is how a tender ended with a
+ * dozen fragments nobody could price from. Keyed by the requirement's reference,
+ * because that is the identity a submission answers against: a reference read
+ * again (a re-read, a correction) updates the line rather than duplicating it,
+ * so the newer reading wins. Order is preserved — the tender's existing
+ * requirements first, in the order they were read, then the genuinely new ones.
+ */
+export function mergeRequirements(prior: ITTRequirement[], next: ITTRequirement[]): ITTRequirement[] {
+  const byReference = new Map<string, ITTRequirement>();
+  for (const requirement of prior) byReference.set(requirement.reference, requirement);
+  for (const requirement of next) byReference.set(requirement.reference, requirement);
+  return [...byReference.values()];
+}
+
+/** Whether a reading stated commercial terms of its own, or left them to another document. */
+export function commercialTermsStated(terms: CommercialTerms): boolean {
+  return (
+    (terms.contractForm !== '' && terms.contractForm !== 'Not stated in the invitation') ||
+    terms.liquidatedDamages !== undefined ||
+    terms.performanceBondPercent !== undefined ||
+    terms.parentCompanyGuaranteeRequired !== undefined ||
+    terms.retentionPercent !== undefined ||
+    terms.paymentDays !== undefined ||
+    terms.designLiability !== undefined ||
+    terms.sectionalCompletions !== undefined ||
+    terms.paymentConditionalOnThirdParty !== undefined ||
+    (terms.other !== undefined && terms.other.length > 0)
+  );
+}
+
+/**
+ * The commercial terms to carry when a second reading is merged in.
+ *
+ * The contract terms are stated once — in the ITT or the conditions of contract
+ * — and an appendix read afterwards states none. Overwriting the tender's terms
+ * with that appendix's empty set would lose the damages, the retention and the
+ * bond the matrix is priced against. So a reading that states terms replaces
+ * them; a reading that states none keeps what the tender already held.
+ */
+export function mergeCommercialTerms(prior: CommercialTerms | undefined, next: CommercialTerms): CommercialTerms {
+  if (!prior) return next;
+  return commercialTermsStated(next) ? next : prior;
+}
+
 // --- Reading one back --------------------------------------------------------
 
 /**

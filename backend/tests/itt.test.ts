@@ -1112,3 +1112,43 @@ describe('Commercial-term risk sizes itself from the take-off, with no value ent
     assert.equal(retention.exposureMinor, 5_000_000, '5% of £1,000,000 is £50,000, sized with no value entered');
   });
 });
+
+describe('Merging readings into one matrix per tender', () => {
+  it('unions requirements by reference, newest wins, order kept', () => {
+    const prior = [requirement({ reference: 'A1', requirement: 'first' }), requirement({ reference: 'A2', requirement: 'second' })];
+    const next = [requirement({ reference: 'A2', requirement: 'second, re-read' }), requirement({ reference: 'A3', requirement: 'third' })];
+    const merged = itt.mergeRequirements(prior, next);
+    assert.deepEqual(merged.map((r) => r.reference), ['A1', 'A2', 'A3']);
+    assert.equal(merged.find((r) => r.reference === 'A2')!.requirement, 'second, re-read');
+  });
+
+  it('recovers a readings requirements from its stored matrix', () => {
+    const matrix = analyse({
+      requirements: [requirement({ reference: 'R1', category: 'QUALITY', weightingPercent: 20, responseLimit: { words: 500, statedAs: '500 words' } })],
+    }).matrix;
+    const back = itt.requirementsFromMatrix(matrix);
+    assert.equal(back[0]!.reference, 'R1');
+    assert.equal(back[0]!.category, 'QUALITY');
+    assert.equal(back[0]!.weightingPercent, 20);
+    assert.deepEqual(back[0]!.responseLimit, { words: 500, statedAs: '500 words' });
+  });
+
+  it('keeps the tenders terms when a later reading states none, replaces them when it states some', () => {
+    const prior = { contractForm: 'NEC4 ECC Option A', retentionPercent: 5 };
+    assert.deepEqual(itt.mergeCommercialTerms(prior, { contractForm: 'Not stated in the invitation' }), prior);
+    const stated = { contractForm: 'JCT D&B 2016', retentionPercent: 3 };
+    assert.deepEqual(itt.mergeCommercialTerms(prior, stated), stated);
+    assert.deepEqual(itt.mergeCommercialTerms(undefined, stated), stated);
+  });
+
+  it('produces one matrix carrying both readings requirements', () => {
+    const ittReqs = [
+      requirement({ reference: 'MAND-01', category: 'INSURANCE' }),
+      requirement({ reference: 'MAND-02', category: 'HEALTH_AND_SAFETY', requirement: 'Health and safety policy' }),
+    ];
+    const appendixReqs = [requirement({ reference: 'SV-01', category: 'SOCIAL_VALUE', requirement: 'Local employment commitment', mandatory: false })];
+    const combined = analyse({ requirements: itt.mergeRequirements(ittReqs, appendixReqs) });
+    assert.equal(combined.matrix.length, 3);
+    assert.deepEqual(combined.matrix.map((l) => l.reference).sort(), ['MAND-01', 'MAND-02', 'SV-01']);
+  });
+});

@@ -16,10 +16,18 @@ import { captureSiteObservation } from './planning.ts';
 import { raiseNCR } from './quality.ts';
 import { logSafetyObservation } from './safety.ts';
 import { runTakeoff } from './tender.ts';
-import { analyseITT, type CommercialTerms, type ITTRequirement } from '../domain/itt.ts';
+import {
+  analyseITT,
+  mergeCommercialTerms,
+  mergeRequirements,
+  requirementsFromMatrix,
+  type CommercialTerms,
+  type ITTRequirement,
+  type MatrixLine,
+} from '../domain/itt.ts';
 import { BRIEF_ITEMS, recordFact } from '../domain/etablix/brief.ts';
 import { requireModule } from '../identity/modules.ts';
-import { extractRequirements, type SubmissionChannel } from '../domain/tenderintake.ts';
+import { bindAnalysis, extractRequirements, type SubmissionChannel, type TenderDeliverable } from '../domain/tenderintake.ts';
 import { recordModelReading } from '../evidence/pipeline.ts';
 
 /**
@@ -1492,20 +1500,37 @@ export async function confirm(
     // The analyst, exactly as a person typing the requirements in would reach
     // it — same authorisation, same ACU cost, same tests. The reading is what
     // changed; nothing about how a matrix is produced did.
+    // One matrix per tender. A second reading of the same invitation — its ITT,
+    // then its questionnaire, then its social-value appendix — adds its
+    // requirements to the matrix already on the tender rather than minting a
+    // separate analysis per document, which is how a tender ended up with a
+    // dozen fragments nobody could price from. The requirements already on the
+    // tender are recovered from its bound matrix and the new ones merged in by
+    // reference; a reading that states commercial terms replaces them, one that
+    // states none keeps what the tender held.
+    const invitationRecord = ctx.ledger.require({ refType: 'TenderInvitation', refId: input.invitationId });
+    const priorAnalysisId = invitationRecord.state.analysisId as string | undefined;
+    let mergedRequirements = requirements;
+    let mergedTerms = commercial;
+    if (priorAnalysisId) {
+      const prior = ctx.ledger.get({ refType: 'ITTAnalysis', refId: priorAnalysisId });
+      if (prior && prior.tenantId === ctx.tenantId) {
+        const priorMatrix = (prior.state.matrix as MatrixLine[] | undefined) ?? [];
+        mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
+        mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
+      }
+    }
+
     const analysis = analyseITT(ctx, {
       // The invitation's own reference when the document did not state one
       // legibly. It is the same record either way, so the matrix binds to it.
-      reference: String(
-        read.reference ??
-          ctx.ledger.require({ refType: 'TenderInvitation', refId: input.invitationId }).state.reference ??
-          '',
-      ),
+      reference: String(read.reference ?? invitationRecord.state.reference ?? ''),
       clientName: String(read.clientName ?? 'Not stated in the invitation'),
       returnBy: String(read.returnBy ?? ''),
       ...(input.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: input.estimatedValueMinor }),
       ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
-      requirements,
-      terms: commercial,
+      requirements: mergedRequirements,
+      terms: mergedTerms,
       ...(input.targetMarginPercent !== undefined ? { targetMarginPercent: input.targetMarginPercent } : {}),
     });
 
@@ -1525,14 +1550,30 @@ export async function confirm(
       ...(deliverable.channel ? { channel: String(deliverable.channel) as SubmissionChannel } : {}),
     }));
 
+    // Keep every deliverable already on the tender — the owner, date and source
+    // a person assigned included — and add only the ones this reading found that
+    // are not already there. A re-read of the pack never wipes an assignment.
+    const existingDeliverables = (invitationRecord.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+    const mergedDeliverables = [...existingDeliverables];
+    const seenDeliverables = new Set(existingDeliverables.map((entry) => entry.reference));
+    for (const deliverable of deliverables) {
+      if (seenDeliverables.has(deliverable.reference)) continue;
+      seenDeliverables.add(deliverable.reference);
+      mergedDeliverables.push(deliverable);
+    }
+
+    // Bind the merged matrix to the tender either way: with the return register
+    // when there is one, or on its own when the reading was requirements only
+    // (a questionnaire, an appendix) — so the next reading can merge into it.
     const extracted =
-      deliverables.length > 0
-        ? extractRequirements(ctx, input.invitationId, { deliverables, analysisId: analysis.analysisId })
+      mergedDeliverables.length > 0
+        ? extractRequirements(ctx, input.invitationId, { deliverables: mergedDeliverables, analysisId: analysis.analysisId })
         : undefined;
+    if (!extracted) bindAnalysis(ctx, input.invitationId, analysis.analysisId);
 
     result = {
       analysisId: analysis.analysisId,
-      requirements: requirements.length,
+      requirements: mergedRequirements.length,
       deliverables: extracted?.deliverables ?? 0,
       // Named rather than counted. A mandatory requirement with no evidence
       // behind it ends the bid, and a barred term ends it before pricing
