@@ -2,7 +2,7 @@ import { DomainError, NotFoundError } from '../core/errors.ts';
 import { authorise, type EngineContext } from '../engines/context.ts';
 import { costHead, lineNetCostMinor, type MeasuredLine } from '../engines/maths/costModel.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
-import { createDraft, type DocumentBody, type LifecycleDocument } from '../group/issuance.ts';
+import { createDraft, documentsOf, type DocumentBody, type LifecycleDocument } from '../group/issuance.ts';
 import type { AuthContext } from '../identity/auth.ts';
 import type { Platform } from '../platform.ts';
 import { formatMoney } from './locale.ts';
@@ -109,6 +109,32 @@ export function quoteFromEstimate(
   if (Number.isNaN(validUntil)) throw new DomainError('VALID_UNTIL_INVALID', 'The validity date is not a date');
   if (validUntil <= Date.now()) {
     throw new DomainError('VALID_UNTIL_PAST', 'A quotation cannot lapse before it is sent', 422);
+  }
+
+  // One issued quotation per job. A tender goes out as a single priced offer,
+  // but nothing stopped drawing up another and issuing it — the first real
+  // bidder ended up with five numbered quotations for one job. Once one is
+  // issued, a revised price *supersedes* it rather than taking a second number;
+  // drawing up again while an issued one stands is refused and says so. Drafts
+  // before anything is issued are left alone, so an abandoned draft is no
+  // obstacle.
+  const projectEstimateIds = new Set(
+    platform.ledger.list(ctx.projectId, 'Estimate').map((record) => String(record.state.id ?? record.refId)),
+  );
+  const alreadyIssued = documentsOf(platform, ctx.tenantId).find(
+    (document) =>
+      document.documentType === 'quotation' &&
+      document.status === 'ISSUED' &&
+      document.source?.refType === 'Estimate' &&
+      projectEstimateIds.has(String(document.source.refId)),
+  );
+  if (alreadyIssued) {
+    throw new DomainError(
+      'QUOTATION_ALREADY_ISSUED',
+      `This job already issued quotation ${alreadyIssued.issuance?.number ?? alreadyIssued.title}. A revised price supersedes it — ` +
+        'supersede that document on Site Documents rather than drawing up and issuing a second number for the same offer.',
+      409,
+    );
   }
 
   const project = platform.ledger.get({ refType: 'Project', refId: ctx.projectId });

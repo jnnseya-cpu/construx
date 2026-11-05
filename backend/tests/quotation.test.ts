@@ -250,6 +250,16 @@ describe('a priced estimate becomes a quotation', () => {
     );
     // What was approved is what was issued.
     assert.equal(documentOf(platform, actor.tenantId, quoted.document.id).revisions.at(-1)!.approval?.hash, hash);
+
+    // And once it is issued, a second priced offer for the same job supersedes
+    // it rather than taking a second number — the mess the first real bidder
+    // hit, five numbered quotations for one job. A fresh estimate on the same
+    // project is refused with the reason, not silently given its own number.
+    const reprice = completeEstimate();
+    throwsCode(
+      () => quoteFromEstimate(platform, qsCtx(), actor, { estimateId: reprice.estimateId, ...QUOTE }),
+      'QUOTATION_ALREADY_ISSUED',
+    );
   });
 });
 

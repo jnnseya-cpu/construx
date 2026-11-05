@@ -1234,8 +1234,14 @@ async function issuerPanels(host) {
       path: '/v1/documents/lifecycle',
       submitLabel: 'Open the draft',
       fields: [
-        { name: 'documentType', label: 'Document type', type: 'select', options: (lifecycle.documentTypes ?? []).map((t) => ({ value: t, label: t })) },
-        { name: 'title', label: 'Title', placeholder: 'Quotation — welfare village, phase 1' },
+        {
+          name: 'documentType',
+          label: 'Document type',
+          type: 'select',
+          options: (lifecycle.documentTypes ?? []).map((t) => ({ value: t, label: t })),
+          hint: 'A quotation is drawn from a priced estimate — use "Draw up the quotation" on Tender & Procurement so it carries the priced lines and total. Opened blank here it goes out empty.',
+        },
+        { name: 'title', label: 'Title', placeholder: 'e.g. Method statement — welfare village, phase 1' },
         { name: 'body', label: 'Rows', type: 'textarea', required: false, placeholder: 'Client: Riverside Depot Ltd\nTotal excl. VAT: 48,500.00\nValidity: 30 days', hint: 'One row per line, label: value' },
         { name: 'sourceRefType', label: 'Source record type', required: false, placeholder: 'Project' },
         { name: 'sourceRefId', label: 'Source record id', required: false },

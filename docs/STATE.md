@@ -25511,6 +25511,17 @@ look. So fixing one finding and re-running no longer discards the rest
 (`redteam.test.ts`: a decision recorded on a finding is still there after a
 re-run, with who made it).
 
+**A job issues one quotation, not five.** A tender goes out as a single priced
+offer, but nothing stopped drawing up another and issuing it, so the first real
+bidder ended up with five numbered quotations for one job. `quoteFromEstimate`
+now refuses to draw up a quotation while an issued one already stands for the
+same project — a revised price *supersedes* it rather than taking a second
+number (`quotation.test.ts`). Drafts before anything is issued are left alone, so
+an abandoned draft is no obstacle. And "Open a draft" on Site Documents now says,
+on the document-type field, that a quotation is drawn from a priced estimate via
+"Draw up the quotation" — so it is not opened as the blank shell that goes out
+empty (`frontend/pages/documents.js`).
+
 The estimate route's schema also required `basisOfEstimate`, which its engine
 took and the schema never listed: a caller could produce an estimate whose
 stated basis was `undefined`, and the basis is the one thing an estimate is read
