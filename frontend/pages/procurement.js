@@ -4115,6 +4115,16 @@ export async function procurement(root) {
           ...(sched.assumptions ?? []).map((a) => `Assumed: ${a}`),
           ...(sched.exclusions ?? []).map((e) => `Not included — ${e.label}: ${e.reason}`),
         ];
+        // The note has to match what the schedule actually carries. Once
+        // provisional and fixed sums are on it, "measured works only — add the
+        // contingency and provisional sums separately" contradicts the lines
+        // the buyer can see, so it only stands where no sums were added.
+        const hasSums = Number(sched.fixedSumsMinor ?? 0) > 0;
+        const hasContingency = (sched.lines ?? []).some((l) => /contingen/i.test(String(l.description ?? '')));
+        const note = hasSums
+          ? `NOTE: this schedule carries the measured works and the provisional and fixed sums listed above${hasContingency ? ', including a contingency' : ''}. ` +
+            `Add VAT${hasContingency ? '' : ', a contingency'} and any M&E fix or external works the take-off does not itself cover before submission.`
+          : 'NOTE: these are the measured works only. On the buyer’s Appendix B also add a contingency, the provisional sums (soakaway, plumbing, asbestos) and any M&E fix / external works the take-off does not itself cover.';
         const text = [
           `PRICING SCHEDULE (priced take-off) — ${sched.projectName}${sched.packageId ? ` · ${sched.packageId}` : ''}`,
           `Period on site: ${sched.durationWeeks} weeks`,
@@ -4124,7 +4134,7 @@ export async function procurement(root) {
           `TOTAL (excluding VAT): ${money(sched.totalMinor)}`,
           ...(quals.length ? ['', 'Qualifications:', ...quals] : []),
           '',
-          'NOTE: these are the measured works only. On the buyer’s Appendix B also add the £5,000 contingency, the provisional sums (soakaway, plumbing, asbestos) and any M&E fix / external works the take-off does not itself cover.',
+          note,
         ].join('\n');
         await navigator.clipboard.writeText(text);
         toast('Copied', `${(sched.lines ?? []).length} priced lines on your clipboard — paste them into your Appendix B.`, 'ok');

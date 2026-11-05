@@ -364,11 +364,23 @@ export function pricingSchedule(ctx: EngineContext): PricingSchedule {
     });
   });
 
+  // Whether the offer now carries a contingency as one of its sums. The P80
+  // risk-register head may still be excluded — that register was never
+  // quantified — but if a contingency line is on the schedule, the offer does
+  // carry one, and saying otherwise in the same document contradicts a line the
+  // buyer can see.
+  const carriesContingency = fixedSumsList.some((sum) => /contingen/i.test(sum.label));
+
   const assumptions = ((estimate.assumptions as string[] | undefined) ?? []).filter(Boolean);
   // The same rule the quotation holds: a margin head is never printed on an offer,
   // so an excluded overhead or profit head is not carried onto the schedule either.
   const exclusions = ((estimate.exclusions as Array<{ label?: string; head?: string; reason?: string }> | undefined) ?? [])
     .filter((exclusion) => costHead(String(exclusion.head ?? ''))?.basis !== 'MARGIN')
+    // Drop the "Contingency and risk: not included" exclusion when a contingency
+    // sum is on the schedule: the two together read as the document contradicting
+    // itself, and a buyer reads the line, not the QS distinction between a P80
+    // register figure and a stated provisional.
+    .filter((exclusion) => !(carriesContingency && (String(exclusion.head ?? '').toUpperCase() === 'RISK' || /contingen/i.test(String(exclusion.label ?? '')))))
     .map((exclusion) => ({
       label: String(exclusion.label ?? exclusion.head ?? ''),
       reason: String(exclusion.reason ?? 'Excluded'),
@@ -429,13 +441,14 @@ export function pricingScheduleBlocks(schedule: PricingSchedule): DocumentBlock[
     blocks.push({ kind: 'LIST', ordered: false, items: schedule.exclusions.map((exclusion) => `${exclusion.label}: ${exclusion.reason}`) });
   }
 
+  const carriesContingency = schedule.lines.some((line) => /contingen/i.test(line.description));
   blocks.push({
     kind: 'PARAGRAPH',
     text:
       schedule.fixedSumsMinor > 0
-        ? 'Provisional and fixed sums are listed above under their own labels and are not marked up. A buyer’s own ' +
-          'pricing schedule may require a separate contingency sum and show VAT; confirm any scope not measured or ' +
-          'listed here is priced before submission.'
+        ? `This schedule carries the measured works and the provisional and fixed sums listed above${carriesContingency ? ', including a contingency' : ''}, ` +
+          `each under its own label and not marked up. VAT is shown separately on the buyer’s own schedule${carriesContingency ? '' : ', which may also require a contingency sum'}; ` +
+          'confirm any scope not measured or listed here is priced before submission.'
         : 'This schedule carries the measured works only. A buyer’s own pricing schedule may also require a contingency ' +
           'sum, provisional sums (for example soakaway, plumbing and asbestos) and any mechanical, electrical or external ' +
           'works not contained in this take-off; those are priced separately and are not included in the total above.',

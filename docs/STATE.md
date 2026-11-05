@@ -25455,6 +25455,30 @@ still stand as one sum with the lines as drawn (`quotation.ts pricingSchedule`,
 pinned in `pricingschedule.test.ts`). The quotation's own apportionment is left
 as it was — the complaint and the fix are on the schedule that goes out.
 
+**The schedule stops contradicting itself once sums are on it.** With the
+measured works alone, the schedule honestly says "measured works only — a buyer
+also needs a contingency, provisional sums and any M&E/external works not in the
+take-off." Once a bidder adds those as fixed/provisional sums, that note and the
+"Contingency and risk: not included" exclusion become lies the buyer can check
+against the lines in front of them. Fixed now at the source: the pricing schedule
+drops the risk-register exclusion when a contingency sum is on it (the P80
+register is still unquantified, but the offer does now carry a contingency), and
+both the PDF note and the "Copy for Appendix B" note state what the schedule
+actually carries — "the measured works and the provisional and fixed sums listed
+above, including a contingency" — rather than telling the buyer to add what is
+already there. Pinned in `pricingschedule.test.ts`; the note lives in
+`quotation.ts pricingScheduleBlocks` and `frontend/pages/procurement.js`.
+
+**A project inherits the account's logo rather than going out unmarked.** Export
+branding resolves a project's own identity ahead of the tenancy's — right, so a
+document prepared for a named client carries that client's name, not the
+contractor's. But it replaced the tenancy's branding *wholesale*, so a project
+that set a name and no logo lost the firm's mark entirely and the cover fell back
+to type — the gap behind "our account has a logo, so why isn't it on the
+document". `ExportService.branding` now inherits the tenancy's `logoRef` onto a
+project that has none of its own, and only the logo: the name, colour and
+reference prefix a project set are deliberate and still win (`branding.test.ts`).
+
 The estimate route's schema also required `basisOfEstimate`, which its engine
 took and the schema never listed: a caller could produce an estimate whose
 stated basis was `undefined`, and the basis is the one thing an estimate is read

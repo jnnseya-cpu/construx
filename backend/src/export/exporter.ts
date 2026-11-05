@@ -441,8 +441,9 @@ export class ExportService {
    * had bothered to configure its own.
    */
   branding(tenantId: string, projectId?: string): ClientBranding {
-    const branding = (projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined)
-      ?? this.#brandingByTenant.get(tenantId);
+    const project = projectId ? this.#brandingByProject.get(`${tenantId}:${projectId}`) : undefined;
+    const tenant = this.#brandingByTenant.get(tenantId);
+    const branding = project ?? tenant;
     if (!branding) {
       // Refusing here is deliberate: an unbranded export sent to a client is
       // worse than no export, and silently substituting a default hides it.
@@ -450,6 +451,16 @@ export class ExportService {
         'BRANDING_NOT_CONFIGURED',
         'Client branding must be configured before documents can be exported',
       );
+    }
+    // A firm that uploaded its mark once, at the account level, expects it on
+    // every project's documents. Project branding still wins on identity — the
+    // name, the colour, the reference prefix a project set are deliberate and
+    // stand — but a project that was given a name and no logo inherits the
+    // tenancy's logo rather than going out unmarked, which is the gap behind
+    // "our account has a logo, so why isn't it on the document". Only the logo,
+    // and only when the project has none of its own.
+    if (project && tenant?.logoRef && !project.logoRef) {
+      return { ...project, logoRef: tenant.logoRef };
     }
     return branding;
   }

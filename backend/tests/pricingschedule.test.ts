@@ -198,6 +198,43 @@ describe('the pricing schedule export', () => {
     schedule.lines.forEach((line, index) => assert.equal(line.n, index + 1));
   });
 
+  it('does not say contingency is excluded while carrying a contingency sum', () => {
+    // The estimate excludes the P80 risk-register head (the register was never
+    // quantified) AND carries a flat contingency as a provisional sum. Printing
+    // both — "Contingency and risk: not included" beside a £5,000 contingency
+    // line — reads as the document contradicting itself to the buyer.
+    tender.buildEstimate(qsCtx(), {
+      packageId: 'WALL',
+      durationWeeks: 4,
+      lines: WALL_LINES,
+      quantified: [{ head: 'WASTE', description: 'Skips and gate fees', unit: 'sum', quantity: 1, rateMinor: 45_000 }],
+      insurance: { policies: [{ type: 'Contract works and liability', percentOfContractValue: 0.9 }] },
+      exclusions: [
+        { head: 'PLANT', reason: 'Scaffold by others' },
+        { head: 'RISK', reason: 'No quantified risk register' },
+      ],
+      margin: { overheadPercent: 8, profitPercent: 6 },
+      basisOfEstimate: 'Measured off the drawings.',
+      assumptions: [],
+      fixedSums: [
+        { label: 'Contingency', amountMinor: 500_000, provisional: true },
+        { label: 'Soakaway', amountMinor: 275_000, provisional: true },
+      ],
+    } as Parameters<typeof tender.buildEstimate>[1]);
+
+    const schedule = pricingSchedule(qsCtx());
+    // The contingency line is on the schedule.
+    assert.ok(schedule.lines.some((line) => /Contingency/.test(line.description)), 'the contingency sum is not on the schedule');
+    // ...so the contingency exclusion is gone, while the others stand.
+    assert.ok(!schedule.exclusions.some((e) => /contingen|risk/i.test(`${e.label} ${e.reason}`)), 'the contingency exclusion contradicts the contingency line');
+    assert.ok(schedule.exclusions.some((e) => /scaffold|plant/i.test(`${e.label} ${e.reason}`)), 'an unrelated exclusion was dropped');
+
+    // And the closing note no longer claims the schedule is measured works only.
+    const printed = JSON.stringify(pricingScheduleBlocks(schedule));
+    assert.ok(!/measured works only/i.test(printed), 'the stale measured-works-only note prints with sums present');
+    assert.match(printed, /including a contingency/i);
+  });
+
   it('refuses rather than exporting a wrong total where no complete estimate exists', () => {
     // A brand-new project with nothing priced on it.
     const gov = platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
