@@ -874,6 +874,99 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
 /** Every command on this screen runs before a project exists. */
 const TENANT = { tenantScoped: true };
 
+/**
+ * A reading across the live tenders — what needs attention, before a tender is
+ * picked to work.
+ *
+ * This is the insight surface the tenant-wide pipeline had none of: the AI
+ * Insight panel reads one project's proposals, so with no project selected it
+ * could only error. This is arithmetic over the board already on screen —
+ * nothing is fetched and no model is called — so it is always there. It names
+ * what is closing, what is not ready to bid, what has a critical clarification
+ * outstanding and what mandatory return has no owner, each the thing that stops
+ * a bid going in, and offers the way straight to the tender that carries it.
+ */
+function tenderAttention(board) {
+  const TERMINAL = ['NO_BID', 'CONVERTED', 'LOST'];
+  const live = board.filter((t) => !TERMINAL.includes(t.stage));
+
+  const closing = live
+    .filter((t) => typeof t.businessDaysRemaining === 'number' && t.businessDaysRemaining <= 10)
+    .sort((a, b) => a.businessDaysRemaining - b.businessDaysRemaining);
+  const notReady = live.filter((t) => (t.blockers ?? []).length > 0);
+  const reReview = live.filter((t) => (t.reReviewReasons ?? []).length > 0);
+  const criticalClar = live.filter((t) => (t.clarifications ?? []).some((c) => c.severity === 'CRITICAL'));
+  const unowned = live.flatMap((t) =>
+    (t.returns ?? [])
+      .filter((d) => d.mandatory && !d.owner)
+      .map((d) => ({ tender: t, deliverable: d })),
+  );
+
+  const metrics = [
+    { n: live.length, k: 'Live tenders', tone: '' },
+    { n: closing.length, k: 'Closing within 10 days', tone: closing.length > 0 ? 'warn' : '' },
+    { n: notReady.length, k: 'Not ready to bid', tone: notReady.length > 0 ? 'bad' : '' },
+    { n: unowned.length, k: 'Mandatory returns unowned', tone: unowned.length > 0 ? 'warn' : '' },
+  ];
+
+  // The tender's row-level entry point, where it carries the project the focus
+  // keys on. Without one there is nothing to focus onto, so the reference is
+  // shown plain rather than as a button that would land nowhere.
+  const go = (t, text) =>
+    t.projectId
+      ? html`<button class="btn quiet sm" data-focus-tender="${t.projectId}">${text}</button>`
+      : html`<span>${text}</span>`;
+
+  const rows = [
+    ...closing.slice(0, 5).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge(`${t.businessDaysRemaining}d`, t.businessDaysRemaining <= 5 ? 'bad' : 'warn'))} ${t.reference} · ${t.clientName} — closing</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...reReview.slice(0, 3).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge('re-review', 'warn'))} ${t.reference} — an addendum changed it</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...criticalClar.slice(0, 3).map(
+      (t) => html`<div class="row">
+        <span class="lbl">${raw(badge('critical', 'bad'))} ${t.reference} — a clarification is outstanding</span>
+        <span class="val">${go(t, 'Work on this')}</span>
+      </div>`,
+    ),
+    ...unowned.slice(0, 5).map(
+      ({ tender, deliverable }) => html`<div class="row">
+        <span class="lbl">${raw(badge('no owner', 'warn'))} ${tender.reference} · ${deliverable.reference} — ${deliverable.title}</span>
+        <span class="val">${go(tender, 'Work on this')}</span>
+      </div>`,
+    ),
+  ];
+
+  return html`<div class="card pad0">
+    <h3 style="padding:15px 17px 0">Where your tenders need attention</h3>
+    <div class="metric-sub" style="padding:4px 17px 0">
+      ${live.length === 0
+        ? 'No live tender is in play. Register an opportunity and record its ITT to start one.'
+        : 'Read across every live tender — what is closing, what is not ready, and what is blocking a bid. Press “Work on this” to take one on.'}
+    </div>
+    <div class="figure-strip" style="padding:11px 17px 4px">
+      ${metrics.map(
+        (m) => html`<div>
+          <div class="fig-k">${m.k}</div>
+          <div class="metric ${raw(m.tone)}">${m.n}</div>
+        </div>`,
+      )}
+    </div>
+    ${rows.length > 0
+      ? html`<div class="split-list" style="padding:6px 17px 15px">${rows}</div>`
+      : live.length > 0
+        ? html`<div class="metric-sub" style="padding:9px 17px 15px">Every live tender is on track — nothing closing inside ten days, and no blocker, critical clarification or unowned mandatory return.</div>`
+        : html`<div style="padding:0 0 6px"></div>`}
+  </div>`;
+}
+
 export async function pipeline(root) {
   const [criteria, summary, discipline, winRate, library, profile, radar, tenders, permissions, matrices, claimRegister, projectList, portfolioList, tradeCatalogue] = await Promise.all([
     api.get('/v1/pipeline/criteria'),
@@ -4015,12 +4108,34 @@ export async function pipeline(root) {
     },
   ]);
 
-  void insightPanel(root.querySelector('#pipeline-insight'), {
-    projectId,
-    areas: ['BUSINESS_DEVELOPMENT', 'ESTIMATE_TENDER'],
-    subject: 'the pipeline and what to bid',
-    onChange: draw,
-  });
+  /*
+   * The insight surface over the pipeline.
+   *
+   * The AI Insight panel reads an agent's proposals for one *project*, so it can
+   * only speak once a project is selected — focused on a tender, or opened from
+   * the board. Mounted with no project it fetched `/v1/projects/undefined/...`
+   * and showed an error where an insight belonged: "no insights at the tender
+   * stage" was exactly that.
+   *
+   * So when a project is in scope, the AI panel mounts as before. When none is —
+   * the tenant-wide board, before a tender is worked — the panel has nothing to
+   * read, so in its place goes a deterministic reading *across* the live tenders:
+   * what is closing, what is not ready, what has a critical clarification or an
+   * unowned mandatory return. It is arithmetic over the board already on screen,
+   * so it is always there, model or no model, and it is the thing a bid manager
+   * opens the pipeline to see.
+   */
+  const insightHost = root.querySelector('#pipeline-insight');
+  if (projectId) {
+    void insightPanel(insightHost, {
+      projectId,
+      areas: ['BUSINESS_DEVELOPMENT', 'ESTIMATE_TENDER'],
+      subject: 'the pipeline and what to bid',
+      onChange: draw,
+    });
+  } else if (insightHost) {
+    render(insightHost, tenderAttention(board));
+  }
 
 
   /*

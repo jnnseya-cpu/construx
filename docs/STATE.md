@@ -9114,6 +9114,22 @@ There is no per-topic read route: the page reads the whole guide at once and the
 grounding runs in-process, so a `/v1/guide/topics/:id` endpoint would have been a
 read nothing reached — the door invariant in `doors.test.ts` is what caught it.
 
+#### Insight at the tender stage, with or without a project
+
+The AI Insight panel reads one *project's* agent proposals, so on the
+tenant-wide pipeline — before a tender is worked — it had no project to read and
+mounting it fetched `/v1/projects/undefined/proposals`, which errored where an
+insight belonged. That was "no insights at the tender stage". Now the panel
+mounts only when a project is in scope (a focused tender, or one opened from the
+board); with none, `tenderAttention(board)` renders in its place — a
+deterministic reading *across* the live tenders, arithmetic over the board
+already on screen, so it is there on every deployment with no model called. It
+names what is closing within ten days, what is not ready to bid, what has a
+critical clarification outstanding and which mandatory return has no owner, each
+with a **Work on this** button to the tender that carries it (shown plain where
+the pursuit names no project to focus onto). Terminal tenders are excluded, and
+an all-clear says so rather than showing an empty card (`frontend/pages/pipeline.js`).
+
 ---
 
 ### The project on site now has a site record
