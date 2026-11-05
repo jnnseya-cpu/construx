@@ -145,6 +145,28 @@ describe('the text is actually in it', () => {
   });
 });
 
+describe('a long cover title', () => {
+  it('wraps instead of running off the page', () => {
+    // A real issued quotation: "Quotation — South Holland District Council,
+    // Single-storey extension & adaptations — 96 Railway Lane South". Drawn as
+    // one line it ran straight off the right edge and the reader never saw the
+    // half that mattered.
+    const long = 'Quotation for South Holland District Council single storey extension and adaptations at 96 Railway Lane South Spalding';
+    const text = latin1(renderPdf(sampleDocument({ title: long })));
+    // Not one overflowing run.
+    assert.ok(!text.includes(`(${long}) Tj`), 'the long title was drawn as a single overflowing line');
+    // The end of the title still reaches the page — it cannot if the line ran off.
+    assert.ok(text.includes('Spalding'), 'the end of the title was lost off the page');
+    // Drawn as more than one Helvetica-Bold 24 line (the cover title is the only F2 24 text).
+    assert.ok([...text.matchAll(/\/F2 24 Tf/g)].length >= 2, 'a long title should wrap to multiple lines');
+  });
+
+  it('keeps a short title on one line', () => {
+    const text = latin1(renderPdf(sampleDocument({ title: 'Pricing Schedule' })));
+    assert.equal([...text.matchAll(/\/F2 24 Tf/g)].length, 1, 'a short title should not wrap');
+  });
+});
+
 describe('the cover names a person, not an id', () => {
   it('shows the resolved generator name where there is one', () => {
     // A client-facing instrument that named its generator `01M1S26DD4K6R0…`

@@ -1006,7 +1006,16 @@ export function renderPdf(document: ExportDocument, resolveImage?: ImageResolver
       sheet.advance(64);
     }
 
-    sheet.text(document.title, { font: 'Helvetica-Bold', size: 24 });
+    // Wrapped, not a single line. A long title — "Quotation — South Holland
+    // District Council, Single-storey extension & adaptations — 96 Railway Lane
+    // South" — drawn as one line runs straight off the right edge of the page
+    // and the reader never sees the half that matters. It wraps to the content
+    // width and the cursor follows it down.
+    const titleLines = wrap(document.title, 'Helvetica-Bold', 24, CONTENT_WIDTH);
+    titleLines.forEach((line, index) => {
+      if (index > 0) sheet.advance(28);
+      sheet.text(line, { font: 'Helvetica-Bold', size: 24 });
+    });
     if (document.subtitle) {
       sheet.advance(20);
       sheet.text(document.subtitle, { size: 12, colour: [0.35, 0.35, 0.38] });

@@ -423,6 +423,20 @@ export function issuedDocumentModel(platform: Platform, document: LifecycleDocum
     ...(issuer.footerLegalText ? [{ kind: 'PARAGRAPH' as const, text: issuer.footerLegalText }] : []),
   ];
   const contentHash = issuance.hash;
+  // The person's name, not the raw actor id. An issued legal instrument that
+  // names its generator `01M1S26DD4K6R0…` tells the recipient nothing and reads
+  // as unfinished — the same fault the exported report carried, here on the path
+  // that issues the numbered document. Resolved from the user directory, and the
+  // id only where no name is on record.
+  const generatedBy = issuance.issuedBy ?? issuance.reservedBy;
+  let generatedByName: string | undefined;
+  try {
+    const name = platform.user(generatedBy).name?.trim();
+    if (name) generatedByName = name;
+  } catch {
+    // An actor no longer on the directory still has a traceable id; a blank
+    // would be worse than the id, so the field simply falls back to it.
+  }
   return {
     id: issuance.id,
     reference: issuance.number,
@@ -432,7 +446,8 @@ export function issuedDocumentModel(platform: Platform, document: LifecycleDocum
     audience: 'CLIENT',
     format: 'PDF',
     generatedAt: issuance.issuedAt ?? issuance.reservedAt,
-    generatedBy: issuance.issuedBy ?? issuance.reservedBy,
+    generatedBy,
+    ...(generatedByName ? { generatedByName } : {}),
     projectId: governance(document.tenantId),
     blocks,
     contentHash,
