@@ -380,6 +380,34 @@ describe('severity is a gate', () => {
     );
   });
 
+  it('carries a recorded decision onto the same finding when the review is re-run', async () => {
+    // The defect a bidder hit: fix one critical finding, re-run the review, and
+    // every decision recorded against the other findings is gone — 27 of them to
+    // record again. A re-run rebuilds the findings, but a decision true a minute
+    // ago is still true, so it must carry onto the same finding.
+    const first = (await redteam.challengeSubmission(asQS(), { packId })).review;
+    const high = first.findings.find(
+      (entry) => (entry.severity === 'HIGH' || entry.severity === 'MEDIUM') && !entry.disposition,
+    );
+    assert.ok(high, 'no undisposed high or medium finding to decide');
+
+    redteam.disposeFinding(asOwner(), first.id, high.id, {
+      decision: 'ACCEPTED',
+      note: 'Evidence is attached separately in the submission, per the invitation.',
+    });
+
+    // Re-run — nothing about the pack changed, so this finding comes back.
+    const second = (await redteam.challengeSubmission(asQS(), { packId })).review;
+    assert.notEqual(second.id, first.id, 'the re-run produced a new review');
+    const sameAgain = second.findings.find(
+      (entry) => entry.severity === high.severity && entry.reference === high.reference && entry.title === high.title,
+    );
+    assert.ok(sameAgain, 'the finding did not come back on the re-run');
+    assert.equal(sameAgain.disposition?.decision, 'ACCEPTED', 'the recorded decision was lost on re-run');
+    assert.match(sameAgain.disposition!.note, /attached separately/);
+    assert.equal(sameAgain.disposition?.by, seed.users.owner!.auth.actorId, 'the decision lost who made it');
+  });
+
   it('refuses a finding that is not on the review', async () => {
     const { review } = await redteam.challengeSubmission(asQS(), { packId });
     throwsCode(

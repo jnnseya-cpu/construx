@@ -25499,6 +25499,18 @@ printed the raw actor id and a long cover title ran off the page edge. The
 generator now resolves to a person's name (falling back to the id), and the cover
 title wraps like every other heading (`pdf.ts`, `pdf.test.ts`).
 
+**Re-running the red team keeps the decisions already recorded.** A bidder fixed
+one critical finding, re-ran "Attack the pack", and found every decision they had
+recorded against the other twenty-seven findings gone — to be recorded again,
+one at a time. Each run rebuilds the findings from scratch with fresh ids, so the
+dispositions, keyed by finding id, did not survive. `challengeSubmission` now
+carries a disposition forward onto a finding that comes back unchanged — same
+requirement, same severity, same title — because a decision true a minute ago is
+still true; a finding edited into a different one does not match and gets a fresh
+look. So fixing one finding and re-running no longer discards the rest
+(`redteam.test.ts`: a decision recorded on a finding is still there after a
+re-run, with who made it).
+
 The estimate route's schema also required `basisOfEstimate`, which its engine
 took and the schema never listed: a caller could produce an estimate whose
 stated basis was `undefined`, and the basis is the one thing an estimate is read

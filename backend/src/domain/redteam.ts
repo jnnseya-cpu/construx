@@ -795,6 +795,29 @@ export async function challengeSubmission(
       : []),
   ];
 
+  // Carry forward the decisions a person already recorded.
+  //
+  // Every re-run rebuilds the findings from scratch with fresh ids, so without
+  // this, fixing one critical finding and re-running would discard the recorded
+  // decision on every other finding — forcing the whole review to be decided
+  // again, 27 times over, which is exactly the busywork that makes a reviewer
+  // stop trusting the tool. A disposition carries onto a finding that comes back
+  // unchanged — same requirement, same severity, same title — because the
+  // decision that was true a minute ago is still true. A finding that was edited
+  // into a different one does not match, so it gets a fresh look, which is right.
+  const prior = latestReview(ctx, pack.id);
+  if (prior) {
+    const key = (entry: AssuranceFinding): string =>
+      `${entry.severity}\u0000${entry.reference ?? ''}\u0000${entry.sectionKey ?? ''}\u0000${entry.title}`;
+    const decided = new Map<string, FindingDisposition>();
+    for (const earlier of prior.findings) if (earlier.disposition) decided.set(key(earlier), earlier.disposition);
+    for (const entry of findings) {
+      if (entry.disposition) continue;
+      const carried = decided.get(key(entry));
+      if (carried) entry.disposition = carried;
+    }
+  }
+
   const id = ulid();
   const counts = (severity: FindingSeverity): number => findings.filter((entry) => entry.severity === severity).length;
   const review: AssuranceReview = {
