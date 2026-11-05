@@ -1455,6 +1455,30 @@ export async function openProject(projectId) {
 }
 
 /**
+ * Step back out of a project, so a screen that narrows to the selected one
+ * shows every project again.
+ *
+ * The counterpart to `openProject`. A screen that focuses on
+ * `state.session.projectId` — the pipeline shows one tender at a time — needs a
+ * way to clear the focus without a project to switch *to*. `selectProject`
+ * cannot do it: it guards against a falsy id precisely so a stray call never
+ * blanks the selection. This clears it deliberately and redraws, and the same
+ * project-derived caches are dropped so nothing downstream reads a stale one.
+ *
+ * Returns without redrawing when nothing was selected, so it is safe to wire to
+ * a control that may be pressed when there is nothing to clear.
+ */
+export async function closeProject() {
+  if (!state.session?.projectId) return;
+  session.set({ ...session.get(), projectId: undefined });
+  state.session = session.get();
+  state.project = null;
+  state.gate = null;
+  state.wallet = null;
+  await draw();
+}
+
+/**
  * Take the reader to where a decision is made, switching project if the
  * decision is about a different one.
  *

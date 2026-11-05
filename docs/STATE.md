@@ -15970,6 +15970,26 @@ documents merge into — with the superseded fragments counted but not listed.
 Where nothing is bound yet, nothing is hidden, so a first analysis is never
 swallowed (`frontend/pages/pipeline.js`).
 
+**One tender per page.** The reader, the response packs and the red team on the
+lower half of the Pipeline screen were already scoped to the project selected in
+the session — writing a section spends that project's ACUs, so they could be
+nothing else. The procurement half above them was not: "Invitations in hand" and
+"Compliance matrices on file" listed every tender at once, so a bid manager
+working one job read it against every other — "it is mixing everything,
+regardless of the selected project." A tender carries the project it is bid from
+(`t.projectId` on the board row), so when the selected project owns an invitation
+on the board the two lists narrow to it, a bar at the top names the tender in
+focus and carries a **Show all tenders** button, and every row on the full board
+carries a **Work on this** button that selects that tender's project through the
+same `openProject` the menu uses — so the lower half follows without a second
+call. `closeProject` (new, `frontend/app.js`) clears the selection the focus
+reads from, the counterpart to `openProject` that `selectProject` would not do.
+Focus engages only when the selected project actually has a tender on this board,
+so a delivery project opened for its costs — which has no invitation here — shows
+everything exactly as before, never a board blanked behind a bar. The analytics
+further down (win rate, the decided pipeline) stay tenant-wide, because they read
+*across* bids and narrowing them to one would be a lie (`frontend/pages/pipeline.js`).
+
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
 them, which terms are a **bar** rather than a negotiation, the quantified

@@ -6,7 +6,7 @@ import { flowPanel, loadFlow } from '../lib/flow.js';
 import { insightPanel } from '../lib/insight.js';
 import { CONTINENT, COUNTRY, REQUIREMENT_CATEGORY, SECTOR_GROUPED, today } from '../lib/enums.js';
 import { lookupPanel, wireLookups } from '../lib/lookup.js';
-import { blockedReason, can, draw, goTo, openProject, phaseGates, state } from '../app.js';
+import { blockedReason, can, closeProject, draw, goTo, openProject, phaseGates, state } from '../app.js';
 
 /**
  * Business development — the pipeline, and the discipline of refusing work.
@@ -1042,6 +1042,39 @@ export async function pipeline(root) {
   const allAnalyses = matrices.analyses ?? [];
   const liveAnalyses = currentAnalysisIds.size > 0 ? allAnalyses.filter((a) => currentAnalysisIds.has(a.analysisId)) : allAnalyses;
   const supersededAnalyses = allAnalyses.length - liveAnalyses.length;
+
+  /*
+   * One tender per page.
+   *
+   * The reader, the response packs and the red team on the lower half of this
+   * screen are already scoped to the project selected in the session — writing
+   * a section spends that project's ACUs, so it could never be anything else.
+   * The procurement half above them was not: "Invitations in hand" and
+   * "Compliance matrices on file" listed every tender the tenancy holds at
+   * once, so a bid manager working one job read it against the backdrop of
+   * every other — "it is mixing everything regardless of the selected project."
+   *
+   * The focus is the project already selected, because that is the one the
+   * lower half is working. A tender carries the project it is bid from
+   * (`t.projectId`), so when the selected project owns an invitation on the
+   * board, the board and the matrices narrow to it and a bar at the top says
+   * which tender is in focus and offers the way back out. The analytics further
+   * down — the win rate, the decided pipeline — stay tenant-wide, because they
+   * are a reading *across* bids and narrowing them to one would be a lie.
+   *
+   * Focus engages only when the selected project actually has a tender here.
+   * A delivery project opened to look at its costs selects a project too, and
+   * it has no invitation on this board; focusing on nothing would blank the
+   * board behind a bar nobody could clear usefully, so that case shows
+   * everything, exactly as before.
+   */
+  const focusTenders = projectId ? board.filter((t) => t.projectId === projectId) : [];
+  const focused = focusTenders.length > 0;
+  const visibleBoard = focused ? focusTenders : board;
+  const focusAnalysisIds = new Set(focusTenders.map((t) => t.analysisId).filter(Boolean));
+  const shownAnalyses = focused ? liveAnalyses.filter((a) => focusAnalysisIds.has(a.analysisId)) : liveAnalyses;
+  const focusLabel = focusTenders.map((t) => t.reference).join(', ');
+  const hiddenTenders = board.length - visibleBoard.length;
   /*
    * The trades the register knows, grouped the way it groups them.
    *
@@ -1213,19 +1246,65 @@ export async function pipeline(root) {
       -->
       ${raw(flowPanel(flow, { here: 'pipeline' }))}
 
+      ${
+        /*
+         * The focus bar. It only appears once a tender is in focus — when it is
+         * not, the "Work on this" button on each board row is the way in, so an
+         * empty bar would be noise. It names the tender being worked and the way
+         * back out, and it carries the client so the reference alone is not the
+         * only thing telling one tender from another.
+         */
+        focused
+          ? html`<div class="card" style="margin-bottom:14px;border-left:3px solid var(--info)">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <div style="flex:1 1 auto;min-width:220px">
+                  <div style="font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)">
+                    Working on one tender
+                  </div>
+                  <div style="font-size:15px;font-weight:600;margin-top:2px">
+                    ${focusLabel}${focusTenders[0]?.clientName ? html` · <span style="font-weight:400;color:var(--text-2)">${focusTenders[0].clientName}</span>` : ''}
+                  </div>
+                  <div style="font-size:12.5px;color:var(--text-3);margin-top:3px">
+                    The invitations board and the compliance matrices below show only this tender${
+                      hiddenTenders > 0
+                        ? ` — ${hiddenTenders} other invitation${hiddenTenders === 1 ? '' : 's'} ${hiddenTenders === 1 ? 'is' : 'are'} hidden while you work it`
+                        : ''
+                    }. The reader, the response packs and the red team were already this tender's.
+                  </div>
+                </div>
+                <button class="btn quiet" data-close-focus>Show all tenders</button>
+              </div>
+            </div>`
+          : ''
+      }
+
       <div id="pipeline-insight" style="margin-bottom:14px"></div>
 
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Invitations in hand</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          ${tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
+          ${focused
+            ? html`Showing the one tender you are working on. ${hiddenTenders > 0 ? html`Use <b>Show all tenders</b> above to see the other ${hiddenTenders}.` : ''}`
+            : tenders.summary} The deadline is recorded in the zone it is read in and resolved to one instant — a portal
           that closes at noon in Dublin has closed an hour before noon here.
         </p>
         ${table({
           headers: ['Reference', 'Client', 'Closes', 'Zone', 'Left', 'Deliverables', 'Addenda', 'Stage', 'Ready to bid', 'Matrix'],
           align: ['', '', '', '', 'num', 'num', 'num', '', '', ''],
-          rows: board.map((t) => [
-            html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>`,
+          rows: visibleBoard.map((t) => [
+            html`${t.reference}<br><span style="font-size:11.5px;color:var(--text-3)">${t.title}</span>${
+              /*
+               * The way into one tender's page. Shown only when the board is
+               * showing every tender and this one carries the project its bid
+               * is written against — focusing keys on that project, so a
+               * pursuit that names none has nothing to focus onto and says so
+               * through its site-visit row rather than a button that would land
+               * on nobody's job.
+               */
+              !focused && t.projectId
+                ? html`<br><button class="btn quiet sm" data-focus-tender="${t.projectId}" style="margin-top:4px">Work on this</button>`
+                : ''
+            }`,
             t.clientName,
             t.deadline.local.replace('T', ' '),
             html`<span style="font-size:11.5px;color:var(--text-3)">${t.deadline.timeZone}</span>${
@@ -1250,9 +1329,9 @@ export async function pipeline(root) {
           empty: 'No invitation recorded',
         })}
         ${
-          board.some((t) => t.blockers.length > 0 || t.reReviewReasons.length > 0 || t.clarifications.length > 0)
+          visibleBoard.some((t) => t.blockers.length > 0 || t.reReviewReasons.length > 0 || t.clarifications.length > 0)
             ? html`<div class="split-list" style="padding:0 17px 15px">
-                ${board.flatMap((t) => [
+                ${visibleBoard.flatMap((t) => [
                   ...t.reReviewReasons.map(
                     (reason) => html`<div class="row"><span class="lbl">${t.reference} ${badge('re-review', 'warn')} ${reason}</span></div>`,
                   ),
@@ -1286,9 +1365,9 @@ export async function pipeline(root) {
            * no project there is nowhere for them to go, and it says so rather
            * than offering a button that would land on somebody else's job.
            */
-          board.some((t) => t.siteVisit || t.clarificationDeadline)
+          visibleBoard.some((t) => t.siteVisit || t.clarificationDeadline)
             ? html`<div class="split-list" style="padding:0 17px 15px">
-                ${board.flatMap((t) => [
+                ${visibleBoard.flatMap((t) => [
                   ...(t.clarificationDeadline
                     ? [
                         html`<div class="row">
@@ -1329,12 +1408,12 @@ export async function pipeline(root) {
            * not readable anywhere in the product: the gate would name `APP5`
            * as missing an owner while no screen said what `APP5` was.
            */
-          board.some((t) => (t.returns ?? []).length > 0)
+          visibleBoard.some((t) => (t.returns ?? []).length > 0)
             ? html`<div style="padding:0 17px 15px">
                 <h3 style="font-size:13px;margin:4px 0 7px">What has to go back</h3>
                 ${table({
                   headers: ['Invitation', 'Ref', 'What it is', 'Pass/fail', 'Owner', 'Our date', 'Source', 'Format'],
-                  rows: board.flatMap((t) =>
+                  rows: visibleBoard.flatMap((t) =>
                     (t.returns ?? []).map((d) => [
                       t.reference,
                       d.reference,
@@ -1673,15 +1752,17 @@ export async function pipeline(root) {
       <div class="card pad0" style="margin-bottom:14px">
         <h2 style="padding:15px 17px 0">Compliance matrices on file</h2>
         <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
-          One matrix per tender: each live invitation’s current matrix, the one its documents merge into as they are read.
+          ${focused
+            ? html`The matrix for the tender you are working on.`
+            : html`One matrix per tender: each live invitation’s current matrix, the one its documents merge into as they are read.
           ${supersededAnalyses > 0
             ? `${supersededAnalyses} superseded ${supersededAnalyses === 1 ? 'matrix is' : 'matrices are'} kept on the record behind them but not listed here.`
-            : ''}
+            : ''}`}
         </p>
         ${table({
           headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', 'To ask', 'Exposure', 'Worst term', 'Verdict', ''],
           align: ['', '', '', 'num', 'num', 'num', 'num', 'num', '', '', ''],
-          rows: liveAnalyses.map((a) => [
+          rows: shownAnalyses.map((a) => [
             a.reference,
             a.clientName,
             date(a.returnBy),
@@ -1694,7 +1775,9 @@ export async function pipeline(root) {
             a.readyToPrice ? badge('ready to price', 'ok') : badge('not ready', 'bad'),
             html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
           ]),
-          empty: 'No invitation has been analysed yet',
+          empty: focused
+            ? 'This tender has not been read into a matrix yet. Read the invitation above, and its matrix appears here.'
+            : 'No invitation has been analysed yet',
         })}
       </div>
 
@@ -3186,6 +3269,23 @@ export async function pipeline(root) {
   // read. Written out per action rather than assembled from a variable, so each
   // path is a quotable route the door invariant can see.
   root.addEventListener('click', async (event) => {
+    // Focus the page on one tender. `openProject` is the same mechanism the
+    // menu and the briefing use to select a project, so the reader, packs and
+    // red team below follow to this tender without a second call, and the board
+    // and matrices above narrow to it on the redraw.
+    const focusTender = event.target.closest('[data-focus-tender]');
+    if (focusTender) {
+      await openProject(focusTender.getAttribute('data-focus-tender'));
+      return;
+    }
+    // Step back out to every tender. `closeProject` clears the selection the
+    // focus reads from and redraws; the lower half returns to its zero-state,
+    // which is correct — there is no one tender's work to show any more.
+    if (event.target.closest('[data-close-focus]')) {
+      await closeProject();
+      return;
+    }
+
     const uploadTender = event.target.closest('[data-upload-tender]');
     if (uploadTender) {
       const filed = await command({
