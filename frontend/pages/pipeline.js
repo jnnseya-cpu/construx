@@ -1014,7 +1014,20 @@ export async function pipeline(root) {
   // The role list comes from the published matrix rather than a second copy in
   // the browser: an owner on a deliverable has to be a role the platform knows.
   const roleOptions = Object.keys(permissions.matrix ?? {}).sort().map((role) => ({ value: role, label: humanise(role) }));
-  const invitationOptions = board.map((t) => ({ value: t.invitationId, label: `${t.reference} · ${t.title}` }));
+  // Only the invitations still in play are offered as a target to confirm a
+  // reading against, add a deliverable to, assign a return on or record an
+  // addendum for. A tender that was declined, won-and-converted or lost is not
+  // one you file a fresh matrix or a new return against — and leaving them in
+  // the list is how a reading for one tender gets confirmed onto another by a
+  // single wrong click, which is exactly what happened: a North Lincolnshire
+  // reading built onto a closed job because every tender the account ever had
+  // was in one flat dropdown. The terminal stages match the backend's own
+  // definition (NO_BID, CONVERTED, LOST); everything else — a live or
+  // not-yet-decided pursuit — stays.
+  const TERMINAL_STAGES = ['NO_BID', 'CONVERTED', 'LOST'];
+  const invitationOptions = board
+    .filter((t) => !TERMINAL_STAGES.includes(t.stage))
+    .map((t) => ({ value: t.invitationId, label: `${t.reference} · ${t.title}` }));
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));

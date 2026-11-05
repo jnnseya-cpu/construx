@@ -25575,6 +25575,24 @@ is a pure, exported function with its own tests (`redteam.test.ts`
 section, gets a fresh look on an edited one, and is never guessed when two share
 a section and severity).
 
+**A reading can no longer be confirmed onto a tender that is already over.** The
+"Confirm what the AI read → against which invitation" picker, and the pickers for
+adding a deliverable, assigning a return and recording an addendum, all read one
+flat `invitationOptions` list built from *every* invitation the account ever had,
+whatever state it was in. A bidder reading a North Lincolnshire highways framework
+confirmed the reading onto a *closed* job by one wrong click, and could not undo
+it — the exact failure of "a tender that is not won or closed must be out of the
+way." `invitationOptions` now excludes the terminal stages the backend already
+defines — `NO_BID` (declined), `CONVERTED` (won and turned into a project) and
+`LOST` — so only a pursuit still in play is offered as a target to file a matrix,
+a return or an addendum against. A submitted bid awaiting its award stays `BID`
+and is still offered, which is correct — it is still live until its outcome is
+recorded; recording won/lost moves it out. (`frontend/pages/pipeline.js`.) Note
+for the record: the misfiled matrix itself is not destructive — it is internal
+analysis bound to the wrong invitation, and it changes nothing that was submitted
+to the buyer; the remedy is to re-read against the right invitation, and the wrong
+analysis is ignorable clutter the append-only record keeps rather than deletes.
+
 **Issuing the pack no longer hides the thing you issued.** The submission reader
 on the pipeline screen — where the drafted answers are read, copied and, most of
 all, *downloaded as the branded PDF* — was built from the open packs only, and
