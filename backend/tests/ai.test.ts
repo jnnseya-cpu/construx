@@ -157,6 +157,28 @@ describe('provider routing and failover', () => {
     }
   });
 
+  it('publishes the active routing mode so an operator can confirm it', () => {
+    const orchestrator = new AIOrchestrator({
+      reasoning: stubProvider('OPENAI', 'REASONING'),
+      perception: stubProvider('GEMINI', 'PERCEPTION'),
+    });
+
+    const original = config.ai.selectCheapest;
+    try {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = false;
+      let status = orchestrator.controlPlaneStatus();
+      assert.equal(status.routing.mode, 'CONFIGURED_ORDER');
+      assert.equal(status.routing.selectCheapest, false);
+
+      (config.ai as { selectCheapest: boolean }).selectCheapest = true;
+      status = orchestrator.controlPlaneStatus();
+      assert.equal(status.routing.mode, 'CHEAPEST');
+      assert.equal(status.routing.selectCheapest, true);
+    } finally {
+      (config.ai as { selectCheapest: boolean }).selectCheapest = original;
+    }
+  });
+
   it('publishes provider health without naming a credential', () => {
     const status = new AIOrchestrator({
       reasoning: stubProvider('OPENAI', 'REASONING'),

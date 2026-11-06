@@ -1238,6 +1238,13 @@ deployments and a scored submission written by the cheapest model can lose more
 in marks than it saves in pennies. Two tests in `ai.test.ts` pin both the cost
 pick and the avoid-still-wins behaviour.
 
+`controlPlaneStatus` publishes the active mode as `routing: { mode, selectCheapest }`
+(`CHEAPEST` or `CONFIGURED_ORDER`) and the AI-engine screen shows it on the
+"Providers live" card, so an operator can confirm which mode is live from inside
+the platform rather than reading `AI_SELECT_CHEAPEST` off the container — the
+"did the env var take effect?" question answered in the UI. A third test pins
+the published mode against the flag.
+
 Anthropic is wired to the Messages API, which differs from the other two in
 ways that matter: `max_tokens` is required, media is an `image` content block,
 and a response can carry several blocks of which only the text one is the

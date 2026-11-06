@@ -69,6 +69,9 @@ export async function aiengine(root) {
             ${healthy.length} of ${providers.length}
           </div>
           <div class="metric-sub">mode: ${plane.mode ?? '—'}</div>
+          <div class="metric-sub">
+            routing: ${plane.routing?.selectCheapest ? 'cheapest provider per call' : 'configured order'}
+          </div>
         </div>
         <div class="card">
           <h2>Reasoning</h2>

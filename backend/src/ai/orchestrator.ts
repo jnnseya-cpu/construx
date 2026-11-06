@@ -1117,6 +1117,8 @@ export class AIOrchestrator {
   /** Operator view of the control plane. Deliberately excludes model identifiers for end users. */
   controlPlaneStatus(): {
     mode: string;
+    /** How a call picks among the cleared, healthy, large-enough vendors. */
+    routing: { mode: 'CHEAPEST' | 'CONFIGURED_ORDER'; selectCheapest: boolean };
     reasoning: { provider: AIProvider; healthy: boolean };
     perception: { provider: AIProvider; healthy: boolean };
     /**
@@ -1212,6 +1214,18 @@ export class AIOrchestrator {
 
     return {
       mode: config.ai.mode,
+      /**
+       * How a call picks among the cleared, healthy, large-enough vendors.
+       *
+       * Published so an operator can confirm from inside the platform which mode
+       * is live, rather than reading `AI_SELECT_CHEAPEST` off the container.
+       * `CONFIGURED_ORDER` tries the chain as set; `CHEAPEST` ranks by estimated
+       * cost at the measured input size and takes the lowest.
+       */
+      routing: {
+        mode: config.ai.selectCheapest ? 'CHEAPEST' : 'CONFIGURED_ORDER',
+        selectCheapest: config.ai.selectCheapest,
+      },
       reasoning: { provider: this.#reasoning.name, healthy: this.#reasoning.healthy() },
       perception: { provider: this.#perception.name, healthy: this.#perception.healthy() },
       embedding: this.#embedding
