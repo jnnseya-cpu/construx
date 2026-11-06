@@ -462,7 +462,7 @@ export async function explainPlainly(
       message:
         'This deployment is running the local stand-in, which cannot write a plain-English explanation honestly. The ' +
         'grounded answer is free and always available; a reasoning provider is needed only for this plain-English ' +
-        'rewrite. Configure one and set AI_MODE=live.',
+        'rewrite. Configure one and set AI_MODE=production.',
     },
   });
 

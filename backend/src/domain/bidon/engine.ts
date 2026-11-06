@@ -432,7 +432,7 @@ const NO_PROVIDER = {
   message:
     'This deployment is running the local stand-in, which reasons about nothing. It cannot read a questionnaire or ' +
     'write a tender answer, and sending what it returns to a buyer under a customer’s name would be a false ' +
-    'statement. Configure a reasoning provider and set AI_MODE=live.',
+    'statement. Configure a reasoning provider and set AI_MODE=production.',
 };
 
 // --- The Parser --------------------------------------------------------------

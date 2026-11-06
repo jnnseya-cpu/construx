@@ -1224,7 +1224,7 @@ export async function extractFromText(
       message:
         'This deployment is running the local stand-in, which reads nothing. What it returns is a fixed answer, not a ' +
         'reading of your document, and filing it would put words on the record that no model produced. Configure a ' +
-        'reasoning provider and set AI_MODE=live; "Call each provider now" on AI Engine says which are answering.',
+        'reasoning provider and set AI_MODE=production; "Call each provider now" on AI Engine says which are answering.',
     },
     toWrites: (output, confidence) => [
       {

@@ -424,7 +424,7 @@ export async function draftPost(
       message:
       'This deployment is running the local stand-in, which reasons about nothing. It cannot write an article, and ' +
         'publishing what it returns under the company name would be prose attributed to reasoning that never ' +
-        'happened. Configure a reasoning provider and set AI_MODE=live.',
+        'happened. Configure a reasoning provider and set AI_MODE=production.',
     },
   });
 

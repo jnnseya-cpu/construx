@@ -131,7 +131,7 @@ export async function checkClarificationAgainstPack(
       message:
         'This deployment is running the local stand-in, which reads nothing. A verdict on whether the pack answers a ' +
         'clarification has to come from a model that actually read the pack — configure a reasoning provider and set ' +
-        'AI_MODE=live, or check the clarification against the documents by hand.',
+        'AI_MODE=production, or check the clarification against the documents by hand.',
     },
     // Advisory: it writes no state. The withdrawal, if any, is a person's act.
     toWrites: (_output, confidence) => {

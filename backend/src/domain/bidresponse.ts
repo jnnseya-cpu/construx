@@ -396,7 +396,7 @@ export async function writeNextSection(
       message:
         'This deployment is running the local stand-in, which reasons about nothing. It cannot write a tender ' +
         'submission, and sending what it returns to a buyer would be a false statement under the company name. ' +
-        'Configure a reasoning provider and set AI_MODE=live.',
+        'Configure a reasoning provider and set AI_MODE=production.',
     },
   });
 
@@ -598,7 +598,7 @@ export async function shortenSection(
       message:
         'This deployment is running the local stand-in, which reasons about nothing. It cannot cut a tender ' +
         'submission to length without deciding what the answer can lose. Configure a reasoning provider and set ' +
-        'AI_MODE=live.',
+        'AI_MODE=production.',
     },
   });
 
