@@ -910,7 +910,24 @@ export function deadlineInForce(state: Record<string, unknown>): ZonedInstant {
 export type BidApprovalPosition = {
   invitationId?: string;
   reference?: string;
+  /**
+   * Everything standing between the opportunity and a submission that can go
+   * out — the invitation being read *and* every mandatory return having an
+   * owner, a date and a source. Kept whole for the guide and the submission
+   * gate, which care about all of it.
+   */
   blockers: string[];
+  /**
+   * Whether anybody has recorded what the submission has to contain. This is
+   * the only part of `blockers` that gates the *decision* to bid: you commit to
+   * a tender from its score and what it asks for, then plan who produces each
+   * return. Assigning owners and internal dates is that planning, and gating
+   * the go/no-go behind it put production admin in front of a commercial
+   * decision — the thing a bid manager does first.
+   */
+  invitationRead: boolean;
+  /** Just the return-assignment half of `blockers`: owner, date or source missing. */
+  deliverableBlockers: string[];
   /** Set when an addendum has landed since the last bid decision. */
   reReviewReasons: string[];
 };
@@ -961,14 +978,15 @@ function decidedAfterLastAddendum(
 
 export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): BidApprovalPosition {
   const opportunity = ctx.ledger.get({ refType: 'Opportunity', refId: opportunityId });
-  if (!opportunity) return { blockers: [], reReviewReasons: [] };
+  if (!opportunity) return { blockers: [], invitationRead: false, deliverableBlockers: [], reReviewReasons: [] };
 
   const invitation = ctx.ledger
     .list(opportunity.projectId, 'TenderInvitation')
     .find((r) => r.state.opportunityId === opportunityId);
-  if (!invitation) return { blockers: [], reReviewReasons: [] };
+  if (!invitation) return { blockers: [], invitationRead: false, deliverableBlockers: [], reReviewReasons: [] };
 
   const blockers: string[] = [];
+  const invitationRead = invitation.state.requirementsExtracted === true;
   if (!invitation.state.requirementsExtracted) {
     /*
      * Named the remedy as well as the fault.
@@ -989,7 +1007,8 @@ export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): 
         'invitation with AI to file the whole register and a compliance matrix at once.',
     );
   }
-  blockers.push(...deliverableBlockers((invitation.state.deliverables as TenderDeliverable[] | undefined) ?? []));
+  const returnBlockers = deliverableBlockers((invitation.state.deliverables as TenderDeliverable[] | undefined) ?? []);
+  blockers.push(...returnBlockers);
 
   const addenda = (invitation.state.addenda as Addendum[] | undefined) ?? [];
   const material = addenda.filter((a) => a.reReviewReasons.length > 0);
@@ -1002,6 +1021,8 @@ export function bidApprovalPosition(ctx: EngineContext, opportunityId: string): 
     invitationId: String(invitation.state.id),
     reference: String(invitation.state.reference),
     blockers,
+    invitationRead,
+    deliverableBlockers: returnBlockers,
     reReviewReasons,
   };
 }

@@ -1501,7 +1501,7 @@ export async function pipeline(root) {
                     (reason) => html`<div class="row"><span class="lbl">${t.reference} ${badge('re-review', 'warn')} ${reason}</span></div>`,
                   ),
                   ...t.blockers.map(
-                    (blocker) => html`<div class="row"><span class="lbl">${t.reference} ${badge('blocks the bid', 'bad')} ${blocker}</span></div>`,
+                    (blocker) => html`<div class="row"><span class="lbl">${t.reference} ${badge('needed to submit', 'bad')} ${blocker}</span></div>`,
                   ),
                   ...t.clarifications.map(
                     (c) => html`<div class="row">
@@ -2894,9 +2894,9 @@ export async function pipeline(root) {
       title: 'Decide bid or no bid',
       intent:
         'The decision, its rationale, and the authority it is taken under where it goes against the algorithm. ' +
-        'Declining is always available and is never gated. Deciding to bid is refused while a mandatory deliverable ' +
-        'on the invitation has no source, no owner or no internal date — a bid disqualified for a missing certificate ' +
-        'was priced correctly and lost anyway.',
+        'Declining is always available and is never gated. Deciding to bid is a commercial call you make from the ' +
+        'score — it needs the invitation read, but not every return assigned yet. Returns still without an owner, a ' +
+        'source or a date are carried on the decision as outstanding and must be cleared before the submission goes out.',
       path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/decide`,
       submitLabel: 'Record the decision',
       fields: [
@@ -3421,10 +3421,10 @@ export async function pipeline(root) {
     'assign-deliverable': {
       title: 'Assign a return',
       intent:
-        'A mandatory return needs an owner, our own internal date and a source in the invitation before the decision ' +
-        'to bid can be recorded. Reading an invitation files what the buyer asked for and cannot file the first two, ' +
-        'because neither is in the buyer’s document — they are this business committing its people. This is where ' +
-        'they are committed.',
+        'A mandatory return needs an owner, our own internal date and a source in the invitation before the submission ' +
+        'can go out — the decision to bid is a commercial call you make from the score, and this planning follows it. ' +
+        'Reading an invitation files what the buyer asked for and cannot file the first two, because neither is in the ' +
+        'buyer’s document — they are this business committing its people. This is where they are committed.',
       path: (v) => `/v1/pipeline/tenders/${splitReturnTarget(v.target).invitationId}/deliverables/assign`,
       submitLabel: 'Assign',
       fields: [
@@ -4494,6 +4494,27 @@ export async function pipeline(root) {
         } It is a suggestion: the register knows how many firms cover each trade, not whether they would want this job.`,
         (result.suggestedScore ?? 0) >= 4 ? 'ok' : 'warn',
       );
+      return;
+    }
+
+    /*
+     * Deciding to bid is now a clean commercial call — it is not blocked by
+     * unassigned returns. So the decision can succeed with returns still to
+     * plan, and a bid manager should be told that plainly rather than finding
+     * out at submission. The outstanding returns come back on the result.
+     */
+    if (button.dataset.command === 'decide') {
+      const outstanding = result.outstandingReturns ?? [];
+      if (result.stage === 'BID') {
+        toast(
+          outstanding.length > 0 ? 'Bid recorded — returns still to assign' : 'Bid recorded',
+          outstanding.length > 0
+            ? `${outstanding.length} mandatory ${outstanding.length === 1 ? 'return needs' : 'returns need'} an owner, a date and a source before you can submit. Use "Assign a return" next.`
+            : 'Every mandatory return already has an owner, a date and a source.',
+          outstanding.length > 0 ? 'warn' : 'ok',
+        );
+      }
+      await draw();
       return;
     }
     await draw();

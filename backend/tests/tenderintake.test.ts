@@ -336,12 +336,22 @@ describe('tender intake · giving a read return its owner and our date', () => {
       { reference: 'APP2', title: 'Order form, signed', mandatory: true, signatureRequired: true, source: { document: 'ITT', clause: '4.2' } },
     ]);
     assert.equal(read.blockers.length, 2, 'a reading filed returns that were somehow already complete');
-    throwsCode(
-      () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'We want it' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
-    );
 
-    // The door. One assignment per return, and the blockers fall as they go.
+    // The decision to bid is a commercial go/no-go, taken from the score and
+    // what the tender asks for. A read invitation with returns still to assign
+    // does not block it: the commitment is recorded and the returns it still
+    // owes are carried on the decision, so who produces each one is planned
+    // after the business has said it is bidding — not before.
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
+      bid: true,
+      rationale: 'Four years of the same work for the same client, and the rates hold.',
+    });
+    assert.equal(decision.stage, 'BID');
+    assert.equal(decision.outstandingReturns.length, 2, 'the decision did not carry the returns still to assign');
+
+    // The door. One assignment per return, and the blockers fall as they go —
+    // this is the planning that follows the commitment, and it is what the
+    // submission gate will check before anything goes out.
     const first = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP5', owner: 'QS', internalDueBy: '2027-03-09' });
     assert.equal(first.blockers.length, 1, 'assigning one return cleared the wrong number of blockers');
     assert.equal(first.assigned.owner, 'QS');
@@ -352,13 +362,6 @@ describe('tender intake · giving a read return its owner and our date', () => {
 
     const second = tenderintake.assignDeliverable(ctx, invitationId, { reference: 'APP2', owner: 'PM', internalDueBy: '2027-03-05' });
     assert.deepEqual(second.blockers, [], 'the register is complete and the gate still reports a blocker');
-
-    // And now the decision the reading made impossible.
-    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
-      bid: true,
-      rationale: 'Four years of the same work for the same client, and the rates hold.',
-    });
-    assert.equal(decision.stage, 'BID');
 
     // Both returns are on the register once, with everything the gate asks for.
     const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2027-01-11' });
@@ -441,15 +444,18 @@ describe('tender intake · giving a read return its owner and our date', () => {
 
 // ── The bid approval gate ───────────────────────────────────────────────────
 describe('tender intake · the gate in front of a decision to bid', () => {
-  it('refuses to record a bid while a mandatory deliverable has no owner', () => {
+  it('records a bid with returns still to assign, and carries them as outstanding', () => {
+    // The decision is a commercial go/no-go, not a production sign-off. A read
+    // invitation whose returns have no owner yet does not block it: assigning
+    // who produces each return is the planning that follows the commitment, and
+    // the submission gate — not this one — is what refuses an incomplete pack.
     const opportunityId = opportunity(asOwner());
     const { invitationId } = record(asQS(), opportunityId);
     extract(asQS(), invitationId, [{ reference: 'D-01', title: 'Employer’s liability certificate', mandatory: true }]);
 
-    throwsCode(
-      () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Good client, right size' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
-    );
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Good client, right size' });
+    assert.equal(decision.stage, 'BID');
+    assert.ok(decision.outstandingReturns.length > 0, 'the unassigned return was not carried onto the decision');
   });
 
   it('refuses to record a bid on an invitation nobody has read', () => {
@@ -458,7 +464,7 @@ describe('tender intake · the gate in front of a decision to bid', () => {
 
     const error = throwsCode(
       () => business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Looks straightforward' }),
-      'TENDER_DELIVERABLES_INCOMPLETE',
+      'TENDER_NOT_READ',
     );
     assert.match(String(error.message), /has not been read/);
   });

@@ -196,8 +196,8 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       | Array<{ title?: string; mandatory?: boolean; owner?: string; internalDueBy?: string; source?: unknown }>
       | undefined) ?? [];
   // A return register is recorded, and then each mandatory return needs an
-  // owner, a source and an internal date or it blocks the bid — the same rule
-  // the board shows as "N blocking". The register step is not done while any of
+  // owner, a source and an internal date or it blocks the submission — the same
+  // rule the board shows as "N blocking". The register step is not done while any of
   // those is open; "recorded" and "owned" are two different states and the guide
   // conflated them, reporting the register done while the board said 16 blocking.
   const unassignedReturns = deliverables.filter(
@@ -376,7 +376,7 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       next: registerDone
         ? undefined
         : registerRecorded
-          ? 'A mandatory return with no owner, no source or no date blocks the bid. Assign a return, and set who owns it and by when.'
+          ? 'A mandatory return with no owner, no source or no date blocks the submission (not the decision to bid — that is a commercial call you make from the score). Assign a return, and set who owns it and by when.'
           : invitation
             ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
             : 'Record the invitation first.',

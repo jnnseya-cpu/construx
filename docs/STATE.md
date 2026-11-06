@@ -4537,11 +4537,33 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The decision to bid is a commercial go/no-go, not a production sign-off.**
+`decideBidNoBid` used to refuse a "bid" decision until every mandatory return on
+the invitation had an owner, an internal date and a source — so a bid manager
+scoring a tender and deciding to pursue it was handed seventeen assignment forms
+*before* the decision would record, which is production admin standing in front
+of a commercial call. The decision now needs the invitation **read** (there is
+something recorded about what the submission contains) but not the returns
+assigned: the returns still without an owner, date or source are carried on the
+decision as `outstandingReturns` so the commitment is honest about what it still
+owes, and assigning them is the planning that follows. The real safety is
+unchanged and lives where it belongs — `issueBidResponse` still refuses to issue
+a pack with an unanswered, undated or over-limit mandatory response, so nothing
+incomplete goes out. `bidApprovalPosition` now exposes `invitationRead` and
+`deliverableBlockers` separately (keeping the combined `blockers` for the guide),
+and the decision gates only on the first. An opportunity with no formal
+invitation still has no gate at all. The `decide` command toasts what remains
+("Bid recorded — N returns still to assign"), and the guide, the board badge
+("needed to submit") and the assign-a-return copy now say the returns block the
+*submission*, not the decision (`business.ts`, `tenderintake.ts`, `bidflow.ts`,
+`frontend/pages/pipeline.js`; `tenderintake.test.ts`).
+
 **Verified in a browser against a running server**, not only by the tests: the
-QS records an ITT with no stated zone and gets the Critical clarification; a bare
-mandatory deliverable is recorded and the Owner's decision to bid is refused,
-naming it; an addendum moves the deadline and the board shows the re-review. The
-panel and the command are screenshotted.
+QS records an ITT with no stated zone and gets the Critical clarification; a
+mandatory return left unassigned is carried on the decision as outstanding rather
+than blocking it, and the submission is what refuses to issue incomplete; an
+addendum moves the deadline and the board shows the re-review. The panel and the
+command are screenshotted.
 
 **The deadline now reminds the company, instead of waiting to be looked at.**
 Every recorded invitation's deadline was in the record and resolved to a single
@@ -29583,20 +29605,22 @@ into a delivery project carrying the thread.
    in front of the next. The factors, the scale and what each end of it means
    come from `/v1/pipeline/criteria` rather than a second list in the browser.
 
-3. **A read invitation could never be cleared to bid.** Every mandatory return
-   must carry an owner, an internal date and a source before the decision to bid
-   is accepted. A reading files what the buyer asked for and *cannot* file the
-   first two — neither is in the buyer's document; they are this business
-   committing its own people — and `addDeliverable` refuses a reference already
-   on the invitation, correctly. The gate therefore named blockers **nothing in
-   the platform could clear**, to somebody with a return date coming. New:
+3. **Assigning a return is where this business commits its own people.** Every
+   mandatory return carries an owner, an internal date and a source. A reading
+   files what the buyer asked for and *cannot* file the first two — neither is in
+   the buyer's document; they are this business committing its own people — and
+   `addDeliverable` refuses a reference already on the invitation, correctly. New:
    `TENDER_DELIVERABLE_ASSIGNED`, `assignDeliverable`,
    `POST /v1/pipeline/tenders/:invitationId/deliverables/assign` and an
-   `Assign a return` panel. It assigns the three things the gate asks for and
+   `Assign a return` panel. It assigns the three things the submission needs and
    nothing else: it cannot rename a return, make a mandatory one optional, or
    move a limit the buyer set, because those come out of the invitation and
    correcting them is a re-reading or an addendum. Human-authored by
-   construction — no AI mandate on the event.
+   construction — no AI mandate on the event. **This is no longer a gate in front
+   of the bid decision** (see "The decision to bid is a commercial go/no-go"
+   above): deciding to bid needs only the invitation read, the returns are
+   assigned afterwards, and the submission gate (`issueBidResponse`) is what holds
+   the line on completeness.
 
    Found with it: `TenderPosition` published a *count* of the return register
    and not the register. The one list a bid manager works from for the fortnight
