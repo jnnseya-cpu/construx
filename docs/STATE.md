@@ -3192,6 +3192,27 @@ places. Surfaced on the opened matrix as "Attach these when you submit" and "Add
 these to your library before you submit". Verified on a six-requirement fixture
 and a dual-purpose document that answers two lines at once.
 
+**The matrix now tells you the route per line, not just the status.** A bidder
+could see a `GAP`, a `toObtain` line and an AI clarification and still have to
+work out *which of three different acts* each one needs. A **"What's needed, and
+how to add each"** panel at the top of the opened matrix (`matrixDetail` in
+`pipeline.js`) groups everything still outstanding by how it clears, each group
+carrying the button that does it: **Record a company fact** (the `GAP` lines —
+every one is profile-backed, so saving the insurance/accreditation/turnover/DBS/
+reference flips it to Satisfied — wired to the existing `company-facts` command);
+**File a document & assert a claim** (`toObtain`, minus any ref already in the
+record-a-fact group so nothing is listed twice — wired to `assert-claim`); and
+**Raise a clarification** (the analysis's own questions — wired to the existing
+`tender-clarifications/from-analysis` raise). `UNKNOWN` lines that need no
+document are named as answered in the response pack, not here. The panel is a
+pure projection of what the matrix read already computed — one source of truth,
+no new endpoint — and it states plainly that raising a clarification puts it on
+the register for the bidder to send from Tender & Procurement, because the
+platform does not transmit to the buyer's portal itself. The `company-facts`
+click binding was made delegated on the view (the same pattern the other two
+dispatchers already used) so the panel's button fires it, not only the bar on the
+company card.
+
 **The analysis raises its own questions in one act.** The matrix produces the
 "Questions for the buyer" — insurance gaps, a weighting total that does not add
 up, uninsurable or bar terms — when it reads the invitation. Until now a person

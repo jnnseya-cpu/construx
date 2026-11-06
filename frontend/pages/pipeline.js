@@ -533,6 +533,30 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
   // as waived here without the analysis being rerun.
   const waivedBy = new Map((waivers?.live ?? []).map((waiver) => [waiver.reference, waiver]));
 
+  // The next-actions panel: everything still outstanding, grouped by how it
+  // clears, so the reader is told the route per line rather than inferring it
+  // from the status column. It reuses exactly what the backend already computed
+  // — there is one source of truth, not a second:
+  //  - GAP lines are profile-backed (a probe matched but nothing is on file), so
+  //    recording the company fact clears them. Every GAP is one of insurance,
+  //    accreditation, turnover, DBS or references.
+  //  - `coverage.toObtain` is the evidence gates with nothing (or nothing
+  //    current) on file — a document to attach and assert a claim against. A ref
+  //    already in the record-a-fact group is not repeated here; recording the
+  //    fact is its primary clear, and the evidence tables below still show it.
+  //  - `clarifications` are the questions the analysis raised for the buyer.
+  //  - UNKNOWN lines the platform cannot check and that need no document are
+  //    answered in the response pack when it is written, not here.
+  const recordFacts = analysis.matrix.filter((line) => line.status === 'GAP');
+  const recordFactRefs = new Set(recordFacts.map((line) => line.reference));
+  const fileDocs = (coverage?.toObtain ?? []).filter((o) => !recordFactRefs.has(o.reference));
+  const fileDocRefs = new Set(fileDocs.map((o) => o.reference));
+  const raiseClars = analysis.clarifications ?? [];
+  const unknownToAnswer = analysis.matrix.filter(
+    (line) => line.status === 'UNKNOWN' && !fileDocRefs.has(line.reference),
+  );
+  const nothingOutstanding = recordFacts.length === 0 && fileDocs.length === 0 && raiseClars.length === 0;
+
   return html`
     <div class="card pad0">
       <h2 style="padding:15px 17px 0">
@@ -576,6 +600,90 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
           <div class="metric ${raw(analysis.clarifications.length === 0 ? 'good' : 'warn')}">${analysis.clarifications.length}</div>
           <div class="metric-sub">Questions that have to go before the clarification deadline, not after.</div>
         </div>
+      </div>
+
+      <div class="card" style="margin:13px 17px 0">
+        <h2 style="margin:0 0 2px">What’s needed, and how to add each</h2>
+        <p style="font-size:12.5px;color:var(--text-3);margin:0 0 10px">
+          Everything still outstanding on this tender, grouped by how you clear it — so each line tells you the route,
+          rather than leaving you to read it off the status column. Clear what you can here; the full matrix and evidence
+          tables are below.
+        </p>
+        ${
+          nothingOutstanding
+            ? html`<div class="notice ok"><div>
+                <b>Nothing outstanding that the platform can check.</b> Every pass/fail requirement is evidenced and no
+                question is waiting for the buyer. The scored sections are answered when you write the response pack.
+              </div></div>`
+            : html`
+                ${
+                  recordFacts.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">Record a company fact
+                          <span style="color:var(--text-3);font-weight:400">— clears the moment you save it</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          Insurances, accreditations, turnover, DBS and references. Saving the fact flips these to
+                          Satisfied — the matrix re-checks your record every time it is read.
+                        </div>
+                        ${table({
+                          headers: ['Ref', 'Requirement', 'What to record'],
+                          rows: recordFacts.map((line) => [
+                            html`${line.reference}${line.mandatory ? badge('mandatory', 'bad') : ''}`,
+                            html`<span style="font-size:12px">${line.requirement}</span>`,
+                            html`<span style="font-size:12px;color:var(--text-3)">${line.evidenceRequired}</span>`,
+                          ]),
+                        })}
+                        <button class="btn sm" data-command="company-facts" style="margin-top:6px">Record the company’s facts</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  fileDocs.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">File a document &amp; assert a claim
+                          <span style="color:var(--text-3);font-weight:400">— the buyer wants to see it</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          A certificate or policy the register does not hold yet. File it, then assert a claim against it so
+                          it is traceable — and have someone other than the asserter verify it before you submit.
+                        </div>
+                        ${table({
+                          headers: ['Ref', 'Requirement', 'Evidence needed'],
+                          rows: fileDocs.map((o) => [
+                            html`${o.reference}${o.mandatory ? badge('mandatory', 'bad') : ''}`,
+                            html`<span style="font-size:12px">${o.requirement}</span>`,
+                            html`<span style="font-size:12px;color:var(--text-3)">${o.evidenceRequired}</span>`,
+                          ]),
+                        })}
+                        <button class="btn sm" data-command="assert-claim" style="margin-top:6px">Assert a claim</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  raiseClars.length > 0
+                    ? html`<div style="margin-bottom:13px">
+                        <div style="font-weight:600;font-size:13px">Raise a clarification
+                          <span style="color:var(--text-3);font-weight:400">— only the buyer can answer these</span></div>
+                        <div style="font-size:12px;color:var(--text-3);margin:2px 0 6px">
+                          The analysis raised these itself. One press puts them on the clarification register as a TQ; you
+                          then send them from Tender &amp; Procurement — paste into the buyer’s portal before their
+                          clarification deadline, as the platform does not transmit to the portal itself.
+                        </div>
+                        ${raiseClars.map((c) => html`<div style="font-size:12px;margin:2px 0">• ${c}</div>`)}
+                        <button class="btn sm" data-raise-clars="${analysis.analysisId}" data-raise-project="${analysis.projectId}" style="margin-top:6px">Raise these to the client</button>
+                      </div>`
+                    : ''
+                }
+                ${
+                  unknownToAnswer.length > 0
+                    ? html`<div class="notice" style="margin-top:4px"><div style="font-size:12px">
+                        <b>${unknownToAnswer.length} requirement${unknownToAnswer.length === 1 ? '' : 's'}</b> the platform
+                        cannot check for you — these are answered in the response pack when you write it
+                        (“Write the next section”), not by a fact or a document.
+                      </div></div>`
+                    : ''
+                }
+              `
+        }
       </div>
 
       ${
@@ -4575,7 +4683,12 @@ export async function pipeline(root) {
     return result;
   }
 
-  root.querySelector('[data-company-facts]')?.addEventListener('click', async (event) => {
+  // Delegated on the view, not bound to the one command bar that carries
+  // `data-company-facts` — so the "Record the company’s facts" button in the
+  // matrix's next-actions panel fires it too, not only the bar on the company
+  // card. Same safe pattern as the two dispatchers below: it returns on a click
+  // that is not this command, and `#view` is fresh each draw so it cannot stack.
+  root.addEventListener('click', async (event) => {
     if (!event.target.closest('[data-command="company-facts"]')) return;
     await recordCompanyFacts();
   });
