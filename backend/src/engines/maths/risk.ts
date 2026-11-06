@@ -18,10 +18,27 @@ export type RiskCategory =
   | 'GROUND_CONDITIONS'
   | 'WEATHER';
 
+/**
+ * Who carries a risk if the event happens. A risk the client owns is not priced
+ * into the bid; one the contractor owns is; a shared one is apportioned. Naming
+ * it is what stops a client-owned risk being double-counted into the tender and
+ * a contractor-owned one being left unfunded.
+ */
+export type RiskAllocation = 'CLIENT' | 'CONTRACTOR' | 'SHARED';
+
 export type RiskInput = {
   id: string;
   title: string;
   category: RiskCategory;
+  /**
+   * The cause — the condition that gives rise to the event. A register that
+   * holds only the event ("energisation slips") cannot be mitigated, because the
+   * control acts on the cause ("DNO connection depends on a wayleave not yet
+   * granted"). cause → event → impact is one record, not three.
+   */
+  cause?: string;
+  /** Who carries it. Absent is treated as the contractor's until allocated. */
+  allocation?: RiskAllocation;
   /** Probability of occurrence in [0,1]. */
   probability: number;
   /** Three-point cost impact in minor units. */

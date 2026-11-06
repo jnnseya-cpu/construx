@@ -20662,11 +20662,16 @@ export const ROUTES: Route[] = [
     description: 'Engine D — register and score a risk',
     schema: {
       type: 'object',
-      required: ['id', 'title', 'category', 'probability', 'costImpact', 'scheduleImpactDays', 'projectValueMinor', 'projectDurationDays'],
+      required: ['title', 'category', 'probability', 'costImpact', 'scheduleImpactDays', 'projectValueMinor', 'projectDurationDays'],
       properties: {
+        // Optional: the engine mints a ulid when the caller does not supply one,
+        // so a browser form need not invent an id.
         id: stringField,
         title: stringField,
         category: stringField,
+        // cause → event → impact as one record, and who carries it.
+        cause: stringField,
+        allocation: { type: 'string', enum: ['CLIENT', 'CONTRACTOR', 'SHARED'] },
         // A proportion, not a percentage. A risk with a probability of 40 would
         // otherwise be scored as forty times certain.
         probability: { type: 'number', minimum: 0, maximum: 1 },

@@ -5220,6 +5220,38 @@ costs by the week, contingency from the risk register at P80. What did not exist
 is the layer underneath, where a bid is actually lost, and always the same three
 ways.
 
+**The risk register is now a step on the bid road, with a door in the estimating
+screen.** The scoring engine was always there — `registerRisk`, `rescoreRisk`,
+`setRiskMitigation`, `assessContingency` over `scoreRisk` (probability × PERT-
+weighted three-point cost and schedule impact → expected cost, residual, P80
+contingency) — but a tender's risks could only be registered through the generated
+command catalogue, so in practice they were not, and "contingency from the risk
+register at P80" sat on an empty register. Three changes close that, reusing the
+engine rather than adding a second one:
+
+- A risk is now one record of **cause → event → impact**: `RiskInput` gains an
+  optional `cause` (the condition the control acts on, distinct from the event)
+  and an `allocation` (`CLIENT` / `CONTRACTOR` / `SHARED`). A **client-owned risk
+  is left out of our contingency** — `assessContingency` filters it — so the same
+  exposure is never funded twice, once in our price and once in the client's
+  budget. Absent allocation is treated as ours, the safe default
+  (`maths/risk.ts`, `engines/safety.ts`).
+- **`bidFlow` carries a `RISK` step**, "Price the risk register": NOT_NEEDED on a
+  price-only enquiry, READY once the bill is priced (a risk is sized against the
+  job it sits on), DONE once risks are on the register. It is deliberately kept
+  out of the headline `nowDo`, so it is visible and clickable but never displaces
+  the pricing or submission step a bidder is told to do next (`bidflow.ts`).
+- The estimating screen gains a **"The risk register, priced" card** (expected
+  value, P80 contingency, worst case, top drivers) and a **"Register a tender
+  risk"** door (cause, event, category, allocation, probability, three-point cost
+  and schedule). `registerRisk`'s route accepts the new fields and no longer
+  requires a caller-supplied id. The Tender & Procurement screen's nav gate gains
+  `RISK_REGISTER` so everyone who can register a risk there can reach it
+  (`frontend/pages/procurement.js`, `frontend/app.js`, `routes.ts`). Covered in
+  `record.test.ts` (cause + allocation persisted, client-owned left out of
+  contingency, bad allocation refused) and `bidrun.test.ts` (the RISK step's
+  states and that it never becomes the headline).
+
 **A quantity nobody can trace.** Somebody measured 1,240 m² of blockwork off a
 drawing eleven weeks ago. Which drawing, at which revision, off which sheet? If
 the answer is not recorded the line cannot be checked, and when the drawing is

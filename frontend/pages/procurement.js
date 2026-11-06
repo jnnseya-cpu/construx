@@ -275,7 +275,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow, contingency] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -306,6 +306,10 @@ export async function procurement(root) {
     // Where this job is on the road from an enquiry to a price. Computed
     // server-side: the console holds no copy of what happens next.
     loadFlow(projectId),
+    // The priced risk register as a contingency: expected value, a P80 tail and
+    // the top drivers. Held beside the base estimate, counted once, so a
+    // contingency can be defended line by line rather than taken as a percentage.
+    api.read(`/v1/projects/${projectId}/risk/contingency`, 'RISK_REGISTER').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -1573,6 +1577,60 @@ export async function procurement(root) {
 
       ${
         /*
+         * The tender risk register, priced as a contingency.
+         *
+         * cause → event → impact as one record, with who carries it. A client-
+         * owned risk is not priced into our contingency; a contractor-owned one
+         * is. The contingency is held beside the base estimate — expected value
+         * plus a P80 tail — so it is counted once and can be defended line by
+         * line rather than taken as a percentage buried in a rate.
+         */
+        contingency?.error
+          ? ''
+          : html`<div class="card pad0" style="margin-bottom:14px">
+              <div style="padding:15px 17px">
+                <h2>The risk register, priced</h2>
+                <div class="metric-sub" style="margin-bottom:11px">
+                  Each risk is a cause, the event it leads to, and the cost and time if it happens — scored at a
+                  probability, with who carries it. The contingency below is held beside the base estimate, not inside a
+                  rate, so the exposure is counted once and defended line by line.
+                </div>
+                <div style="display:flex;gap:22px;flex-wrap:wrap;margin-bottom:11px">
+                  <div><div class="metric">${money(contingency?.expectedMinor ?? 0)}</div><div class="metric-sub">expected value</div></div>
+                  <div><div class="metric">${money(contingency?.p80Minor ?? 0)}</div><div class="metric-sub">P80 contingency to hold</div></div>
+                  <div><div class="metric">${money(contingency?.worstCaseMinor ?? 0)}</div><div class="metric-sub">worst case</div></div>
+                </div>
+                ${(contingency?.topDrivers ?? []).length > 0
+                  ? table({
+                      headers: ['Risk', 'Expected cost', 'Share'],
+                      align: ['', 'num', 'num'],
+                      rows: (contingency.topDrivers ?? []).map((driver) => [
+                        driver.title,
+                        money(driver.expectedCostMinor),
+                        pct(Number(driver.share ?? 0) * 100, 0),
+                      ]),
+                    })
+                  : html`<div class="empty"><b>No risks priced yet</b>Register the tender's risks — ground, access,
+                      energisation, supply chain — so the contingency is a number you can defend, not a percentage.</div>`}
+                <div class="actions" style="margin-top:12px">
+                  ${raw(
+                    commandBar([
+                      {
+                        id: 'register-risk',
+                        label: 'Register a tender risk',
+                        tone: 'primary',
+                        permitted: can('RISK_REGISTER', 'C'),
+                        reason: blockedReason('RISK_REGISTER', 'C'),
+                      },
+                    ]),
+                  )}
+                </div>
+              </div>
+            </div>`
+      }
+
+      ${
+        /*
          * The bill, and the door that prices it.
          *
          * Both engines existed and neither had a screen: `runTakeoff` wrote
@@ -1639,6 +1697,12 @@ export async function procurement(root) {
                           (boq?.items ?? []).length === 0
                             ? 'Nothing has been measured yet. An estimate prices measured lines; it does not invent them.'
                             : blockedReason('ESTIMATE_TENDER', 'C'),
+                      },
+                      {
+                        id: 'register-risk',
+                        label: 'Register a tender risk',
+                        permitted: can('RISK_REGISTER', 'C'),
+                        reason: blockedReason('RISK_REGISTER', 'C'),
                       },
                       /*
                        * The way out of a bill that is wrong.
@@ -2551,6 +2615,72 @@ export async function procurement(root) {
         title: `About ${res.weeks} week${res.weeks === 1 ? '' : 's'} — low confidence`,
         message: `${res.basis} Take it to the construction period and confirm it; this is an estimate from the works, not a programme a planner has built.`,
         tone: 'ok',
+      }),
+    },
+    'register-risk': {
+      title: 'Register a tender risk',
+      intent:
+        'A tender risk is one record: the cause, the event it leads to, and the cost and time if it happens — scored ' +
+        'at a probability, with who carries it. A client-owned risk is not priced into our contingency; a contractor-' +
+        'owned one is. The register produces a P80 contingency held beside the base estimate, so the exposure is ' +
+        'counted once and defended line by line rather than taken as a percentage.',
+      path: `/v1/projects/${projectId}/risk`,
+      submitLabel: 'Register it',
+      fields: [
+        { name: 'title', label: 'The risk, in a line', type: 'text',
+          hint: 'The event — "temporary generation runs beyond the priced period".' },
+        { name: 'cause', label: 'Cause', type: 'textarea', rows: 2, required: false,
+          hint: 'What gives rise to it — "DNO energisation depends on a wayleave not yet granted". A control acts on the cause, not the event.' },
+        { name: 'category', label: 'Category', type: 'select',
+          options: [
+            { value: 'GROUND_CONDITIONS', label: 'Ground conditions' },
+            { value: 'PROGRAMME', label: 'Programme' },
+            { value: 'COMMERCIAL', label: 'Commercial' },
+            { value: 'DESIGN', label: 'Design' },
+            { value: 'SUPPLY_CHAIN', label: 'Supply chain' },
+            { value: 'SAFETY', label: 'Safety' },
+            { value: 'QUALITY', label: 'Quality' },
+            { value: 'ENVIRONMENTAL', label: 'Environmental' },
+            { value: 'REGULATORY', label: 'Regulatory' },
+            { value: 'WEATHER', label: 'Weather' },
+          ] },
+        { name: 'allocation', label: 'Who carries it', type: 'select',
+          options: [
+            { value: 'CONTRACTOR', label: 'Us — priced into our contingency' },
+            { value: 'CLIENT', label: 'The client — not priced into our contingency' },
+            { value: 'SHARED', label: 'Shared' },
+          ],
+          hint: 'A client-owned risk is left out of our contingency, so the same exposure is never funded twice.' },
+        { name: 'probability', label: 'Probability (0–1)', type: 'number', step: '0.05', min: 0, max: 1,
+          hint: 'A proportion, not a percentage. 0.4 means a four-in-ten chance.' },
+        { name: 'costOptimistic', label: 'Cost if it happens — best case (£)', type: 'number', money: true },
+        { name: 'costMostLikely', label: 'Cost if it happens — most likely (£)', type: 'number', money: true },
+        { name: 'costPessimistic', label: 'Cost if it happens — worst case (£)', type: 'number', money: true },
+        { name: 'dayOptimistic', label: 'Delay if it happens — best case (days)', type: 'number', required: false, value: 0 },
+        { name: 'dayMostLikely', label: 'Delay if it happens — most likely (days)', type: 'number', required: false, value: 0 },
+        { name: 'dayPessimistic', label: 'Delay if it happens — worst case (days)', type: 'number', required: false, value: 0 },
+      ],
+      transform: (v) => ({
+        title: String(v.title ?? '').trim(),
+        category: v.category,
+        ...(String(v.cause ?? '').trim() ? { cause: String(v.cause).trim() } : {}),
+        ...(v.allocation ? { allocation: v.allocation } : {}),
+        probability: Number(v.probability ?? 0),
+        costImpact: {
+          optimistic: Math.round(Number(v.costOptimistic ?? 0)),
+          mostLikely: Math.round(Number(v.costMostLikely ?? 0)),
+          pessimistic: Math.round(Number(v.costPessimistic ?? 0)),
+        },
+        scheduleImpactDays: {
+          optimistic: Number(v.dayOptimistic ?? 0),
+          mostLikely: Number(v.dayMostLikely ?? 0),
+          pessimistic: Number(v.dayPessimistic ?? 0),
+        },
+        // Score normalisation only — the expected cost that drives the
+        // contingency is independent of these. Taken from the priced estimate
+        // where there is one, with a sensible fallback where there is not.
+        projectValueMinor: Number(estimate?.totalMinor ?? 0),
+        projectDurationDays: Math.max(1, Math.round(Number(estimate?.durationWeeks ?? 26) * 7)),
       }),
     },
     'build-estimate': {

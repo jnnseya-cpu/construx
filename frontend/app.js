@@ -187,7 +187,7 @@ export const NAV = [
       // BIM manager takes off quantities from the model and a supplier answers
       // an enquiry; neither holds procurement award, and neither could reach
       // the screen that takes their work.
-      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', alsoArea: ['BOQ_TAKEOFF', 'ESTIMATE_TENDER', 'SUPPLIER_SUBMISSION'], icon: 'gavel' },
+      { id: 'procurement', label: 'Tender & Procurement', area: 'PROCUREMENT_AWARD', alsoArea: ['BOQ_TAKEOFF', 'ESTIMATE_TENDER', 'SUPPLIER_SUBMISSION', 'RISK_REGISTER'], icon: 'gavel' },
       // A design change is raised by the design team and valued by the
       // commercial one. Gating on contracts alone meant the half of the screen
       // that starts the process was unreachable by the people who start it.

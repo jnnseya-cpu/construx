@@ -784,6 +784,11 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(flow.nowDo?.id, 'ISSUED');
     assert.equal(flow.nowDo?.screen, 'documents');
     assert.match(flow.summary, /Next: issue it/);
+    // Pricing the risk register is a tender discipline, not a quotation one, so
+    // on a price-only enquiry it is a statement that it is not needed — and it is
+    // never the headline, so it cannot displace "issue it".
+    assert.equal(state('RISK'), 'NOT_NEEDED');
+    assert.notEqual(flow.nowDo?.id, 'RISK');
   });
 
   it('names a button that actually exists on the screen it names', () => {
@@ -955,6 +960,15 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(flow.nowDo?.id, 'RESPONSE_PACK', `nowDo was ${flow.nowDo?.id}`);
     assert.equal(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'READY');
     assert.match(flow.nowDo?.door ?? '', /Plan a response pack/);
+
+    // The risk register is a live step on the bid road (not NOT_NEEDED), blocked
+    // here only because nothing is priced yet to size a risk against — and it is
+    // never the headline, so it does not displace writing the submission.
+    const risk = flow.steps.find((step) => step.id === 'RISK')!;
+    assert.notEqual(risk.state, 'NOT_NEEDED');
+    assert.equal(risk.state, 'BLOCKED');
+    assert.equal(risk.command, 'register-risk');
+    assert.notEqual(flow.nowDo?.id, 'RISK');
   });
 
   it('keeps the submission step open until its sections are written, not just planned', () => {

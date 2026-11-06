@@ -460,7 +460,42 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
     }),
   );
 
-  const actionable = steps.filter((step) => step.state === 'READY' || step.state === 'BLOCKED');
+  // Price the risk register. A tender discipline, not a quotation one, so it
+  // follows the submission road (NOT_NEEDED on a price-only enquiry). It is a
+  // visible step with its own door, but it is kept out of the headline "do next"
+  // below: a bidder is steered down the critical pricing and submission path
+  // first, and pricing the risks is the deliberate pass they take alongside it
+  // rather than a gate that displaces writing the bid.
+  const openRisks = ctx.ledger.list(ctx.projectId, 'RiskRegisterItem').filter((r) => r.state.status === 'OPEN');
+  steps.push(
+    bidStep({
+      id: 'RISK',
+      title: 'Price the risk register',
+      state: openRisks.length > 0 ? 'DONE' : complete.length > 0 ? 'READY' : 'BLOCKED',
+      detail:
+        openRisks.length > 0
+          ? `${openRisks.length} risk${openRisks.length === 1 ? '' : 's'} on the register, priced into a contingency held beside the base estimate.`
+          : complete.length > 0
+            ? 'No tender risks are priced yet. A risk with no price is an exposure nobody has funded.'
+            : 'Price the bill first — a risk is sized against the job it sits on.',
+      next:
+        openRisks.length > 0
+          ? undefined
+          : complete.length > 0
+            ? 'Record each cause → event → impact with its probability and cost, and who carries it. The P80 contingency is then defended line by line and sits beside the base estimate, counted once rather than buried in a rate.'
+            : 'A priced bill gives the value a risk is sized against.',
+      door: 'Register a tender risk',
+      command: 'register-risk',
+      screen: 'procurement',
+    }),
+  );
+
+  // 'RISK' is deliberately not in the nowDo candidacy: it is shown and clickable
+  // but never the headline, so it cannot displace the pricing or submission step
+  // a bidder is told to do next.
+  const actionable = steps.filter(
+    (step) => (step.state === 'READY' || step.state === 'BLOCKED') && step.id !== 'RISK',
+  );
   /*
    * The headline next step. On a submission the pricing road and the submission
    * road run in parallel, and the pricing road is listed first — so the first
