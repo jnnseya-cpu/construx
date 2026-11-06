@@ -4537,6 +4537,20 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The guided journey now carries the whole arc, through to award.** `bidFlow`
+stopped at the red team; the stages after it — pricing the risk register, settling
+and approving the price, and recording how the bid ended — lived on screens but
+not in the step-by-step. The flow now carries `RISK`, `SETTLE` and `AWARD` as
+visible steps with their own doors (`register-risk`, `open-settlement`,
+`record-award`), each NOT_NEEDED on a price-only enquiry and each computed from
+the record (a settlement is DONE once approved; an award is DONE once an outcome
+is on a submitted pack). All three are held out of the headline `nowDo` — an
+`ADVISORY_STEP_IDS` set — so they are shown and clickable but never displace the
+pricing or submission step a bidder is told to do next. The result is that the
+guide walks the full standard process — receive, decide, read, return register,
+matrix, risk, price, settle, write, red-team, submit, award — rather than the
+pricing-and-writing middle of it (`bidflow.ts`).
+
 **Post-submission control — the loss, by reason, and the standstill, counted
 down.** The opportunity outcome already captured the marks, the rank, the winning
 price and the evaluator's feedback; what it did not capture was *why* a bid was

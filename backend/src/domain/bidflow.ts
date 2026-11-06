@@ -490,11 +490,63 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
     }),
   );
 
-  // 'RISK' is deliberately not in the nowDo candidacy: it is shown and clickable
-  // but never the headline, so it cannot displace the pricing or submission step
-  // a bidder is told to do next.
+  // Settle, then record the award. The last two stages of the arc, so the guide
+  // carries the whole process through to how the bid ended rather than stopping
+  // at the red team. Both follow the submission road and, like RISK, are shown
+  // with their doors but kept out of the headline below.
+  const settlements = ctx.ledger.list(ctx.projectId, 'Settlement').map((record) => record.state);
+  const settlementApproved = settlements.some((s) => s.finalPriceMinor !== undefined);
+  const submissionPacks = ctx.ledger.list(ctx.projectId, 'BidSubmissionPack').map((record) => record.state);
+  const awarded = submissionPacks.some((p) => (p.award as { outcome?: string } | undefined)?.outcome);
+
+  steps.push(
+    bidStep({
+      id: 'SETTLE',
+      title: 'Settle and approve the price',
+      state: settlementApproved ? 'DONE' : complete.length > 0 ? 'READY' : 'BLOCKED',
+      detail: settlementApproved
+        ? 'The price is settled and approved under a named authority.'
+        : complete.length > 0
+          ? 'The estimate is priced but the settlement is not approved. The bridge, the risk contingency and the departures are reconciled here and signed off.'
+          : 'Price the bill first — a settlement moves a price that exists.',
+      next: settlementApproved
+        ? undefined
+        : complete.length > 0
+          ? 'Open the settlement, move the price with a reason and an owner, carry what is unresolved as a stated condition, and approve it under a named authority and its limit.'
+          : 'A priced estimate is what a settlement settles.',
+      door: 'Open the settlement',
+      command: 'open-settlement',
+      screen: 'procurement',
+    }),
+  );
+
+  steps.push(
+    bidStep({
+      id: 'AWARD',
+      title: 'Record how it ended',
+      state: awarded ? 'DONE' : submissionPacks.length > 0 ? 'READY' : 'BLOCKED',
+      detail: awarded
+        ? 'The award outcome is on the record, with any standstill counted down.'
+        : submissionPacks.length > 0
+          ? 'A pack has been submitted and carries no outcome yet.'
+          : 'Nothing has been submitted, so there is no outcome to record.',
+      next: awarded
+        ? undefined
+        : submissionPacks.length > 0
+          ? 'Record the client’s award notice — won, lost or withdrawn — with any standstill it opened. Why a bid was lost, and the marks, go on the opportunity’s outcome, which the calibration reads.'
+          : 'A submission has to go in before it can be awarded.',
+      door: 'Record the award outcome',
+      command: 'record-award',
+      screen: 'procurement',
+    }),
+  );
+
+  // 'RISK', 'SETTLE' and 'AWARD' are deliberately not in the nowDo candidacy:
+  // they are shown and clickable but never the headline, so they cannot displace
+  // the pricing or submission step a bidder is told to do next.
+  const ADVISORY_STEP_IDS = new Set(['RISK', 'SETTLE', 'AWARD']);
   const actionable = steps.filter(
-    (step) => (step.state === 'READY' || step.state === 'BLOCKED') && step.id !== 'RISK',
+    (step) => (step.state === 'READY' || step.state === 'BLOCKED') && !ADVISORY_STEP_IDS.has(step.id),
   );
   /*
    * The headline next step. On a submission the pricing road and the submission
