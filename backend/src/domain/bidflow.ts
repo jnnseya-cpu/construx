@@ -191,7 +191,18 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   );
   const issued = quotations.filter((document) => document.status === 'ISSUED');
 
-  const deliverables = (invitation?.deliverables as Array<{ title?: string }> | undefined) ?? [];
+  const deliverables =
+    (invitation?.deliverables as
+      | Array<{ title?: string; mandatory?: boolean; owner?: string; internalDueBy?: string; source?: unknown }>
+      | undefined) ?? [];
+  // A return register is recorded, and then each mandatory return needs an
+  // owner, a source and an internal date or it blocks the bid — the same rule
+  // the board shows as "N blocking". The register step is not done while any of
+  // those is open; "recorded" and "owned" are two different states and the guide
+  // conflated them, reporting the register done while the board said 16 blocking.
+  const unassignedReturns = deliverables.filter(
+    (d) => d.mandatory === true && (!d.owner || !d.internalDueBy || !d.source),
+  ).length;
   // An invitation asking for more than a price is a submission to write. One
   // that asks only for a price is a quotation, whatever it calls itself.
   //
@@ -345,24 +356,32 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   const bidStep = (step: Omit<FlowStep, 'state'> & { state: FlowState }): FlowStep =>
     wantsSubmission ? step : { ...step, state: 'NOT_NEEDED', detail: 'This enquiry asks only for a price, so there is no submission to write.', ...(step.next ? { next: undefined } : {}) };
 
-  const registerDone = invitation?.requirementsExtracted === true;
+  const registerRecorded = invitation?.requirementsExtracted === true;
+  // Recorded, and then owned. The register is done only when every mandatory
+  // return has an owner, a source and a date; while any is open it is the next
+  // step — assign a return — not a finished one.
+  const registerDone = registerRecorded && unassignedReturns === 0;
   steps.push(
     bidStep({
       id: 'RETURN_REGISTER',
       title: 'Record what has to go back',
-      state: registerDone ? 'DONE' : invitation ? 'READY' : 'BLOCKED',
+      state: registerDone ? 'DONE' : registerRecorded || invitation ? 'READY' : 'BLOCKED',
       detail: registerDone
-        ? `${deliverables.length} return item${deliverables.length === 1 ? '' : 's'} recorded.`
-        : invitation
-          ? 'Nothing is recorded about what the submission has to contain.'
-          : 'No invitation is recorded on this project.',
+        ? `${deliverables.length} return item${deliverables.length === 1 ? '' : 's'} recorded and owned.`
+        : registerRecorded
+          ? `${deliverables.length} return item${deliverables.length === 1 ? '' : 's'} recorded, ${unassignedReturns} mandatory ${unassignedReturns === 1 ? 'return' : 'returns'} still without an owner, a source or a date.`
+          : invitation
+            ? 'Nothing is recorded about what the submission has to contain.'
+            : 'No invitation is recorded on this project.',
       next: registerDone
         ? undefined
-        : invitation
-          ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
-          : 'Record the invitation first.',
-      door: invitation ? 'It only asks for a price' : 'Record an ITT',
-      ...(invitation ? { command: 'quote-only' } : {}),
+        : registerRecorded
+          ? 'A mandatory return with no owner, no source or no date blocks the bid. Assign a return, and set who owns it and by when.'
+          : invitation
+            ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
+            : 'Record the invitation first.',
+      door: registerRecorded ? 'Assign a return' : invitation ? 'It only asks for a price' : 'Record an ITT',
+      ...(registerRecorded ? { command: 'assign-deliverable' } : invitation ? { command: 'quote-only' } : {}),
       screen: 'pipeline',
     }),
   );
@@ -374,7 +393,11 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       state: analyses.length > 0 ? 'DONE' : profile ? 'READY' : 'BLOCKED',
       detail:
         analyses.length > 0
-          ? `${analyses.length} compliance matri${analyses.length === 1 ? 'x' : 'ces'} on file.`
+          ? // Not the raw count of analysis records — a tender read one document
+            // at a time holds a dozen superseded fragments, and "21 compliance
+            // matrices on file" reported those rather than the one that counts.
+            // The step is binary: a matrix exists, built from the confirmed reading.
+            'A compliance matrix is on file, built from the confirmed reading.'
           : profile
             ? 'No matrix has been produced from a confirmed reading.'
             : 'This company’s own facts are not recorded, so there is nothing to set a buyer’s requirements against.',

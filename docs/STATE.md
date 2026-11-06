@@ -26124,6 +26124,17 @@ pack as a written submission and send the bidder on to attack it
 (`backend/src/domain/bidflow.ts`; `bidrun.test.ts` pins the submission-first
 headline and the planned-not-written step).
 
+Two more conflations tidied in the same step logic. **Recorded is not owned:**
+the return register is `DONE` only when every mandatory return has an owner, a
+source and a date (the board's own blocker rule); while any is open it reads
+*"N recorded, M mandatory returns still without an owner, a source or a date"*
+and stays the next step (door **Assign a return**), so the guide no longer calls
+the register done while the board shows returns blocking. And the matrix step no
+longer reports the **raw analysis-record count** — a tender read one document at
+a time holds a dozen superseded fragments, and *"21 compliance matrices on file"*
+counted those; it is a binary step and now reads *"a compliance matrix is on
+file, built from the confirmed reading."*
+
 ### The guided walkthrough, on every screen and from an empty account
 
 `bidflow.ts` answered "what now?" well, but only on the four screens a job's road
