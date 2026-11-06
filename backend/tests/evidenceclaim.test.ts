@@ -189,6 +189,20 @@ describe('the register is judged against a day, not against today', () => {
     assert.match(register.summary, /lapse within 60 days/);
   });
 
+  it('falls back to today rather than crashing on an absent, empty or malformed day', () => {
+    // A pack whose tender return date is not set yet carries an empty returnBy,
+    // and the red-team review slices that to '' and passes it here. '' is not
+    // undefined, so it once reached new Date(NaN).toISOString() and threw
+    // RangeError: Invalid time value, 500ing the whole review. An unknown day is
+    // today, never a crash — and the same guard hardens the ?asAt= query param.
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(evidence.evidenceRegister(asQS(), '').asAt, today);
+    assert.equal(evidence.evidenceRegister(asQS(), 'not-a-date').asAt, today);
+    assert.equal(evidence.evidenceRegister(asQS(), undefined).asAt, today);
+    // A real date is still honoured.
+    assert.equal(evidence.evidenceRegister(asQS(), '2026-03-01').asAt, '2026-03-01');
+  });
+
   it('keeps a refusal on the record and will not verify over it', () => {
     const doomed = evidence.assertClaim(asQS(), {
       kind: 'CASE_STUDY',

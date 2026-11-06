@@ -386,7 +386,17 @@ const LAPSE_WINDOW_DAYS = 60;
 export function evidenceRegister(ctx: EngineContext, asAt?: string): EvidenceRegister {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
-  const day = asAt ?? new Date().toISOString().slice(0, 10);
+  // The day the register is judged against. Defaults to today when `asAt` is
+  // absent — and also when it is present but not a real date. A pack whose tender
+  // return date has not been set yet carries an empty `returnBy`, and
+  // `challengeSubmission` slices that to '' and passes it here; '' is not
+  // `undefined`, so it slipped past a bare `??` and reached `new Date(NaN)` below,
+  // whose `.toISOString()` throws `RangeError: Invalid time value` and 500s the
+  // whole red-team review. An unknown day is today, never a crash — which also
+  // hardens the `?asAt=` query parameter the API exposes against a bad value.
+  const today = new Date().toISOString().slice(0, 10);
+  const candidate = asAt === undefined ? '' : asAt.slice(0, 10);
+  const day = candidate !== '' && !Number.isNaN(Date.parse(`${candidate}T00:00:00Z`)) ? candidate : today;
   const claims = claimsOf(ctx)
     .map((claim) => ({ ...claim, standing: standingOf(claim, day) }))
     .sort((a, b) => (b.assertedAt ?? '').localeCompare(a.assertedAt ?? ''));

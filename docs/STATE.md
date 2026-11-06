@@ -22095,6 +22095,18 @@ submission effect and the effect is enforced: `CRITICAL` is a hard block nobody
 can dispose of, `HIGH` blocks until a named person records what they decided,
 `MEDIUM` and `LOW` are reported. A severity with no consequence is a list.
 
+**A pack with no return date no longer 500s the review.** `challengeSubmission`
+builds the evidence register as of the pack's return date — `pack.returnBy.slice(0,10)`
+— and a pack whose tender return date has not been set yet carries an empty
+`returnBy`, so that slice is `''`. `evidenceRegister` defaulted its day only when
+the argument was `undefined`, so `''` slipped through to `new Date(NaN)` and
+`.toISOString()` threw `RangeError: Invalid time value`, surfacing to the bidder
+as `INTERNAL_ERROR` on "Attack the pack". The register now resolves an absent,
+empty **or malformed** day to today rather than crashing — an unknown day is
+today, never a 500 — which also hardens the `?asAt=` query parameter the evidence
+route exposes against a bad value. The undated deadline itself is still caught, as
+a `PROGRAMME` finding, the way it always was.
+
 **A model may not hard-block and may not clear itself.** A model-raised finding
 is capped at `HIGH` — it stops the submission until a person decides, which is
 exactly what propose means. `ASSURANCE_FINDING_DISPOSED` carries
