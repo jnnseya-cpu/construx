@@ -9130,6 +9130,40 @@ with a **Work on this** button to the tender that carries it (shown plain where
 the pursuit names no project to focus onto). Terminal tenders are excluded, and
 an all-clear says so rather than showing an empty card (`frontend/pages/pipeline.js`).
 
+#### Report when stuck, report the error
+
+The honest counterpart to "the AI gets help when it struggles". The platform
+cannot silently reach a developer or repair itself — "AI proposes, a person
+confirms" and "no agent mandate exceeds PROPOSE" are settled — but it can make a
+struggle or a bug reach a watched place automatically, with the person seeing it
+happen. `fileSupportReport` (`backend/src/ops/support.ts`) takes a report from a
+person — `STUCK` (the copilot could not help), `ERROR` (a request failed,
+carrying its `x-correlation-id` so a developer can find it in the logs), or
+`FEEDBACK` — and does three things, telling the caller which: puts it on the
+tenancy's governance chain as `SUPPORT_REPORT_FILED`; notifies the tenancy's
+owners and administrators in-platform through the durable outbox (the floor, so
+a deployment with no ops webhook still surfaces it to a human); and forwards it
+to `OPS_ALERT_WEBHOOK_URL` where one is configured — the same channel the watch
+fires to, now shared through `postOpsWebhook` (`backend/src/ops/opswebhook.ts`,
+extracted from `watch.ts` so there is one POST to the ops webhook). Filed by a
+person, never an AI: `SUPPORT_REPORT_FILED` is not `aiAllowed`, because a report
+is a human saying "this is wrong", which an AI must not fabricate on their
+behalf. Held by every seat (`PROJECT_SETUP` R), so a subcontractor can report a
+bug. `POST /v1/support/reports`; five tests in `support.test.ts` pin the record,
+the in-platform delivery, the correlation-id capture, the empty-report refusal
+and the unknown-kind normalisation.
+
+On the browser side, `ApiError` now carries the response's `x-correlation-id`
+(`frontend/lib/api.js`), and `openReport` (`frontend/lib/report.js`) is the one
+control that opens the standard command modal, posts the report, and shows the
+person the reference and who it reached — nothing about them is reported
+silently. The Copilot page wires it three ways: a **Report a problem** button,
+a **This didn't help — report it** on every answer (carrying the question), and
+a **Report this** on a failed answer (carrying the correlation id the person
+never has to see). A report from anywhere else in the console is a possible next
+step — the error path in `command.js` could carry the same `Report this` — not
+yet built.
+
 ---
 
 ### The project on site now has a site record

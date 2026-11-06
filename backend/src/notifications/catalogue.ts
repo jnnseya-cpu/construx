@@ -338,6 +338,7 @@ def('executive.alert', 'Executive alert', 'Executive alert', 'CRITICAL', [E, I, 
 
 // ----------------------------------------------------------- Support & Success
 group('SUPPORT_SUCCESS');
+def('support.report_filed', 'Problem reported', '{{reporter}} reported a problem — {{kind}} on {{screen}}', 'WARNING', [E, I]);
 def('support.ticket_created', 'Ticket created', 'Support ticket {{number}} created', 'INFO', [E, I]);
 def('support.ticket_assigned', 'Ticket assigned', 'Ticket {{number}} assigned', 'INFO', [I]);
 def('support.ticket_updated', 'Ticket updated', 'Update on ticket {{number}}', 'INFO', [E, I]);

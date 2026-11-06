@@ -443,6 +443,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   DocumentSequence: { area: 'ENTERPRISE_STRUCTURE' },
   RecordShare: { area: 'ENTERPRISE_STRUCTURE' },
   SupportAccessGrant: { area: 'ENTERPRISE_STRUCTURE' },
+  SupportReport: { area: 'ENTERPRISE_STRUCTURE' },
   AccountRequest: { area: 'PLATFORM_ADMINISTRATION' },
   Agreement: { area: 'ENTERPRISE_STRUCTURE', sensitivity: 'COMMERCIAL_L3' },
   // A legal instrument the company issues, and its issuance. Under evidence

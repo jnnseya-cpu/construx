@@ -122,6 +122,7 @@ import * as siteWorkflow from '../domain/etablix/workflow.ts';
 import * as intermediation from '../domain/intermediation.ts';
 import * as programme from '../domain/programme.ts';
 import * as platformguide from '../ai/platformguide.ts';
+import * as supportreports from '../ops/support.ts';
 import * as programmereview from '../domain/programmereview.ts';
 import * as resources from '../domain/resources.ts';
 import * as responsibility from '../domain/responsibility.ts';
@@ -23230,6 +23231,27 @@ export const ROUTES: Route[] = [
     pattern: '/v1/guide/topics',
     description: 'The platform step-by-step guide — how CONSTRUX works, from an empty account to a won job. Deterministic content; no provider is called',
     handler: (platform, ctx) => platformguide.guideTopics(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/support/reports',
+    description:
+      'Report a problem — the copilot could not help, or a request errored. Put on the record, delivered to the ' +
+      'tenancy’s owners in-platform, and forwarded to the ops webhook where one is configured; the person is shown ' +
+      'the reference. Filed by a person, never an AI',
+    schema: {
+      type: 'object',
+      required: ['kind', 'message'],
+      properties: {
+        kind: { type: 'string', enum: [...supportreports.REPORT_KINDS] },
+        message: { type: 'string', minLength: 3, maxLength: 4000 },
+        screen: { type: 'string', maxLength: 80 },
+        correlationId: { type: 'string', maxLength: 120 },
+        question: { type: 'string', maxLength: 2000 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => supportreports.fileSupportReport(platform, tenantContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

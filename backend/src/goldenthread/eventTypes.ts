@@ -1394,6 +1394,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('SUPPORT_ACCESS_OPENED', 'SupportAccessGrant', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('SUPPORT_ACCESS_USED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
   def('SUPPORT_ACCESS_CLOSED', 'SupportAccessGrant', 'UPDATE', 'GOVERNANCE'),
+  // A person reports a problem — the copilot could not help, or a request
+  // errored — and it is put on the record rather than lost. Filed by a person,
+  // never an AI: a report is a human saying "this is wrong", which is exactly
+  // what an AI must not fabricate on their behalf.
+  def('SUPPORT_REPORT_FILED', 'SupportReport', 'CREATE', 'GOVERNANCE', { creates: true }),
   def('RECORD_SHARE_ACCEPTED', 'RecordShare', 'UPDATE', 'GOVERNANCE'),
   // The enterprise / group specification: the agreement under a group,
   // versioned and effective-dated; the document lifecycle with an issuance

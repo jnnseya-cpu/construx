@@ -3,6 +3,7 @@ import { aiModeNotice } from '../lib/insight.js';
 import { heatmap, pieChart } from '../lib/charts.js';
 import { badge, esc, exact, html, humanise, raw, render, table, toast } from '../lib/ui.js';
 import { state } from '../app.js';
+import { openReport } from '../lib/report.js';
 
 /**
  * Copilot.
@@ -74,6 +75,9 @@ export async function copilot(root) {
         <div>
           <h1>Copilot</h1>
           <p>Grounded in this project's Golden Thread. It proposes commands rather than executing them, and every figure it quotes names the record it came from.</p>
+        </div>
+        <div class="actions">
+          <button class="btn quiet" id="report-problem">Report a problem</button>
         </div>
       </div>
 
@@ -239,13 +243,21 @@ export async function copilot(root) {
       // actually write it, and clearly marked as spending ACUs. The free answer
       // above is always there; this is the "paid on request" half.
       const explainChip = providerLive
-        ? `<div class="chips"><button class="chip explain" data-explain="${escapeHtml(question)}">Explain this in plain English (uses ACUs)</button></div>`
+        ? `<button class="chip explain" data-explain="${escapeHtml(question)}">Explain this in plain English (uses ACUs)</button>`
         : '';
 
-      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}${explainChip}`;
+      // The honest "it struggled" control. Every answer carries it, because the
+      // one the platform most needs reported is the one that looked fine and was
+      // not. It hands the copilot's own question along so a person does not
+      // retype what they already asked.
+      const reportChip = `<button class="chip" data-report-stuck="${escapeHtml(question)}">This didn’t help — report it</button>`;
+
+      pending.innerHTML = `${engine}${body}${grounding ? `<div style="margin-top:8px">${grounding}</div>` : ''}${chips ? `<div class="chips">${chips}</div>` : ''}<div class="chips">${explainChip}${reportChip}</div>`;
     } catch (error) {
       pending.classList.add('err');
-      pending.textContent = error.message;
+      // The failure, and a one-press way to report it carrying the correlation
+      // id the developer needs — the person never has to see or copy it.
+      pending.innerHTML = `<div>${escapeHtml(error.message)}</div><div class="chips"><button class="chip" data-report-error="${escapeHtml(question)}" data-correlation="${escapeHtml(error.correlationId ?? '')}">Report this</button></div>`;
       toast('Copilot failed', error.message, 'err');
     }
     chat.scrollIntoView({ block: 'end' });
@@ -277,9 +289,35 @@ export async function copilot(root) {
 
   chat.addEventListener('click', (event) => {
     const btn = event.target.closest('[data-explain]');
-    if (btn) explain(btn.dataset.explain, btn);
+    if (btn) {
+      explain(btn.dataset.explain, btn);
+      return;
+    }
+    const stuck = event.target.closest('[data-report-stuck]');
+    if (stuck) {
+      void openReport({
+        kind: 'STUCK',
+        screen: 'copilot',
+        question: stuck.dataset.reportStuck,
+        prefill: `I asked: "${stuck.dataset.reportStuck}". The answer did not help because `,
+      });
+      return;
+    }
+    const errored = event.target.closest('[data-report-error]');
+    if (errored) {
+      void openReport({
+        kind: 'ERROR',
+        screen: 'copilot',
+        question: errored.dataset.reportError,
+        correlationId: errored.dataset.correlation || undefined,
+        prefill: `The copilot errored when I asked: "${errored.dataset.reportError}".`,
+      });
+    }
   });
 
+  document.getElementById('report-problem').addEventListener('click', () =>
+    openReport({ kind: 'FEEDBACK', screen: 'copilot' }),
+  );
   document.getElementById('ask').addEventListener('click', () => ask(input.value));
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') ask(input.value);
