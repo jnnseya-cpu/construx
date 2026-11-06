@@ -10139,6 +10139,7 @@ export const ROUTES: Route[] = [
         // read it through the calibration signals; a summary of it would be
         // somebody's opinion of what the buyer meant.
         feedback: { type: 'array', items: { type: 'string', maxLength: 2000 } },
+        reasonClass: { type: 'string', enum: [...learning.LOSS_REASON_CLASS] },
       },
       additionalProperties: false,
     },
@@ -13592,6 +13593,9 @@ export const ROUTES: Route[] = [
         tenderers: { type: 'integer', minimum: 1 },
         reviewId: stringField,
         feedback: { type: 'array', items: stringField },
+        // The class a loss is filed under, for the calibration to separate "we
+        // price too high" from "we write poor answers".
+        reasonClass: { type: 'string', enum: [...learning.LOSS_REASON_CLASS] },
       },
       additionalProperties: false,
     },
@@ -25192,6 +25196,10 @@ export const ROUTES: Route[] = [
         },
         notes: { type: 'string' },
         evidenceHash: stringField,
+        // The standstill window the award notice opened, counted down in the
+        // award position. The reason a bid was lost lives on the opportunity
+        // outcome, not here.
+        standstillEndsOn: stringField,
       },
       additionalProperties: false,
     },

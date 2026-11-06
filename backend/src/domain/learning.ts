@@ -103,9 +103,28 @@ export type CalibrationSignal = {
 
 export type BidOutcome = 'WON' | 'LOST';
 
+/**
+ * Why a bid was lost — the four classes a post-mortem actually separates, plus
+ * the honest "the buyer gave no feedback". The marks say how the bid scored; the
+ * class says what to do differently, and they are not the same question — a loss
+ * on price and a loss on a weak answer both score badly and are fixed in
+ * opposite places. Recorded here because this is the record the calibration reads.
+ */
+export const LOSS_REASON_CLASS = [
+  'COMPLIANCE_FAILURE',
+  'UNCOMPETITIVE_PRICE',
+  'WEAK_QUALITY',
+  'POOR_FIT',
+  'NO_FEEDBACK',
+  'OTHER',
+] as const;
+export type LossReasonClass = (typeof LOSS_REASON_CLASS)[number];
+
 export type RecordedOutcome = {
   outcome: BidOutcome;
   decidedOn: string;
+  /** For a loss: the class it was lost under, where it is known. */
+  reasonClass?: LossReasonClass;
   /** What we tendered. Read from the opportunity where not stated. */
   ourPriceMinor?: number;
   /** What the winner tendered, where the buyer disclosed it. */
@@ -328,6 +347,7 @@ export function recordTenderOutcome(
     rank?: number;
     tenderers?: number;
     feedback?: string[];
+    reasonClass?: LossReasonClass;
   },
 ): RecordedOutcome {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'U');
@@ -389,6 +409,12 @@ export function recordTenderOutcome(
       'A win does not carry somebody else’s winning price. Record what we tendered.',
     );
   }
+  if (input.reasonClass && input.outcome !== 'LOST') {
+    throw new DomainError('REASON_CLASS_ON_A_WIN', 'A loss reason class belongs on a loss, not on a win.');
+  }
+  if (input.reasonClass && !LOSS_REASON_CLASS.includes(input.reasonClass)) {
+    throw new DomainError('REASON_CLASS_INVALID', `A loss reason class is one of ${LOSS_REASON_CLASS.join(', ')}.`);
+  }
 
   // What we tendered, where the request does not say. The award replaces the
   // project's headline value, so the tendered figure is kept separately from
@@ -398,6 +424,7 @@ export function recordTenderOutcome(
   const outcome: RecordedOutcome = {
     outcome: input.outcome,
     decidedOn: input.decidedOn.slice(0, 10),
+    ...(input.reasonClass ? { reasonClass: input.reasonClass } : {}),
     ...(input.ourPriceMinor === undefined
       ? tendered > 0
         ? { ourPriceMinor: tendered }
@@ -452,6 +479,7 @@ export function recordBidOutcome(
     tenderers?: number;
     reviewId?: string;
     feedback?: string[];
+    reasonClass?: LossReasonClass;
   },
 ): RecordedOutcome {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'U');
@@ -507,10 +535,17 @@ export function recordBidOutcome(
       'A win does not carry somebody else’s winning price. Record what we tendered.',
     );
   }
+  if (input.reasonClass && input.outcome !== 'LOST') {
+    throw new DomainError('REASON_CLASS_ON_A_WIN', 'A loss reason class belongs on a loss, not on a win.');
+  }
+  if (input.reasonClass && !LOSS_REASON_CLASS.includes(input.reasonClass)) {
+    throw new DomainError('REASON_CLASS_INVALID', `A loss reason class is one of ${LOSS_REASON_CLASS.join(', ')}.`);
+  }
 
   const outcome: RecordedOutcome = {
     outcome: input.outcome,
     decidedOn: input.decidedOn.slice(0, 10),
+    ...(input.reasonClass ? { reasonClass: input.reasonClass } : {}),
     ...(input.ourPriceMinor === undefined
       ? state.estimatedValueMinor === undefined
         ? {}

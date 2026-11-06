@@ -4537,6 +4537,27 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**Post-submission control — the loss, by reason, and the standstill, counted
+down.** The opportunity outcome already captured the marks, the rank, the winning
+price and the evaluator's feedback; what it did not capture was *why* a bid was
+lost as a class the calibration can separate — a loss on price and a loss on a
+weak answer both score badly and are fixed in opposite places. `recordBidOutcome`
+and `recordTenderOutcome` now take an optional `reasonClass` (`UNCOMPETITIVE_PRICE`
+/ `WEAK_QUALITY` / `COMPLIANCE_FAILURE` / `POOR_FIT` / `NO_FEEDBACK` / `OTHER`),
+refused on a win, recorded on the same outcome the calibration reads, and offered
+on the "Record how a bid ended" form (`learning.ts`, `routes.ts`,
+`frontend/pages/pipeline.js`). Separately, the **standstill** window an award
+notice opens is now recorded on `recordAward` (`standstillEndsOn`) and **counted
+down** in `awardPosition` (`standstill.daysRemaining`), so a challenge is not filed
+out of time — and `recordAward`, which had no console door at all, gains a
+compact **"Record the award outcome"** door on the estimating screen (outcome,
+reference, standstill, winner/terms) (`award.ts`, `routes.ts`,
+`frontend/pages/procurement.js`). Covered in `learning.test.ts` and
+`award.test.ts`. *Still partial (named, not built):* a live post-tender **query
+log** for buyer questions during evaluation, and abnormally-low **price-challenge
+substantiation** — recorded here as the remaining stage-10 pieces rather than
+shipped half-built.
+
 **The settlement pack, on one screen.** The settlement engine was complete —
 `openSettlement`, `recordAdjustment`, `raiseAction`/`settleAction`,
 `approveBidProgramme`, `approveSettlement`, with `settlementPosition` assembling

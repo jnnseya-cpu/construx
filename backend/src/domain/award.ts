@@ -396,6 +396,14 @@ export function recordAward(
     winner?: { name?: string; sumMinor?: number };
     notes?: string;
     evidenceHash?: string;
+    /**
+     * The standstill period the award notice opened, where one applies. Why a
+     * bid was lost — the reason class, the marks, the winning price — lives on the
+     * opportunity's own outcome (`recordOutcome`), which is the single record the
+     * calibration reads; the award notice is where the *standstill* is recorded,
+     * because that window is a fact about the notice, not the pursuit.
+     */
+    standstillEndsOn?: string;
   },
 ): { outcome: AwardOutcome; departures: Departure[] } {
   authorise(ctx, 'PROCUREMENT_AWARD', 'A', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
@@ -477,6 +485,9 @@ export function recordAward(
         // the outcome, because the register is read across jobs.
         winner: input.winner,
         notes: input.notes,
+        // The standstill the notice opened, counted down in awardPosition. The
+        // reason a bid was lost lives on the opportunity outcome, not here.
+        ...(input.standstillEndsOn ? { standstillEndsOn: input.standstillEndsOn } : {}),
         recordedAt: new Date().toISOString(),
         recordedBy: ctx.auth.actorId,
       },
@@ -799,6 +810,8 @@ export type AwardPosition = {
     qualificationsUnresolved: number;
     converted: boolean;
     contractSumMinor?: number;
+    /** The standstill window the award notice opened, counted down. */
+    standstill?: { endsOn: string; daysRemaining: number };
   }>;
   /**
    * Every qualification the award said nothing about, across every pack.
@@ -817,13 +830,27 @@ export function awardPosition(ctx: EngineContext): AwardPosition {
   const packs = ctx.ledger.list(ctx.projectId, 'BidSubmissionPack').map((record) => {
     const state = record.state;
     const submission = state.submission as (SubmissionReceipt & { submittedPackHash?: string }) | undefined;
-    const award = state.award as { outcome?: AwardOutcome; terms?: AwardedTerms } | undefined;
+    const award = state.award as
+      | { outcome?: AwardOutcome; terms?: AwardedTerms; standstillEndsOn?: string }
+      | undefined;
     const departures = (state.departures as Array<Departure & { id: string; status: string }>) ?? [];
+    // A standstill is a window, and what a bidder needs is how long is left in it
+    // — a challenge filed after it closes is out of time. Computed, not stored, so
+    // it is right whenever it is read.
+    const standstill = award?.standstillEndsOn
+      ? {
+          endsOn: award.standstillEndsOn,
+          daysRemaining: Math.ceil(
+            (new Date(`${award.standstillEndsOn}T23:59:59Z`).getTime() - Date.now()) / 86_400_000,
+          ),
+        }
+      : undefined;
 
     return {
       packId: String(state.id),
       contentHash: String(state.contentHash),
       status: String(state.status),
+      ...(standstill ? { standstill } : {}),
       submitted: submission
         ? {
             reference: submission.reference,

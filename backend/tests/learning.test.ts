@@ -248,6 +248,30 @@ describe('a loss had nowhere to go', () => {
       'SCORE_OUT_OF_RANGE',
     );
   });
+
+  it('refuses a loss reason class on a win', () => {
+    // Left at BID without an outcome, so it does not settle and the calibration
+    // counts below are untouched — the point here is only that the guard fires.
+    const { opportunityId } = business.registerOpportunity(asBd(), {
+      title: 'Reason class on a win',
+      clientName: 'Calderdale Council',
+      sectorType: 'TRANSPORT',
+      estimatedValueMinor: 30_000_000,
+      source: 'Portal',
+    });
+    business.qualifyOpportunity(asBd(), opportunityId, scores(3));
+    business.decideBidNoBid(asOwner(), opportunityId, { bid: true, rationale: 'Worth pursuing' });
+
+    throwsCode(
+      () =>
+        learning.recordBidOutcome(asBd(), opportunityId, {
+          outcome: 'WON',
+          decidedOn: '2027-04-01',
+          reasonClass: 'UNCOMPETITIVE_PRICE',
+        }),
+      'REASON_CLASS_ON_A_WIN',
+    );
+  });
 });
 
 describe('what the record says about how this business bids', () => {
@@ -255,8 +279,17 @@ describe('what the record says about how this business bids', () => {
     // Two more losses with a disclosed winning price, so the price signal has
     // three observations rather than one.
     settle('Brighouse leisure centre', 4, 'LOST', { winningPriceMinor: 88_000_000, qualityScorePercent: 68 });
-    settle('Elland highways package', 2, 'LOST', { winningPriceMinor: 92_000_000 });
+    settle('Elland highways package', 2, 'LOST', { winningPriceMinor: 92_000_000, reasonClass: 'UNCOMPETITIVE_PRICE' });
     settle('Sowerby Bridge culvert', 2, 'WON');
+  });
+
+  it('keeps the loss reason class on the settled outcome', () => {
+    // The reason class rides on the same outcome record the calibration reads,
+    // so "why" is one fact beside the marks rather than a note somewhere else.
+    const elland = opportunities
+      .map((id) => platform.ledger.require({ refType: 'Opportunity', refId: id }).state)
+      .find((state) => String(state.title).includes('Elland'))!;
+    assert.equal((elland.outcome as { reasonClass?: string }).reasonClass, 'UNCOMPETITIVE_PRICE');
   });
 
   it('reports where our price sat against the winning price', () => {

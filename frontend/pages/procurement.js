@@ -2018,6 +2018,29 @@ export async function procurement(root) {
           },
         ],
       })}
+
+      <div class="card pad0" style="margin-bottom:14px">
+        <div style="padding:15px 17px">
+          <h2>After submission</h2>
+          <div class="metric-sub" style="margin-bottom:11px">
+            Record the client’s award notice against the pack — won, lost or withdrawn — with any standstill window it
+            opened. A win computes what departs from what was bid; a standstill is counted down above. Why a bid was lost,
+            and the marks, go on the opportunity’s outcome on Pipeline &amp; Bids, which the calibration reads.
+          </div>
+          <div class="actions">
+            ${raw(
+              commandBar([
+                {
+                  id: 'record-award',
+                  label: 'Record the award outcome',
+                  permitted: can('PROCUREMENT_AWARD', 'A'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'A'),
+                },
+              ]),
+            )}
+          </div>
+        </div>
+      </div>
     `,
   );
 
@@ -3490,6 +3513,57 @@ export async function procurement(root) {
         { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
       ],
       transform: ({ lessonId: _lessonId, ...rest }) => rest,
+    },
+    'record-award': {
+      title: 'Record the award outcome',
+      intent:
+        'The client’s award notice against the submission pack: won, lost or withdrawn, with its reference and the date ' +
+        'it arrived. A win records the terms awarded so what departs from what was bid is computed while that comparison ' +
+        'is still cheap. Where the notice opened a standstill, record when it ends — a challenge filed after it closes is ' +
+        'out of time. Why a bid was lost is recorded on the opportunity’s own outcome, which the calibration reads.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/award`,
+      submitLabel: 'Record',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => !p.outcome).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'Every submitted pack already carries an outcome, or nothing has been submitted yet.' },
+        { name: 'outcome', label: 'Outcome', type: 'select',
+          options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }, { value: 'WITHDRAWN', label: 'Withdrawn' }] },
+        { name: 'reference', label: 'Award / notice reference', type: 'text' },
+        { name: 'receivedOn', label: 'Received on', type: 'date' },
+        { name: 'standstillEndsOn', label: 'Standstill ends (if any)', type: 'date', required: false,
+          hint: 'The end of the standstill window the notice opened. Left blank where none applies.' },
+        { name: 'contractSumMinor', label: 'Awarded contract sum (£, on a win)', type: 'number', money: true, required: false },
+        { name: 'commencementDate', label: 'Commencement (on a win)', type: 'date', required: false },
+        { name: 'completionDate', label: 'Completion (on a win)', type: 'date', required: false },
+        { name: 'winnerName', label: 'Who won (on a loss, where disclosed)', type: 'text', required: false },
+        { name: 'winnerSumMinor', label: 'Winning price (on a loss, where disclosed)', type: 'number', money: true, required: false },
+        { name: 'notes', label: 'Notes', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        outcome: v.outcome,
+        reference: String(v.reference ?? '').trim(),
+        receivedOn: String(v.receivedOn ?? '').trim(),
+        ...(String(v.standstillEndsOn ?? '').trim() ? { standstillEndsOn: String(v.standstillEndsOn).trim() } : {}),
+        ...(v.outcome === 'WON'
+          ? {
+              terms: {
+                ...(v.contractSumMinor !== undefined && v.contractSumMinor !== '' ? { contractSumMinor: Math.round(Number(v.contractSumMinor)) } : {}),
+                ...(String(v.commencementDate ?? '').trim() ? { commencementDate: String(v.commencementDate).trim() } : {}),
+                ...(String(v.completionDate ?? '').trim() ? { completionDate: String(v.completionDate).trim() } : {}),
+              },
+            }
+          : {}),
+        ...((String(v.winnerName ?? '').trim() || (v.winnerSumMinor !== undefined && v.winnerSumMinor !== ''))
+          ? {
+              winner: {
+                ...(String(v.winnerName ?? '').trim() ? { name: String(v.winnerName).trim() } : {}),
+                ...(v.winnerSumMinor !== undefined && v.winnerSumMinor !== '' ? { sumMinor: Math.round(Number(v.winnerSumMinor)) } : {}),
+              },
+            }
+          : {}),
+        ...(String(v.notes ?? '').trim() ? { notes: String(v.notes).trim() } : {}),
+      }),
     },
     award: {
       title: 'Award the package',

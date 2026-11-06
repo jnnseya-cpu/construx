@@ -431,6 +431,9 @@ describe('award · a lost bid is not a dead end', () => {
       receivedOn: '2027-04-02',
       winner: { name: 'Corbridge Construction', sumMinor: 17_900_000_00 },
       notes: 'Second on price, first on quality. Four bidders.',
+      // The notice opened a standstill. A challenge filed after it closes is out
+      // of time, so the window is counted down on the award position.
+      standstillEndsOn: '2099-04-12',
     });
 
     const error = throwsCode(
@@ -454,6 +457,12 @@ describe('award · a lost bid is not a dead end', () => {
 
     const position = award.awardPosition(qs());
     assert.match(position.summary, /0 won, 1 lost/);
+
+    // The standstill window is surfaced and counted down, so a challenge is not
+    // filed out of time.
+    const lostPack = position.packs.find((p) => p.packId === packId)!;
+    assert.equal(lostPack.standstill?.endsOn, '2099-04-12');
+    assert.ok((lostPack.standstill?.daysRemaining ?? 0) > 0, 'the standstill is not being counted down');
   });
 
   it('computes no departures for a loss, because there is nothing to compare', () => {
