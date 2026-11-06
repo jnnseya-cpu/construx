@@ -4567,10 +4567,27 @@ out of time — and `recordAward`, which had no console door at all, gains a
 compact **"Record the award outcome"** door on the estimating screen (outcome,
 reference, standstill, winner/terms) (`award.ts`, `routes.ts`,
 `frontend/pages/procurement.js`). Covered in `learning.test.ts` and
-`award.test.ts`. *Still partial (named, not built):* a live post-tender **query
-log** for buyer questions during evaluation, and abnormally-low **price-challenge
-substantiation** — recorded here as the remaining stage-10 pieces rather than
-shipped half-built.
+`award.test.ts`.
+
+**Post-tender control — the query log and the price challenge — is now built.**
+Between submission and award the bid is not idle, and both ways it is tripped up
+after the work is done now have a home on the submission pack. A **post-tender
+query log**: `logPostTenderQuery` records the buyer's question against the pack,
+`answerPostTenderQuery` records our reply and names what it changed (`NONE` /
+`PRICE` / `SCOPE` / `PROGRAMME`) — a reply that quietly moved the scope is the one
+the award departs on, so it is not filed as a clarification. A **price challenge**:
+`recordPriceChallenge` logs the buyer's abnormally-low challenge (starting the
+Procurement Act clock to demonstrate the price can be performed at), and
+`substantiatePriceChallenge` records the evidence — the cost build-up, productivity,
+supplier coverage, programme and exclusions, with the direct cost and net margin —
+so the response that kept the bid in is on the thread rather than in an inbox. Both
+surface in `awardPosition` (open queries counted, the challenge's substantiated
+state and response deadline) and in its summary, and both have doors in the
+estimating screen's **"After submission"** card (`log-query`, `answer-query`,
+`price-challenge`, `substantiate-price-challenge`). Four new closed-catalogue
+events on `BidSubmissionPack`, no AI mandate. Covered in `award.test.ts`. That
+closes the stage-10 list — nothing in the standard post-submission process is now
+"named but not built".
 
 **The settlement pack, on one screen.** The settlement engine was complete —
 `openSettlement`, `recordAdjustment`, `raiseAction`/`settleAction`,

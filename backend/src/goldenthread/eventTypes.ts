@@ -965,6 +965,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // What the client awarded that is not what was bid. Computed rather than
   // typed: a departure somebody noticed is not the one that costs money.
   def('AWARD_DEPARTURE_IDENTIFIED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  // After the submission goes in, the buyer asks questions during evaluation and
+  // may challenge an abnormally low price. Both are logged against the pack: a
+  // query that was answered off the record, and a price nobody substantiated,
+  // are how a scored bid is disqualified after the hard work is already done.
+  def('POST_TENDER_QUERY_RAISED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('POST_TENDER_QUERY_ANSWERED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('PRICE_CHALLENGE_RAISED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
+  def('PRICE_CHALLENGE_SUBSTANTIATED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
   // The budget and the buyout targets, carried off the estimate rather than
   // re-keyed. Evidence required because it is the join the whole no-re-entry
   // rule stands on.

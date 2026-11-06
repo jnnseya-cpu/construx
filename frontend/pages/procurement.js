@@ -2031,6 +2031,34 @@ export async function procurement(root) {
             ${raw(
               commandBar([
                 {
+                  id: 'log-query',
+                  label: 'Log a post-tender query',
+                  permitted: can('PROCUREMENT_AWARD', 'U'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'U'),
+                },
+                {
+                  id: 'answer-query',
+                  label: 'Answer a query',
+                  permitted: can('PROCUREMENT_AWARD', 'U') && (awards?.packs ?? []).some((p) => (p.queriesOpen ?? 0) > 0),
+                  reason: (awards?.packs ?? []).some((p) => (p.queriesOpen ?? 0) > 0)
+                    ? blockedReason('PROCUREMENT_AWARD', 'U')
+                    : 'No post-tender query is open.',
+                },
+                {
+                  id: 'price-challenge',
+                  label: 'Record a price challenge',
+                  permitted: can('PROCUREMENT_AWARD', 'U'),
+                  reason: blockedReason('PROCUREMENT_AWARD', 'U'),
+                },
+                {
+                  id: 'substantiate-price-challenge',
+                  label: 'Substantiate the price',
+                  permitted: can('PROCUREMENT_AWARD', 'U') && (awards?.packs ?? []).some((p) => p.priceChallenge && !p.priceChallenge.substantiated),
+                  reason: (awards?.packs ?? []).some((p) => p.priceChallenge && !p.priceChallenge.substantiated)
+                    ? blockedReason('PROCUREMENT_AWARD', 'U')
+                    : 'No open price challenge to substantiate.',
+                },
+                {
                   id: 'record-award',
                   label: 'Record the award outcome',
                   permitted: can('PROCUREMENT_AWARD', 'A'),
@@ -3513,6 +3541,105 @@ export async function procurement(root) {
         { name: 'reason', label: 'Why', type: 'textarea', rows: 2 },
       ],
       transform: ({ lessonId: _lessonId, ...rest }) => rest,
+    },
+    'log-query': {
+      title: 'Log a post-tender query',
+      intent:
+        'The buyer’s question during evaluation, against the pack it is about. Logged so the answer, when it comes, is ' +
+        'tied to the bid and the evaluator’s view of it rather than living in an inbox — a query answered off the record ' +
+        'is how a scored bid is tripped up after the hard work is done.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/queries`,
+      submitLabel: 'Log it',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.submitted).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'Nothing has been submitted yet, so there is no bid for a buyer to ask about.' },
+        { name: 'question', label: 'The buyer’s question', type: 'textarea', rows: 3 },
+        { name: 'receivedOn', label: 'Received on', type: 'date' },
+        { name: 'replyDueBy', label: 'Reply due by', type: 'date', required: false,
+          hint: 'The buyer’s deadline for our answer, where one was set.' },
+      ],
+      transform: (v) => ({
+        question: String(v.question ?? '').trim(),
+        receivedOn: String(v.receivedOn ?? '').trim(),
+        ...(String(v.replyDueBy ?? '').trim() ? { replyDueBy: String(v.replyDueBy).trim() } : {}),
+      }),
+    },
+    'answer-query': {
+      title: 'Answer a post-tender query',
+      intent:
+        'Our reply, and what answering it changed. Naming the impact is the point: a query that moved the price or the ' +
+        'scope is not a clarification, and a reply that quietly changed what was bid is the one the award departs on.',
+      path: (v) => {
+        const [packId, queryId] = String(v.target ?? '').split('::');
+        return `/v1/projects/${projectId}/bid-packs/${packId}/queries/${queryId}/answer`;
+      },
+      submitLabel: 'Record the reply',
+      fields: [
+        { name: 'target', label: 'Open query', type: 'select',
+          options: (awards?.packs ?? []).flatMap((p) =>
+            (p.postTenderQueries ?? []).filter((q) => !q.reply).map((q) => ({
+              value: `${p.packId}::${q.id}`,
+              label: `${q.id} · ${String(q.question).slice(0, 60)}${String(q.question).length > 60 ? '…' : ''}`,
+            })),
+          ),
+          emptyHint: 'No post-tender query is open. Log one first, or every one is already answered.' },
+        { name: 'reply', label: 'Our reply', type: 'textarea', rows: 3 },
+        { name: 'impact', label: 'What it changed', type: 'select',
+          options: [
+            { value: 'NONE', label: 'Nothing — a clarification' },
+            { value: 'PRICE', label: 'The price' },
+            { value: 'SCOPE', label: 'The scope' },
+            { value: 'PROGRAMME', label: 'The programme' },
+          ] },
+      ],
+      transform: (v) => ({ reply: String(v.reply ?? '').trim(), impact: v.impact }),
+    },
+    'price-challenge': {
+      title: 'Record a price challenge',
+      intent:
+        'The buyer has challenged the price as abnormally low. Under the Procurement Act they must give a reasonable ' +
+        'opportunity to demonstrate it can be performed at before disregarding the tender on that ground — logging the ' +
+        'challenge starts that clock on the record.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/price-challenge`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.submitted && !p.priceChallenge).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · ${p.status}` })),
+          emptyHint: 'No submitted pack is without a challenge already — or nothing has been submitted.' },
+        { name: 'raisedOn', label: 'Raised on', type: 'date' },
+        { name: 'responseDueBy', label: 'Our response due by', type: 'date', required: false },
+        { name: 'concern', label: 'What the buyer said looked low', type: 'textarea', rows: 2, required: false },
+      ],
+      transform: (v) => ({
+        raisedOn: String(v.raisedOn ?? '').trim(),
+        ...(String(v.responseDueBy ?? '').trim() ? { responseDueBy: String(v.responseDueBy).trim() } : {}),
+        ...(String(v.concern ?? '').trim() ? { concern: String(v.concern).trim() } : {}),
+      }),
+    },
+    'substantiate-price-challenge': {
+      title: 'Substantiate the price',
+      intent:
+        'The evidence the bid can be performed at the offered price: the cost build-up, productivity, supplier coverage, ' +
+        'programme and the exclusions that explain the number — the same things the settlement already holds. Recorded so ' +
+        'the response that kept the bid in is on the thread, not in an email nobody can find when the next one lands.',
+      path: (v) => `/v1/projects/${projectId}/bid-packs/${v.packId}/price-challenge/substantiate`,
+      submitLabel: 'Substantiate',
+      fields: [
+        { name: 'packId', label: 'Submission pack', type: 'select',
+          options: (awards?.packs ?? []).filter((p) => p.priceChallenge && !p.priceChallenge.substantiated).map((p) => ({ value: p.packId, label: `${p.packId.slice(-8)} · challenged ${p.priceChallenge.raisedOn}` })),
+          emptyHint: 'No open price challenge to substantiate.' },
+        { name: 'basis', label: 'The substantiation, one point per line', type: 'textarea', rows: 5,
+          hint: 'Productivity, quantities, supplier coverage, programme, exclusions, cost drivers — each the evidence the number holds.' },
+        { name: 'directCostMinor', label: 'Direct cost the price rests on (£)', type: 'number', money: true, required: false },
+        { name: 'netMarginPercent', label: 'Net margin on the offered price (%)', type: 'number', required: false,
+          hint: '"Abnormally low" is answered with the actual figure, not an assurance.' },
+      ],
+      transform: (v) => ({
+        basis: String(v.basis ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
+        ...(v.directCostMinor !== undefined && v.directCostMinor !== '' ? { directCostMinor: Math.round(Number(v.directCostMinor)) } : {}),
+        ...(v.netMarginPercent !== undefined && v.netMarginPercent !== '' ? { netMarginPercent: Number(v.netMarginPercent) } : {}),
+      }),
     },
     'record-award': {
       title: 'Record the award outcome',

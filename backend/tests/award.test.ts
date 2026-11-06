@@ -470,6 +470,61 @@ describe('award · a lost bid is not a dead end', () => {
     assert.deepEqual(row.departures, []);
     assert.equal(row.outcome, 'LOST');
   });
+
+  it('logs a post-tender query, ties the answer and its impact to the bid', () => {
+    const logged = award.logPostTenderQuery(pm(), packId, {
+      question: 'Confirm the generator period priced in schedule item 4.12',
+      receivedOn: '2027-03-20',
+      replyDueBy: '2027-03-25',
+    });
+    assert.equal(logged.open, 1);
+
+    const openRow = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(openRow.queriesOpen, 1);
+
+    const answered = award.answerPostTenderQuery(pm(), packId, logged.queryId, {
+      reply: 'Sixteen weeks from mobilisation, as priced.',
+      impact: 'NONE',
+    });
+    assert.equal(answered.open, 0);
+
+    throwsCode(
+      () => award.answerPostTenderQuery(pm(), packId, logged.queryId, { reply: 'again', impact: 'NONE' }),
+      'QUERY_ALREADY_ANSWERED',
+    );
+
+    const closedRow = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(closedRow.queriesOpen, 0);
+    assert.equal(closedRow.postTenderQueries?.[0]?.impact, 'NONE');
+  });
+
+  it('records a price challenge and refuses an empty substantiation', () => {
+    award.recordPriceChallenge(pm(), packId, {
+      raisedOn: '2027-03-21',
+      responseDueBy: '2027-03-28',
+      concern: 'Bid 12% below the next tenderer',
+    });
+
+    throwsCode(
+      () => award.substantiatePriceChallenge(pm(), packId, { basis: ['   '] }),
+      'SUBSTANTIATION_REQUIRED',
+    );
+
+    const result = award.substantiatePriceChallenge(pm(), packId, {
+      basis: ['Measured quantities from the take-off', 'Three firm subcontract quotes on the deep drainage', 'Own plant, no hire markup'],
+      directCostMinor: 16_000_000_00,
+      netMarginPercent: 7.5,
+    });
+    assert.equal(result.lines, 3);
+
+    const row = award.awardPosition(qs()).packs.find((p) => p.packId === packId)!;
+    assert.equal(row.priceChallenge?.substantiated, true);
+
+    throwsCode(
+      () => award.substantiatePriceChallenge(pm(), packId, { basis: ['again'] }),
+      'ALREADY_SUBSTANTIATED',
+    );
+  });
 });
 
 // ── The catalogue ───────────────────────────────────────────────────────────

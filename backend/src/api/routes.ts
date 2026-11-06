@@ -25208,6 +25208,78 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/queries',
+    description: 'Log a buyer’s post-tender question against the submitted pack',
+    schema: {
+      type: 'object',
+      required: ['question', 'receivedOn'],
+      properties: {
+        question: { type: 'string' },
+        receivedOn: stringField,
+        replyDueBy: stringField,
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.logPostTenderQuery(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/queries/:queryId/answer',
+    description: 'Record our reply to a post-tender query, and what it changed',
+    schema: {
+      type: 'object',
+      required: ['reply', 'impact'],
+      properties: {
+        reply: { type: 'string' },
+        impact: { type: 'string', enum: [...award.QUERY_IMPACT] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.answerPostTenderQuery(
+        projectContext(platform, ctx),
+        ctx.params.packId as string,
+        ctx.params.queryId as string,
+        body(ctx),
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/price-challenge',
+    description: 'Record that the buyer has challenged the price as abnormally low',
+    schema: {
+      type: 'object',
+      required: ['raisedOn'],
+      properties: {
+        raisedOn: stringField,
+        responseDueBy: stringField,
+        concern: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.recordPriceChallenge(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/bid-packs/:packId/price-challenge/substantiate',
+    description: 'Substantiate the price against an abnormally-low challenge, with the evidence it can be performed at',
+    schema: {
+      type: 'object',
+      required: ['basis'],
+      properties: {
+        basis: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        directCostMinor: { type: 'integer', minimum: 0 },
+        netMarginPercent: { type: 'number' },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      award.substantiatePriceChallenge(projectContext(platform, ctx), ctx.params.packId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-packs/:packId/departures/:departureId/accept',
     description: 'Take a departure on knowingly, with the reason it is acceptable',
     schema: {
