@@ -16058,6 +16058,17 @@ documents merge into — with the superseded fragments counted but not listed.
 Where nothing is bound yet, nothing is hidden, so a first analysis is never
 swallowed (`frontend/pages/pipeline.js`).
 
+A matrix bound to a tender that is **closed, won or lost** drops out of the live
+list and the pickers too — the "it went to an old closed project" a reading
+confirmed onto the wrong tender by mistake, which could not be cleared, stops
+cluttering the live list the moment that tender is terminal, which is what "when
+an opportunity is closed it must be closed" means for its matrix. It is counted
+among the superseded, stays on the append-only record, and is reachable by
+focusing that tender (the focused view draws from every analysis, not only the
+live ones, so a tender opened on purpose still shows its own matrix). The list
+falls back to showing everything only when no tender has a matrix bound at all,
+so the first-analysis safety holds without re-showing a closed one.
+
 **One tender per page.** The reader, the response packs and the red team on the
 lower half of the Pipeline screen were already scoped to the project selected in
 the session — writing a section spends that project's ACUs, so they could be

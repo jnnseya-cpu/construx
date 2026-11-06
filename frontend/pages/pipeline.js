@@ -1124,16 +1124,29 @@ export async function pipeline(root) {
   const biddableOptions = board
     .filter((t) => t.stage === 'BID')
     .map((t) => ({ value: t.invitationId, label: `${t.reference} · closes ${t.deadline.local}` }));
-  // One matrix per tender. A tender's requirements now merge into a single
-  // analysis as its documents are read, but every superseded fragment stays on
-  // the append-only ledger — so a tender read one document at a time had a dozen
-  // analyses on file, all mixed together. The list and the pickers show only the
-  // matrix each live invitation currently points to; the rest are the history
-  // behind it, counted but not listed. Where nothing is bound yet, nothing is
-  // hidden, so a first analysis is never swallowed.
-  const currentAnalysisIds = new Set(board.map((t) => t.analysisId).filter(Boolean));
+  // One matrix per tender, and only for a tender still in play. A tender's
+  // requirements merge into a single analysis as its documents are read, but
+  // every superseded fragment stays on the append-only ledger — so a tender read
+  // one document at a time had a dozen analyses on file, all mixed together. The
+  // list and the pickers show only the matrix each *live* invitation currently
+  // points to.
+  //
+  // A matrix bound to a tender that is **closed, won or lost** drops out too —
+  // a reading confirmed onto a tender by mistake (the "it went to an old closed
+  // project" that could not be cleared) stops cluttering the live list the
+  // moment that tender is terminal, which is also what "when an opportunity is
+  // closed it must be closed" means for its matrix. It stays on the record,
+  // counted among the superseded, reachable by focusing that tender.
+  //
+  // Where nothing is bound to any tender yet, nothing is hidden, so a first
+  // analysis is never swallowed.
   const allAnalyses = matrices.analyses ?? [];
-  const liveAnalyses = currentAnalysisIds.size > 0 ? allAnalyses.filter((a) => currentAnalysisIds.has(a.analysisId)) : allAnalyses;
+  const boundAnalysisIds = new Set(board.map((t) => t.analysisId).filter(Boolean));
+  const liveAnalysisIds = new Set(
+    board.filter((t) => !TERMINAL_STAGES.includes(t.stage)).map((t) => t.analysisId).filter(Boolean),
+  );
+  const liveAnalyses =
+    boundAnalysisIds.size === 0 ? allAnalyses : allAnalyses.filter((a) => liveAnalysisIds.has(a.analysisId));
   const supersededAnalyses = allAnalyses.length - liveAnalyses.length;
 
   /*
@@ -1165,7 +1178,12 @@ export async function pipeline(root) {
   const focused = focusTenders.length > 0;
   const visibleBoard = focused ? focusTenders : board;
   const focusAnalysisIds = new Set(focusTenders.map((t) => t.analysisId).filter(Boolean));
-  const shownAnalyses = focused ? liveAnalyses.filter((a) => focusAnalysisIds.has(a.analysisId)) : liveAnalyses;
+  // Focused, the matrix is drawn from every analysis, not only the live ones, so
+  // a won or lost tender opened on purpose still shows its own matrix — the
+  // exclusion above is about the unfocused list, not about what you asked to see.
+  const shownAnalyses = focused
+    ? allAnalyses.filter((a) => focusAnalysisIds.has(a.analysisId))
+    : liveAnalyses;
   const focusLabel = focusTenders.map((t) => t.reference).join(', ');
   const hiddenTenders = board.length - visibleBoard.length;
   /*
