@@ -26109,6 +26109,21 @@ screen does it; a test fails if one does not. The detailed panel is on Pipeline 
 Bids and Tender & Procurement, reading one endpoint, holding no rule of its own —
 the same reason the console holds no copy of the permission matrix.
 
+**The headline next step, on a submission, is the submission — not the pricing
+road.** The two roads run in parallel and the pricing road is listed first, so
+the first ready step across both was a pricing one: a bidder who had just read
+an invitation into a matrix was told the next thing to do was *"file the pack /
+measure the drawings"* — a road that does not even apply to a tender priced from
+a schedule rather than a take-off. For a `wantsSubmission` job the headline now
+prefers the submission road (the pricing steps stay in the list, they are just
+not what a just-read tender is told to do first). And **planned is not written**:
+`RESPONSE_PACK` is `DONE` only when a pack exists and every section carries prose
+(`writtenAt`); a pack planned with its sections still blank reads *"N of M
+sections written"* and stays the next step — the guide no longer reports an empty
+pack as a written submission and send the bidder on to attack it
+(`backend/src/domain/bidflow.ts`; `bidrun.test.ts` pins the submission-first
+headline and the planned-not-written step).
+
 ### The guided walkthrough, on every screen and from an empty account
 
 `bidflow.ts` answered "what now?" well, but only on the four screens a job's road

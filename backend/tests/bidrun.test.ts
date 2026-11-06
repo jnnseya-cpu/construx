@@ -947,5 +947,60 @@ describe('where the job is, and the one thing to do next', () => {
     assert.notEqual(flow.steps.find((step) => step.id === 'MATRIX')!.state, 'NOT_NEEDED');
     assert.notEqual(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'NOT_NEEDED');
     assert.doesNotMatch(flow.why, /quotation rather than a submission/);
+
+    // The headline next step is on the submission road, not the pricing road.
+    // A tender just read into a matrix is told to write the submission — not to
+    // "file the pack / measure the drawings", which is the pricing road and does
+    // not even apply to a tender priced from a schedule.
+    assert.equal(flow.nowDo?.id, 'RESPONSE_PACK', `nowDo was ${flow.nowDo?.id}`);
+    assert.equal(flow.steps.find((step) => step.id === 'RESPONSE_PACK')!.state, 'READY');
+    assert.match(flow.nowDo?.door ?? '', /Plan a response pack/);
+  });
+
+  it('keeps the submission step open until its sections are written, not just planned', () => {
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'Pack written not just planned',
+      sectorType: 'RMI',
+      assetType: 'Highways civils',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Scunthorpe' },
+      contractValueMinor: 2_000_000,
+      currency: 'GBP',
+      plannedStart: '2027-04-01',
+      plannedCompletion: '2027-08-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+    const analysisId = `analysis-${tender.slice(-6)}`;
+
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId, reference: 'HF1', clientName: 'North Lincolnshire', returnBy: '2026-11-30',
+        matrix: [{ reference: 'Q1', category: 'Quality', requirement: 'Method statement', mandatory: false, weightingPercent: 5, status: 'UNKNOWN' }],
+        mandatoryGaps: [], weightings: { stated: 100, complete: true }, terms: [], bars: [],
+        quantifiedExposureMinor: 0, committedCapacityMinor: 0, clarifications: [], readyToPrice: false,
+        analysedAt: new Date().toISOString(), analysedBy: ctx.auth.actorId,
+      },
+    });
+    // A pack planned, with its one section not yet written (no writtenAt).
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'BID_RESPONSE_PLANNED',
+      entity: { refType: 'BidResponsePack', refId: `pack-${tender.slice(-6)}` },
+      nextState: {
+        id: `pack-${tender.slice(-6)}`, reference: 'BID-0001', projectId: tender, analysisId,
+        clientName: 'North Lincolnshire', returnBy: '2026-11-30',
+        sections: [{ key: 'Q1', title: 'Method statement', requirement: 'Method statement' }],
+        deadlines: [], status: 'DRAFTING', passes: 0,
+      },
+    });
+
+    const step = bidFlow(platform, ctx).steps.find((s) => s.id === 'RESPONSE_PACK')!;
+    assert.equal(step.state, 'READY', 'a planned pack with an unwritten section is not done');
+    assert.match(step.detail, /0 of 1 section/);
+    assert.equal(step.door, 'Write the next section');
   });
 });

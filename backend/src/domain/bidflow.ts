@@ -154,6 +154,17 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       : undefined);
   const analyses = ctx.ledger.list(ctx.projectId, 'ITTAnalysis');
   const packs = ctx.ledger.list(ctx.projectId, 'BidResponsePack').map((record) => record.state);
+  // A pack is "planned" the moment it exists, but planned is not written: its
+  // sections are drafted one at a time and a section is written once it carries
+  // a `writtenAt`. The guide reported a pack with every section still blank as
+  // "Write the submission — done", and then sent the person to attack an empty
+  // pack. Counting the written sections is what lets the next step be the real
+  // one — write the next section — until none is left.
+  const packSections = packs.flatMap((p) => (p.sections as Array<{ writtenAt?: string }> | undefined) ?? []);
+  const sectionsTotal = packSections.length;
+  const sectionsWritten = packSections.filter((section) => section.writtenAt).length;
+  const packPlanned = packs.length > 0;
+  const packFullyWritten = packPlanned && sectionsTotal > 0 && sectionsWritten === sectionsTotal;
   const reviews = ctx.ledger.list(ctx.projectId, 'AssuranceReview');
   /*
    * The company's own facts, by the id they are actually written under.
@@ -382,19 +393,25 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
     bidStep({
       id: 'RESPONSE_PACK',
       title: 'Write the submission',
-      state: packs.length > 0 ? 'DONE' : analyses.length > 0 ? 'READY' : 'BLOCKED',
-      detail:
-        packs.length > 0
-          ? `${packs.length} response pack${packs.length === 1 ? '' : 's'} planned.`
+      // Planned is not written. DONE only when a pack exists and every section
+      // carries prose; a planned pack with sections still blank is READY — the
+      // next step is to write the next one, not to move on from a submission
+      // that is not written.
+      state: packFullyWritten ? 'DONE' : packPlanned || analyses.length > 0 ? 'READY' : 'BLOCKED',
+      detail: packFullyWritten
+        ? `${packs.length} response pack${packs.length === 1 ? '' : 's'} planned, every section written.`
+        : packPlanned
+          ? `${packs.length} response pack${packs.length === 1 ? '' : 's'} planned, ${sectionsWritten} of ${sectionsTotal} section${sectionsTotal === 1 ? '' : 's'} written.`
           : 'No submission has been planned.',
-      next:
-        packs.length > 0
-          ? 'Write the next section until none remains, then attack the pack before issuing it.'
+      next: packFullyWritten
+        ? 'Every section is written — attack the pack before issuing it.'
+        : packPlanned
+          ? 'Write one section at a time until none remains; the size of the tender decides how many passes run, never how much of it fits into one.'
           : analyses.length > 0
             ? 'Then write one section at a time: the size of the tender decides how many passes run, never how much of it fits into one.'
             : 'A compliance matrix has to exist before a submission can be planned against it.',
-      door: packs.length > 0 ? 'Write the next section' : 'Plan a response pack',
-      command: packs.length > 0 ? 'bid-section' : 'bid-plan',
+      door: packPlanned ? 'Write the next section' : 'Plan a response pack',
+      command: packPlanned ? 'bid-section' : 'bid-plan',
       screen: 'pipeline',
     }),
   );
@@ -421,7 +438,24 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   );
 
   const actionable = steps.filter((step) => step.state === 'READY' || step.state === 'BLOCKED');
-  const nowDo = actionable.find((step) => step.state === 'READY') ?? actionable[0] ?? null;
+  /*
+   * The headline next step. On a submission the pricing road and the submission
+   * road run in parallel, and the pricing road is listed first — so the first
+   * ready step across both was the pricing one, and a bidder who had just read
+   * the invitation into a matrix was told the next thing to do was "file the
+   * pack / measure the drawings", a road that does not even apply to a tender
+   * priced from a schedule. For a submission, the headline prefers the
+   * submission road; the pricing steps stay in the list, they are just not what
+   * a just-read tender is told to do first. A price-only enquiry is unchanged.
+   */
+  const SUBMISSION_STEP_IDS = new Set(['RETURN_REGISTER', 'MATRIX', 'RESPONSE_PACK', 'RED_TEAM']);
+  const preferred = wantsSubmission ? actionable.filter((step) => SUBMISSION_STEP_IDS.has(step.id)) : actionable;
+  const nowDo =
+    preferred.find((step) => step.state === 'READY') ??
+    actionable.find((step) => step.state === 'READY') ??
+    preferred[0] ??
+    actionable[0] ??
+    null;
 
   const done = steps.filter((step) => step.state === 'DONE').length;
   const needed = steps.filter((step) => step.state !== 'NOT_NEEDED').length;
