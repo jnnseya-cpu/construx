@@ -16102,6 +16102,21 @@ than the tenant-wide "record one first" that would be a lie. Off focus the
 `scoped*` lists are the originals unchanged, so nothing about the unfocused screen
 moves.
 
+**A graded accreditation is matched by its tier, not waved through.** Constructionline
+is tiered — Gold is the full prequalification a highways framework demands, Silver
+is not — and the evidence probe matched it tier-blind, so a "Constructionline Gold"
+requirement was marked **satisfied** by a held **Silver**: a false pass on a
+mandatory bar that loses the bid at the preferred-tenderer check with everything
+already spent. The named-certificate catalogue now carries the tiers as distinct
+entries (Gold/Silver/Bronze, and a plain entry that excludes them), so a Gold
+requirement is satisfied only by a held Gold; and the general accreditation probe
+no longer fires where the requirement named a specific scheme the named probe
+could not satisfy — answering a named-but-unheld scheme off the whole
+accreditation list was the other half of the false pass. Unmatched falls to a
+gap, which prompts the check rather than hiding it (`backend/src/domain/itt.ts`;
+`itt.test.ts` pins Gold-held satisfied, Silver-held a gap, and not answered off
+the general list).
+
 The confirmation answers what a bid manager asks first rather than reporting
 that a matrix exists: which mandatory requirements have no evidence behind
 them, which terms are a **bar** rather than a negotiation, the quantified

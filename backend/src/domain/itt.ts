@@ -143,7 +143,17 @@ const NAMED_CERTIFICATES: Array<{ label: string; pattern: RegExp }> = [
   { label: 'ISO 50001', pattern: /iso[\s-]?50001/i },
   { label: 'CHAS', pattern: /\bchas\b/i },
   { label: 'SafeContractor', pattern: /safe\s?contractor/i },
-  { label: 'Constructionline', pattern: /constructionline/i },
+  // Constructionline is tiered, and the tier is the whole point: Gold is the
+  // full prequalification a highways framework demands, Silver is not. A
+  // tier-blind match marked a "Constructionline Gold" requirement satisfied by
+  // a held Silver — a false pass on a mandatory bar. So the tiers are distinct,
+  // and the plain entry excludes them so "Constructionline membership" with no
+  // tier named is not answered by a Gold the company does not hold, or the
+  // reverse. Gold listed before the plain entry so it wins where both could read.
+  { label: 'Constructionline Gold', pattern: /constructionline[\s-]*(?:level[\s-]*3[\s-]*)?gold/i },
+  { label: 'Constructionline Silver', pattern: /constructionline[\s-]*(?:level[\s-]*2[\s-]*)?silver/i },
+  { label: 'Constructionline Bronze', pattern: /constructionline[\s-]*(?:level[\s-]*1[\s-]*)?bronze/i },
+  { label: 'Constructionline', pattern: /constructionline(?![\s-]*(?:level[\s-]*\d[\s-]*)?(?:gold|silver|bronze))/i },
   { label: 'SMAS Worksafe', pattern: /\bsmas\b/i },
   { label: 'Acclaim', pattern: /\bacclaim\b/i },
   { label: 'Achilles', pattern: /\bachilles\b|\buvdb\b/i },
@@ -254,8 +264,20 @@ const PROBES: EvidenceProbe[] = [
     // named. A named one is caught by the probe above; this answers the rest
     // from the whole list, which is the right answer to a requirement that asks
     // for any accreditation rather than a particular one.
+    //
+    // It must not fire where the requirement named a specific scheme the probe
+    // above could not satisfy: "Constructionline Gold" when only Silver is held
+    // is a gap, and answering it from the whole accreditation list turns that
+    // gap into a false pass. If a certificate is named, this line is not the
+    // generic case and is left to the named probe's verdict — which, unmatched,
+    // falls to a gap that prompts the check rather than hiding it.
     match: /accreditation|accredited|pre-?qualif/i,
-    find: (p) => (p.accreditations.length > 0 ? `Held: ${p.accreditations.join(', ')}` : null),
+    find: (p, requirement) =>
+      certificatesNamedIn(requirement).length > 0
+        ? null
+        : p.accreditations.length > 0
+          ? `Held: ${p.accreditations.join(', ')}`
+          : null,
   },
   {
     // Enhanced DBS for personnel entering occupied homes — a mandatory

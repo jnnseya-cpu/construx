@@ -175,6 +175,31 @@ describe('A named certificate is matched to the one the invitation asks for', ()
     const line = cert({ requirement: 'ISO 55001 asset management certification', evidenceRequired: 'ISO 55001 certificate' });
     assert.equal(line.status, 'UNKNOWN');
   });
+
+  it('does not wave a Gold requirement through on a Silver held, and never off the general list', () => {
+    // The commercial-killer: a highways framework demands Constructionline Gold,
+    // and a tier-blind match marked it satisfied by a held Silver. Gold is a
+    // mandatory bar; a false pass here loses the bid at the preferred-tenderer
+    // check with everything else already spent.
+    const goldReq = { requirement: 'Constructionline Gold accreditation', evidenceRequired: 'Constructionline Gold Accreditation Number' };
+
+    // Seeded profile holds Gold → satisfied, by that tier's name.
+    const onGold = cert(goldReq);
+    assert.equal(onGold.status, 'SATISFIED');
+    assert.ok(onGold.evidenceHeld?.includes('Constructionline Gold'), `evidence was: ${onGold.evidenceHeld}`);
+
+    const current = radar.companyProfile(qs());
+    try {
+      // Hold only Silver (plus ISO 9001, so the general list is non-empty and a
+      // blanket probe would otherwise have something to wrongly return).
+      radar.setCompanyProfile(qs(), { ...current, accreditations: ['Constructionline Silver', 'ISO 9001'] });
+      const onSilver = cert(goldReq);
+      assert.equal(onSilver.status, 'GAP', 'Silver does not satisfy a Gold requirement');
+      assert.equal(onSilver.evidenceHeld, undefined, 'and it is not answered off the general accreditation list');
+    } finally {
+      radar.setCompanyProfile(qs(), current);
+    }
+  });
 });
 
 // Enhanced DBS is a mandatory requirement on work in occupied homes — satisfied
