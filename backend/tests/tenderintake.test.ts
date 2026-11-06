@@ -511,6 +511,83 @@ describe('tender intake · the gate in front of a decision to bid', () => {
   });
 });
 
+// ── The conditional bid — the third decision ─────────────────────────────────
+describe('tender intake · a conditional bid', () => {
+  const commitment = {
+    condition: 'Can an approved HV switching contractor meet the outage dates?',
+    owner: 'Commercial manager',
+    spendCapMinor: 200_000,
+    killDate: '2027-01-15',
+  };
+
+  it('records limited work to a condition, with owner, cap and kill date, before the invitation is read', () => {
+    // The point of a conditional bid is to authorise the work that resolves an
+    // open question, so it is not held behind the invitation being fully read.
+    const opportunityId = opportunity(asOwner());
+    const { invitationId } = record(asQS(), opportunityId); // recorded, deliberately not read
+
+    const decision = business.decideBidNoBid(asOwner(), opportunityId, {
+      bid: true,
+      rationale: 'Worth pursuing if the switching contractor can hold the dates',
+      conditional: commitment,
+    });
+
+    assert.equal(decision.stage, 'BID');
+    assert.equal(decision.conditional, true);
+
+    const state = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
+    assert.ok(state, 'the invitation is still on file');
+    const dec = platform.ledger.require({ refType: 'Opportunity', refId: opportunityId }).state.decision as {
+      conditional?: boolean;
+      conditionalCommitment?: { condition: string; owner: string; spendCapMinor: number; killDate: string };
+    };
+    assert.equal(dec.conditional, true);
+    assert.equal(dec.conditionalCommitment?.owner, 'Commercial manager');
+    assert.equal(dec.conditionalCommitment?.spendCapMinor, 200_000);
+    assert.equal(dec.conditionalCommitment?.killDate, '2027-01-15');
+    assert.match(dec.conditionalCommitment?.condition ?? '', /switching contractor/);
+  });
+
+  it('refuses a conditional bid with no cap — an open-ended "look into it" is what it replaces', () => {
+    const opportunityId = opportunity(asOwner());
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: true,
+          rationale: 'Investigate',
+          conditional: { ...commitment, spendCapMinor: 0 },
+        }),
+      'CONDITION_CAP_REQUIRED',
+    );
+  });
+
+  it('refuses a conditional bid with no kill date', () => {
+    const opportunityId = opportunity(asOwner());
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: true,
+          rationale: 'Investigate',
+          conditional: { ...commitment, killDate: '' },
+        }),
+      'CONDITION_KILL_DATE_REQUIRED',
+    );
+  });
+
+  it('refuses a conditional commitment attached to a no-bid', () => {
+    const opportunityId = opportunity(asOwner(), flat(2));
+    throwsCode(
+      () =>
+        business.decideBidNoBid(asOwner(), opportunityId, {
+          bid: false,
+          rationale: 'Declining',
+          conditional: commitment,
+        }),
+      'CONDITIONAL_REQUIRES_BID',
+    );
+  });
+});
+
 // ── Authority ───────────────────────────────────────────────────────────────
 
 describe('tender intake · the authority an override is taken under', () => {

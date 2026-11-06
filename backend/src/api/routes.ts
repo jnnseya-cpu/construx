@@ -4195,6 +4195,20 @@ export const ROUTES: Route[] = [
           },
           additionalProperties: false,
         },
+        // A conditional bid: limited work to a named condition, with an owner, a
+        // spend cap and a kill date. The engine validates each; the schema only
+        // shapes it.
+        conditional: {
+          type: 'object',
+          required: ['condition', 'owner', 'spendCapMinor', 'killDate'],
+          properties: {
+            condition: stringField,
+            owner: stringField,
+            spendCapMinor: { type: 'integer', minimum: 1 },
+            killDate: stringField,
+          },
+          additionalProperties: false,
+        },
       },
       additionalProperties: false,
     },

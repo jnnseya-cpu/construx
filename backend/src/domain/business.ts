@@ -534,8 +534,23 @@ export function decideBidNoBid(
     conditions?: string[];
     dissent?: DecisionDissent[];
     authority?: DecisionAuthority;
+    /**
+     * A conditional bid — the third decision. Not yet a commitment to the whole
+     * tender: an authorisation to spend a limited amount of pursuit effort until
+     * a named condition is answered (can the HV switching contractor meet the
+     * outage dates?), with an owner, a spend cap and a kill date. It is recorded
+     * as a bid under a condition, and because it is the act that goes to resolve
+     * the condition it is not held behind the invitation being fully read.
+     */
+    conditional?: { condition: string; owner: string; spendCapMinor: number; killDate: string };
   },
-): { stage: OpportunityStage; againstRecommendation: boolean; conditions: string[]; outstandingReturns: string[] } {
+): {
+  stage: OpportunityStage;
+  againstRecommendation: boolean;
+  conditions: string[];
+  outstandingReturns: string[];
+  conditional: boolean;
+} {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'A');
 
   const record = requireOpportunity(ctx, opportunityId);
@@ -549,6 +564,25 @@ export function decideBidNoBid(
   }
   if (!input.rationale?.trim()) {
     throw new DomainError('RATIONALE_REQUIRED', 'A bid decision requires a rationale, whichever way it goes');
+  }
+
+  const conditional = input.conditional;
+  if (conditional) {
+    if (!input.bid) {
+      throw new DomainError('CONDITIONAL_REQUIRES_BID', 'A conditional commitment is a kind of bid, not a no-bid. Decide to bid, under the condition, or decline.');
+    }
+    if (!conditional.condition?.trim()) {
+      throw new DomainError('CONDITION_REQUIRED', 'A conditional bid must name the condition that limited work will resolve.');
+    }
+    if (!conditional.owner?.trim()) {
+      throw new DomainError('CONDITION_OWNER_REQUIRED', 'A conditional bid needs an owner for the limited work it authorises.');
+    }
+    if (!(conditional.spendCapMinor > 0)) {
+      throw new DomainError('CONDITION_CAP_REQUIRED', 'A conditional bid needs a spend cap on the work it authorises — an open-ended "look into it" is the thing this replaces.');
+    }
+    if (!conditional.killDate?.trim()) {
+      throw new DomainError('CONDITION_KILL_DATE_REQUIRED', 'A conditional bid needs a kill date — the point by which the condition must be answered or the pursuit stops.');
+    }
   }
 
   const stage: OpportunityStage = input.bid ? 'BID' : 'NO_BID';
@@ -579,7 +613,10 @@ export function decideBidNoBid(
     // Only where a formal invitation exists: an opportunity with no ITT (a
     // relationship bid, a framework call-off taken on the phone) has no register
     // to read and no gate to pass, exactly as before.
-    if (position.invitationId && !position.invitationRead) {
+    // A conditional bid is the act that goes to resolve the open question, so it
+    // is not held behind the invitation being fully read — that is the point of
+    // it. A full commitment to bid still is.
+    if (!conditional && position.invitationId && !position.invitationRead) {
       throw new DomainError(
         'TENDER_NOT_READ',
         `Invitation ${position.reference ?? ''} has not been read, so there is nothing recorded about what the ` +
@@ -614,6 +651,20 @@ export function decideBidNoBid(
         // or source yet. Recorded on the decision so "we will bid" is honest
         // about the planning that follows, not so it is hidden.
         ...(outstandingReturns.length > 0 ? { outstandingReturns } : {}),
+        // The conditional commitment, where this is a conditional bid: what has
+        // to be answered, who owns the limited work, the cap on it and the date
+        // the pursuit stops if the condition is not met.
+        ...(conditional
+          ? {
+              conditional: true,
+              conditionalCommitment: {
+                condition: conditional.condition.trim(),
+                owner: conditional.owner.trim(),
+                spendCapMinor: Math.round(conditional.spendCapMinor),
+                killDate: conditional.killDate.trim(),
+              },
+            }
+          : {}),
         // A re-review after an addendum supersedes rather than replaces: the
         // ledger keeps both, and this says which one this decision answers.
         supersedes: previous?.decidedAt,
@@ -621,7 +672,7 @@ export function decideBidNoBid(
     },
   });
 
-  return { stage, againstRecommendation, conditions, outstandingReturns };
+  return { stage, againstRecommendation, conditions, outstandingReturns, conditional: Boolean(conditional) };
 }
 
 // --- Convert ----------------------------------------------------------------

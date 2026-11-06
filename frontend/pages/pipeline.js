@@ -2912,6 +2912,16 @@ export async function pipeline(root) {
         { name: 'rationale', label: 'Why', type: 'textarea', rows: 3,
           hint: 'Required whichever way it goes. This is what the calibration is read against when the outcome comes ' +
             'back, so "the numbers said so" is not an answer.' },
+        { name: 'conditionalBid', label: 'Conditional — authorise limited work to a condition', type: 'checkbox', required: false,
+          hint: 'Tick with "we are bidding" when the go-ahead is limited: a named question must be answered before a full commitment. Fill the four fields below. Leave unticked for a full bid.' },
+        { name: 'condition', label: 'The condition to resolve', type: 'textarea', rows: 2, required: false,
+          hint: 'What limited work will answer — "can an approved HV switching contractor meet the outage dates?".' },
+        { name: 'conditionOwner', label: 'Owner of the limited work', type: 'text', required: false,
+          hint: 'Who runs the investigation. The person or office, not the system.' },
+        { name: 'spendCap', label: 'Spend cap on it (£)', type: 'number', money: true, required: false,
+          hint: 'The most this pursuit may cost before a full decision. An open-ended "look into it" is what this replaces.' },
+        { name: 'killDate', label: 'Kill date', type: 'date', required: false,
+          hint: 'The date the condition must be answered by, or the pursuit stops.' },
         { name: 'conditions', label: 'Conditions', type: 'textarea', rows: 2, required: false,
           hint: 'One per line — "provided the liquidated damages are capped". Recorded with the decision and reported ' +
             'against it.' },
@@ -2922,11 +2932,21 @@ export async function pipeline(root) {
           hint: 'The scheme of delegation, board minute or policy it comes from.' },
         { name: 'limitMinor', label: 'The limit that authority carries', type: 'number', money: true, required: false },
       ],
-      transform: ({ bid, rationale, conditions, delegatedTo, authorityReference, limitMinor }) => ({
+      transform: ({ bid, rationale, conditions, delegatedTo, authorityReference, limitMinor, conditionalBid, condition, conditionOwner, spendCap, killDate }) => ({
         bid: bid === true,
         rationale: String(rationale ?? '').trim(),
         ...(String(conditions ?? '').trim()
           ? { conditions: String(conditions).split('\n').map((line) => line.trim()).filter(Boolean) }
+          : {}),
+        ...(conditionalBid === true
+          ? {
+              conditional: {
+                condition: String(condition ?? '').trim(),
+                owner: String(conditionOwner ?? '').trim(),
+                spendCapMinor: Math.round(Number(spendCap ?? 0)),
+                killDate: String(killDate ?? '').trim(),
+              },
+            }
           : {}),
         ...(String(delegatedTo ?? '').trim()
           ? {
@@ -4505,7 +4525,13 @@ export async function pipeline(root) {
      */
     if (button.dataset.command === 'decide') {
       const outstanding = result.outstandingReturns ?? [];
-      if (result.stage === 'BID') {
+      if (result.conditional) {
+        toast(
+          'Conditional bid recorded',
+          'Limited work is authorised to the condition, under its owner, spend cap and kill date. It becomes a full commitment once the condition is met and you decide again.',
+          'ok',
+        );
+      } else if (result.stage === 'BID') {
         toast(
           outstanding.length > 0 ? 'Bid recorded — returns still to assign' : 'Bid recorded',
           outstanding.length > 0

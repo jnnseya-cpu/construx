@@ -4537,6 +4537,21 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The conditional bid — the third decision.** Beyond bid and no-bid, a bidder
+often wants to commit *limited* effort to resolve a hard-stop before a full
+commitment: "spend two days establishing whether an approved HV switching
+contractor can meet the outage dates." `decideBidNoBid` takes an optional
+`conditional` — a condition, an owner, a spend cap and a kill date — recorded on
+the decision as `conditional: true` with its `conditionalCommitment`. It is a kind
+of bid (refused on a no-bid, `CONDITIONAL_REQUIRES_BID`), each field is required
+(`CONDITION_*` errors — in particular no open-ended commitment: the cap must be
+positive), and because it is the act that goes to resolve the open question it is
+**not** held behind the invitation being fully read, unlike a full commitment. The
+`decide` command carries a "Conditional — authorise limited work to a condition"
+tick with the four fields, and confirms with a toast that says it becomes a full
+commitment once the condition is met and the decision is taken again
+(`business.ts`, `routes.ts`, `frontend/pages/pipeline.js`; `tenderintake.test.ts`).
+
 **The decision to bid is a commercial go/no-go, not a production sign-off.**
 `decideBidNoBid` used to refuse a "bid" decision until every mandatory return on
 the invitation had an owner, an internal date and a source — so a bid manager
