@@ -16069,6 +16069,14 @@ live ones, so a tender opened on purpose still shows its own matrix). The list
 falls back to showing everything only when no tender has a matrix bound at all,
 so the first-analysis safety holds without re-showing a closed one.
 
+Hidden is not lost. "Compliance matrices on file" carries a collapsed **"Show N
+superseded or closed-tender matrices"** panel listing every analysis not in the
+live list — the superseded fragments and the matrices on closed/won/lost tenders,
+including a reading confirmed onto the wrong tender by mistake — each with an
+**Open** that loads the same matrix detail as a live one. A matrix hidden from the
+working list can still be retrieved and read; it is removed from the clutter, not
+from reach (`frontend/pages/pipeline.js`).
+
 **One tender per page.** The reader, the response packs and the red team on the
 lower half of the Pipeline screen were already scoped to the project selected in
 the session — writing a section spends that project's ACUs, so they could be

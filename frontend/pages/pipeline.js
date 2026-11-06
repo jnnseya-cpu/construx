@@ -1148,6 +1148,12 @@ export async function pipeline(root) {
   const liveAnalyses =
     boundAnalysisIds.size === 0 ? allAnalyses : allAnalyses.filter((a) => liveAnalysisIds.has(a.analysisId));
   const supersededAnalyses = allAnalyses.length - liveAnalyses.length;
+  // The matrices not shown in the live list — superseded fragments, and matrices
+  // bound to a closed, won or lost tender. Kept so a person can still open and
+  // read one (the reading confirmed onto the wrong tender by mistake is in here),
+  // rather than it being hidden with no way back to it.
+  const liveAnalysisSet = new Set(liveAnalyses.map((a) => a.analysisId));
+  const hiddenAnalyses = allAnalyses.filter((a) => !liveAnalysisSet.has(a.analysisId));
 
   /*
    * One tender per page.
@@ -1920,6 +1926,38 @@ export async function pipeline(root) {
             ? 'This tender has not been read into a matrix yet. Read the invitation above, and its matrix appears here.'
             : 'No invitation has been analysed yet',
         })}
+        ${
+          /*
+           * The way back to a matrix that is not in the live list — a superseded
+           * fragment, or one bound to a closed, won or lost tender, including a
+           * reading confirmed onto the wrong tender by mistake. Collapsed by
+           * default so it does not clutter, but it is here, and each one opens
+           * into the same matrix detail as a live one, so nothing read is lost.
+           */
+          hiddenAnalyses.length > 0
+            ? html`<details style="padding:4px 17px 15px">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--text-2)">
+                  Show ${hiddenAnalyses.length} superseded or closed-tender ${hiddenAnalyses.length === 1 ? 'matrix' : 'matrices'} — to retrieve one read onto the wrong tender
+                </summary>
+                <div style="padding-top:8px">
+                  ${table({
+                    headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', ''],
+                    align: ['', '', '', 'num', 'num', 'num', ''],
+                    rows: hiddenAnalyses.map((a) => [
+                      a.reference,
+                      a.clientName,
+                      date(a.returnBy),
+                      a.requirements,
+                      html`<span style="${raw(a.mandatoryGaps > 0 ? 'color:var(--critical)' : '')}">${a.mandatoryGaps}</span>`,
+                      html`<span style="${raw(a.bars > 0 ? 'color:var(--critical)' : '')}">${a.bars}</span>`,
+                      html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
+                    ]),
+                    empty: 'None',
+                  })}
+                </div>
+              </details>`
+            : ''
+        }
       </div>
 
       <!-- The topbar is 54px and sticky, so scrolling this into view without a
