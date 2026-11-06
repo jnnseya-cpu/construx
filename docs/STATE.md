@@ -4537,6 +4537,18 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The returnables matrix — the day-one control, as one table.** Everything a
+returnables matrix holds was already on the record (the return register bound to
+each invitation), but a bid manager had no single list of it: the returns were
+reachable only through the "Assign a return" picker and the cross-tender "returns
+unowned" attention line. The Pipeline screen now carries a **"Returnables —
+everything that has to go back"** table: per return, the reference, what it is,
+mandatory or optional, format, owner, internal date, where in the invitation it
+comes from, and whether it still blocks the submission (and with what missing).
+It is focus-aware like the board and the matrices — the tender in focus, or every
+live tender when none is — and draws entirely from `t.returns`, adding no new
+model (`frontend/pages/pipeline.js`).
+
 **The conditional bid — the third decision.** Beyond bid and no-bid, a bidder
 often wants to commit *limited* effort to resolve a hard-stop before a full
 commitment: "spend two days establishing whether an approved HV switching

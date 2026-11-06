@@ -2012,6 +2012,62 @@ export async function pipeline(root) {
         }
       </div>
 
+      ${
+        /*
+         * The returnables matrix — the day-one control, as one table.
+         *
+         * Everything here is already on the record (the return register bound to
+         * each invitation); what was missing was the single list a bid manager
+         * works from — every return, what it is, who owns it, by when, where in
+         * the invitation it comes from, and whether it still blocks the
+         * submission. Focus-aware, like the board and the matrices above it.
+         */
+        (() => {
+          const returnTenders = visibleBoard.filter((t) => (t.returns ?? []).length > 0);
+          const total = returnTenders.reduce((n, t) => n + (t.returns ?? []).length, 0);
+          if (total === 0) return '';
+          const rows = returnTenders.flatMap((t) =>
+            (t.returns ?? []).map((d) => {
+              const missing = whatIsMissing(d);
+              const blocking = d.mandatory && missing.length > 0;
+              const dash = (v) => (v ? v : html`<span style="color:var(--critical)">—</span>`);
+              return [
+                focused ? d.reference : `${t.reference} · ${d.reference}`,
+                d.title,
+                d.mandatory ? badge('mandatory', 'bad') : badge('optional', ''),
+                d.format ? d.format : '—',
+                dash(d.owner ? humanise(d.owner) : ''),
+                dash(d.internalDueBy ? date(d.internalDueBy) : ''),
+                dash(d.source?.document ?? ''),
+                blocking
+                  ? badge(`blocks submission — ${missing.join(', ')}`, 'bad')
+                  : missing.length > 0
+                    ? badge(missing.join(', '), 'warn')
+                    : badge('ready', 'ok'),
+              ];
+            }),
+          );
+          return html`<div class="card pad0" style="margin-bottom:14px">
+            <h2 style="padding:15px 17px 0">Returnables — everything that has to go back</h2>
+            <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
+              ${focused
+                ? 'Every return on the tender you are working on'
+                : 'Every return across the live tenders'} — what it is, who owns it, your internal date, where in the
+              invitation it comes from, and whether it still blocks the submission. Assign the blocking ones with
+              <b>Assign a return</b> above.
+            </p>
+            <div style="padding:8px 0 4px">
+              ${table({
+                headers: ['Return', 'What it is', 'Type', 'Format', 'Owner', 'Our date', 'Source', 'Status'],
+                align: ['', '', '', '', '', '', '', ''],
+                rows,
+                empty: 'No returns recorded yet',
+              })}
+            </div>
+          </div>`;
+        })()
+      }
+
       <!-- The topbar is 54px and sticky, so scrolling this into view without a
            margin puts the matrix's own heading underneath it. -->
       <div id="matrix-detail" style="margin-bottom:14px;scroll-margin-top:68px"></div>
