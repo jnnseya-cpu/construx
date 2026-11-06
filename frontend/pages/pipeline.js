@@ -1283,6 +1283,24 @@ export async function pipeline(root) {
 
   const thresholds = criteria.thresholds;
   const opportunities = summary.opportunities ?? [];
+  /*
+   * Under focus, the opportunities list narrows to the one tender in focus, the
+   * same way the board and the matrices do — "why is everything listed in score
+   * an opportunity" was this table showing every pursuit in the tenancy while a
+   * bid manager was working one job. An opportunity belongs to the focus when it
+   * is tied to the focused project (as a pursuit or once converted), or carries
+   * the same reference as a tender in focus. With nothing in focus, the whole
+   * list shows, exactly as before.
+   */
+  const focusReferences = new Set(focusTenders.map((t) => t.reference).filter(Boolean));
+  const shownOpportunities = focused
+    ? opportunities.filter(
+        (o) =>
+          o.projectId === projectId ||
+          o.convertedProjectId === projectId ||
+          (o.reference && focusReferences.has(o.reference)),
+      )
+    : opportunities;
 
   /*
    * The two halves of the decision this screen is named after, and which of
@@ -2471,7 +2489,7 @@ export async function pipeline(root) {
         ${table({
           headers: ['Opportunity', 'Client', 'Value', 'Score', 'Recommended', 'Stage', 'Outcome', 'Due'],
           align: ['', '', 'num', 'num', '', '', '', ''],
-          rows: opportunities.map((o) => {
+          rows: shownOpportunities.map((o) => {
             const q = o.qualification;
             return [
               o.title,
@@ -2490,7 +2508,9 @@ export async function pipeline(root) {
               o.submissionDueAt ? date(o.submissionDueAt) : '—',
             ];
           }),
-          empty: 'No opportunities registered',
+          empty: focused
+            ? 'No opportunity is tied to the tender in focus. Show all tenders to see every pursuit.'
+            : 'No opportunities registered',
         })}
       </div>
 

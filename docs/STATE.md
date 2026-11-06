@@ -16137,6 +16137,15 @@ than the tenant-wide "record one first" that would be a lie. Off focus the
 `scoped*` lists are the originals unchanged, so nothing about the unfocused screen
 moves.
 
+The **Opportunities** table narrows under focus too — "why is everything listed
+in score an opportunity" was that table showing every pursuit in the tenancy while
+a bid manager worked one job. An opportunity belongs to the focus when it is tied
+to the focused project (`o.projectId`, or `o.convertedProjectId` once it became a
+project) or carries the same reference as a tender in focus (`shownOpportunities`,
+`frontend/pages/pipeline.js`). The focused empty state says no pursuit is tied to
+the tender in focus and points at **Show all tenders**; off focus the whole list
+shows unchanged.
+
 **A graded accreditation is matched by its tier, not waved through.** Constructionline
 is tiered — Gold is the full prequalification a highways framework demands, Silver
 is not — and the evidence probe matched it tier-blind, so a "Constructionline Gold"
