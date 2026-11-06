@@ -3988,6 +3988,9 @@ export const ROUTES: Route[] = [
           },
           additionalProperties: false,
         },
+        // One-director business: owners default to the owner rather than a role
+        // per category.
+        singleOwnerBids: { type: 'boolean' },
       },
       additionalProperties: false,
     },
@@ -4757,6 +4760,31 @@ export const ROUTES: Route[] = [
         tenantContext(platform, ctx),
         ctx.params.invitationId as string,
         body(ctx) as Parameters<typeof tenderintake.assignDeliverable>[2],
+      ),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/pipeline/tenders/:invitationId/deliverables/assign-all',
+    description: 'Fill the owner, internal date and source on every mandatory return still missing one, in one act',
+    schema: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', enum: TENANT_GRANTABLE_ROLES },
+        internalDueBy: stringField,
+        source: {
+          type: 'object',
+          required: ['document'],
+          properties: { document: stringField, clause: { type: 'string' }, page: { type: 'integer', minimum: 1 } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      tenderintake.assignDeliverablesBulk(
+        tenantContext(platform, ctx),
+        ctx.params.invitationId as string,
+        body(ctx) as Parameters<typeof tenderintake.assignDeliverablesBulk>[2],
       ),
   },
   {

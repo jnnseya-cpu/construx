@@ -71,6 +71,14 @@ export type CompanyProfile = {
   targetMarginPercent: { min: number; max: number };
   /** Sites the business can run at once, and how many are already committed. */
   capacity: { concurrentProjects: number; committedProjects: number };
+  /**
+   * One-director business: every requirement and every return belongs to the
+   * owner, because there is one person wearing all the hats. With it set, the
+   * compliance matrix stops suggesting a role per category (QS, EPC, Safety…)
+   * that reads as work going to people who do not exist, and defaults the owner
+   * to OWNER instead. Absent is treated as a normal multi-role firm.
+   */
+  singleOwnerBids?: boolean;
 };
 
 export type OpportunityRequirements = {

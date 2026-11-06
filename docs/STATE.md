@@ -4605,6 +4605,29 @@ reason and owner) and **Approve the price** (under a named authority and its
 limit). All reuse the existing routes; no engine change
 (`frontend/pages/procurement.js`).
 
+**One-director business, and clearing the register in one act.** Two fixes for a
+solo-director tenancy, where the role-per-owner model reads as work going to people
+who do not exist and assigning returns one modal at a time is the busywork the
+platform exists to remove.
+
+- **One-director mode.** The company profile gains `singleOwnerBids`. With it set,
+  `analyseITT` defaults every matrix line's owner to `OWNER` instead of the
+  role-per-category suggestion (QS, EPC, Safety…), and `complianceMatrix` applies
+  the same override **on read** — so it is retroactive on an existing matrix and
+  reversible, the ledger keeping what was computed while the view reflects current
+  policy, exactly as the status column is already re-derived. A toggle on the
+  company facts form ("One-director business — every requirement and return is
+  mine") sets it (`radar.ts`, `itt.ts`, `routes.ts`, `frontend/pages/pipeline.js`).
+- **Clear every blocking return at once.** `assignDeliverablesBulk` fills the
+  owner, internal date and source on every mandatory return still missing one, in
+  a single event — touching only what is missing, so a return deliberately given a
+  different owner or date is left alone. The **source defaults to the invitation
+  itself**: these returns were read *out of* the invitation, so "where in the
+  invitation it comes from" is the invitation — never the bidder's to invent. A
+  "Clear all N blocking returns" button on the Returnables card drives it; it
+  refuses when nothing is missing (`tenderintake.ts`, `routes.ts`,
+  `frontend/pages/pipeline.js`). Covered in `itt.test.ts` and `tenderintake.test.ts`.
+
 **The returnables matrix — the day-one control, as one table.** Everything a
 returnables matrix holds was already on the record (the return register bound to
 each invitation), but a bid manager had no single list of it: the returns were

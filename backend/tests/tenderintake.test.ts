@@ -946,3 +946,53 @@ describe('tender intake · the board and the event catalogue', () => {
     assert.equal(lookupEventType('BID_NO_BID_DECIDED')!.aiAllowed, false);
   });
 });
+
+// ── Bulk-fill the return register — the one-director path ─────────────────────
+describe('tender intake · assigning every blocking return at once', () => {
+  it('fills owner, date and source on the mandatory returns still missing one, defaulting source to the invitation', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    // Three bare mandatory returns and one optional one.
+    extract(ctx, invitationId, [
+      { reference: 'R-01', title: 'Procurement questionnaire', mandatory: true },
+      { reference: 'R-02', title: 'Non-collusion certificate', mandatory: true },
+      { reference: 'R-03', title: 'Pricing schedule', mandatory: true },
+      { reference: 'R-04', title: 'Nice to have', mandatory: false },
+    ]);
+
+    const result = tenderintake.assignDeliverablesBulk(ctx, invitationId, {
+      owner: 'OWNER',
+      internalDueBy: '2027-01-10',
+      // No source given — it must default to the invitation these were read from.
+    });
+    assert.equal(result.assigned, 3, 'the three blocking mandatory returns were not all filled');
+    assert.deepEqual(result.blockers, [], 'the register still blocks after a bulk fill');
+
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    const r1 = position.returns.find((d) => d.reference === 'R-01')!;
+    assert.equal(r1.owner, 'OWNER');
+    assert.equal(r1.internalDueBy, '2027-01-10');
+    assert.match(String(r1.source?.document ?? ''), /Invitation to tender/);
+    // The optional return is left untouched — no owner invented for it.
+    const r4 = position.returns.find((d) => d.reference === 'R-04')!;
+    assert.equal(r4.owner, undefined);
+  });
+
+  it('leaves a return that already has an owner and date alone, and refuses when nothing is missing', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [complete('D-01', 'Already complete'), { reference: 'D-02', title: 'Bare', mandatory: true }]);
+
+    const result = tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' });
+    assert.equal(result.assigned, 1, 'the already-complete return was touched');
+
+    const position = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    // The complete one kept the owner it was given, not overwritten with OWNER.
+    assert.equal(position.returns.find((d) => d.reference === 'D-01')!.owner, 'QS');
+
+    throwsCode(
+      () => tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' }),
+      'NOTHING_TO_ASSIGN',
+    );
+  });
+});

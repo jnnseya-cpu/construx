@@ -677,6 +677,11 @@ export function analyseITT(
     value === undefined ? undefined : Math.round(value * ((input.targetMarginPercent ?? profile.targetMarginPercent.min) / 100));
 
   // --- The matrix -----------------------------------------------------------
+  // A one-director business has one person wearing every hat, so the role-per-
+  // category suggestion reads as work going to people who do not exist. With the
+  // flag set, every line's owner defaults to OWNER instead.
+  const ownerFor = (category: RequirementCategory): Role =>
+    profile.singleOwnerBids ? 'OWNER' : OWNER_BY_CATEGORY[category];
   const matrix: MatrixLine[] = input.requirements.map((requirement) => {
     // A requirement the platform cannot probe is UNKNOWN, not a gap. Marking it
     // a gap would bury the real gaps under everything nobody automated.
@@ -688,7 +693,7 @@ export function analyseITT(
       requirement: requirement.requirement,
       mandatory: requirement.mandatory,
       weightingPercent: requirement.weightingPercent,
-      owner: OWNER_BY_CATEGORY[requirement.category],
+      owner: ownerFor(requirement.category),
       evidenceRequired: requirement.evidenceRequired,
       evidenceHeld: probed.evidenceHeld,
       status: probed.status,
@@ -1076,6 +1081,11 @@ export function complianceMatrix(ctx: EngineContext, analysisId: string): Stored
     // unchanged profile is byte-for-byte what was written.
     const next: MatrixLine = { ...line, status: probed.status };
     if (probed.evidenceHeld !== undefined) next.evidenceHeld = probed.evidenceHeld;
+    // A one-director business sees every line owned by the owner, whatever the
+    // stored role-per-category suggestion was. Applied on read so it is retroactive
+    // and reversible — the ledger keeps what was computed, the view reflects the
+    // business's current policy — the same way the status column is re-derived.
+    if (profile.singleOwnerBids) next.owner = 'OWNER';
     return next;
   });
 

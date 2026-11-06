@@ -767,6 +767,91 @@ export function assignDeliverable(
 }
 
 /**
+ * Fill the three things a mandatory return needs — an owner, our internal date
+ * and a source in the invitation — across every return still missing one, in a
+ * single act.
+ *
+ * For a one-director business, assigning seventeen returns one modal at a time
+ * is the busywork that turns "frictionless for busy people" into a lie. This
+ * fills only what is *missing* on each mandatory, still-blocking return, so a
+ * deliverable somebody deliberately gave a different owner or date is left
+ * exactly as it was. The source defaults to the invitation itself: these returns
+ * were read *out of* the invitation, so "where in the invitation it comes from"
+ * is the invitation — a bidder should never have to invent that.
+ */
+export function assignDeliverablesBulk(
+  ctx: EngineContext,
+  invitationId: string,
+  input: { owner?: Role; internalDueBy?: string; source?: SourceAnchor },
+): { assigned: number; blockers: string[] } {
+  authorise(ctx, 'ESTIMATE_TENDER', 'U', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireInvitation(ctx, invitationId);
+  const existing = (record.state.deliverables as TenderDeliverable[] | undefined) ?? [];
+  if (existing.length === 0) {
+    throw new DomainError(
+      'NO_DELIVERABLES',
+      'Nothing is recorded about what the submission has to contain yet — read the invitation or add the return items first.',
+    );
+  }
+
+  // The source a return was read from is the invitation. Where the caller gives
+  // one, use it; otherwise name the invitation by its own reference, so the
+  // "source" that was never anybody's to invent is filled from what is known.
+  const defaultSource: SourceAnchor =
+    input.source ?? { document: `Invitation to tender ${String(record.state.reference ?? '')}`.trim() };
+
+  const returnDeadline = deadlineInForce(record.state);
+  const clarifications = [...((record.state.clarifications as Clarification[] | undefined) ?? [])];
+
+  let assigned = 0;
+  const deliverables = existing.map((deliverable) => {
+    // Only mandatory returns still missing one of the three. An optional return,
+    // or a mandatory one already complete, is left exactly as it is.
+    if (!deliverable.mandatory) return deliverable;
+    const needsOwner = !deliverable.owner;
+    const needsDate = !deliverable.internalDueBy;
+    const needsSource = !deliverable.source;
+    if (!needsOwner && !needsDate && !needsSource) return deliverable;
+
+    const next: TenderDeliverable = {
+      ...deliverable,
+      ...(needsOwner && input.owner ? { owner: input.owner } : {}),
+      ...(needsDate && input.internalDueBy ? { internalDueBy: input.internalDueBy } : {}),
+      ...(needsSource ? { source: defaultSource } : {}),
+    };
+    // Only count it as assigned where something actually changed — a return that
+    // needed an owner but none was supplied is not cleared by a no-op.
+    if (next !== deliverable && JSON.stringify(next) !== JSON.stringify(deliverable)) assigned += 1;
+
+    if (next.internalDueBy && `${next.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
+      clarifications.push({
+        severity: 'CRITICAL',
+        subject: `${next.reference} is due after the return`,
+        question: `${next.title} carries an internal date of ${next.internalDueBy}, which is after the return deadline of ${readable(returnDeadline.local)}. The internal date has to move.`,
+      });
+    }
+    return next;
+  });
+
+  if (assigned === 0) {
+    throw new DomainError(
+      'NOTHING_TO_ASSIGN',
+      'Every mandatory return already has an owner, an internal date and a source. There is nothing to fill.',
+    );
+  }
+
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'TENDER_DELIVERABLE_ASSIGNED',
+    entity: { refType: 'TenderInvitation', refId: invitationId },
+    nextState: { ...record.state, deliverables, clarifications },
+  });
+
+  return { assigned, blockers: deliverableBlockers(deliverables) };
+}
+
+/**
  * `AC-T-WF-01-01`, stated as the list of reasons a bid cannot yet be approved.
  *
  * Source, owner and internal date, on every **mandatory** deliverable. Not on

@@ -1177,3 +1177,32 @@ describe('Merging readings into one matrix per tender', () => {
     assert.deepEqual(combined.matrix.map((l) => l.reference).sort(), ['MAND-01', 'MAND-02', 'SV-01']);
   });
 });
+
+// ── One-director business ─────────────────────────────────────────────────────
+describe('a one-director business owns every line itself', () => {
+  it('defaults matrix owners to OWNER instead of a role per category when the flag is set', () => {
+    const current = radar.companyProfile(qs());
+    try {
+      // Off: the role-per-category suggestion stands — a commercial line is the QS's.
+      radar.setCompanyProfile(qs(), { ...current, singleOwnerBids: false });
+      const byCategory = analyse({
+        requirements: [requirement({ reference: 'C-01', category: 'COMMERCIAL', requirement: '30-day payment terms' })],
+      });
+      assert.equal(byCategory.matrix[0]!.owner, 'QS');
+
+      // On: the same line belongs to the owner, because there is one person.
+      radar.setCompanyProfile(qs(), { ...current, singleOwnerBids: true });
+      const written = analyse({
+        requirements: [requirement({ reference: 'C-02', category: 'COMMERCIAL', requirement: '30-day payment terms' })],
+      });
+      assert.equal(written.matrix[0]!.owner, 'OWNER');
+
+      // And it is retroactive on read: the by-category matrix written while the
+      // flag was off now shows OWNER too, without rewriting the ledger.
+      const reread = itt.complianceMatrix(qs(), byCategory.analysisId);
+      assert.equal(reread.matrix[0]!.owner, 'OWNER');
+    } finally {
+      radar.setCompanyProfile(qs(), current);
+    }
+  });
+});

@@ -2047,14 +2047,20 @@ export async function pipeline(root) {
               ];
             }),
           );
+          const blocking = returnTenders.reduce(
+            (n, t) => n + (t.returns ?? []).filter((d) => d.mandatory && whatIsMissing(d).length > 0).length,
+            0,
+          );
           return html`<div class="card pad0" style="margin-bottom:14px">
             <h2 style="padding:15px 17px 0">Returnables — everything that has to go back</h2>
             <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
               ${focused
                 ? 'Every return on the tender you are working on'
                 : 'Every return across the live tenders'} — what it is, who owns it, your internal date, where in the
-              invitation it comes from, and whether it still blocks the submission. Assign the blocking ones with
-              <b>Assign a return</b> above.
+              invitation it comes from, and whether it still blocks the submission.
+              ${blocking > 0
+                ? html`${blocking} still ${blocking === 1 ? 'blocks' : 'block'} the submission — clear them all at once below, or one at a time with <b>Assign a return</b> above.`
+                : 'Every mandatory return is owned, dated and sourced.'}
             </p>
             <div style="padding:8px 0 4px">
               ${table({
@@ -2064,6 +2070,21 @@ export async function pipeline(root) {
                 empty: 'No returns recorded yet',
               })}
             </div>
+            ${blocking > 0
+              ? html`<div class="actions" style="padding:0 17px 15px">
+                  ${raw(
+                    commandBar([
+                      {
+                        id: 'assign-all-returns',
+                        label: `Clear all ${blocking} blocking ${blocking === 1 ? 'return' : 'returns'}`,
+                        tone: 'primary',
+                        permitted: can('ESTIMATE_TENDER', 'U'),
+                        reason: blockedReason('ESTIMATE_TENDER', 'U'),
+                      },
+                    ]),
+                  )}
+                </div>`
+              : ''}
           </div>`;
         })()
       }
@@ -3545,6 +3566,32 @@ export async function pipeline(root) {
       }),
     },
 
+    'assign-all-returns': {
+      title: 'Assign every blocking return',
+      intent:
+        'Fills the owner, our internal date and the source on every mandatory return still missing one — in a single ' +
+        'act rather than a form each. It touches only what is missing, so a return you deliberately gave a different ' +
+        'owner or date is left as it is. The source defaults to the invitation itself: these returns were read out of ' +
+        'it, so "where in the invitation it comes from" is the invitation — never yours to invent.',
+      path: (v) => `/v1/pipeline/tenders/${v.invitationId}/deliverables/assign-all`,
+      submitLabel: 'Assign them all',
+      fields: [
+        { name: 'invitationId', label: 'Tender', type: 'select', options: scopedInvitationOptions },
+        { name: 'owner', label: 'Owner for all of them', type: 'select', options: roleOptions, value: 'OWNER',
+          hint: 'For a one-director business this is you. Any return that already has an owner keeps it.' },
+        { name: 'internalDueBy', label: 'Our internal date for all of them', type: 'date', required: false,
+          hint: 'Earlier than the buyer’s return. Any return that already has a date keeps it.' },
+        { name: 'sourceDocument', label: 'Source document', type: 'text', required: false,
+          placeholder: 'Leave blank to use the invitation',
+          hint: 'Left blank, the source is the invitation these returns were read from — which is the honest answer.' },
+      ],
+      transform: (v) => ({
+        ...(v.owner ? { owner: v.owner } : {}),
+        ...(v.internalDueBy ? { internalDueBy: v.internalDueBy } : {}),
+        ...(String(v.sourceDocument ?? '').trim() ? { source: { document: String(v.sourceDocument).trim() } } : {}),
+      }),
+    },
+
     addendum: {
       title: 'Record an addendum',
       intent:
@@ -4467,6 +4514,9 @@ export async function pipeline(root) {
         },
         { name: 'marginMin', label: 'Target margin, minimum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.min ?? '' },
         { name: 'marginMax', label: 'Target margin, maximum (%)', type: 'number', required: false, value: held?.targetMarginPercent?.max ?? '' },
+        { name: 'singleOwnerBids', label: 'One-director business — every requirement and return is mine', type: 'checkbox', required: false,
+          value: !!held?.singleOwnerBids,
+          hint: 'Tick it and the compliance matrix stops suggesting a role per category (QS, EPC, Safety…) that reads as work going to people who do not exist — every owner defaults to the owner instead.' },
       ],
       transform: (v) => {
         const money = (x) => Math.round(Number(x || 0) * 100);
@@ -4514,6 +4564,7 @@ export async function pipeline(root) {
           selfDeliveredTrades: list(v.trades),
           targetMarginPercent: { min: Number(v.marginMin || 0), max: Number(v.marginMax || 0) },
           capacity: { concurrentProjects: Number(v.concurrent || 0), committedProjects: Number(v.committed || 0) },
+          ...(v.singleOwnerBids === true ? { singleOwnerBids: true } : {}),
         };
       },
     });
