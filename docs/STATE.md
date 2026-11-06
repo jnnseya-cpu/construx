@@ -4537,6 +4537,22 @@ written to an append-only ledger. They are **mapped, not renamed** — renaming
 orphans every record carrying the old name — and a test asserts the mapping so
 it stays readable.
 
+**The settlement pack, on one screen.** The settlement engine was complete —
+`openSettlement`, `recordAdjustment`, `raiseAction`/`settleAction`,
+`approveBidProgramme`, `approveSettlement`, with `settlementPosition` assembling
+the cost-to-price `bridge`, the adjustments by category, the actions and whether
+the price and programme share a cut-off — and it had **no screen**. The estimating
+screen now carries a **"The settlement pack"** card that puts the four things an
+approver signs against in one place: the bridge (pre-settlement → adjustments →
+settled price, reconciled), the **risk held as contingency** (the P80 from the
+register), the **contract departures** the submission carries (from
+`awardPosition`, with any outstanding flagged), and whether the programme shares
+the price's cut-off, plus the conditions carried and actions open. Three doors
+drive it — **Open the settlement**, **Move the price** (signed, with category,
+reason and owner) and **Approve the price** (under a named authority and its
+limit). All reuse the existing routes; no engine change
+(`frontend/pages/procurement.js`).
+
 **The returnables matrix — the day-one control, as one table.** Everything a
 returnables matrix holds was already on the record (the return register bound to
 each invitation), but a bid manager had no single list of it: the returns were

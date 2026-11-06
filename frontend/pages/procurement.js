@@ -275,7 +275,7 @@ export async function procurement(root) {
   // built on, the price history to check it against, the trade catalogue, where
   // coverage is too thin to compete, the frameworks already held, what a tender
   // review found, and what has actually converted.
-  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow, contingency] = await Promise.all([
+  const [costHeads, costIntel, trades, coverage, frameworks, reviews, awards, units, calibration, lessons, boq, ingestion, perception, flow, contingency, settlements] = await Promise.all([
     api.get('/v1/tender/cost-heads').catch((error) => ({ error })),
     api.read('/v1/cost-intelligence', 'ESTIMATE_TENDER').catch((error) => ({ error })),
     api.get('/v1/supply-chain/trades').catch((error) => ({ error })),
@@ -310,6 +310,10 @@ export async function procurement(root) {
     // the top drivers. Held beside the base estimate, counted once, so a
     // contingency can be defended line by line rather than taken as a percentage.
     api.read(`/v1/projects/${projectId}/risk/contingency`, 'RISK_REGISTER').catch((error) => ({ error })),
+    // The settlement: the cost-to-price bridge, the actions carried as conditions
+    // and whether the price and the programme share a cut-off. Assembled with the
+    // risk exposures and the award departures into one settlement pack below.
+    api.read(`/v1/projects/${projectId}/settlements`, 'ESTIMATE_TENDER', 'COMMERCIAL_L3').catch((error) => ({ error })),
   ]);
 
   const b = await entityBundle(projectId, [
@@ -1631,6 +1635,93 @@ export async function procurement(root) {
 
       ${
         /*
+         * The settlement pack, on one screen.
+         *
+         * The engine was complete and had no screen: open the meeting, move the
+         * price with a reason and an owner, carry what is unresolved as a stated
+         * condition, approve under a named authority. This assembles the four
+         * things a settlement approver needs in front of them at once — the
+         * cost-to-price bridge, the risk exposures held as contingency, the
+         * contract departures the submission will carry, and the sign-off — so the
+         * decision is taken against the whole position rather than four screens.
+         */
+        settlements?.error
+          ? ''
+          : (() => {
+              const list = settlements?.settlements ?? [];
+              const current = list.at(-1);
+              const departures = (awards?.packs ?? []).flatMap((p) => p.departures ?? []);
+              const departuresOutstanding = (awards?.packs ?? []).reduce((n, p) => n + (p.departuresOutstanding ?? 0), 0);
+              const open = current && current.status === 'OPEN';
+              return html`<div class="card pad0" style="margin-bottom:14px">
+                <div style="padding:15px 17px">
+                  <h2>The settlement pack</h2>
+                  <div class="metric-sub" style="margin-bottom:11px">
+                    ${settlements?.summary ?? 'No settlement opened yet.'} Everything an approver signs against, in one
+                    place: the bridge from cost to price, the risk held as contingency, the departures the submission
+                    carries, and the authority the price goes out under.
+                  </div>
+                  ${current
+                    ? html`<div class="split-list">
+                        <div class="row"><span class="lbl">Pre-settlement</span><span class="val">${money(current.bridge.preSettlementMinor)}</span></div>
+                        <div class="row"><span class="lbl">Adjustments (${current.bridge.adjustments.length})</span><span class="val">${money(current.bridge.adjustmentTotalMinor)}</span></div>
+                        <div class="row"><span class="lbl"><b>Settled price</b></span><span class="val"><b style="color:var(--orange)">${money(current.bridge.postSettlementMinor)}</b></span></div>
+                        <div class="row"><span class="lbl">Risk contingency (P80)</span><span class="val">${money(contingency?.p80Minor ?? 0)}</span></div>
+                        <div class="row"><span class="lbl">Contract departures</span><span class="val">${departures.length}${departuresOutstanding > 0 ? raw(` ${badge(`${departuresOutstanding} outstanding`, 'bad')}`) : ''}</span></div>
+                        <div class="row"><span class="lbl">Programme shares the price’s cut-off</span><span class="val">${current.programmeAligned === null ? '—' : current.programmeAligned ? raw(badge('yes', 'ok')) : raw(badge('no', 'warn'))}</span></div>
+                        <div class="row"><span class="lbl">Conditions carried to the submission</span><span class="val">${(current.conditions ?? []).length}</span></div>
+                        <div class="row"><span class="lbl">Actions open</span><span class="val">${current.actions.open}</span></div>
+                        ${current.finalPriceMinor !== undefined
+                          ? html`<div class="row"><span class="lbl"><b>Approved price</b></span><span class="val"><b>${money(current.finalPriceMinor)}</b></span></div>`
+                          : ''}
+                      </div>
+                      ${current.bridge.adjustments.length > 0
+                        ? table({
+                            headers: ['Category', 'Reason', 'Owner', 'Amount'],
+                            align: ['', '', '', 'num'],
+                            rows: current.bridge.adjustments.map((a) => [a.category, a.reason, a.owner, money(a.amountMinor)]),
+                          })
+                        : ''}
+                      ${departures.length > 0
+                        ? html`<div class="metric-sub" style="margin-top:10px"><b>Departures the submission carries:</b>
+                            ${departures.slice(0, 6).map((d) => d.summary ?? d.topic ?? '').filter(Boolean).join('; ')}</div>`
+                        : ''}`
+                    : html`<div class="empty"><b>No settlement opened</b>Freeze the pre-settlement position and open the
+                        meeting to move the price, carry conditions and approve it under a named authority.</div>`}
+                  <div class="actions" style="margin-top:12px">
+                    ${raw(
+                      commandBar([
+                        {
+                          id: 'open-settlement',
+                          label: 'Open the settlement',
+                          permitted: can('ESTIMATE_TENDER', 'C') && !!estimate,
+                          reason: !estimate
+                            ? 'Price the bill first — a settlement is opened against an estimate.'
+                            : blockedReason('ESTIMATE_TENDER', 'C'),
+                        },
+                        {
+                          id: 'settlement-adjustment',
+                          label: 'Move the price',
+                          permitted: can('ESTIMATE_TENDER', 'U') && !!open,
+                          reason: !open ? 'Open a settlement first.' : blockedReason('ESTIMATE_TENDER', 'U'),
+                        },
+                        {
+                          id: 'approve-settlement',
+                          label: 'Approve the price',
+                          tone: 'primary',
+                          permitted: can('ESTIMATE_TENDER', 'A') && !!open,
+                          reason: !open ? 'Open a settlement first.' : blockedReason('ESTIMATE_TENDER', 'A'),
+                        },
+                      ]),
+                    )}
+                  </div>
+                </div>
+              </div>`;
+            })()
+      }
+
+      ${
+        /*
          * The bill, and the door that prices it.
          *
          * Both engines existed and neither had a screen: `runTakeoff` wrote
@@ -2681,6 +2772,92 @@ export async function procurement(root) {
         // where there is one, with a sensible fallback where there is not.
         projectValueMinor: Number(estimate?.totalMinor ?? 0),
         projectDurationDays: Math.max(1, Math.round(Number(estimate?.durationWeeks ?? 26) * 7)),
+      }),
+    },
+    'open-settlement': {
+      title: 'Open the settlement',
+      intent:
+        'Freezes the pre-settlement position — the estimate total as it stands — and opens the meeting. From here the ' +
+        'price is moved with a reason and an owner, what cannot be closed is carried as a stated condition, and the ' +
+        'result is approved under a named authority.',
+      path: `/v1/projects/${projectId}/settlements`,
+      submitLabel: 'Open it',
+      fields: [
+        { name: 'estimateId', label: 'Estimate', type: 'select',
+          options: b.Estimate.map((e) => ({ value: String(e.id), label: `${e.reference ?? e.id} · ${money(e.totalMinor ?? 0)}` })) },
+        { name: 'informationAt', label: 'Information cut-off', type: 'date',
+          hint: 'The revision of the information the price is settled against — so the price and the programme can be checked to share it.' },
+        { name: 'addendum', label: 'Against addendum', type: 'text', required: false,
+          hint: 'The last addendum reflected, where one applies.' },
+      ],
+      transform: (v) => ({
+        estimateId: v.estimateId,
+        cutOff: { informationAt: String(v.informationAt ?? ''), ...(String(v.addendum ?? '').trim() ? { addendum: String(v.addendum).trim() } : {}) },
+      }),
+    },
+    'settlement-adjustment': {
+      title: 'Move the price',
+      intent:
+        'Every movement carries a category, a reason and the person who decided it — taking money out of a price is the ' +
+        'commonest thing that happens in this meeting, so the amount is signed. Supplier, scope and benchmark ' +
+        'corrections point at a document; the judgements taken in the room do not.',
+      path: (v) => `/v1/projects/${projectId}/settlements/${v.settlementId}/adjustments`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'settlementId', label: 'Settlement', type: 'select',
+          options: (settlements?.settlements ?? []).filter((s) => s.status === 'OPEN').map((s) => ({ value: s.settlementId, label: s.reference })) },
+        { name: 'category', label: 'Category', type: 'select',
+          options: [
+            { value: 'SUPPLIER_PRICE', label: 'Supplier price (needs evidence)' },
+            { value: 'SCOPE_CORRECTION', label: 'Scope correction (needs evidence)' },
+            { value: 'BENCHMARK_CORRECTION', label: 'Benchmark correction (needs evidence)' },
+            { value: 'RISK_ALLOWANCE', label: 'Risk allowance' },
+            { value: 'CONTINGENCY', label: 'Contingency' },
+            { value: 'INFLATION', label: 'Inflation' },
+            { value: 'MARGIN', label: 'Margin' },
+            { value: 'COMMERCIAL_OPPORTUNITY', label: 'Commercial opportunity' },
+          ] },
+        { name: 'amountMinor', label: 'Amount (£, negative to take out)', type: 'number', money: true,
+          hint: 'Signed. A reduction is negative.' },
+        { name: 'reason', label: 'Reason', type: 'textarea', rows: 2 },
+        { name: 'owner', label: 'Decided by', type: 'text' },
+      ],
+      transform: (v) => ({
+        category: v.category,
+        amountMinor: Math.round(Number(v.amountMinor ?? 0)),
+        reason: String(v.reason ?? '').trim(),
+        owner: String(v.owner ?? '').trim(),
+      }),
+    },
+    'approve-settlement': {
+      title: 'Approve the price',
+      intent:
+        'The settled price goes out under a named authority and within its limit. The cost-to-price bridge, the risk ' +
+        'contingency and the departures the submission carries are on the screen behind this — the approval is taken ' +
+        'against the whole position.',
+      path: (v) => `/v1/projects/${projectId}/settlements/${v.settlementId}/approve`,
+      submitLabel: 'Approve',
+      fields: [
+        { name: 'settlementId', label: 'Settlement', type: 'select',
+          options: (settlements?.settlements ?? []).filter((s) => s.status === 'OPEN').map((s) => ({ value: s.settlementId, label: `${s.reference} · ${money(s.bridge.postSettlementMinor)}` })) },
+        { name: 'finalPriceMinor', label: 'Final price (£)', type: 'number', money: true,
+          hint: 'The number that goes out. Normally the settled price above.' },
+        { name: 'delegatedTo', label: 'Authority delegated to', type: 'text',
+          hint: 'The person or office approving it, not the system.' },
+        { name: 'limitMinor', label: 'The limit that authority carries (£)', type: 'number', money: true },
+        { name: 'authorityReference', label: 'Under what authority', type: 'text', required: false,
+          hint: 'Scheme of delegation, board minute or policy.' },
+        { name: 'summary', label: 'Approval summary', type: 'textarea', rows: 2,
+          hint: 'What is being approved and on what basis — read back on the thread.' },
+      ],
+      transform: (v) => ({
+        finalPriceMinor: Math.round(Number(v.finalPriceMinor ?? 0)),
+        authority: {
+          delegatedTo: String(v.delegatedTo ?? '').trim(),
+          limitMinor: Math.round(Number(v.limitMinor ?? 0)),
+          ...(String(v.authorityReference ?? '').trim() ? { reference: String(v.authorityReference).trim() } : {}),
+        },
+        summary: String(v.summary ?? '').trim(),
       }),
     },
     'build-estimate': {
