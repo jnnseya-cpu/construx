@@ -719,9 +719,31 @@ export class AIOrchestrator {
      * tried" is not a reason to do nothing. Health is the condition; having
      * had a turn is only a preference between the healthy.
      */
-    const healthy =
-      fits.find((adapter) => !avoid.includes(adapter.name) && adapter.healthy()) ??
-      fits.find((adapter) => adapter.healthy());
+    /*
+     * Cheapest-first, when the deployment asks for it.
+     *
+     * The order the chain is tried in is a deliberate choice on most
+     * deployments, so it stands by default. With `AI_SELECT_CHEAPEST` the
+     * candidates are instead ranked by estimated cost at this input size — the
+     * cheapest cleared, healthy, large-enough vendor takes the call. The two
+     * preferences that already matter are preserved: health is a condition, and
+     * a vendor already tried for this piece of work is passed over where another
+     * is available, so cheapest-first does not trap an escalating draft on the
+     * one weak model the red team just rejected. A vendor that publishes no rate
+     * (the local stand-in) sorts last, never ahead of a priced one.
+     */
+    const byCheapest = (pool: AIProviderAdapter[]): AIProviderAdapter[] =>
+      config.ai.selectCheapest
+        ? [...pool].sort(
+            (a, b) =>
+              (a.costAtTokensMinor?.(inputTokens) ?? Number.POSITIVE_INFINITY) -
+              (b.costAtTokensMinor?.(inputTokens) ?? Number.POSITIVE_INFINITY),
+          )
+        : pool;
+
+    const untried = byCheapest(fits.filter((adapter) => !avoid.includes(adapter.name) && adapter.healthy()));
+    const anyHealthy = byCheapest(fits.filter((adapter) => adapter.healthy()));
+    const healthy = untried[0] ?? anyHealthy[0];
     if (healthy) return healthy;
 
     throw new DomainError('AI_UNAVAILABLE', 'No healthy AI provider is available for this capability', 503);

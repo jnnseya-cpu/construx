@@ -185,6 +185,14 @@ export interface AIProviderAdapter {
   readonly answerBudgetTokens?: number;
   /** Estimated cost before execution, used to size the ACU hold. */
   estimateCostMinor(request: ProviderRequest): number;
+  /**
+   * The cost of an input of this many tokens, by this adapter's default model —
+   * the rate, without needing a whole request to hand. Used only to rank
+   * candidate providers by price when the orchestrator is routing to the
+   * cheapest. Absent on an adapter with no meaningful rate (the local stand-in);
+   * such an adapter is simply not cost-ranked.
+   */
+  costAtTokensMinor?(inputTokens: number): number;
   execute(request: ProviderRequest): Promise<ProviderResponse>;
   healthy(): boolean;
 }

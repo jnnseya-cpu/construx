@@ -1221,6 +1221,23 @@ incidental. A test pins that injected adapters stay isolated — otherwise a
 suite exercising the exhausted-provider path would quietly reach a real vendor
 whenever the environment happened to hold a key.
 
+**Cheapest-first routing is a switch, off by default.** `AI_SELECT_CHEAPEST`
+(default off) makes `adapterFor` rank the cleared, healthy, large-enough
+candidates by estimated cost at the measured input size and take the lowest,
+instead of trying the configured chain in order. It reads the rate through a new
+optional `costAtTokensMinor(inputTokens)` on the adapter — implemented by the
+remote adapters (same `priceFor` basis as `estimateCostMinor`) and the local
+stand-in, absent-able so an adapter with no meaningful rate simply sorts last
+rather than ahead of a priced one. The two existing preferences survive the
+re-sort: health is still a condition, and a vendor already in `avoid` (tried for
+this piece of work) is still passed over where another is available, so the
+quality-escalation path does not get trapped on the cheapest weak model the red
+team just rejected. With one provider configured the flag changes nothing. Off
+by default because the configured order is a deliberate choice on most
+deployments and a scored submission written by the cheapest model can lose more
+in marks than it saves in pennies. Two tests in `ai.test.ts` pin both the cost
+pick and the avoid-still-wins behaviour.
+
 Anthropic is wired to the Messages API, which differs from the other two in
 ways that matter: `max_tokens` is required, media is an `image` content block,
 and a response can carry several blocks of which only the text one is the

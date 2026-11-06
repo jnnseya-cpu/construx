@@ -1128,6 +1128,20 @@ export const config = {
     reasoningProvider: str('AI_REASONING_PROVIDER', 'OPENAI'),
     perceptionProvider: str('AI_PERCEPTION_PROVIDER', 'GEMINI'),
     /**
+     * Route each call to the cheapest cleared, healthy provider whose window
+     * holds it, rather than to the configured primary first.
+     *
+     * Off by default, because the primary order is a deliberate choice on most
+     * deployments and "cheapest" is not always "best" — a scored submission
+     * written by the cheapest model can lose more in marks than it saves in
+     * pennies. With one provider configured it changes nothing (there is nothing
+     * to choose between). With several, it picks the lowest estimated cost at the
+     * measured input size, and the quality-escalation path still applies: a draft
+     * the red team rejects is retried on a *different* model, which `avoid`
+     * already steers, so cheapest-first does not trap the work on a weak model.
+     */
+    selectCheapest: bool('AI_SELECT_CHEAPEST', false),
+    /**
      * Which vendor embeds text for semantic search, or empty for none.
      *
      * Empty is the default and a supported state, unlike the two above: a
