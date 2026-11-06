@@ -15826,12 +15826,18 @@ export const ROUTES: Route[] = [
       }),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/programme/duration-basis',
+    description: 'The measured-works value and trade-phase count read off the priced bill, to pre-fill the duration estimate; null when nothing is priced yet',
+    handler: (platform, ctx) => ({ basis: costintel.programmeDurationBasis(projectContext(platform, ctx)) }),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/programme/duration-estimate',
-    description: 'Propose a construction duration from the measured works — a structural estimate to confirm, feeding the period and the WBS',
+    description: 'Propose a construction duration from the measured works — a structural estimate to confirm, feeding the period and the WBS. The figures default to the priced bill when omitted',
     schema: {
       type: 'object',
-      required: ['netMeasuredMinor', 'tradeGroups'],
+      required: [],
       properties: {
         netMeasuredMinor: { type: 'integer', minimum: 0 },
         tradeGroups: { type: 'integer', minimum: 1 },

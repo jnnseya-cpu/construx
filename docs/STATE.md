@@ -26542,6 +26542,25 @@ market. The figure feeds the construction-period field and seeds the WBS
 generator's `targetDurationDays` — so "how long is this job" is answered from
 the works, and then a person confirms it.
 
+**Auto-filled from the priced bill.** The two figures the estimate rests on — the
+net measured works and the number of trade phases — were still typed in by hand,
+which is the one thing the measurement already holds the moment the bill is
+priced. `programmeDurationBasis` reads them off: the net measured works is the
+direct cost summed across the project's priced schedules, and the trade-phase
+count is the number of distinct work-section codes that carry a priced line.
+`GET …/programme/duration-basis` serves them, and the `Estimate the programme
+duration` command fills its two fields from them before it opens, so the common
+case is a glance and one press rather than retyping a total off the bill.
+`proposeProgrammeDuration` takes both figures as optional and defaults each to the
+basis when omitted — a figure the estimator does pass still wins, so trying a
+different works value or phase count is one edit — and refuses with
+`MEASURED_WORKS_NOT_PRICED` where nothing is priced yet, rather than estimating a
+fortnight from a zero. The command dispatcher gained a general `prepare` hook
+(`frontend/pages/procurement.js`) that reads state and pre-fills a command's
+fields before it opens, cloning the shared spec rather than mutating it.
+Proven in `programmedurationbasis.test.ts` (the not-priced refusal, the direct-cost
+and distinct-section basis, the derive-equals-explicit path, and the override).
+
 ### The bill, rolled up by section
 
 A sectional pricing schedule — the kind a buyer issues that asks for one lump

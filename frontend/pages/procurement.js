@@ -2499,20 +2499,33 @@ export async function procurement(root) {
         'basis. Take the figure to the construction-period field, and to the WBS generator on the programme side.',
       path: `/v1/projects/${projectId}/programme/duration-estimate`,
       submitLabel: 'Estimate it',
+      // Before the form opens, read the two figures off the priced bill and fill
+      // them in — so the common case is a glance and one press, not retyping a
+      // total the measurement already holds. Where nothing is priced the fields
+      // open blank with a hint, and the person can type them.
+      prepare: async () => {
+        const { basis } = await api.get(`/v1/projects/${projectId}/programme/duration-basis`).catch(() => ({ basis: null }));
+        if (!basis) return {};
+        // The money field is entered in major units (command.js multiplies by
+        // 100 on submit), so the net-measured minor figure is shown in major.
+        return { values: { netMeasuredMinor: basis.netMeasuredMinor / 100, tradeGroups: basis.tradeGroups } };
+      },
       fields: [
         {
           name: 'netMeasuredMinor',
           label: 'Net measured works',
           type: 'number',
           money: true,
-          hint: 'The measured-works total from the estimate — direct cost only, before heads, overhead and profit.',
+          required: false,
+          hint: 'The measured-works total — direct cost only, before heads, overhead and profit. Filled from the priced bill; leave it to use that, or type your own.',
         },
         {
           name: 'tradeGroups',
           label: 'Trade phases the works span',
           type: 'number',
           step: '1',
-          hint: 'How many distinct trade phases are in the bill — groundworks, walls, roof, finishes, externals and so on.',
+          required: false,
+          hint: 'How many distinct trade phases are in the bill — groundworks, walls, roof, finishes, externals. Filled from the bill’s work sections.',
         },
         {
           name: 'complexity',
@@ -2526,9 +2539,12 @@ export async function procurement(root) {
           ],
         },
       ],
+      // Blank means "use the priced bill" — omit it so the server derives it,
+      // rather than sending a 0 or a NaN that would estimate a fortnight from
+      // nothing.
       transform: (v) => ({
-        netMeasuredMinor: Number(v.netMeasuredMinor),
-        tradeGroups: Number(v.tradeGroups),
+        ...(v.netMeasuredMinor !== '' && v.netMeasuredMinor != null ? { netMeasuredMinor: Number(v.netMeasuredMinor) } : {}),
+        ...(v.tradeGroups !== '' && v.tradeGroups != null ? { tradeGroups: Number(v.tradeGroups) } : {}),
         ...(v.complexity ? { complexity: v.complexity } : {}),
       }),
       report: (res) => ({
@@ -4146,8 +4162,24 @@ export async function procurement(root) {
 
     const button = event.target.closest('[data-command]');
     if (!button) return;
-    const spec = COMMANDS[button.dataset.command];
+    let spec = COMMANDS[button.dataset.command];
     if (!spec) return;
+    // A command may read state before it opens — the duration estimate fills its
+    // fields from the priced bill. `prepare` returns `false` to cancel, or
+    // `{ values }` to pre-fill matching fields; the spec is cloned so the shared
+    // COMMANDS entry is never mutated.
+    if (spec.prepare) {
+      const prepared = await spec.prepare();
+      if (prepared === false) return;
+      if (prepared?.values) {
+        spec = {
+          ...spec,
+          fields: spec.fields.map((field) =>
+            field.name in prepared.values ? { ...field, value: prepared.values[field.name] } : field,
+          ),
+        };
+      }
+    }
     const result = await command(spec);
     if (!result) return;
     // A command whose answer belongs to this screen rather than to the record
