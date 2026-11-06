@@ -1935,15 +1935,29 @@ export async function pipeline(root) {
            * into the same matrix detail as a live one, so nothing read is lost.
            */
           hiddenAnalyses.length > 0
-            ? html`<details style="padding:4px 17px 15px">
-                <summary style="cursor:pointer;font-size:12.5px;color:var(--text-2)">
-                  Show ${hiddenAnalyses.length} superseded or closed-tender ${hiddenAnalyses.length === 1 ? 'matrix' : 'matrices'} — to retrieve one read onto the wrong tender
-                </summary>
-                <div style="padding-top:8px">
-                  ${table({
+            ? (() => {
+                /*
+                 * Two different things were being hidden under one misleading
+                 * label. `a.bound` is the backend's truth: it is true only for
+                 * the matrix a tender's invitation currently points at.
+                 *
+                 *  - `!a.bound` — an *earlier reading* of a tender. Reading a
+                 *    second document merges into the tender's matrix and leaves
+                 *    the previous one behind; it is not a separate tender and was
+                 *    never "sent to the wrong project". It is history of a live
+                 *    matrix, kept on the append-only ledger.
+                 *  - `a.bound` but hidden — a matrix bound to a tender that is
+                 *    closed, won or lost (or another project's, when you are not
+                 *    focused on it). This is the one that could have been read
+                 *    onto the wrong tender by mistake.
+                 */
+                const earlierReadings = hiddenAnalyses.filter((a) => !a.bound);
+                const otherTenderMatrices = hiddenAnalyses.filter((a) => a.bound);
+                const panelTable = (list) =>
+                  table({
                     headers: ['Reference', 'Client', 'Returns', 'Requirements', 'Mandatory gaps', 'Bars', ''],
                     align: ['', '', '', 'num', 'num', 'num', ''],
-                    rows: hiddenAnalyses.map((a) => [
+                    rows: list.map((a) => [
                       a.reference,
                       a.clientName,
                       date(a.returnBy),
@@ -1953,9 +1967,29 @@ export async function pipeline(root) {
                       html`<button class="btn sm" data-matrix="${a.analysisId}">Open</button>`,
                     ]),
                     empty: 'None',
-                  })}
+                  });
+                return html`<details style="padding:4px 17px 15px">
+                <summary style="cursor:pointer;font-size:12.5px;color:var(--text-2)">
+                  Show ${hiddenAnalyses.length} earlier and closed-tender ${hiddenAnalyses.length === 1 ? 'matrix' : 'matrices'}
+                </summary>
+                <div style="padding-top:8px">
+                  ${earlierReadings.length > 0
+                    ? html`<p style="font-size:12px;color:var(--text-3);margin:0 0 6px">
+                        <strong>Earlier readings of a live tender (${earlierReadings.length}).</strong>
+                        Each is a previous version of a tender’s matrix, from before the next document was read and merged in. The current matrix for the tender is in the list above — these are kept only so nothing read is ever lost.
+                      </p>
+                      ${panelTable(earlierReadings)}`
+                    : ''}
+                  ${otherTenderMatrices.length > 0
+                    ? html`<p style="font-size:12px;color:var(--text-3);margin:${earlierReadings.length > 0 ? '14px' : '0'} 0 6px">
+                        <strong>Bound to a closed, won or lost tender (${otherTenderMatrices.length}).</strong>
+                        A matrix read onto the wrong tender shows up here. Open it, then re-read the invitation against the right tender above to move its requirements across.
+                      </p>
+                      ${panelTable(otherTenderMatrices)}`
+                    : ''}
                 </div>
-              </details>`
+              </details>`;
+              })()
             : ''
         }
       </div>

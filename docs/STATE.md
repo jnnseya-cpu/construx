@@ -16069,13 +16069,40 @@ live ones, so a tender opened on purpose still shows its own matrix). The list
 falls back to showing everything only when no tender has a matrix bound at all,
 so the first-analysis safety holds without re-showing a closed one.
 
-Hidden is not lost. "Compliance matrices on file" carries a collapsed **"Show N
-superseded or closed-tender matrices"** panel listing every analysis not in the
-live list — the superseded fragments and the matrices on closed/won/lost tenders,
-including a reading confirmed onto the wrong tender by mistake — each with an
-**Open** that loads the same matrix detail as a live one. A matrix hidden from the
-working list can still be retrieved and read; it is removed from the clutter, not
-from reach (`frontend/pages/pipeline.js`).
+Hidden is not lost, and the panel no longer lies about what is hidden. "Compliance
+matrices on file" carries a collapsed **"Show N earlier and closed-tender
+matrices"** panel, but it splits what is inside into the two different things it
+holds, because calling all of them "superseded or closed-tender" confused a bid
+manager who knew most of them were neither — just earlier readings of the live
+tender they were still working. `analysisBoard` (`itt.ts`) now returns `bound` on
+each summary — true only for the matrix an invitation currently points at — and
+the panel groups by it:
+
+- **Earlier readings of a live tender** (`!bound`): previous versions of a
+  tender's matrix, from before the next document was read and merged in. The
+  current matrix is in the list above; these are kept only so nothing read is
+  ever lost. They were never "sent to the wrong project".
+- **Bound to a closed, won or lost tender** (`bound`, but hidden from the live
+  list): the matrix a reading was confirmed onto by mistake shows up here. Open
+  it, then re-read the invitation against the right tender to move its
+  requirements across.
+
+Each row still carries an **Open** that loads the same matrix detail as a live
+one. The count summary counts only the matrices bound to a live tender — one per
+tender — not every intermediate reading, so "3 compliance matrices on file" means
+three tenders, not thirty fragments (`frontend/pages/pipeline.js`, `itt.ts`).
+
+**The merged matrix keeps the tender's name, not the last appendix's.** A re-read
+used to rename the whole matrix after whatever the last document called itself —
+reading "Appendix 3a — List of Publicly Maintainable Roads" into a tender left the
+consolidated 71-requirement matrix labelled "Appendix 3a", so the live list showed
+a fragment's title over the full set. `perception.confirm` now keeps the tender's
+identity — its reference, client and return date — from the matrix already on the
+tender whenever a later document is merged in; a second, third or fourth document
+adds its requirements without renaming the matrix. A first reading still takes its
+identity from the document (or the invitation), and a later reading still fills a
+blank identity — it only cannot overwrite one the tender already carries
+(`backend/src/engines/perception.ts`).
 
 **One tender per page.** The reader, the response packs and the red team on the
 lower half of the Pipeline screen were already scoped to the project selected in

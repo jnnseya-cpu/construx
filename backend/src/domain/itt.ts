@@ -918,6 +918,16 @@ export type ITTAnalysisSummary = {
   readyToPrice: boolean;
   analysedAt: string;
   projectId: string;
+  /**
+   * The tender this matrix is the *current* one for. A reading merges into the
+   * matrix on the tender and writes a fresh analysis each time, so a tender that
+   * has been read three times leaves two superseded analyses behind the one its
+   * invitation now points at. `bound` is true only for that current one; the
+   * rest are history, not a dozen separate tenders.
+   */
+  bound: boolean;
+  /** The invitation currently pointing at this matrix, when `bound`. */
+  invitationId?: string;
 };
 
 /**
@@ -982,6 +992,16 @@ const SEVERITY_RANK: Record<TermAssessment['severity'], number> = { BAR: 0, SEVE
 export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummary[]; summary: string } {
   authorise(ctx, 'ESTIMATE_TENDER', 'R', { dataSensitivity: 'COMMERCIAL_L3' });
 
+  // Which matrix each tender currently points at. A tender read more than once
+  // leaves the earlier analyses behind the one its invitation now binds; those
+  // earlier ones are superseded, not separate tenders, and only this map tells
+  // them apart from the live one.
+  const boundTo = new Map<string, string>();
+  for (const invitation of ctx.ledger.listByTenant(ctx.tenantId, 'TenderInvitation')) {
+    const id = invitation.state.analysisId as string | undefined;
+    if (id) boundTo.set(id, invitation.refId);
+  }
+
   // Analyses are written against the tender's own project rather than the
   // governance scope, so this crosses projects within the tenancy — which is
   // what a bid manager holding four live tenders is asking for.
@@ -990,6 +1010,7 @@ export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummar
     .map((record) => readAnalysis(record))
     .map((analysis): ITTAnalysisSummary => {
       const worst = [...analysis.terms].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0];
+      const invitationId = boundTo.get(analysis.analysisId);
       return {
         analysisId: analysis.analysisId,
         reference: analysis.reference,
@@ -1004,15 +1025,24 @@ export function analysisBoard(ctx: EngineContext): { analyses: ITTAnalysisSummar
         readyToPrice: analysis.readyToPrice,
         analysedAt: analysis.analysedAt,
         projectId: analysis.projectId,
+        bound: invitationId !== undefined,
+        ...(invitationId ? { invitationId } : {}),
       };
     })
     .sort((a, b) => b.analysedAt.localeCompare(a.analysedAt));
 
-  const blocked = analyses.filter((a) => !a.readyToPrice).length;
+  // Count the matrices a bid manager actually has — one per tender — not every
+  // intermediate reading left in the ledger. The superseded ones are still
+  // returned (a matrix read onto the wrong tender has to be retrievable), but
+  // they are not what "on file" means.
+  const live = analyses.filter((a) => a.bound);
+  const blocked = live.filter((a) => !a.readyToPrice).length;
   const summary =
-    analyses.length === 0
-      ? 'No invitation has been analysed yet. Record an ITT and run the analysis to build a compliance matrix.'
-      : `${analyses.length} compliance matri${analyses.length === 1 ? 'x' : 'ces'} on file` +
+    live.length === 0
+      ? analyses.length === 0
+        ? 'No invitation has been analysed yet. Record an ITT and run the analysis to build a compliance matrix.'
+        : 'No compliance matrix is bound to a live tender. Earlier readings are held below and can be retrieved.'
+      : `${live.length} compliance matri${live.length === 1 ? 'x' : 'ces'} on file` +
         `${blocked > 0 ? `, ${blocked} not ready to price` : ', all ready to price'}.`;
 
   return { analyses, summary };

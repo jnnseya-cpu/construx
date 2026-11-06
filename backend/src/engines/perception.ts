@@ -1512,21 +1512,36 @@ export async function confirm(
     const priorAnalysisId = invitationRecord.state.analysisId as string | undefined;
     let mergedRequirements = requirements;
     let mergedTerms = commercial;
+    // The tender's own identity — the reference, client and return date it is
+    // known by. On a first reading these come from the document (or the
+    // invitation when the document did not state one). On a re-read they are
+    // kept from the matrix already on the tender: the second, third and fourth
+    // documents of one ITT are appendices and questionnaires with their own
+    // titles, and letting the last one read win renamed the whole matrix after
+    // "Appendix 3a". A later reading still *updates* a blank identity — it only
+    // cannot overwrite one the tender already carries.
+    let tenderReference = String(read.reference ?? invitationRecord.state.reference ?? '');
+    let tenderClient = String(read.clientName ?? 'Not stated in the invitation');
+    let tenderReturnBy = String(read.returnBy ?? '');
     if (priorAnalysisId) {
       const prior = ctx.ledger.get({ refType: 'ITTAnalysis', refId: priorAnalysisId });
       if (prior && prior.tenantId === ctx.tenantId) {
         const priorMatrix = (prior.state.matrix as MatrixLine[] | undefined) ?? [];
         mergedRequirements = mergeRequirements(requirementsFromMatrix(priorMatrix), requirements);
         mergedTerms = mergeCommercialTerms(prior.state.commercialTerms as CommercialTerms | undefined, commercial);
+        const priorReference = String(prior.state.reference ?? '').trim();
+        const priorClient = String(prior.state.clientName ?? '').trim();
+        const priorReturnBy = String(prior.state.returnBy ?? '').trim();
+        if (priorReference) tenderReference = priorReference;
+        if (priorClient && priorClient !== 'Not stated in the invitation') tenderClient = priorClient;
+        if (priorReturnBy) tenderReturnBy = priorReturnBy;
       }
     }
 
     const analysis = analyseITT(ctx, {
-      // The invitation's own reference when the document did not state one
-      // legibly. It is the same record either way, so the matrix binds to it.
-      reference: String(read.reference ?? invitationRecord.state.reference ?? ''),
-      clientName: String(read.clientName ?? 'Not stated in the invitation'),
-      returnBy: String(read.returnBy ?? ''),
+      reference: tenderReference,
+      clientName: tenderClient,
+      returnBy: tenderReturnBy,
       ...(input.estimatedValueMinor === undefined ? {} : { estimatedValueMinor: input.estimatedValueMinor }),
       ...(input.durationWeeks === undefined ? {} : { durationWeeks: input.durationWeeks }),
       requirements: mergedRequirements,

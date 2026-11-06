@@ -12,7 +12,7 @@ import { EvidenceStore, hashBytes } from '../src/evidence/store.ts';
 import { ingestFile, ingestedFiles, ittFromFile } from '../src/evidence/pipeline.ts';
 import { projectRegister } from '../src/evidence/registry.ts';
 import * as perception from '../src/engines/perception.ts';
-import { complianceMatrix } from '../src/domain/itt.ts';
+import { analysisBoard, complianceMatrix } from '../src/domain/itt.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import { grantEnvelope } from '../src/agents/mandate.ts';
 import { runAgents, runAgentsForChanges } from '../src/agents/runtime.ts';
@@ -365,6 +365,7 @@ describe('one matrix per tender — a second reading merges in', () => {
     // The tender holds one matrix, carrying both readings.
     const invitation = platform.ledger.require({ refType: 'TenderInvitation', refId: invitationId }).state;
     const analysis = platform.ledger.require({ refType: 'ITTAnalysis', refId: invitation.analysisId as string }).state as {
+      reference?: string;
       matrix: Array<{ reference: string }>;
       commercialTerms?: { contractForm?: string };
     };
@@ -372,6 +373,15 @@ describe('one matrix per tender — a second reading merges in', () => {
       analysis.matrix.map((line) => line.reference).sort(),
       ['AW 2.4', 'SQ 4.1', 'SQ 6.2', 'SV 1', 'SV 2'],
       'the one matrix does not carry both readings’ requirements',
+    );
+    // The appendix was titled "YW/2026/SPILLWAY/014 — Appendix D Social Value".
+    // Merging it must not rename the tender's matrix after the appendix: the
+    // matrix keeps the tender's own reference from the first reading, or the
+    // live list ends up showing a fragment's title over the full set.
+    assert.equal(
+      analysis.reference,
+      'YW/2026/SPILLWAY/014',
+      'a later document renamed the whole matrix after itself',
     );
     // The appendix stated no terms, so the ITT terms are kept rather than wiped.
     assert.equal(
@@ -384,6 +394,24 @@ describe('one matrix per tender — a second reading merges in', () => {
       (invitation.deliverables as Array<{ reference: string }>).map((deliverable) => deliverable.reference).sort(),
       ['RD-01', 'RD-02', 'RD-03', 'RD-04'],
       'a later reading wiped the tender’s return register',
+    );
+
+    // The board marks exactly one matrix as bound — the current one the
+    // invitation points at — and the earlier reading as not bound, so the
+    // screen can show one live matrix per tender and hold the rest as earlier
+    // readings rather than calling them separate tenders.
+    const board = analysisBoard(ctx('qs'));
+    const current = board.analyses.find((a) => a.analysisId === invitation.analysisId);
+    const earlier = board.analyses.find(
+      (a) => a.analysisId === (firstConfirmed.result as { analysisId: string }).analysisId,
+    );
+    assert.ok(current?.bound, 'the current matrix is not marked bound to the tender');
+    assert.equal(current?.invitationId, invitationId, 'the bound matrix does not name its invitation');
+    assert.ok(earlier && !earlier.bound, 'an earlier reading is still marked as a live matrix');
+    assert.equal(
+      board.analyses.filter((a) => a.invitationId === invitationId).length,
+      1,
+      'more than one matrix is bound to a single tender',
     );
   });
 });
