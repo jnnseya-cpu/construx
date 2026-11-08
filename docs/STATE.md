@@ -3233,24 +3233,45 @@ click binding was made delegated on the view (the same pattern the other two
 dispatchers already used) so the panel's button fires it, not only the bar on the
 company card.
 
-**Agents reason as the named construction professional, not a general model.**
-`backend/src/ai/expertise.ts` is the single home for the framing every AI
-reasoning task opens with, so an agent reads a tender as a chartered QS, a
-programme as a planner, a method as a CDM principal contractor — and names the
-real UK standards that profession works to (RICS NRM, NEC4/JCT, CDM 2015, BS 5975
-temporary works, CIBSE Commissioning Code M, the Procurement Act 2023, and so on
-per discipline) rather than reasoning as a model with no feel for the industry.
-`expertBriefing(discipline)` returns the opening — the professional, the
-judgement they bring, the standards they work to — and ends with the discipline
-that separates a professional from a plausible guess and that the whole platform
-keeps: reason only from the documents supplied, quote the passage behind every
-point, never invent a figure, clause, reference or standard, and propose rather
-than decide. It frames the reasoning and relaxes no guard (the orchestrator still
-refuses a synthetic answer where a model is required; no mandate exceeds PROPOSE).
-Wired into the tender clarification review first; the home the other AI engines
-adopt in place of their own hand-written openings. Covered in `expertise.test.ts`
-(every discipline names a real profession and real standards; every briefing
-carries the no-fabrication, propose-not-decide discipline).
+**Agents reason as the named construction professional, across the whole RIBA
+lifecycle, not as a general model.** `backend/src/ai/expertise.ts` is the single
+home for the framing every AI reasoning task opens with, so an agent reads a
+tender as a chartered QS, a programme as a planner, a method as a CDM principal
+contractor, a clash as a design manager, a handover as a commissioning manager —
+and names the real UK standards that profession works to (RICS NRM1/2/3, NEC4
+compensation events and the clause-61.3 time bar, JCT, CDM 2015 with the F10
+thresholds, BS EN ISO 19650, BS 5975 temporary works, CIBSE Commissioning Code M,
+the SCL Delay and Disruption Protocol, the Building Safety Act 2022, the
+Procurement Act 2023, and so on per discipline) rather than reasoning as a model
+with no feel for the industry. Ten disciplines are framed. `expertBriefing(
+discipline, { stage })` returns the opening — the professional, the judgement
+they bring, the standards they work to, and, when the task sits at a known point
+in the lifecycle, the **RIBA Plan of Work 2020 stage context**: a `RibaStage` 0–7
+model (`RIBA_STAGES`, `stageBriefing(stage)`) carrying each stage's canonical
+outcome, what an experienced Tier-1 contractor's team actually does there, and the
+judgement call that decides whether the stage goes well — Strategic Definition
+through Use. Every briefing ends with the discipline that separates a professional
+from a plausible guess and that the whole platform keeps: reason only from the
+documents and facts supplied, quote the passage behind every point, never invent a
+figure, clause, reference or standard, and propose rather than decide. It frames
+the reasoning and relaxes no guard (the orchestrator still refuses a synthetic
+answer where a model is required; output becomes state only through the engine's
+deterministic `toWrites`; no mandate exceeds PROPOSE). Wired into the judgement
+reasoning across the lifecycle — the tender clarification review (BID_MANAGER);
+the planning engine's WBS weighting and delay-driver forecast (PLANNER, stage 5);
+the cost engine's CVR margin analysis (COMMERCIAL_MANAGER, stage 5); the safety
+engine's RAMS method review (HEALTH_AND_SAFETY, stage 5); the contracts/claims
+engine's clause-and-time-bar extraction, entitlement assessment, delay-concurrency
+argument and evidence chronology (COMMERCIAL_MANAGER); the handover engine's
+readiness assessment (COMMISSIONING, stage 6) and maintenance prioritisation
+(stage 7); and the BIM engine's clash-resolution sequencing (DESIGN_MANAGER, stage
+3). Pure perception/extraction tasks (title-block OCR, O&M extraction, site-reality
+comparison) are deliberately left unframed — the "reason from the documents" opening
+is for judgement, not extraction. Covered in `expertise.test.ts` (every discipline
+names a real profession and real standards; every briefing carries the
+no-fabrication, propose-not-decide discipline; every RIBA stage 0–7 carries a named
+stage, outcome, contractor focus and watch-for; a discipline composes with a stage
+so both the professional and the stage context are present).
 
 **An AI construction-expert review of the tender for clarifications.** The
 mechanical reader catches what arithmetic catches — weightings that do not add

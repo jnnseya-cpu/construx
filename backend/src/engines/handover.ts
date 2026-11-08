@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -153,7 +154,11 @@ export async function compileHandoverPack(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
     request: {
-      task: 'Assess handover readiness and set out what the receiving party should require before acceptance',
+      task:
+        `${expertBriefing('COMMISSIONING', { stage: 6 })} ` +
+        'Assess handover readiness and set out what the receiving party should require before acceptance. Hold a ' +
+        'practical completion that lacks commissioning evidence, the Health & Safety File, as-builts or the O&M ' +
+        'information; distinguish a genuine gap from a minor snag, and name what must be in hand before acceptance.',
       payload: { checklist, gaps, openDefects: openDefects.length, openSnags: openSnags.length },
     },
     toWrites: (output) => [
@@ -588,7 +593,11 @@ export async function forecastMaintenance(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
     request: {
-      task: 'Prioritise the maintenance schedule against the available budget and identify deferrals',
+      task:
+        `${expertBriefing('COMMISSIONING', { stage: 7 })} ` +
+        'Prioritise the maintenance schedule against the available budget and identify deferrals. Protect statutory and ' +
+        'safety-critical maintenance first, flag what a deferral actually risks, and do not defer anything whose failure ' +
+        'would breach a statutory duty.',
       payload: { schedule: schedule.slice(0, 50), totalForecast, annualBudgetMinor: input.annualBudgetMinor, budgetPressure },
     },
     toWrites: (output) => [

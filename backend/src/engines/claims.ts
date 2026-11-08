@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -248,7 +249,11 @@ export async function extractContractIntelligence(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Contract', refId: input.contractId }],
     request: {
-      task: 'Identify clauses in each obligation category and extract any time bar that applies',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER')} ` +
+        'Identify clauses in each obligation category and extract any time bar that applies, from the contract text ' +
+        'supplied. Quote the clause number and wording for each; where a notice period or time bar runs from an event, ' +
+        'state the trigger and the period exactly as the contract sets them, and never infer a bar the text does not carry.',
       payload: { suite: contract.state.suite, form: contract.state.form, categories, contractText: input.contractText.slice(0, 40_000) },
     },
     toWrites: (output) => {
@@ -399,7 +404,11 @@ export async function assessImpact(
     // writing agreeably around one.
     outputStandard: true,
     request: {
-      task: 'Assess entitlement basis, knock-on effects and the notice obligations this change triggers',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Assess the entitlement basis, the knock-on effects and the notice obligations this change triggers. Found the ' +
+        'entitlement on a named clause, separate time from money, flag the notice and any time bar that must be served ' +
+        'to preserve the entitlement, and do not assert an entitlement the contract does not support.',
       payload: {
         change: changeRequest.state,
         costImpactMinor: input.costImpactMinor,
@@ -1092,7 +1101,11 @@ export async function assessDelayClaim(
     capability: 'REASONING',
     inputRefs: delayEvents.map((e) => ({ refType: 'DelayEvent', refId: e.id })),
     request: {
-      task: 'Review the delay attribution and set out the contractual argument, including concurrency treatment',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Review the delay attribution and set out the contractual argument, including concurrency treatment. Follow the ' +
+        'SCL Delay and Disruption Protocol: assess delay by its effect on the critical path, treat concurrency and float ' +
+        'ownership on the protocol’s terms, and state the method of analysis rather than asserting a figure of days.',
       payload: { attribution, assessment, claimType: input.claimType },
     },
     toWrites: (output) => [
@@ -1188,7 +1201,10 @@ export async function buildEvidencePack(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Claim', refId: input.claimId }],
     request: {
-      task: 'Write the narrative chronology tying the evidence to the entitlement argument',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Write the narrative chronology tying the evidence to the entitlement argument. Anchor each step to a dated ' +
+        'record in the evidence, keep the cause-and-effect chain unbroken, and make no claim the timeline does not carry.',
       payload: { eventCount: timeline.length, attribution, audience: input.audience },
     },
     toWrites: (output) => [

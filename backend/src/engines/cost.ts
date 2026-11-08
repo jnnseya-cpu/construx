@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -371,7 +372,11 @@ export async function publishCVR(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Contract', refId: contract.refId }],
     request: {
-      task: 'Explain margin movement and identify the commercial actions that would recover it',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        'Explain the margin movement in this cost-value reconciliation and identify the commercial actions that would ' +
+        'recover it. Separate a genuine cost overrun from a value not yet certified or a cut-off mismatch, and name the ' +
+        'action against each driver — recover under the contract, re-rate, or accept the loss.',
       payload: { cvr, period: input.period },
     },
     toWrites: (output) => [

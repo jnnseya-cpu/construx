@@ -1,5 +1,6 @@
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
+import { expertBriefing } from '../ai/expertise.ts';
 import { ulid } from '../core/ids.ts';
 import type { EntityRef } from '../goldenthread/types.ts';
 import { authorise, currentPhase, registerEvidence, runAI, write, type EngineContext } from './context.ts';
@@ -526,7 +527,11 @@ export async function detectClashes(
       { refType: 'Model', refId: input.modelBId },
     ],
     request: {
-      task: 'Sequence clash resolution against construction order and identify the responsible discipline',
+      task:
+        `${expertBriefing('DESIGN_MANAGER', { stage: 3 })} ` +
+        'Sequence clash resolution against construction order and identify the responsible discipline for each. Resolve ' +
+        'clashes on the path of the earliest trade to install first, distinguish a genuine hard clash from a tolerance ' +
+        'or modelling artefact, and assign each to the discipline whose information must change — not merely the one it appears in.',
       payload: { clashes: scored.slice(0, 50), totalClashes: scored.length },
     },
     toWrites: () =>

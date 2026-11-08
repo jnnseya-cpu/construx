@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
@@ -232,7 +233,11 @@ export async function draftRAMS(
     capability: 'REASONING',
     inputRefs: [{ refType: 'WorkPackage', refId: input.workPackageId }],
     request: {
-      task: 'Review the assembled method steps for residual hazards and sequencing conflicts',
+      task:
+        `${expertBriefing('HEALTH_AND_SAFETY', { stage: 5 })} ` +
+        'Review the assembled method steps for residual hazards and sequencing conflicts. Apply the hierarchy of ' +
+        'control — eliminate before you mitigate — and flag any step that depends on PPE where the hazard could be ' +
+        'designed or sequenced out instead.',
       payload: { activity: input.activityDescription, location: input.location, steps },
     },
     toWrites: (output) => [
