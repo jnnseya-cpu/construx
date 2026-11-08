@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, runAI, type EngineContext } from '../engines/context.ts';
 import { ingestedFiles } from '../evidence/pipeline.ts';
 import { expertBriefing } from '../ai/expertise.ts';
+import { CRITIQUE_SCHEMA, partitionByCritique, shapeCritiques } from '../ai/refine.ts';
 
 /**
  * Review a tender as a construction expert, and propose the clarification
@@ -79,6 +80,113 @@ export function shapeProposedQuestions(output: Record<string, unknown>): Propose
     if (out.length >= 8) break;
   }
   return out;
+}
+
+const QUESTIONS_SCHEMA = {
+  type: 'object',
+  properties: {
+    questions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          subject: { type: 'string' },
+          question: { type: 'string' },
+          basis: { type: 'string' },
+        },
+        required: ['subject', 'question', 'basis'],
+      },
+    },
+  },
+  required: ['questions'],
+} as const;
+
+/**
+ * The verify-and-improve pass. A first draft is a first draft; this is where it
+ * is made worth sending. An independent senior reviewer — reading the questions
+ * the way the buyer and every competitor will — marks each one against the bar it
+ * actually has to clear: is it material, specific, and genuinely supported by the
+ * passage it cites? What it passes is kept; what is real but loose is rewritten
+ * to the fault named; what is immaterial, already answered, generic or unsupported
+ * is dropped. Best-effort: a provider or wallet failure mid-way leaves the
+ * first-pass questions standing rather than losing them.
+ */
+async function refineClarifications(
+  ctx: EngineContext,
+  proposed: ProposedClarification[],
+  documents: Array<{ label: string; text: string }>,
+): Promise<{ questions: ProposedClarification[]; acuConsumed: number; droppedCount: number; sharpenedCount: number }> {
+  let acuConsumed = 0;
+
+  // 1. Critique — an independent senior reviewer marks each question. It did not
+  //    write them and is not here to be kind to them.
+  const critique = await runAI(ctx, {
+    engine: 'TENDER',
+    taskType: 'tender_clarification_critique',
+    capability: 'REASONING',
+    inputRefs: [],
+    request: {
+      task:
+        `${expertBriefing('BID_MANAGER')} ` +
+        'A first pass has proposed the clarification questions below, each with the passage it rests on. You did not ' +
+        'write them, and you are not here to be kind to them — mark each as it will be judged once it is sent to the ' +
+        'buyer and read by every competitor. For each, return its `index`, a `verdict`, and the `fault` in one ' +
+        'sentence. KEEP a question that is material, specific, and genuinely supported by its basis. SHARPEN one that ' +
+        'is real but loose — vague, not quantified, broader than its basis, or worded so the buyer could brush it off ' +
+        '— and name exactly what to tighten. DROP one that is immaterial, already answered in the documents, generic ' +
+        'enough to fit any tender, or that reveals the bidder cannot meet a clear requirement. Check each basis against ' +
+        'the documents supplied: if the quoted passage does not actually say what the question claims, that is a DROP.',
+      payload: {
+        questions: proposed.map((q, index) => ({ index, subject: q.subject, question: q.question, basis: q.basis })),
+        documents,
+      },
+      responseSchema: CRITIQUE_SCHEMA,
+    },
+    toWrites: () => [],
+  });
+  acuConsumed += critique.acuConsumed;
+
+  const critiques = shapeCritiques(critique.output, proposed.length);
+  const { keep, sharpen, droppedCount } = partitionByCritique(proposed, critiques);
+
+  // 2. Improve — rewrite only what was faulted, to clear the bar. If nothing
+  //    needs sharpening, the kept set is already the answer.
+  let sharpened: ProposedClarification[] = [];
+  if (sharpen.length > 0) {
+    const improve = await runAI(ctx, {
+      engine: 'TENDER',
+      taskType: 'tender_clarification_sharpen',
+      capability: 'REASONING',
+      inputRefs: [],
+      request: {
+        task:
+          `${expertBriefing('BID_MANAGER')} ` +
+          'Each question below was judged real but not yet good enough, with the fault named. Rewrite each to fix ' +
+          'exactly that fault: make it specific and quantified, keep it within what its basis actually supports, and ' +
+          'word it so the buyer must answer it rather than brush it off. Quote the passage(s) it rests on as the basis. ' +
+          'If a question cannot be made both sharp and supported by the documents, omit it rather than pad it. Return ' +
+          'the same shape: `questions`, an array of { subject, question, basis }.',
+        payload: {
+          toSharpen: sharpen.map((entry) => ({
+            subject: entry.item.subject,
+            question: entry.item.question,
+            basis: entry.item.basis,
+            fault: entry.fault,
+          })),
+          documents,
+        },
+        responseSchema: QUESTIONS_SCHEMA,
+      },
+      toWrites: () => [],
+    });
+    acuConsumed += improve.acuConsumed;
+    sharpened = shapeProposedQuestions(improve.output);
+  }
+
+  // 3. Merge: the kept questions plus the sharpened rewrites, re-guarded,
+  //    de-duplicated and capped. The dropped ones are gone — that is the point.
+  const questions = shapeProposedQuestions({ questions: [...keep, ...sharpened] });
+  return { questions, acuConsumed, droppedCount, sharpenedCount: sharpen.length };
 }
 
 export async function reviewTenderForClarifications(ctx: EngineContext): Promise<ClarificationReview> {
@@ -166,17 +274,52 @@ export async function reviewTenderForClarifications(ctx: EngineContext): Promise
     });
 
     const proposed = shapeProposedQuestions(result.output);
+
+    // Verify and improve: a first pass is not a finished job. An independent
+    // senior reviewer marks each question and the weak ones are sharpened or
+    // dropped before a person ever sees them — the mechanism that makes the
+    // output experienced, not just the agent. Best-effort: if the second pass
+    // cannot run, the first-pass questions still stand.
+    let questions = proposed;
+    let refineAcu = 0;
+    let droppedCount = 0;
+    let sharpenedCount = 0;
+    let refined = false;
+    if (proposed.length > 0) {
+      try {
+        const refinement = await refineClarifications(ctx, proposed, documents);
+        questions = refinement.questions;
+        refineAcu = refinement.acuConsumed;
+        droppedCount = refinement.droppedCount;
+        sharpenedCount = refinement.sharpenedCount;
+        refined = true;
+      } catch {
+        // A provider outage or an empty wallet mid-review: keep the first-pass
+        // questions rather than lose a paid-for result.
+      }
+    }
+
+    const reviewedNote = refined
+      ? ' Each was marked by an independent senior reviewer' +
+        (droppedCount > 0 || sharpenedCount > 0
+          ? `, which dropped ${droppedCount} and sharpened ${sharpenedCount} before they reached you.`
+          : ' and passed as sent.')
+      : '';
+
     return {
       available: true,
-      proposed,
+      proposed: questions,
       documentsReviewed,
-      acuConsumed: result.acuConsumed,
+      acuConsumed: result.acuConsumed + refineAcu,
       note:
-        proposed.length === 0
-          ? 'The review read the tender and found nothing that needs asking — it is internally consistent and specified ' +
-            'as written. That is a real answer, not a gap: a clarification nobody needs is one the competition reads too.'
-          : `${proposed.length} question${proposed.length === 1 ? '' : 's'} proposed from the documents. Each cites the ` +
-            'passage it comes from — verify it against the tender, then raise the ones worth sending.',
+        questions.length === 0
+          ? proposed.length === 0
+            ? 'The review read the tender and found nothing that needs asking — it is internally consistent and specified ' +
+              'as written. That is a real answer, not a gap: a clarification nobody needs is one the competition reads too.'
+            : 'A first pass proposed questions, but an independent senior review found none of them material, supported and ' +
+              'worth sending once it checked each against the documents. There is nothing here that needs asking.'
+          : `${questions.length} question${questions.length === 1 ? '' : 's'} proposed from the documents.${reviewedNote} ` +
+            'Each cites the passage it comes from — verify it against the tender, then raise the ones worth sending.',
     };
   } catch (error) {
     if (error instanceof DomainError && error.code === 'NO_REASONING_PROVIDER') {

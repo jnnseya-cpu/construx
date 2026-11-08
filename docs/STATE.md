@@ -3340,6 +3340,28 @@ to null; a stage carries through to the role briefing) and `api.test.ts` (the
 matrix endpoint publishes the per-role expert, with the PM's discipline and
 standards and a null for the viewer).
 
+**Verify-and-improve: the loop that makes the *job* experienced, not just the
+agent.** The framing asks for quality; this checks for it. `backend/src/ai/refine.ts`
+is the reusable core — a critique vocabulary (KEEP / SHARPEN / DROP), the response
+shape a reviewer returns, and the pure merge that applies a critique to a draft
+(`shapeCritiques`, `partitionByCritique`; covered in `refine.test.ts`, including
+that a malformed review never silently discards work and a whole set can be cut).
+The author drafts; an **independent** reviewer — reading the work the way the party
+on the other side will — marks each item against the bar it actually has to clear
+and names the fault; then the author rewrites only what was faulted, or the weak
+item is dropped before a person ever sees it. Wired first into the **tender
+clarification review** (`clarificationreview.ts`): after the first pass proposes
+questions, a senior reviewer (not the author) marks each — material? specific?
+genuinely supported by the passage it cites? — then `tender_clarification_sharpen`
+rewrites the loose ones to the fault named and the immaterial, already-answered,
+generic or unsupported ones are cut. Best-effort: a provider or wallet failure
+mid-review leaves the first-pass questions standing. The note tells the person how
+many were dropped and sharpened, so the cull is visible. This is the template to
+roll across the other heavy deliverables (claims, stage-gate, feasibility); the
+control flow and guards are shared, each deliverable supplies its own reviewer and
+rewrite prompts. The *ceiling* is still the live model — this raises the floor and
+checks the output; it does not manufacture a capability the model lacks.
+
 **The framing reaches every AI reasoning surface, not a chosen few.** The expert
 opening is now on every judgement task the platform runs — the tender clarification
 review, bid-response drafting, feasibility, the stage-gate narratives, and across
