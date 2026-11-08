@@ -117,7 +117,48 @@ describe('The compliance matrix', () => {
 
     assert.equal(result.weightings.stated, 90);
     assert.equal(result.weightings.complete, false);
+    assert.equal(result.weightings.status, 'SHORT');
     assert.ok(result.clarifications.some((c) => c.includes('total 90%')));
+  });
+
+  it('does not raise a weightings question when sub-criteria flatten to over 100%', () => {
+    // The bug this guards: quality sub-criteria are percentages of a section,
+    // not of the whole, so a nested scheme (a 30% quality block split into parts
+    // that themselves sum to 100%, plus 70% price) flattens to well over 100%.
+    // That is normal nesting, not a buyer error — asking "your weightings total
+    // 180%" on a well-formed tender makes the bidder look unable to read it. So
+    // a total over 100% is NESTED and carries no clarification.
+    const result = analyse({
+      requirements: [
+        requirement({ reference: 'P', category: 'COMMERCIAL', weightingPercent: 70 }),
+        requirement({ reference: 'Q', category: 'QUALITY', weightingPercent: 30 }),
+        requirement({ reference: 'Q1', category: 'QUALITY', weightingPercent: 30 }),
+        requirement({ reference: 'Q2', category: 'HEALTH_AND_SAFETY', weightingPercent: 15 }),
+        requirement({ reference: 'Q3', category: 'PROGRAMME', weightingPercent: 20 }),
+      ],
+    });
+
+    assert.ok(result.weightings.stated > 100, 'the flattened total is over 100%');
+    assert.equal(result.weightings.status, 'NESTED');
+    assert.equal(result.weightings.complete, false);
+    assert.ok(
+      !result.clarifications.some((c) => c.startsWith('The stated evaluation weightings total')),
+      'a nested scheme over 100% must not raise a weightings clarification',
+    );
+  });
+
+  it('is clean when the stated weightings total exactly 100%', () => {
+    const result = analyse({
+      requirements: [
+        requirement({ reference: 'P', category: 'COMMERCIAL', weightingPercent: 70 }),
+        requirement({ reference: 'Q', category: 'QUALITY', weightingPercent: 30 }),
+      ],
+    });
+
+    assert.equal(result.weightings.stated, 100);
+    assert.equal(result.weightings.status, 'COMPLETE');
+    assert.equal(result.weightings.complete, true);
+    assert.ok(!result.clarifications.some((c) => c.startsWith('The stated evaluation weightings total')));
   });
 });
 

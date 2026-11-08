@@ -435,7 +435,7 @@ export type ITTAnalysis = {
   /** Mandatory requirements with no evidence. These end the bid. */
   mandatoryGaps: MatrixLine[];
   /** How the evaluation is weighted, and whether it adds up. */
-  weightings: { stated: number; declared: Array<{ category: RequirementCategory; percent: number }>; complete: boolean };
+  weightings: { stated: number; declared: Array<{ category: RequirementCategory; percent: number }>; complete: boolean; status: WeightingStatus };
   terms: TermAssessment[];
   /** Terms that are a bar rather than a negotiation. */
   bars: string[];
@@ -472,6 +472,62 @@ function declaredWeightings(
     declared.set(line.category, (declared.get(line.category) ?? 0) + line.weightingPercent);
   }
   return [...declared.entries()].map(([category, percent]) => ({ category, percent }));
+}
+
+/**
+ * Whether the declared weightings reconcile to a single 100% scheme — read
+ * honestly, because the matrix cannot always tell a top-level weight from a
+ * nested one.
+ *
+ * Weightings are read per requirement line and grouped by category. That cannot
+ * by itself separate a top-level weight ("Quality 30%") from a sub-criterion
+ * weight that is a percentage *of* that block ("approach 30%, of the quality
+ * mark"). A properly nested scheme — a 30% quality block split into seven
+ * sub-criteria that themselves sum to 100% — therefore flattens to well over
+ * 100%. That is not a buyer error, and raising it as one ("your weightings total
+ * 180%") on a well-specified tender made the reader look unable to read, on a
+ * bid where understanding the tender carries marks.
+ *
+ * So the rule is read by direction: over 100% is `NESTED`, which carries no
+ * concern because we cannot prove the top-level scheme is wrong; under 100% is a
+ * genuine `SHORT`fall — part of the scheme is undisclosed — which is the one
+ * worth putting to the buyer. Exactly 100% is `COMPLETE`; nothing stated is
+ * `NONE`.
+ */
+export type WeightingStatus = 'COMPLETE' | 'NESTED' | 'SHORT' | 'NONE';
+
+function weightingStatus(stated: number): WeightingStatus {
+  if (stated <= 0) return 'NONE';
+  if (stated === 100) return 'COMPLETE';
+  if (stated > 100) return 'NESTED';
+  return 'SHORT';
+}
+
+/**
+ * The one weighting concern worth sending to the buyer: a genuine shortfall.
+ * The prefix is stable so a reader can recognise and replace a weightings
+ * clarification an older analysis was stored with.
+ */
+const WEIGHTING_CLARIFICATION_PREFIX = 'The stated evaluation weightings total';
+
+function weightingClarification(stated: number): string | undefined {
+  if (weightingStatus(stated) !== 'SHORT') return undefined;
+  return (
+    `${WEIGHTING_CLARIFICATION_PREFIX} ${stated}%, under 100% — part of how the bid is marked has not been ` +
+    'disclosed. Ask the buyer to confirm the full breakdown before pricing.'
+  );
+}
+
+/**
+ * Replace whatever weightings clarification a record was stored with by the one
+ * the current rule stands behind — so an analysis written under the old
+ * flatten-and-complain behaviour stops surfacing a concern the reader has since
+ * dropped, without needing a re-analysis.
+ */
+function reconcileStoredClarifications(stored: string[], stated: number): string[] {
+  const withoutWeighting = stored.filter((c) => !c.startsWith(WEIGHTING_CLARIFICATION_PREFIX));
+  const current = weightingClarification(stated);
+  return current ? [...withoutWeighting, current] : withoutWeighting;
 }
 
 /**
@@ -721,9 +777,8 @@ export function analyseITT(
   for (const gap of mandatoryGaps) {
     clarifications.push(`${gap.reference}: ${gap.evidenceRequired} — nothing on file to satisfy this.`);
   }
-  if (statedTotal > 0 && statedTotal !== 100) {
-    clarifications.push(`The stated evaluation weightings total ${statedTotal}%, not 100%. Ask the buyer to confirm the full breakdown before pricing.`);
-  }
+  const weightingQuestion = weightingClarification(statedTotal);
+  if (weightingQuestion) clarifications.push(weightingQuestion);
 
   const analysisId = ulid();
   const readyToPrice = mandatoryGaps.length === 0 && bars.length === 0;
@@ -764,7 +819,7 @@ export function analyseITT(
       commercialTerms: input.terms,
       matrix,
       mandatoryGaps: mandatoryGaps.map((g) => g.reference),
-      weightings: { stated: statedTotal, complete: statedTotal === 100 },
+      weightings: { stated: statedTotal, complete: statedTotal === 100, status: weightingStatus(statedTotal) },
       terms: orderedTerms,
       bars,
       quantifiedExposureMinor,
@@ -783,7 +838,7 @@ export function analyseITT(
     returnBy: input.returnBy,
     matrix,
     mandatoryGaps,
-    weightings: { stated: statedTotal, declared, complete: statedTotal === 100 },
+    weightings: { stated: statedTotal, declared, complete: statedTotal === 100, status: weightingStatus(statedTotal) },
     terms: orderedTerms,
     bars,
     quantifiedExposureMinor,
@@ -960,7 +1015,7 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
     // Derived from the matrix by the same rule `analyseITT` applies, so a line
     // that is a mandatory gap on the day is a mandatory gap on the read.
     mandatoryGaps: matrix.filter((line) => line.mandatory && line.status === 'GAP'),
-    weightings: { stated, declared, complete: stated === 100 },
+    weightings: { stated, declared, complete: stated === 100, status: weightingStatus(stated) },
     terms: (state.terms as TermAssessment[] | undefined) ?? [],
     bars: (state.bars as string[] | undefined) ?? [],
     quantifiedExposureMinor: Number(state.quantifiedExposureMinor ?? 0),
@@ -975,7 +1030,10 @@ function readAnalysis(record: EntityRecord): StoredITTAnalysis {
             0,
           )
         : Number(state.committedCapacityMinor),
-    clarifications: (state.clarifications as string[] | undefined) ?? [],
+    // Reconciled on read: an analysis stored under the old flatten-and-complain
+    // rule drops its spurious weightings clarification here, so a re-read clears
+    // it without a re-analysis.
+    clarifications: reconcileStoredClarifications((state.clarifications as string[] | undefined) ?? [], stated),
     readyToPrice: Boolean(state.readyToPrice),
     // Undefined — not zero — when the analysis was confirmed before a value was
     // known, so a reader can say "not yet sized" instead of "£0".

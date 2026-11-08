@@ -931,11 +931,13 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
           <h2 style="margin-bottom:6px">The buyer's marking scheme</h2>
           <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">
             ${
-              analysis.weightings.stated === 0
+              (analysis.weightings.status ?? (analysis.weightings.complete ? 'COMPLETE' : analysis.weightings.stated === 0 ? 'NONE' : analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'NONE'
                 ? 'The invitation stated no weightings. Ask for the breakdown before pricing — an evaluation nobody can see is one nobody can bid to.'
-                : analysis.weightings.complete
+                : (analysis.weightings.status ?? (analysis.weightings.complete ? 'COMPLETE' : analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'COMPLETE'
                   ? 'The stated weightings total 100%. The full breakdown is published.'
-                  : `The stated weightings total ${analysis.weightings.stated}%, not 100%. Part of how this is being marked has not been disclosed.`
+                  : (analysis.weightings.status ?? (analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'NESTED'
+                    ? `The published criteria include sub-weightings — percentages of a section, not of the whole — so they add to ${analysis.weightings.stated}% when flattened. That is normal nesting, not a gap; read the top-level split in the ITT.`
+                    : `The stated weightings total ${analysis.weightings.stated}%, under 100%. Part of how this is being marked has not been disclosed.`
             }
           </p>
           <div class="split-list">
@@ -943,8 +945,8 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
               (w) => html`<div class="row"><span class="lbl">${humanise(w.category)}</span><span class="val">${w.percent}%</span></div>`,
             )}
             <div class="row">
-              <span class="lbl"><b>Stated total</b></span>
-              <span class="val">${badge(`${analysis.weightings.stated}%`, analysis.weightings.complete ? 'ok' : 'warn')}</span>
+              <span class="lbl"><b>${analysis.weightings.stated > 100 ? 'Flattened total' : 'Stated total'}</b></span>
+              <span class="val">${badge(`${analysis.weightings.stated}%`, analysis.weightings.complete ? 'ok' : analysis.weightings.stated > 100 ? 'neutral' : 'warn')}</span>
             </div>
           </div>
         </div>

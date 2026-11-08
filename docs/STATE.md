@@ -3213,9 +3213,29 @@ click binding was made delegated on the view (the same pattern the other two
 dispatchers already used) so the panel's button fires it, not only the bar on the
 company card.
 
+**The weighting-reconciliation question is read by direction, not by a flat
+sum.** Weightings are read per requirement line and grouped by category, which
+cannot tell a top-level weight ("Quality 30%") from a sub-criterion weight that
+is a percentage *of* that block ("approach 30%, of the quality mark"). A properly
+nested scheme — a 30% quality block split into seven sub-criteria that themselves
+sum to 100%, plus 70% price — therefore flattens to ~180%. The old rule raised
+"your weightings total 180%, not 100%" on exactly those well-formed tenders,
+which made the bidder look unable to read the tender on a bid where understanding
+it carries marks, and it fired on almost every real ITT. Now `weightingStatus`
+(`itt.ts`) reads the total by direction: **over 100% is `NESTED`** and carries no
+concern (we cannot prove the top-level scheme is wrong); **under 100% is a
+genuine `SHORT`fall** — part of the marking is undisclosed — and is the one
+weighting question put to the buyer; 100% is `COMPLETE`, nothing stated is
+`NONE`. The frontend banner shows the nested case neutrally ("sub-weightings …
+normal nesting, not a gap") rather than as a warning. Already-stored analyses
+self-heal: `readAnalysis` drops the weightings clarification a record was written
+with and re-derives the current one, so a re-read clears the old false positive
+without a re-analysis. Covered in `itt.test.ts` (SHORT raises, NESTED does not,
+COMPLETE is clean).
+
 **The analysis raises its own questions in one act.** The matrix produces the
-"Questions for the buyer" — insurance gaps, a weighting total that does not add
-up, uninsurable or bar terms — when it reads the invitation. Until now a person
+"Questions for the buyer" — insurance gaps, a genuine weighting shortfall,
+uninsurable or bar terms — when it reads the invitation. Until now a person
 had to retype each one into the batch box in a `subject | question | reference`
 format they had no way to know, and a plain paste failed with "must contain at
 least one item" — the agent did the thinking and the human did transcription.
