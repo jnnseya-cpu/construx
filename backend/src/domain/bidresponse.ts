@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, currentPhase, runAI, write, type EngineContext } from '../engines/context.ts';
@@ -346,8 +347,11 @@ export async function writeNextSection(
     inputRefs: [{ refType: 'ITTAnalysis', refId: pack.analysisId }],
     request: {
       task:
-        'Write one section of a construction tender submission, answering one stated requirement. Return JSON with ' +
-        '`body`: an array of paragraph strings.',
+        `${expertBriefing('BID_MANAGER')} ` +
+        'Now write one section of a construction tender submission, answering one stated requirement — in the voice of ' +
+        'that bid manager: answer every element the requirement names, in the buyer’s own words, with the method and ' +
+        'the measurable commitments it asks for, and nothing it does not. Return JSON with `body`: an array of ' +
+        'paragraph strings.',
       payload: {
         client: pack.clientName,
         requirement: next.deliverable,

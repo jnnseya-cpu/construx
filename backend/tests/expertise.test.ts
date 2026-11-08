@@ -47,6 +47,7 @@ describe('construction expertise framing', () => {
     assert.match(expertBriefing('COMMISSIONING'), /Code M/);
     assert.match(expertBriefing('SITE_MANAGER'), /BS 5975|temporary works/i);
     assert.match(expertBriefing('BID_MANAGER'), /Procurement Act 2023/);
+    assert.match(expertBriefing('DEVELOPMENT_MANAGER'), /NRM1|viability|Future Homes/);
   });
 });
 

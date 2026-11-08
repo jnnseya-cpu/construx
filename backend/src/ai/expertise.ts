@@ -29,6 +29,7 @@
 
 export type Discipline =
   | 'BID_MANAGER'
+  | 'DEVELOPMENT_MANAGER'
   | 'QUANTITY_SURVEYOR'
   | 'ESTIMATOR'
   | 'PLANNER'
@@ -60,6 +61,20 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'NEC4 and JCT tendering and the PCSA route',
       'the Selection Questionnaire / PAS 91 and SSIP prequalification',
       'RICS tendering and tender settlement practice',
+    ],
+  },
+  DEVELOPMENT_MANAGER: {
+    title: 'development manager taking a social-housing or mixed-use scheme through feasibility and the early RIBA stages',
+    judgement:
+      'tests whether a scheme is deliverable and viable before cost is committed — reads the site and brief for what ' +
+      'drives value and risk, builds an order-of-cost and a realistic programme from concept information, weighs ' +
+      'placemaking, planning policy and tenure against deliverability, and keeps a concept control honest about what ' +
+      'is still an allowance to be firmed up by measured design and QS data before tender',
+    standards: [
+      'RICS NRM1 order of cost estimating and RICS financial viability in planning',
+      'the RIBA Plan of Work 2020 Stages 0 to 2 (strategic definition through concept design)',
+      'national and local planning policy (the NPPF and the local plan) and biodiversity net gain',
+      'the Future Homes Standard and the accessible and adaptable housing standards (Part M4(2) and M4(3))',
     ],
   },
   QUANTITY_SURVEYOR: {

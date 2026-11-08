@@ -3243,7 +3243,10 @@ compensation events and the clause-61.3 time bar, JCT, CDM 2015 with the F10
 thresholds, BS EN ISO 19650, BS 5975 temporary works, CIBSE Commissioning Code M,
 the SCL Delay and Disruption Protocol, the Building Safety Act 2022, the
 Procurement Act 2023, and so on per discipline) rather than reasoning as a model
-with no feel for the industry. Ten disciplines are framed. `expertBriefing(
+with no feel for the industry. Eleven disciplines are framed (including a
+DEVELOPMENT_MANAGER for feasibility and the early RIBA stages, working to RICS
+NRM1 and viability, RIBA 0–2, the NPPF and local plan, biodiversity net gain and
+the Future Homes Standard). `expertBriefing(
 discipline, { stage })` returns the opening — the professional, the judgement
 they bring, the standards they work to, and, when the task sits at a known point
 in the lifecycle, the **RIBA Plan of Work 2020 stage context**: a `RibaStage` 0–7
@@ -3264,10 +3267,15 @@ engine's RAMS method review (HEALTH_AND_SAFETY, stage 5); the contracts/claims
 engine's clause-and-time-bar extraction, entitlement assessment, delay-concurrency
 argument and evidence chronology (COMMERCIAL_MANAGER); the handover engine's
 readiness assessment (COMMISSIONING, stage 6) and maintenance prioritisation
-(stage 7); and the BIM engine's clash-resolution sequencing (DESIGN_MANAGER, stage
-3). Pure perception/extraction tasks (title-block OCR, O&M extraction, site-reality
-comparison) are deliberately left unframed — the "reason from the documents" opening
-is for judgement, not extraction. Covered in `expertise.test.ts` (every discipline
+(stage 7); the BIM engine's clash-resolution sequencing (DESIGN_MANAGER, stage 3);
+the bid-response section drafting (BID_MANAGER), so each section sent to a buyer is
+written in an experienced bid manager's voice; and the feasibility brief's vision
+and strategy narrative (DEVELOPMENT_MANAGER, stage 2), so an early appraisal reasons
+as a development manager at concept stage. The bid-response *shorten-to-limit* task
+is left unframed (it is precise editing, not professional judgement), as are the
+pure perception/extraction tasks (title-block OCR, O&M extraction, site-reality
+comparison) — the "reason from the documents" opening is for judgement, not extraction
+or mechanical editing. Covered in `expertise.test.ts` (every discipline
 names a real profession and real standards; every briefing carries the
 no-fabrication, propose-not-decide discipline; every RIBA stage 0–7 carries a named
 stage, outcome, contractor focus and watch-for; a discipline composes with a stage

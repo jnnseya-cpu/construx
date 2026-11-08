@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
 import { runAI, type EngineContext } from '../engines/context.ts';
 import type { FeasibilityScheme } from './feasibility.ts';
@@ -45,10 +46,9 @@ export const BRIEF_AI_SECTIONS: Array<{ key: string; heading: string; brief: str
     key: 'vision',
     heading: 'Vision and placemaking',
     brief:
-      'You are a development manager writing the vision for a council social-housing scheme. In two or three sentences, ' +
-      'describe the placemaking intent — how the homes sit in their context, overlooking and active frontages, a safe ' +
-      'and tenure-blind neighbourhood. Reason only about the scheme figures supplied; state no figure, name or date not ' +
-      'in them.',
+      'Write the vision for this council social-housing scheme. In two or three sentences, describe the placemaking ' +
+      'intent — how the homes sit in their context, overlooking and active frontages, a safe and tenure-blind ' +
+      'neighbourhood. No headings, no lists; state no figure, name or date not in the scheme figures supplied.',
     fallback: (s) =>
       `The scheme places ${s.totals.houses} two-storey houses against the existing residential edges and ${s.totals.flats} ` +
       `flats in lower blocks toward the arrival street, so scale steps down into the neighbourhood. Entrances and ` +
@@ -61,7 +61,7 @@ export const BRIEF_AI_SECTIONS: Array<{ key: string; heading: string; brief: str
     brief:
       'In two or three sentences, summarise the delivery and infrastructure strategy for this social-housing scheme: ' +
       'all-electric low-carbon homes, an adoptable street, sustainable drainage, utility connections and biodiversity ' +
-      'net gain, procured to secure cost and programme certainty. Reason only about the figures supplied.',
+      'net gain, procured to secure cost and programme certainty. No headings, no lists; reason only about the figures supplied.',
     fallback: (s) =>
       `Every home is all-electric to the emerging Future Homes Standard, served by an adoptable street, sustainable ` +
       `drainage, new or reinforced utility connections and on-site biodiversity net gain. The ${s.programme.totalMonths}-month ` +
@@ -240,7 +240,7 @@ export async function feasibilityNarrative(
         capability: 'REASONING',
         inputRefs: [],
         request: {
-          task: section.brief,
+          task: `${expertBriefing('DEVELOPMENT_MANAGER', { stage: 2 })} ${section.brief}`,
           payload: {
             ...payload,
             constraint:
