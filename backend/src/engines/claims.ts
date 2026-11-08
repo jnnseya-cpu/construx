@@ -405,7 +405,7 @@ export async function assessImpact(
     outputStandard: true,
     request: {
       task:
-        `${expertBriefing('COMMERCIAL_MANAGER', { stage: 5 })} ` +
+        `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
         'Assess the entitlement basis, the knock-on effects and the notice obligations this change triggers. Found the ' +
         'entitlement on a named clause, separate time from money, flag the notice and any time bar that must be served ' +
         'to preserve the entitlement, and do not assert an entitlement the contract does not support.',

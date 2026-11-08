@@ -44,6 +44,8 @@ export type Discipline =
   | 'HEALTH_AND_SAFETY'
   | 'QUALITY_MANAGER'
   | 'COMMERCIAL_MANAGER'
+  | 'CHANGE_MANAGER'
+  | 'RISK_MANAGER'
   | 'COMMISSIONING'
   | 'FACILITIES_MANAGER'
   | 'REGULATORY';
@@ -238,6 +240,34 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'JCT extension of time and Relevant Events, and loss and expense and Relevant Matters',
       'the Construction Act payment and pay-less notices',
       'cost-value reconciliation, the final account, retention (commonly released half at practical completion) and dayworks',
+    ],
+  },
+  CHANGE_MANAGER: {
+    title: 'chartered change manager (MRICS) running contract change control',
+    judgement:
+      'runs the change-control process to the letter and the clock — recognises an event as a compensation event or a ' +
+      'variation, serves and tracks the notices and time bars that preserve the entitlement, separates time from money, ' +
+      'keeps the change register reconciled to what has been instructed and assessed, and will not let a change be ' +
+      'priced or an entitlement asserted beyond what the contract supports',
+    standards: [
+      'NEC4 compensation events (clauses 60 to 66), the clause-61.3 eight-week time bar, and the early warning register (clause 15)',
+      'JCT variations, the Architect/Contract Administrator’s instruction regime, and extension of time and loss and expense',
+      'the Construction Act payment regime as it applies to assessed change',
+      'a change register reconciled to instructions, assessments and the final account',
+    ],
+  },
+  RISK_MANAGER: {
+    title: 'chartered risk manager (CMIRM) quantifying and controlling project risk',
+    judgement:
+      'keeps a live risk register that records cause, event and impact as one entry rather than an event with no handle, ' +
+      'gives each risk an owner, a trigger and a proportionate control, separates a client-owned risk from a ' +
+      'contractor-owned one so neither is double-counted into the price nor left unfunded, and quantifies exposure — ' +
+      'expected value and a P80 contingency — instead of colouring a heat map',
+    standards: [
+      'CMIRM and the Institute of Risk Management (IRM) professional practice',
+      'ISO 31000 risk management and the APM risk management guidance',
+      'quantitative schedule and cost risk analysis (QSRA — Monte Carlo, P50/P80 contingency)',
+      'a live risk register with cause→event→impact, owners, triggers, mitigations and residual exposure',
     ],
   },
   COMMISSIONING: {

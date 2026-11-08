@@ -161,6 +161,7 @@ import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
 import * as clarificationreview from '../domain/clarificationreview.ts';
+import * as riskreview from '../domain/riskreview.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
@@ -20876,6 +20877,16 @@ export const ROUTES: Route[] = [
     readOnly: true,
     description: 'Cash in and out over the payment periods that remain, measured from what has been certified',
     handler: (platform, ctx) => cost.forwardCashflow(projectContext(platform, ctx)),
+  },
+
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/risks/ai-review',
+    ai: { engine: 'RISK_SAFETY', taskType: 'risk_register_review', capability: 'REASONING' },
+    description:
+      'Review the live risk register as a chartered risk manager and propose the risks worth adding or strengthening — a missing risk, an event with no cause, no owner or no trigger, a control that watches rather than acts, a misallocated risk — each stated as cause→event→impact and saying what it rests on. Advice to verify and add; writes nothing, and adding or re-scoring a risk stays a person’s act',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => riskreview.reviewProjectRisks(projectContext(platform, ctx)),
   },
 
   {

@@ -3340,6 +3340,30 @@ to null; a stage carries through to the role briefing) and `api.test.ts` (the
 matrix endpoint publishes the per-role expert, with the PM's discipline and
 standards and a null for the viewer).
 
+**A chartered risk manager and a change manager.** Risk and change had no
+professional of their own — change was folded into the commercial manager and risk
+had no AI surface at all. Two disciplines added: RISK_MANAGER (chartered risk
+manager, CMIRM / IRM, ISO 31000, APM risk guidance, QSRA Monte-Carlo P50/P80, and a
+live register with cause→event→impact, owners, triggers, mitigations and residual
+exposure) and CHANGE_MANAGER (chartered change manager, MRICS, NEC4 compensation
+events and the clause-61.3 time bar, JCT variations and the instruction regime, the
+change register reconciled to the final account). The change entitlement assessment
+(`claims.ts`, `impact_assessment`) now reasons as the change manager rather than
+the commercial manager. And risk gained a real AI surface: `reviewProjectRisks`
+(`riskreview.ts`, `POST …/risks/ai-review`) — a chartered risk manager reads the
+live register and project context and proposes the risks worth adding or
+strengthening (a missing risk, an event with no cause, no owner or no trigger, a
+control that watches rather than acts, a misallocated client/contractor risk), each
+stated as cause→event→impact with the party, trigger and control, and saying what
+it rests on. Advisory (proposes; adding or re-scoring a risk stays a person's act),
+`requireModel` refuses the local stand-in, and it carries the verify-and-improve
+loop — an independent reviewer marks each proposed risk and the weak ones are
+sharpened or dropped. Nineteen disciplines now framed. Covered in `riskreview.test.ts`
+(the shaper keeps a real cause→event→impact with a control, drops stubs and
+duplicates, caps at ten; the review refuses the stand-in and charges nothing;
+proposes from a real model and touches nothing on the register) and
+`expertise.test.ts` (both name their standards).
+
 **Verify-and-improve: the loop that makes the *job* experienced, not just the
 agent.** The framing asks for quality; this checks for it. `backend/src/ai/refine.ts`
 is the reusable core — a critique vocabulary (KEEP / SHARPEN / DROP), the response

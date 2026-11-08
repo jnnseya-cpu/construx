@@ -67,6 +67,8 @@ describe('construction expertise framing', () => {
     assert.match(expertBriefing('BID_MANAGER'), /Procurement Act 2023/);
     assert.match(expertBriefing('DEVELOPMENT_MANAGER'), /NRM1|viability|Future Homes/);
     assert.match(expertBriefing('CONSTRUCTION_MANAGER'), /chartered construction manager \(MCIOB\)|CIOB/);
+    assert.match(expertBriefing('RISK_MANAGER'), /ISO 31000|QSRA|P50\/P80|IRM/);
+    assert.match(expertBriefing('CHANGE_MANAGER'), /compensation events|time bar|variations/);
   });
 });
 
