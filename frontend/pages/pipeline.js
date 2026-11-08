@@ -929,26 +929,31 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
       <div class="grid g2" style="padding:13px 17px 15px">
         <div>
           <h2 style="margin-bottom:6px">The buyer's marking scheme</h2>
-          <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">
-            ${
-              (analysis.weightings.status ?? (analysis.weightings.complete ? 'COMPLETE' : analysis.weightings.stated === 0 ? 'NONE' : analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'NONE'
+          ${(() => {
+            const w = analysis.weightings;
+            const st = w.status ?? (w.complete ? 'COMPLETE' : w.stated === 0 ? 'NONE' : w.stated > 100 ? 'NESTED' : 'SHORT');
+            const note =
+              st === 'NONE'
                 ? 'The invitation stated no weightings. Ask for the breakdown before pricing — an evaluation nobody can see is one nobody can bid to.'
-                : (analysis.weightings.status ?? (analysis.weightings.complete ? 'COMPLETE' : analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'COMPLETE'
+                : st === 'COMPLETE'
                   ? 'The stated weightings total 100%. The full breakdown is published.'
-                  : (analysis.weightings.status ?? (analysis.weightings.stated > 100 ? 'NESTED' : 'SHORT')) === 'NESTED'
-                    ? `The published criteria include sub-weightings — percentages of a section, not of the whole — so they add to ${analysis.weightings.stated}% when flattened. That is normal nesting, not a gap; read the top-level split in the ITT.`
-                    : `The stated weightings total ${analysis.weightings.stated}%, under 100%. Part of how this is being marked has not been disclosed.`
-            }
-          </p>
-          <div class="split-list">
-            ${analysis.weightings.declared.map(
-              (w) => html`<div class="row"><span class="lbl">${humanise(w.category)}</span><span class="val">${w.percent}%</span></div>`,
-            )}
-            <div class="row">
-              <span class="lbl"><b>${analysis.weightings.stated > 100 ? 'Flattened total' : 'Stated total'}</b></span>
-              <span class="val">${badge(`${analysis.weightings.stated}%`, analysis.weightings.complete ? 'ok' : analysis.weightings.stated > 100 ? 'neutral' : 'warn')}</span>
-            </div>
-          </div>
+                  : st === 'NESTED'
+                    ? 'The criteria are nested — the sub-weightings are percentages of a section, not of the whole, so they do not add to a single total. The top-level split (typically a price / quality share) is set out in the ITT; do not read the sub-weightings as shares of the whole mark.'
+                    : `The stated weightings total ${w.stated}%, under 100%. Part of how this is being marked has not been disclosed.`;
+            return html`
+              <p style="font-size:12.5px;color:var(--text-3);margin:0 0 8px">${note}</p>
+              ${
+                st === 'NESTED'
+                  ? html`<p style="font-size:12px;color:var(--text-3);margin:0"><b>Scored on:</b> ${w.declared.map((d) => humanise(d.category)).join(', ')}. The ITT carries the exact split.</p>`
+                  : html`<div class="split-list">
+                      ${w.declared.map((d) => html`<div class="row"><span class="lbl">${humanise(d.category)}</span><span class="val">${d.percent}%</span></div>`)}
+                      <div class="row">
+                        <span class="lbl"><b>Stated total</b></span>
+                        <span class="val">${badge(`${w.stated}%`, w.complete ? 'ok' : 'warn')}</span>
+                      </div>
+                    </div>`
+              }`;
+          })()}
         </div>
         <div>
           <h2 style="margin-bottom:6px">Questions for the buyer</h2>
