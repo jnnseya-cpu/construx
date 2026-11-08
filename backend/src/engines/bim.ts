@@ -875,7 +875,11 @@ export async function generateAsBuilt(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Model', refId: input.baseModelId }],
     request: {
-      task: 'Reconcile design intent against captured site reality and list the as-built departures',
+      task:
+        `${expertBriefing('BIM_MANAGER', { stage: 5 })} ` +
+        'Reconcile the design intent against the captured site reality and list the as-built departures. Separate a ' +
+        'real departure from a tolerance or a capture artefact, and flag the ones that matter for operation, safety or ' +
+        'the asset record rather than every millimetre.',
       payload: { deviationCount: allDeviations.length, captures: twinStates.length },
     },
     toWrites: (output) => [
@@ -1270,7 +1274,11 @@ export async function ingestSpecification(
     capability: 'REASONING',
     inputRefs: [evidence],
     request: {
-      task: 'Characterise what this specification section demands of the contractor and where the risk in it sits',
+      task:
+        `${expertBriefing('DESIGN_MANAGER')} ` +
+        'Characterise what this specification section demands of the contractor and where the risk in it sits. Pick out ' +
+        'the performance obligations, the testing and sample requirements, the approvals and the long-lead or ' +
+        'specialist-design items, and name the clause each demand comes from.',
       payload: {
         sectionRef: input.sectionRef,
         title: input.title,

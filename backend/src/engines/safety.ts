@@ -437,7 +437,11 @@ export async function forecastSafetyRisk(
     capability: 'REASONING',
     inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
     request: {
-      task: 'Interpret the safety leading indicators and prioritise the recommended controls',
+      task:
+        `${expertBriefing('HEALTH_AND_SAFETY', { stage: 5 })} ` +
+        'Interpret these safety leading indicators and prioritise the recommended controls. Read the trend behind the ' +
+        'numbers — a near-miss rate that is rising is telling you something before the incident does — and put the ' +
+        'control that removes the hazard above the one that only watches it.',
       payload: { signal, forecast },
     },
     toWrites: (output) => [

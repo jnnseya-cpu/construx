@@ -6,6 +6,8 @@ import {
   ROLE_EXPERTISE,
   expertBriefing,
   expertBriefingForRole,
+  expertPersona,
+  expertPersonaForRoles,
   expertRole,
   ribaStage,
   roleExpertise,
@@ -162,5 +164,32 @@ describe('the AI expert behind each platform role', () => {
     const briefing = expertBriefingForRole('FM', { stage: 7 });
     assert.match(briefing!, /facilities manager/i);
     assert.match(briefing!, /RIBA Stage 7/);
+  });
+});
+
+/**
+ * The lighter persona framing, for advise/draft/guide tasks (the copilot, the
+ * cover-letter drafts, the market-rate estimator): it keeps the professional and
+ * the never-invent discipline but drops the "quote the exact passage" clause that
+ * only fits a document analysis.
+ */
+describe('the persona framing for advisory and guide tasks', () => {
+  it('names the professional and keeps the never-invent discipline, without the quote-the-passage clause', () => {
+    const persona = expertPersona('QUANTITY_SURVEYOR');
+    assert.ok(persona.startsWith('You are a '), 'opens as the professional');
+    assert.match(persona, /chartered quantity surveyor/i);
+    assert.match(persona, /never invent/i);
+    assert.match(persona, /propose/i);
+    assert.doesNotMatch(persona, /quote the exact passage/i, 'the document-quote clause is for analysis, not advice');
+  });
+
+  it('opens as the first construction professional among a person’s roles, or null where none is', () => {
+    assert.equal(expertPersonaForRoles(['VIEWER']), null);
+    assert.equal(expertPersonaForRoles(['PLATFORM_ADMIN']), null);
+    const qs = expertPersonaForRoles(['QS']);
+    assert.match(qs!, /chartered quantity surveyor/i);
+    // A read-only seat is skipped in favour of the delivery seat the person also holds.
+    const picked = expertPersonaForRoles(['VIEWER', 'PM']);
+    assert.match(picked!, /project manager/i);
   });
 });

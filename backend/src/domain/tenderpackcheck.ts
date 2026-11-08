@@ -1,3 +1,4 @@
+import { expertBriefing } from '../ai/expertise.ts';
 import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, runAI, type EngineContext } from '../engines/context.ts';
 import { ingestedFiles } from '../evidence/pipeline.ts';
@@ -106,7 +107,8 @@ export async function checkClarificationAgainstPack(
     inputRefs: [{ refType: 'Clarification', refId: input.clarificationId }],
     request: {
       task:
-        'You are a bid manager checking, before a tender clarification is sent to the buyer, whether the tender ' +
+        `${expertBriefing('BID_MANAGER')} ` +
+        'You are checking, before a tender clarification is sent to the buyer, whether the tender ' +
         'documents already answer it. Decide only from the documents supplied. If one answers the question, set ' +
         'answered true, name that document and quote the exact passage that answers it. If nothing in the documents ' +
         'answers it, set answered false. Never invent an answer the documents do not contain, and do not treat a ' +

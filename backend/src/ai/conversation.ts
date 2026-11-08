@@ -1,6 +1,7 @@
 import { AREA_CONSOLE_PAGE } from '../../../shared/vocabulary.js';
 import { guideGroundingLines, relevantGuideTopics } from './platformguide.ts';
 import { ENGINE_CONTRACTS } from './orchestrator.ts';
+import { expertPersonaForRoles } from './expertise.ts';
 import { config } from '../config.ts';
 import { abbreviateMoney } from '../domain/locale.ts';
 import type { EngineContext } from '../engines/context.ts';
@@ -433,8 +434,15 @@ export async function explainPlainly(
     inputRefs: [],
     request: {
       task:
-        'Explain, in plain English for a busy builder with no bid-writing experience, what this step means and exactly ' +
-        'what to do next in the platform. Return JSON with `explanation`: an array of short paragraph strings.',
+        // The copilot answers as the experienced professional whose seat the
+        // person holds — a QS hears a QS, a site manager a CDM principal
+        // contractor — so the universal "Ask for help" is expert, not generic.
+        // Persona, not the full briefing: this explains a platform step in plain
+        // words, it does not analyse a document to quote from.
+        (expertPersonaForRoles(ctx.auth.roles) ?? '') +
+        ' Explain, in plain English for a busy builder with no bid-writing experience, what this step means and exactly ' +
+        'what to do next in the platform. Bring your professional judgement to what matters about the step, but keep the ' +
+        'words plain. Return JSON with `explanation`: an array of short paragraph strings.',
       payload: {
         question,
         phase: currentPhase(ctx) ?? 'none',

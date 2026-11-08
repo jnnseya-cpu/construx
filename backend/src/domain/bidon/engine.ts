@@ -1,3 +1,4 @@
+import { expertBriefing, expertPersona } from '../../ai/expertise.ts';
 import { config } from '../../config.ts';
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
@@ -575,6 +576,7 @@ export async function parseQuestionnaire(
       request: {
         ...(part.media ? { media: part.media } : {}),
         task:
+          `${expertPersona('BID_MANAGER')} ` +
           'Read this prequalification or tender questionnaire and list every question a bidder must answer. Return ' +
           'JSON with `questions`: an array of { section, number, text, answerType, wordLimit, weighting, mandatory, ' +
           'passFail }.',
@@ -1626,6 +1628,7 @@ export async function draftAnswer(
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
       task:
+        `${expertBriefing('BID_MANAGER')} ` +
         'Plan one answer to one tender question. Do not write the answer. Return JSON with `limbs`: an array of ' +
         '`{ asks, chunkIds, evidenced }` — one entry per distinct thing the question asks, in the order it asks ' +
         'them, with the `chunkId` values that evidence it and `evidenced` true or false; `missing`: an array of ' +
@@ -1727,6 +1730,7 @@ export async function draftAnswer(
     attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
     request: {
       task:
+        `${expertBriefing('BID_MANAGER')} ` +
         'Write one answer to one question of a construction prequalification or tender questionnaire, using only the ' +
         'supplied passages. Return JSON with `body`: an array of paragraph strings, `citations`: an array of the ' +
         '`chunkId` values you actually relied on, and `unsupported`: an array of anything the question asks for that ' +
@@ -2020,6 +2024,7 @@ export async function draftAnswer(
       attribution: { customerAccountId: bid.customerAccountId, engagementId: bid.engagementId, bidId: bid.id },
       request: {
         task:
+          `${expertBriefing('BID_MANAGER')} ` +
           'An independent evaluator has marked this draft and its marks and reasons are below. Rewrite the ' +
           'answer to score higher against exactly those criticisms. Return JSON in exactly the shape of the ' +
           'draft — `body`, `citations`, `unsupported`' +

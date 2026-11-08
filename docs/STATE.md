@@ -3309,6 +3309,32 @@ to null; a stage carries through to the role briefing) and `api.test.ts` (the
 matrix endpoint publishes the per-role expert, with the PM's discipline and
 standards and a null for the viewer).
 
+**The framing reaches every AI reasoning surface, not a chosen few.** The expert
+opening is now on every judgement task the platform runs — the tender clarification
+review, bid-response drafting, feasibility, the stage-gate narratives, and across
+the engines: planning (WBS, delay), cost (CVR), safety (RAMS review, leading
+indicators), claims (clause/time-bar, entitlement, concurrency, chronology),
+handover (readiness, maintenance), BIM (clash sequencing, as-built reconciliation,
+specification reading), tender (bid drafting, enquiry assessment, return variance),
+the market-rate estimator (`bidrun.ts`), the correspondence commitment reader
+(`commitments.ts`), the clarification pack-check (`tenderpackcheck.ts`), and the
+Bid-On question-extraction, answer-planning, answer-writing and rewrite tasks.
+Two framings are used: `expertBriefing` for tasks that analyse a supplied document
+and should cite it (it keeps the "quote the exact passage" clause), and the lighter
+`expertPersona` for tasks that advise, draft or guide — the copilot, the
+cover-letter drafts, the market-rate estimator — which carries the professional and
+the never-invent discipline but drops the document-quote clause that only fits an
+analysis. The **copilot** (`explainPlainly`, the universal "Ask for help" on every
+screen, for every user) now answers as the experienced professional whose seat the
+person holds — a QS hears a QS, a site manager a CDM principal contractor — via
+`expertPersonaForRoles(ctx.auth.roles)`, so the framing is genuinely everywhere and
+for everyone, not only on the specialist screens. Deliberately left unframed: pure
+perception/extraction (title-block and drawing OCR, O&M extraction, take-off from a
+drawing, hazard-photo classification, site-reality capture), where "reason from the
+documents, never invent a figure" is about judgement, not transcription; and the
+red-team evaluator, which already reasons as a different expert on purpose — the
+buyer's own scorer.
+
 **An AI construction-expert review of the tender for clarifications.** The
 mechanical reader catches what arithmetic catches — weightings that do not add
 up, a clause that cannot be insured. It does not read the scope the way a bid

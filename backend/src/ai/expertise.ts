@@ -427,3 +427,41 @@ export function expertBriefingForRole(role: Role, opts: { stage?: RibaStage } = 
   const discipline = ROLE_EXPERTISE[role];
   return discipline === null ? null : expertBriefing(discipline, opts);
 }
+
+/**
+ * A lighter framing for tasks that advise, draft or guide rather than analyse a
+ * supplied document. It carries the professional, the judgement and the real
+ * standards, and the honesty that matters everywhere — never invent, you propose
+ * and a person decides — but drops the "quote the exact passage" clause, which
+ * only fits a document analysis. Used by the copilot, the drafting tasks and the
+ * market-rate estimator, where there is no single passage to quote.
+ */
+export function expertPersona(discipline: Discipline, opts: { stage?: RibaStage } = {}): string {
+  const role = ROLES[discipline];
+  const stageText = opts.stage === undefined ? '' : ` ${stageBriefing(opts.stage)}`;
+  return (
+    `You are a ${role.title}. You ${role.judgement}. ` +
+    `You work to ${joinList(role.standards)}.${stageText} ` +
+    'Reason only from the facts and documents you are given; never invent a figure, a name, a date, a clause or a ' +
+    'standard that is not in them; and remember you are advising — you propose, and a qualified person decides.'
+  );
+}
+
+/** The persona for whoever holds this role, or null where the role has no single profession. */
+export function expertPersonaForRole(role: Role, opts: { stage?: RibaStage } = {}): string | null {
+  const discipline = ROLE_EXPERTISE[role];
+  return discipline === null ? null : expertPersona(discipline, opts);
+}
+
+/**
+ * The persona for the first of a person's roles that names a profession, or null
+ * where none does (an administrator, a viewer). A person can hold several roles;
+ * the copilot opens as the first construction professional among them.
+ */
+export function expertPersonaForRoles(roles: readonly Role[], opts: { stage?: RibaStage } = {}): string | null {
+  for (const role of roles) {
+    const persona = expertPersonaForRole(role, opts);
+    if (persona !== null) return persona;
+  }
+  return null;
+}

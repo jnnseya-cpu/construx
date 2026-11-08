@@ -1,3 +1,4 @@
+import { expertBriefing, expertPersona } from '../ai/expertise.ts';
 import { hashEvidence } from '../core/canonical.ts';
 import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
@@ -806,6 +807,7 @@ export async function respondToTender(
     inputRefs: input.enquiry.documents.map((d) => d.ref).filter((r): r is EntityRef => r !== undefined),
     request: {
       task:
+        `${expertPersona('BID_MANAGER')} ` +
         'Draft the qualifications, exclusions, tender queries and covering letter for this bid. ' +
         'Do not state, adjust or infer any price: the commercial figures are fixed and supplied.',
       payload: {
@@ -993,7 +995,10 @@ export async function composeTenderPackage(
     capability: 'REASONING',
     inputRefs: input.documents.map((d) => d.ref),
     request: {
-      task: 'Assess enquiry package completeness and draft the enquiry cover letter',
+      task:
+        `${expertPersona('QUANTITY_SURVEYOR')} ` +
+        'Assess this enquiry package for completeness — everything a subcontractor needs to price it accurately and ' +
+        'nothing that leaves a gap to be argued later — and draft the enquiry cover letter.',
       payload: {
         packageId: input.packageId,
         scopeNarrative: input.scopeNarrative,
@@ -1056,7 +1061,10 @@ export async function analyseReturns(
     capability: 'REASONING',
     inputRefs: input.returns.map((r) => ({ refType: 'SupplierSubmission', refId: r.submissionId })),
     request: {
-      task: 'Characterise tender return variance and rank commercial exposure',
+      task:
+        `${expertBriefing('COMMERCIAL_MANAGER')} ` +
+        'Characterise the variance across these tender returns and rank the commercial exposure. Separate a keen price ' +
+        'from an error or a qualification that moves the risk, and say which differences would actually bite on award.',
       payload: { rfqId: input.rfqId, findings, returnCount: input.returns.length },
     },
     toWrites: (output) =>
