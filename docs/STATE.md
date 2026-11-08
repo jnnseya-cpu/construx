@@ -958,6 +958,41 @@ error — so the one export failure that has a next step now offers it. The stri
 refusal stands; what changed is that a tenancy can now satisfy it.
 `consoleforms` covers the new command against the route schema.
 
+### The spreadsheet export went out unbranded while the PDF and Word did not
+
+Found checking that the company's identity reaches **everything** it produces.
+The PDF and the Word pack were fully branded — the mark, the brand colour, the
+legal footer, and the issuer named in the file's own properties — but the
+**Excel** pack was a bare grid: `renderXlsx(sheets)` took only the data, and its
+styles were hardcoded with no colour, no logo, no cover and no document
+properties. A tender pricing schedule or questionnaire returned as a workbook is
+the tenancy's own outbound instrument like the other two, and it was the one
+going out looking like a printout.
+
+`renderXlsx(sheets, branding?)` now brands the workbook **without disturbing a
+single data cell**, which is the whole constraint: a buyer's returned
+questionnaire must keep its sheet-per-section, row-per-question structure and its
+numbering, or it fails a format check. So the branding is additive — a **cover
+sheet** (sheet 1) carrying the mark, the issuing name in the brand colour and the
+legal footer; the brand colour on each section's existing **header row** (a style
+change, not a structural one); the logo embedded through DrawingML from the
+tenancy's `logoRef` data URI (or the evidence store when a resolver is supplied),
+PNG or JPEG, an undecodable mark left off rather than written broken; and the
+issuer named in `docProps` as author and company, the same decision the PDF and
+Word renderers make. The colour is parsed from hex **or** the seeded `rgba(...)`
+form (`brandArgb`), where the shared `hex()` helper would have dropped `rgba` to
+grey. Omit `branding` and the file is byte-for-byte the unbranded grid it was, so
+nothing that does not pass branding changes; with branding it stays deterministic,
+so an export's hash still means two renders are the same instrument. Verified in a
+real browser-class renderer (LibreOffice opens it; the cover shows the logo, the
+orange title and the footer, and each section's header row sits in the brand band)
+and covered in `bidonbid` (the cover is sheet 1, the sections keep order after it,
+the brand colour reaches the stylesheet, and the file is authored as the issuer).
+The one format still unbranded is the copy-ready **TEXT**, which carries no
+formatting at all by design. **PowerPoint is not produced by any stage**, so there
+is nothing there to brand; a branded deck would be a new export, built against a
+named deliverable rather than invented.
+
 ### The submission export leaked internal citation machinery
 
 Reading the exported pack the way the buyer would, after the branding door was in
