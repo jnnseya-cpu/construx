@@ -11895,6 +11895,51 @@ Re-opening these is what caused churn before.
 
 ---
 
+## Feasibility appraisal — a site and a brief into numbers
+
+The platform could read an invitation into a compliance matrix, price a measured
+take-off and generate the construction-phase documents, but it had no way to go
+the other direction: from a plot and a one-line brief ("a council hectare, social
+rent, a mix of houses and flats") to a **schedule of accommodation, a land
+budget, an order-of-cost and an indicative programme** — the quantitative spine
+of a feasibility study or an Employer's Requirements brief. A development manager
+kept that in a spreadsheet nobody could audit. `backend/src/domain/feasibility.ts`
+builds it, and `frontend/pages/feasibility.js` (the **Feasibility** screen, in the
+Pipeline section) is its console door.
+
+**It is deterministic, and honest about it — which is the whole point.** Every
+figure is computed, not judged, so the engine has no model in it. Dwelling areas
+are the published Nationally Described Space Standard plus a stated design uplift;
+the land budget apportions the real site area and balances to a flexibility line
+(and flags `overSite` rather than silently overflowing when the mix is too dense);
+the cost plan builds up from elemental rates that carry a basis and a base date,
+through preliminaries, overhead-and-profit, fees, risk and inflation to a forecast
+outturn with per-home and per-m² metrics; the programme scales published RIBA
+stage bands by the size of the scheme. Nothing is presented as a surveyed fact:
+the rates are *concept allowances to be replaced by measured design and QS data*,
+and `assumptionsNarrative` and `limits` say so on every result. This is the
+no-fabrication rule applied to feasibility — the honest way to produce a brief
+full of assumptions is to compute each from a transparent rule and label it,
+which is exactly what a good feasibility study does. The AI narrative and policy
+citations that would wrap these figures into prose are a separate advisory layer,
+not yet built; this module is the part that has to be *right*.
+
+`GET /v1/feasibility/archetypes` publishes the dwelling archetypes (with NDSS
+areas) and the default assumptions; `POST /v1/feasibility/scheme` computes a
+scheme — deterministic, nothing persisted, authorised `PROJECT_SETUP` `R`. A
+short brief need not carry a mix: `suggestMix` fills the site to a target density
+with a family-weighted social-rent mix as a transparent starting point the person
+then edits. Seventeen tests in `feasibility.test.ts` pin the reconciliation: the
+schedule sums to the GIA, the GIA drives the cost, the cost lines total, the land
+uses plus the balance equal the site exactly, M4(2) never drops below policy, and
+an over-dense mix is flagged rather than overflowed.
+
+**What it is not, stated plainly.** It does not yet assemble the narrative brief
+document (the prose, the policy justification, the DOCX/PDF export of the whole
+Employer's Requirements) — that is the next increment, and it would reuse the
+existing document-generation and export pipeline. Today it produces the numbers
+and the schedule the brief is built on, in the console and over the API.
+
 ## Concept, stage 6 — C-WF-01 to C-WF-08 and the 6.4 gate
 
 The head of the lifecycle, and the last stage to be built. That is the right way

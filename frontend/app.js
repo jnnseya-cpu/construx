@@ -151,6 +151,11 @@ export const NAV = [
     group: 'Commercial',
     items: [
       { id: 'pipeline', label: 'Pipeline & Bids', area: 'BUSINESS_DEVELOPMENT', icon: 'target', tenantScoped: true, hostOnly: true },
+      // Feasibility appraisal: a site and a brief into a schedule, land budget,
+      // order-of-cost and programme. Tenant-level and pre-project, so it is not
+      // gated on a project; it reads reference data and the deterministic compute
+      // route, offering no write action of its own.
+      { id: 'feasibility', label: 'Feasibility', area: 'BUSINESS_DEVELOPMENT', icon: 'meter', tenantScoped: true, hostOnly: true },
       // Bid-On: bid work delivered for external customers. `module` is what
       // makes it absent rather than locked for everybody else — see
       // `reachable()` — and the value is checked against what the API said this

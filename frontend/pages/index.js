@@ -45,6 +45,7 @@ import { overview } from './overview.js';
 import { partners } from './partners.js';
 import { performance } from './performance.js';
 import { pipeline } from './pipeline.js';
+import { feasibility } from './feasibility.js';
 import { procurement } from './procurement.js';
 import { programme } from './programme.js';
 import { reports } from './reports.js';
@@ -79,6 +80,7 @@ export const PAGES = {
   team,
   group,
   pipeline,
+  feasibility,
   programme,
   field,
   construction,

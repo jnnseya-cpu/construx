@@ -250,6 +250,7 @@ import * as conceptcontrols from '../domain/conceptcontrols.ts';
 import * as conceptduediligence from '../domain/conceptduediligence.ts';
 import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
+import * as feasibility from '../domain/feasibility.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
 import { guidedJourney } from '../domain/journey.ts';
@@ -4027,6 +4028,47 @@ export const ROUTES: Route[] = [
         ...(ctx.query.get('name') ? { name: ctx.query.get('name') as string } : {}),
         ...(ctx.query.get('today') ? { today: ctx.query.get('today') as string } : {}),
       }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/feasibility/archetypes',
+    guest: 'REFERENCE',
+    description: 'The dwelling archetypes (with NDSS areas) and the default concept assumptions a feasibility scheme is computed under',
+    handler: () => ({ archetypes: feasibility.DWELLING_ARCHETYPES, assumptions: feasibility.DEFAULT_ASSUMPTIONS }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/scheme',
+    readOnly: true,
+    description: 'Turn a site and a brief into a schedule of accommodation, land budget, order-of-cost and indicative programme. Deterministic; nothing is persisted.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        // Explicit counts where the mix is decided; the nested shapes are
+        // validated by the engine, which refuses an unknown archetype by name.
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & { suggest?: { densityDph?: number; familyWeighted?: boolean } }>(ctx);
+      // A short brief need not carry a mix: where none is given, suggest one from
+      // the site area and target density, which the caller then adjusts. The
+      // suggestion is a transparent rule, not a hidden judgement.
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      return feasibility.feasibilityScheme({ ...input, mix });
+    },
   },
   {
     method: 'GET',
