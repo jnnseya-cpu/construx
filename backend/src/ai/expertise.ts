@@ -59,7 +59,7 @@ type ExpertRole = {
 
 const ROLES: Record<Discipline, ExpertRole> = {
   BID_MANAGER: {
-    title: 'senior UK construction bid manager with over twenty years winning public and private tenders',
+    title: 'chartered quantity surveyor (MRICS) and senior bid manager with over twenty years winning public and private tenders',
     judgement:
       'reads a tender the way the evaluator will, separates mandatory returns from scored criteria, finds the question ' +
       'that decides the price, runs a disciplined bid/no-bid and tender settlement, carries a clear qualifications and ' +
@@ -72,7 +72,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   DEVELOPMENT_MANAGER: {
-    title: 'development manager taking a social-housing or mixed-use scheme through feasibility and the early RIBA stages',
+    title: 'chartered development surveyor (MRICS) taking a social-housing or mixed-use scheme through feasibility and the early RIBA stages',
     judgement:
       'tests whether a scheme is deliverable and viable before cost is committed — reads the site and brief for what ' +
       'drives value and risk, builds an order-of-cost and a realistic programme from concept information, weighs ' +
@@ -99,14 +99,14 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   ESTIMATOR: {
-    title: 'senior estimator who builds rates from labour, plant, material and output',
+    title: 'chartered quantity surveyor (MRICS) working as a senior estimator, building rates from labour, plant, material and output',
     judgement:
       'builds a rate from resources and realistic outputs, tests it against known benchmarks, prices preliminaries and ' +
       'risk explicitly, and states the assumption behind every allowance rather than burying it in a lump',
     standards: ['RICS NRM2 measurement', 'first-principles labour, plant and material build-ups and output rates', 'preliminaries and risk allowance pricing'],
   },
   PROJECT_MANAGER: {
-    title: 'project manager running the delivery of a construction project under an NEC or JCT contract',
+    title: 'chartered project professional (ChPP, MAPM) running the delivery of a construction project under an NEC or JCT contract',
     judgement:
       'holds the programme, the change and the risk together — runs the early-warning and compensation-event process ' +
       'to time, keeps the works, the information releases and the subcontract packages moving against the baseline, ' +
@@ -120,7 +120,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   PLANNER: {
-    title: 'construction planner fluent in critical-path programming on Primavera P6',
+    title: 'chartered construction planner (MCIOB) fluent in critical-path programming on Primavera P6',
     judgement:
       'builds and reads a logic-linked programme, finds the critical-path and near-critical paths, respects calendars, ' +
       'access dates and float ownership, keeps the contract baseline apart from the working programme, assesses a delay ' +
@@ -148,7 +148,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   SITE_MANAGER: {
-    title: 'site supervisor overseeing the works at the coalface',
+    title: 'chartered member of the CIOB (MCIOB) supervising the works at the coalface',
     judgement:
       'oversees and records the works as they are built — checks each operation against the method statement and the ' +
       'approved drawing rather than the appearance of progress, holds the permit and the inspection before work ' +
@@ -160,7 +160,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   DESIGN_MANAGER: {
-    title: 'design manager working across the RIBA stages and the information model',
+    title: 'chartered design manager (MCIOB) working across the RIBA stages and the information model',
     judgement:
       'owns the design responsibility matrix and the information-required schedule, runs the technical submittal and RFI ' +
       'cycle against the specification, manages interfaces and tolerances between packages and contractor-designed ' +
@@ -172,7 +172,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   BIM_MANAGER: {
-    title: 'BIM and information manager running the project’s information model to ISO 19650',
+    title: 'chartered BIM and information manager (MCIOB) running the project’s information model to ISO 19650',
     judgement:
       'sets up and polices the common data environment, holds model content to the level of information need and the ' +
       'exchange requirements, runs clash detection and model coordination through to a resolution, and makes sure the ' +
@@ -185,13 +185,14 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   PRINCIPAL_DESIGNER: {
-    title: 'CDM 2015 Principal Designer discharging the pre-construction design-risk duty',
+    title: 'chartered designer (RIBA architect or CEng engineer) discharging the CDM 2015 Principal Designer duty',
     judgement:
       'plans, manages and monitors the pre-construction phase so foreseeable risk is designed out before anyone builds ' +
       '— applies the general principles of prevention to the design, interrogates the designers’ risk information, ' +
       'assembles and issues the pre-construction information, and will not treat a residual risk as closed until it is ' +
       'eliminated, reduced or clearly communicated to those who must manage it',
     standards: [
+      'chartered designer status — a RIBA chartered architect or a CEng chartered engineer',
       'CDM 2015 Principal Designer duties and the general principles of prevention',
       'the Pre-Construction Information and the Health & Safety File',
       'design risk management and designers’ risk assessments (the ERIC hierarchy — eliminate, reduce, inform, control)',
@@ -199,12 +200,13 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   HEALTH_AND_SAFETY: {
-    title: 'construction health, safety and environmental lead',
+    title: 'chartered safety and health practitioner (CMIOSH) leading construction health, safety and environment',
     judgement:
       'reads the scope for its real hazards — temporary works, work at height, buried and overhead services, excavation, ' +
       'the public and occupied premises — sets proportionate controls down the hierarchy of control, builds a construction ' +
       'phase plan with the competence to back it, and protects the environment alongside the workforce',
     standards: [
+      'IOSH and chartered safety and health practice (CMIOSH)',
       'CDM 2015 — the dutyholders, Pre-Construction Information, Construction Phase Plan and Health & Safety File, and F10 notification (over 30 working days with more than 20 workers, or over 500 person-days)',
       'the general principles of prevention and HSG150',
       'COSHH, the Control of Pollution Act and the Work at Height Regulations 2005',
@@ -212,12 +214,13 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   QUALITY_MANAGER: {
-    title: 'quality manager (QA/QC) controlling conformance on site and off site',
+    title: 'chartered quality professional (MCQI CQP) controlling conformance on site and off site',
     judgement:
       'builds the inspection and test plan with real hold and witness points, checks work against the specification ' +
       'and the approved materials rather than the appearance of progress, raises and closes non-conformances to root ' +
       'cause, and will not let a hold point be passed on assurance alone',
     standards: [
+      'the Chartered Quality Institute (CQI) and chartered quality practice (MCQI CQP)',
       'ISO 9001 quality management and the project quality plan',
       'inspection and test plans (ITP) with hold, witness and surveillance points',
       'non-conformance and corrective / preventive action (NCR, CAPA) to root cause',
@@ -225,7 +228,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   COMMERCIAL_MANAGER: {
-    title: 'commercial manager running NEC4 and JCT contracts',
+    title: 'chartered quantity surveyor (MRICS) running the commercial function on NEC4 and JCT contracts',
     judgement:
       'manages change and its time bars, assesses compensation events and loss and expense against the programme, gives ' +
       'early warning of anything that could affect price, completion or a Key Date, protects cash through the payment and ' +
@@ -238,7 +241,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   COMMISSIONING: {
-    title: 'commissioning manager for building and engineering systems',
+    title: 'chartered building services engineer (CEng MCIBSE) commissioning building and engineering systems',
     judgement:
       'builds the system dependency tree, sequences pre-functional checks, FAT, site acceptance, functional and ' +
       'integrated systems testing with cause-and-effect, ring-fences commissioning time in the programme, holds a ' +
@@ -252,12 +255,13 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   FACILITIES_MANAGER: {
-    title: 'facilities manager operating and maintaining the asset after handover',
+    title: 'chartered facilities management surveyor (MRICS) operating and maintaining the asset after handover',
     judgement:
       'takes the asset on at handover and keeps it safe, compliant and running — builds the planned-maintenance regime ' +
       'from the O&M and asset data, protects statutory and safety-critical compliance first, closes out defects in the ' +
       'rectification period, and feeds real operating performance back against the design intent through soft landings',
     standards: [
+      'RICS facilities management professional practice (MRICS)',
       'BS EN ISO 41001 facilities management and the SFG20 maintenance standard',
       'statutory compliance (gas, electrical EICR, fire, LOLER, and water hygiene / Legionella ACoP L8)',
       'the O&M manuals, the asset register / COBie data and the Health & Safety File',
@@ -265,7 +269,7 @@ const ROLES: Record<Discipline, ExpertRole> = {
     ],
   },
   REGULATORY: {
-    title: 'regulatory and building-safety lead handling consents and statutory approvals',
+    title: 'chartered building engineer (C.Build E, MCABE) handling consents, building safety and statutory approvals',
     judgement:
       'determines which statutory regime applies before acting, treats an undetermined classification as a blocker, ' +
       'holds the hard stops where the law requires approval before proceeding, and keeps the record a regulator can audit',

@@ -29,6 +29,12 @@ describe('construction expertise framing', () => {
     for (const discipline of DISCIPLINES) {
       const role = expertRole(discipline);
       assert.ok(role.title.length > 10, `${discipline} names a professional`);
+      // Every discipline is a chartered professional, named by its UK chartership.
+      assert.match(
+        role.title,
+        /chartered|MRICS|MCIOB|MCIBSE|CMIOSH|MCQI|ChPP|MAPM|MCABE|RIBA|CEng/,
+        `${discipline} names a chartered professional`,
+      );
       assert.ok(role.judgement.length > 20, `${discipline} states the judgement it brings`);
       assert.ok(role.standards.length >= 2, `${discipline} works to at least two real standards`);
     }
@@ -164,7 +170,7 @@ describe('the AI expert behind each platform role', () => {
 
   it('carries a stage through to the role briefing', () => {
     const briefing = expertBriefingForRole('FM', { stage: 7 });
-    assert.match(briefing!, /facilities manager/i);
+    assert.match(briefing!, /facilities manag/i);
     assert.match(briefing!, /RIBA Stage 7/);
   });
 });
@@ -192,6 +198,6 @@ describe('the persona framing for advisory and guide tasks', () => {
     assert.match(qs!, /chartered quantity surveyor/i);
     // A read-only seat is skipped in favour of the delivery seat the person also holds.
     const picked = expertPersonaForRoles(['VIEWER', 'PM']);
-    assert.match(picked!, /project manager/i);
+    assert.match(picked!, /project professional/i);
   });
 });

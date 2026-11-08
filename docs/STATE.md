@@ -3282,7 +3282,13 @@ stage, outcome, contractor focus and watch-for; a discipline composes with a sta
 so both the professional and the stage context are present).
 
 **Every platform role has an AI agent: the professional it reasons as.** Seventeen
-disciplines are now framed, and `ROLE_EXPERTISE` (in `expertise.ts`) joins the
+disciplines are now framed, and **every one names the UK chartership that
+profession holds** — MRICS (QS, development, commercial, estimating, FM), MCIOB
+(construction manager, planner, design manager, BIM, supervisor), ChPP/MAPM
+(project manager), CEng MCIBSE (commissioning), CMIOSH (health & safety), MCQI CQP
+(quality), a RIBA architect or CEng engineer (Principal Designer) and C.Build E
+MCABE (building safety) — so each agent reasons as a chartered professional, not a
+generic one. `ROLE_EXPERTISE` (in `expertise.ts`) joins the
 identity model's roles (`roles.ts`) to them — the one place a *seat in the
 business* is mapped to the *profession* the person in it practises, so an agent
 working for a QS reasons as a chartered QS, for the Construction Manager seat as a
