@@ -3356,11 +3356,22 @@ genuinely supported by the passage it cites? — then `tender_clarification_shar
 rewrites the loose ones to the fault named and the immaterial, already-answered,
 generic or unsupported ones are cut. Best-effort: a provider or wallet failure
 mid-review leaves the first-pass questions standing. The note tells the person how
-many were dropped and sharpened, so the cull is visible. This is the template to
-roll across the other heavy deliverables (claims, stage-gate, feasibility); the
-control flow and guards are shared, each deliverable supplies its own reviewer and
-rewrite prompts. The *ceiling* is still the live model — this raises the floor and
-checks the output; it does not manufacture a capability the model lacks.
+many were dropped and sharpened, so the cull is visible. Rolled across next to the
+**stage-gate chair** (`stagegate.ts`, `gateNarrative`): the first read's risks and
+required actions are flattened to findings, an independent reviewer — the person
+who must sign the gate decision — marks each (material? specific? tied to a clause
+the report marks not met or not assessable? for an action, actually actionable?),
+the loose ones are rewritten to the fault named by `stage_gate_sharpen` and the
+ones that merely restate a clause, duplicate another or claim an unsupported
+problem are dropped, then the findings split back into risks and actions
+(`shapeGateFindings`, covered in `stagegate.test.ts`; the note says how many were
+dropped and sharpened). Same shared core, a different reviewer rubric — the pattern
+this was built to roll. Still to come: the **claims assessment**, which writes to
+the ledger under the AI Output Standard, so its loop runs the critique between the
+draft and the ledger write rather than around an advisory read — a careful
+follow-up, not the same drop-in. The *ceiling* is still the live model — this
+raises the floor and checks the output; it does not manufacture a capability the
+model lacks.
 
 **The framing reaches every AI reasoning surface, not a chosen few.** The expert
 opening is now on every judgement task the platform runs — the tender clarification

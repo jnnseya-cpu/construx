@@ -134,6 +134,21 @@ describe('stage gate · the chair’s AI read of the verdict', () => {
     assert.equal(shaped.toClose.length, 8);
   });
 
+  it('shapes rewritten findings, binding clauses to real ones and keeping each kind', () => {
+    const findings = stagegate.shapeGateFindings({
+      findings: [
+        { kind: 'risk', clause: 'INPUTS_COMPLETE', text: 'The price rests on information still moving.', detail: 'MS-001 not frozen' },
+        { kind: 'action', clause: 'NOT_REAL', text: 'Freeze the measurement schedule', detail: 'so the quantities stop moving' },
+        { kind: 'action', clause: 'ONE_CUT_OFF', text: 'no', detail: 'too short' }, // dropped
+      ],
+    });
+    assert.equal(findings.length, 2, 'the stub finding is dropped');
+    assert.equal(findings[0]!.kind, 'risk');
+    assert.equal(findings[0]!.clause, 'INPUTS_COMPLETE');
+    assert.equal(findings[1]!.kind, 'action');
+    assert.equal(findings[1]!.clause, null, 'an invented clause becomes null');
+  });
+
   it('refuses the local stand-in, charges nothing, and leaves the deterministic report to stand', async () => {
     const narrative = await stagegate.gateNarrative(asPM());
     assert.equal(narrative.available, false, 'a synthetic gate review is not a review');

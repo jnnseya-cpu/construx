@@ -3,6 +3,7 @@ import { DomainError } from '../core/errors.ts';
 import { ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, runAI, write, type EngineContext } from '../engines/context.ts';
 import { expertBriefing, expertRole, type Discipline, type RibaStage } from '../ai/expertise.ts';
+import { CRITIQUE_SCHEMA, partitionByCritique, shapeCritiques } from '../ai/refine.ts';
 import { lookupEventType } from '../goldenthread/eventTypes.ts';
 import { replayProject } from '../goldenthread/replay.ts';
 import { constructabilityPosition, freezeBlockersFor } from './constructability.ts';
@@ -2229,6 +2230,145 @@ export function shapeGateNarrative(output: Record<string, unknown>): {
   return { verdict, risks, toClose };
 }
 
+/**
+ * One flat finding for the verify-and-improve pass — a risk or a required action,
+ * carried together so an independent reviewer can mark the whole chaired read at
+ * once, then split back by kind.
+ */
+type GateFinding = { kind: 'risk' | 'action'; clause: GateClause | null; text: string; detail: string };
+
+const FINDINGS_SCHEMA = {
+  type: 'object',
+  properties: {
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['risk', 'action'] },
+          clause: { type: ['string', 'null'] },
+          text: { type: 'string' },
+          detail: { type: 'string' },
+        },
+        required: ['kind', 'text'],
+      },
+    },
+  },
+  required: ['findings'],
+} as const;
+
+/** Shape rewritten findings, binding any clause to a real one and dropping stubs. Pure. */
+export function shapeGateFindings(output: Record<string, unknown>): GateFinding[] {
+  const asClause = (value: unknown): GateClause | null => {
+    const text = String(value ?? '').trim();
+    return (GATE_CLAUSE as readonly string[]).includes(text) ? (text as GateClause) : null;
+  };
+  const raw = Array.isArray((output as { findings?: unknown }).findings) ? (output as { findings: unknown[] }).findings : [];
+  const out: GateFinding[] = [];
+  for (const entry of raw) {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const kind = String(row.kind ?? '').toLowerCase() === 'action' ? 'action' : 'risk';
+    const text = String(row.text ?? '').trim();
+    if (text.length < 8) continue;
+    out.push({ kind, clause: asClause(row.clause), text, detail: String(row.detail ?? '').trim() });
+  }
+  return out;
+}
+
+/**
+ * The verify-and-improve pass for the chaired read. The risks and required
+ * actions a first pass produced are marked by an independent reviewer — the
+ * person who must sign the gate decision on them — against the bar each actually
+ * has to clear: material, specific, tied to a clause the report marks not met or
+ * not assessable, and, for an action, actually actionable. What passes is kept;
+ * what is real but loose is rewritten to the fault named; what restates a clause
+ * without judgement, duplicates another, or claims a problem the results do not
+ * support is dropped. Best-effort: a failure mid-pass leaves the first read
+ * standing.
+ */
+async function refineGateNarrative(
+  ctx: EngineContext,
+  shaped: { risks: GateNarrativeRisk[]; toClose: GateNarrativeAction[] },
+  report: GateReport,
+  expert: { discipline: Discipline; stage?: RibaStage },
+): Promise<{ risks: GateNarrativeRisk[]; toClose: GateNarrativeAction[]; acuConsumed: number; droppedCount: number; sharpenedCount: number }> {
+  const findings: GateFinding[] = [
+    ...shaped.risks.map((r): GateFinding => ({ kind: 'risk', clause: r.clause, text: r.risk, detail: r.basis })),
+    ...shaped.toClose.map((a): GateFinding => ({ kind: 'action', clause: a.clause, text: a.action, detail: a.why })),
+  ];
+  if (findings.length === 0) {
+    return { risks: shaped.risks, toClose: shaped.toClose, acuConsumed: 0, droppedCount: 0, sharpenedCount: 0 };
+  }
+
+  const briefing = expertBriefing(expert.discipline, expert.stage === undefined ? {} : { stage: expert.stage });
+  const clausePayload = report.clauses.map((c) => ({ clause: c.clause, state: c.state, detail: c.detail, blocking: c.blocking }));
+
+  let acuConsumed = 0;
+
+  // 1. Critique — an independent reviewer marks each finding.
+  const critique = await runAI(ctx, {
+    engine: 'EXECUTIVE',
+    taskType: `stage_gate_critique:${report.phase}`,
+    capability: 'REASONING',
+    inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
+    request: {
+      task:
+        `${briefing} ` +
+        'A first pass has chaired this gate and produced the risks and required actions below, each tied to a clause of ' +
+        'the seven-clause Definition of Done. Review them as the person who must sign the gate decision on them would — ' +
+        'you did not write them. For each, return its `index`, a `verdict`, and the `fault` in one sentence. KEEP one ' +
+        'that is material, specific, and tied to a real clause the report marks not met or not assessable. SHARPEN one ' +
+        'that is real but vague, generic, or — for an action — not actually actionable, and name what to tighten. DROP ' +
+        'one that is immaterial, duplicates another, merely restates a clause without adding judgement, or claims a ' +
+        'problem the clause results do not support.',
+      payload: {
+        phase: report.phase,
+        clauses: clausePayload,
+        findings: findings.map((f, index) => ({ index, kind: f.kind, clause: f.clause, text: f.text, detail: f.detail })),
+      },
+      responseSchema: CRITIQUE_SCHEMA,
+    },
+    toWrites: () => [],
+  });
+  acuConsumed += critique.acuConsumed;
+
+  const critiques = shapeCritiques(critique.output, findings.length);
+  const { keep, sharpen, droppedCount } = partitionByCritique(findings, critiques);
+
+  // 2. Improve — rewrite only what was faulted.
+  let sharpened: GateFinding[] = [];
+  if (sharpen.length > 0) {
+    const improve = await runAI(ctx, {
+      engine: 'EXECUTIVE',
+      taskType: `stage_gate_sharpen:${report.phase}`,
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'Project', refId: ctx.projectId }],
+      request: {
+        task:
+          `${briefing} ` +
+          'Each finding below was judged real but not yet good enough, with the fault named. Rewrite each to fix exactly ' +
+          'that fault: make it specific, tie it to the clause it rests on, and — for an action — say what must be done ' +
+          'and what closing it requires, not just that it is outstanding. Keep each within what the clause results ' +
+          'support. Return `findings`: an array of { kind, clause, text, detail } in the same shape, keeping each ' +
+          'finding’s kind.',
+        payload: {
+          clauses: clausePayload,
+          toSharpen: sharpen.map((s) => ({ kind: s.item.kind, clause: s.item.clause, text: s.item.text, detail: s.item.detail, fault: s.fault })),
+        },
+        responseSchema: FINDINGS_SCHEMA,
+      },
+      toWrites: () => [],
+    });
+    acuConsumed += improve.acuConsumed;
+    sharpened = shapeGateFindings(improve.output);
+  }
+
+  const merged = [...keep, ...sharpened];
+  const risks = merged.filter((f) => f.kind === 'risk').slice(0, 8).map((f) => ({ clause: f.clause, risk: f.text, basis: f.detail }));
+  const toClose = merged.filter((f) => f.kind === 'action').slice(0, 8).map((f) => ({ clause: f.clause, action: f.text, why: f.detail }));
+  return { risks, toClose, acuConsumed, droppedCount, sharpenedCount: sharpen.length };
+}
+
 export async function gateNarrative(ctx: EngineContext): Promise<GateNarrative> {
   // The deterministic report first — free, and the only thing the model may
   // reason from. `gateFor` authorises the read through its evaluate function.
@@ -2313,20 +2453,47 @@ export async function gateNarrative(ctx: EngineContext): Promise<GateNarrative> 
     });
 
     const shaped = shapeGateNarrative(result.output);
+
+    // Verify and improve: the first read's risks and required actions are marked
+    // by an independent reviewer and the weak ones sharpened or dropped before a
+    // person leans on them to sign the gate. Best-effort: if it cannot run, the
+    // first read still stands.
+    let risks = shaped.risks;
+    let toClose = shaped.toClose;
+    let refineAcu = 0;
+    let droppedCount = 0;
+    let sharpenedCount = 0;
+    let refined = false;
+    try {
+      const refinement = await refineGateNarrative(ctx, shaped, report, expert);
+      risks = refinement.risks;
+      toClose = refinement.toClose;
+      refineAcu = refinement.acuConsumed;
+      droppedCount = refinement.droppedCount;
+      sharpenedCount = refinement.sharpenedCount;
+      refined = refinement.acuConsumed > 0;
+    } catch {
+      // A provider or wallet failure mid-review: keep the first read.
+    }
+
+    const reviewedNote = refined && (droppedCount > 0 || sharpenedCount > 0)
+      ? ` An independent review dropped ${droppedCount} and sharpened ${sharpenedCount} of the findings before this reached you.`
+      : '';
+
     return {
       available: true,
       phase: report.phase,
       passed: report.passed,
       reviewedAs,
       verdict: shaped.verdict,
-      risks: shaped.risks,
-      toClose: shaped.toClose,
-      acuConsumed: result.acuConsumed,
-      note: report.passed
+      risks,
+      toClose,
+      acuConsumed: result.acuConsumed + refineAcu,
+      note: (report.passed
         ? 'Every clause the platform can check is met. This is the chair’s read of the residual judgement — the gate ' +
           'decision remains a person’s act.'
         : 'This is the chair’s read of the deterministic gate result. It proposes; passing or holding the gate remains ' +
-          'a person’s act, recorded with its rationale and any time-bound conditions.',
+          'a person’s act, recorded with its rationale and any time-bound conditions.') + reviewedNote,
     };
   } catch (error) {
     if (error instanceof DomainError && error.code === 'NO_REASONING_PROVIDER') {
