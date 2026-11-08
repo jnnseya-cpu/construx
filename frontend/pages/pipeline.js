@@ -958,7 +958,12 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
           </p>
           ${
             analysis.clarifications.length === 0
-              ? html`<div class="empty"><b>Nothing to ask</b>The invitation is internally consistent and insurable as written.</div>`
+              ? html`<div class="empty"><b>No question the analysis can prove</b>
+                  The invitation is internally consistent and insurable as written, so there is nothing to ask on its
+                  behalf — a clarification nobody needs is one the competition reads too. If you need to put a question
+                  to the buyer yourself, raise it on <b>Tender &amp; Procurement → “Raise clarification”</b>: it then
+                  appears on the clarification register with a <b>“Copy all questions to send”</b> button, to paste into
+                  the buyer’s portal before the clarification deadline.</div>`
               : html`
                   ${
                     can('PROCUREMENT_AWARD', 'C')
