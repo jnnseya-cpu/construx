@@ -2,6 +2,7 @@ import { DomainError } from '../core/errors.ts';
 import { formatRef, ulid } from '../core/ids.ts';
 import { authorise, registerEvidence, write, type EngineContext } from '../engines/context.ts';
 import type { EntityRecord } from '../goldenthread/ledger.ts';
+import { companyProfile } from './radar.ts';
 
 /**
  * The evidence registry — `L7.2`, `RSP-001`, `GE-EV-01`.
@@ -116,6 +117,19 @@ export type EvidenceClaim = {
   verifiedAt?: string;
   /** How it was checked — "compared against the insurer's schedule", not "yes". */
   verificationMethod?: string;
+  /**
+   * True where the person who checked the document is the same one who asserted
+   * it — an owner of a one-director firm, who has nobody else to ask.
+   *
+   * Recorded rather than hidden, because the honest answer to "was this
+   * independently verified" is no, and a claim that let a self-check pass for an
+   * independent one would be the fabrication the whole register exists to stop.
+   * The claim still counts as approved — the document is real and the owner
+   * stands behind it — but the record says plainly that the check and the claim
+   * are the same hand, so a reader can weigh it for what it is. Only reachable
+   * when the company has declared itself a one-director business.
+   */
+  selfAttested?: boolean;
   rejectedBy?: string;
   rejectedAt?: string;
   rejectedReason?: string;
@@ -273,13 +287,23 @@ export function verifyClaim(
     );
   }
 
-  // Segregation. One person attaching a certificate and then declaring it
-  // proves the sentence is not a check, it is the same opinion written twice.
-  if (claim.assertedBy === ctx.auth.actorId) {
+  // Segregation, with one honest exception.
+  //
+  // One person attaching a certificate and then declaring it proves the sentence
+  // is not a check — it is the same opinion written twice. So a self-check is
+  // refused, UNLESS the company has declared itself a one-director business, in
+  // which case there is genuinely nobody else to ask. Then the owner may attest
+  // their own claim, and the record says so: `selfAttested` is stamped below, the
+  // check and the claim are named as the same hand, and nothing pretends an
+  // independent verification happened. A firm with more than one person gets the
+  // refusal unchanged — segregation is available to them, so it is required.
+  const selfChecked = claim.assertedBy === ctx.auth.actorId;
+  if (selfChecked && companyProfile(ctx).singleOwnerBids !== true) {
     throw new DomainError(
       'SELF_VERIFICATION_REFUSED',
       `${claim.reference} was asserted by you. Somebody else has to be the one who says the document proves the claim, ` +
-        'because a check done by the person being checked is not a check.',
+        'because a check done by the person being checked is not a check. If you are a one-director business with ' +
+        'nobody else to ask, turn on single-director mode in the company facts and record this as your own attestation.',
     );
   }
 
@@ -309,10 +333,14 @@ export function verifyClaim(
     verifiedBy: ctx.auth.actorId,
     verifiedAt: new Date().toISOString(),
     verificationMethod: method,
+    // Stamped only on a genuine self-check, which the branch above has already
+    // confined to a declared one-director business. The flag travels with the
+    // claim, so the register and any later read show it for what it is.
+    ...(selfChecked ? { selfAttested: true } : {}),
   };
 
   write(ctx, {
-    eventType: 'EVIDENCE_CLAIM_VERIFIED',
+    eventType: selfChecked ? 'EVIDENCE_CLAIM_SELF_ATTESTED' : 'EVIDENCE_CLAIM_VERIFIED',
     entity: { refType: 'EvidenceClaim', refId: claimId },
     nextState: verified as unknown as Record<string, unknown>,
   });

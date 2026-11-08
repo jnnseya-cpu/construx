@@ -1802,6 +1802,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
 
   def('EVIDENCE_CLAIM_ASSERTED', 'EvidenceClaim', 'CREATE', 'EVIDENCE', { creates: true, aiAllowed: true }),
   def('EVIDENCE_CLAIM_VERIFIED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
+  // A one-director owner attesting their own claim: approved, but named as the
+  // self-check it is, never as an independent verification.
+  def('EVIDENCE_CLAIM_SELF_ATTESTED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
   def('EVIDENCE_CLAIM_REJECTED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE'),
 
   // What a model read out of a held file, and what a person did about it. Three

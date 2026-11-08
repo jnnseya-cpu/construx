@@ -4803,17 +4803,22 @@ export async function pipeline(root) {
       transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
     },
     'verify-claim': {
-      title: 'Verify a claim',
-      intent:
-        'Say the document proves the sentence, and how it was checked. Refused if you were the one who asserted it, and ' +
-        'refused over a document that has already lapsed — an approved claim nobody can stand behind is worse than none.',
+      title: profile?.singleOwnerBids ? 'Verify or attest a claim' : 'Verify a claim',
+      intent: profile?.singleOwnerBids
+        ? 'Say the document proves the sentence, and how it was checked. Normally somebody other than the person who '
+          + 'asserted it does this. You have turned on single-director mode, so you may attest your own \u2014 it is '
+          + 'recorded as your own attestation, not an independent check, and the record says so.'
+        : 'Say the document proves the sentence, and how it was checked. Refused if you were the one who asserted it, '
+          + 'and refused over a document that has already lapsed \u2014 an approved claim nobody can stand behind is worse than none.',
       path: (v) => `/v1/evidence/claims/${v.claimId}/verify`,
-      submitLabel: 'Verify',
+      submitLabel: profile?.singleOwnerBids ? 'Verify / attest' : 'Verify',
       fields: [
         { name: 'claimId', label: 'Claim', type: 'select',
           options: pendingClaims.map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
         { name: 'method', label: 'How it was checked', type: 'text',
-          hint: '"Compared against the insurer\u2019s schedule" is a method. "Yes" is a signature on nothing.' },
+          hint: profile?.singleOwnerBids
+            ? 'State what you checked it against \u2014 "compared the uploaded certificate against the Constructionline portal on 8 Nov".'
+            : '"Compared against the insurer\u2019s schedule" is a method. "Yes" is a signature on nothing.' },
       ],
       transform: ({ claimId, ...rest }) => rest,
     },

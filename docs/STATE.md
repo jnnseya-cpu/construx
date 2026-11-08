@@ -4663,6 +4663,15 @@ platform exists to remove.
   policy, exactly as the status column is already re-derived. A toggle on the
   company facts form ("One-director business — every requirement and return is
   mine") sets it (`radar.ts`, `itt.ts`, `routes.ts`, `frontend/pages/pipeline.js`).
+  The same flag also unlocks **owner-attestation of evidence claims**: with it
+  set the owner may verify a claim they asserted themselves, because there is
+  nobody else to ask. It is recorded honestly, not relabelled — the claim is
+  stamped `selfAttested: true` under a distinct `EVIDENCE_CLAIM_SELF_ATTESTED`
+  event, the verify-claim form on Pipeline reads "Verify or attest a claim" and
+  explains the self-attestation, and a genuine second checker is still recorded
+  as an independent `EVIDENCE_CLAIM_VERIFIED`. Multi-person firms get the
+  segregation refusal unchanged (`evidenceclaim.ts`, `eventTypes.ts`,
+  `frontend/pages/pipeline.js`; covered in `evidenceclaim.test.ts`).
 - **Clear every blocking return at once.** `assignDeliverablesBulk` fills the
   owner, internal date and source on every mandatory return still missing one, in
   a single event — touching only what is missing, so a return deliberately given a
@@ -21986,10 +21995,20 @@ asserted, what proves it, who checked, and when it stops. It points at an
 
 **Four rules, each a refusal.**
 
-- **The asserter may not be the verifier.** Attaching a certificate to a
-  sentence is clerical. Deciding it proves the sentence is a judgement, and one
-  person doing both is not a check — the same segregation the payment cycle and
-  the signature ceremony already carry.
+- **The asserter may not be the verifier — with one honest exception.**
+  Attaching a certificate to a sentence is clerical. Deciding it proves the
+  sentence is a judgement, and one person doing both is not a check — the same
+  segregation the payment cycle and the signature ceremony already carry. The
+  exception is the one-director firm: where the company profile has
+  `singleOwnerBids` set there is genuinely nobody else to ask, so the owner may
+  attest their own claim. It is not relabelled as independent verification — the
+  claim is stamped `selfAttested: true`, and it is recorded under a distinct
+  `EVIDENCE_CLAIM_SELF_ATTESTED` event so the audit trail never passes an
+  owner's own word off as a segregated check. A firm with more than one person
+  gets the refusal unchanged (segregation is available, so it is required), and
+  even in single-director mode a genuine second checker is recorded as a normal
+  `EVIDENCE_CLAIM_VERIFIED` — the exception widens who *may* check, it does not
+  relabel a real one.
 - **Verification cannot be granted over something already lapsed.** An approved
   claim nobody can stand behind is worse than no claim.
 - **A method, not a signature on nothing.** "Compared against the insurer's
