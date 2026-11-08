@@ -631,6 +631,13 @@ describe('the interface is given the rules rather than holding them', () => {
     assert.equal(matrix.status, 200);
     assert.ok(matrix.body.matrix?.PM ?? matrix.body.PM, 'the matrix does not describe the PM role');
     assert.equal(gates.status, 200);
+
+    // The AI expert behind each role is published alongside the matrix, so the
+    // console can show a person who their AI agent is without restating it.
+    assert.ok(matrix.body.roleExpertise, 'the AI expert map is not published');
+    assert.equal(matrix.body.roleExpertise.PM?.discipline, 'PROJECT_MANAGER');
+    assert.ok(Array.isArray(matrix.body.roleExpertise.PM?.standards), 'the expert names the standards it works to');
+    assert.equal(matrix.body.roleExpertise.VIEWER, null, 'a read-only seat has no construction profession');
   });
 
   it('publishes the route table as its own documentation', async () => {

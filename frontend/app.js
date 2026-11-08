@@ -412,6 +412,8 @@ let grantableRoles = [];
  * holding a rule the server does not.
  */
 let heldModules = [];
+/** The AI expert behind each role — published by the API, keyed by role. */
+let roleExperts = {};
 
 /**
  * The grantable roles, for a screen that offers them.
@@ -441,6 +443,16 @@ export function permissionMatrix() {
 
 export function phaseGates() {
   return writePhaseGates;
+}
+
+/**
+ * The AI expert behind a role — the experienced construction professional the
+ * platform's agents reason as on that role's behalf, or null where the role has
+ * no single one. A getter for the same reason as the others: it arrives with the
+ * matrix, and the mapping stays on the server, not restated here.
+ */
+export function roleExpertFor(role) {
+  return roleExperts[role] ?? null;
 }
 
 /**
@@ -486,6 +498,7 @@ function forgetPermissions() {
   writePhaseGates = {};
   grantableRoles = [];
   heldModules = [];
+  roleExperts = {};
 }
 
 /**
@@ -509,6 +522,7 @@ async function loadMatrix() {
   writePhaseGates = result.writePhaseGates ?? {};
   grantableRoles = result.tenantGrantableRoles ?? [];
   heldModules = result.modules ?? [];
+  roleExperts = result.roleExpertise ?? {};
   // The record-type classification the API authorises reads against, so a
   // screen can withhold a type this role cannot read without asking first.
   // Unclassified means ask: the server decides, and this only ever narrows what

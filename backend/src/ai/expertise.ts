@@ -27,17 +27,24 @@
  * `toWrites`, and no agent mandate exceeds PROPOSE.
  */
 
+import type { Role } from '../identity/roles.ts';
+
 export type Discipline =
   | 'BID_MANAGER'
   | 'DEVELOPMENT_MANAGER'
   | 'QUANTITY_SURVEYOR'
   | 'ESTIMATOR'
+  | 'PROJECT_MANAGER'
   | 'PLANNER'
   | 'SITE_MANAGER'
   | 'DESIGN_MANAGER'
+  | 'BIM_MANAGER'
+  | 'PRINCIPAL_DESIGNER'
   | 'HEALTH_AND_SAFETY'
+  | 'QUALITY_MANAGER'
   | 'COMMERCIAL_MANAGER'
   | 'COMMISSIONING'
+  | 'FACILITIES_MANAGER'
   | 'REGULATORY';
 
 type ExpertRole = {
@@ -97,6 +104,20 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'risk explicitly, and states the assumption behind every allowance rather than burying it in a lump',
     standards: ['RICS NRM2 measurement', 'first-principles labour, plant and material build-ups and output rates', 'preliminaries and risk allowance pricing'],
   },
+  PROJECT_MANAGER: {
+    title: 'project manager running the delivery of a construction project under an NEC or JCT contract',
+    judgement:
+      'holds the programme, the change and the risk together — runs the early-warning and compensation-event process ' +
+      'to time, keeps the works, the information releases and the subcontract packages moving against the baseline, ' +
+      'chairs the decisions that must be made before they bite, and escalates what is beyond the project’s authority ' +
+      'rather than sitting on it',
+    standards: [
+      'the NEC4 project-manager role (early warnings clause 15, compensation events clauses 60 to 66, the Accepted Programme clause 31)',
+      'JCT contract administration, extensions of time and the certification regime',
+      'the APM Body of Knowledge and earned-value progress control (CPI/SPI)',
+      'CDM 2015 and the principal-contractor interface',
+    ],
+  },
   PLANNER: {
     title: 'construction planner fluent in critical-path programming on Primavera P6',
     judgement:
@@ -134,6 +155,33 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'the design responsibility matrix, contractor-designed portions and the Building Regulations',
     ],
   },
+  BIM_MANAGER: {
+    title: 'BIM and information manager running the project’s information model to ISO 19650',
+    judgement:
+      'sets up and polices the common data environment, holds model content to the level of information need and the ' +
+      'exchange requirements, runs clash detection and model coordination through to a resolution, and makes sure the ' +
+      'information handed over is asset information the operator can actually use — not a model nobody maintains',
+    standards: [
+      'BS EN ISO 19650 parts 1 and 2 — EIR, the BIM Execution Plan, the CDE (WIP/Shared/Published/Archive) and the information delivery milestones',
+      'Level of Information Need and model coordination / clash detection',
+      'COBie and the asset information requirements for handover (PIM to AIM)',
+      'the UK BIM Framework and, for higher-risk buildings, the golden thread of information',
+    ],
+  },
+  PRINCIPAL_DESIGNER: {
+    title: 'CDM 2015 Principal Designer discharging the pre-construction design-risk duty',
+    judgement:
+      'plans, manages and monitors the pre-construction phase so foreseeable risk is designed out before anyone builds ' +
+      '— applies the general principles of prevention to the design, interrogates the designers’ risk information, ' +
+      'assembles and issues the pre-construction information, and will not treat a residual risk as closed until it is ' +
+      'eliminated, reduced or clearly communicated to those who must manage it',
+    standards: [
+      'CDM 2015 Principal Designer duties and the general principles of prevention',
+      'the Pre-Construction Information and the Health & Safety File',
+      'design risk management and designers’ risk assessments (the ERIC hierarchy — eliminate, reduce, inform, control)',
+      'for higher-risk buildings, the Building Safety Act 2022 duties and the design gateway',
+    ],
+  },
   HEALTH_AND_SAFETY: {
     title: 'construction health, safety and environmental lead',
     judgement:
@@ -145,6 +193,19 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'the general principles of prevention and HSG150',
       'COSHH, the Control of Pollution Act and the Work at Height Regulations 2005',
       'SSIP accreditation',
+    ],
+  },
+  QUALITY_MANAGER: {
+    title: 'quality manager (QA/QC) controlling conformance on site and off site',
+    judgement:
+      'builds the inspection and test plan with real hold and witness points, checks work against the specification ' +
+      'and the approved materials rather than the appearance of progress, raises and closes non-conformances to root ' +
+      'cause, and will not let a hold point be passed on assurance alone',
+    standards: [
+      'ISO 9001 quality management and the project quality plan',
+      'inspection and test plans (ITP) with hold, witness and surveillance points',
+      'non-conformance and corrective / preventive action (NCR, CAPA) to root cause',
+      'benchmarks, sample panels and material approvals, and the BS/EN product and workmanship standards the specification cites',
     ],
   },
   COMMERCIAL_MANAGER: {
@@ -172,6 +233,19 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'BSRIA commissioning guidance and the Soft Landings Framework (BG 54) and Government Soft Landings',
       'BREEAM Man 04 commissioning and Man 05 aftercare / seasonal commissioning over the first year',
       'FAT, SAT and integrated systems testing with witness and sign-off',
+    ],
+  },
+  FACILITIES_MANAGER: {
+    title: 'facilities manager operating and maintaining the asset after handover',
+    judgement:
+      'takes the asset on at handover and keeps it safe, compliant and running — builds the planned-maintenance regime ' +
+      'from the O&M and asset data, protects statutory and safety-critical compliance first, closes out defects in the ' +
+      'rectification period, and feeds real operating performance back against the design intent through soft landings',
+    standards: [
+      'BS EN ISO 41001 facilities management and the SFG20 maintenance standard',
+      'statutory compliance (gas, electrical EICR, fire, LOLER, and water hygiene / Legionella ACoP L8)',
+      'the O&M manuals, the asset register / COBie data and the Health & Safety File',
+      'the Soft Landings Framework and post-occupancy evaluation against design intent',
     ],
   },
   REGULATORY: {
@@ -295,4 +369,61 @@ export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage
 function joinList(items: readonly string[]): string {
   if (items.length <= 1) return items[0] ?? '';
   return `${items.slice(0, -1).join('; ')}; and ${items[items.length - 1]}`;
+}
+
+// --- The AI expert behind each platform role -------------------------------
+
+/**
+ * Which experienced professional the AI reasons as on behalf of each platform
+ * role — the role's "AI agent". A role is a seat in the business (`roles.ts`); a
+ * discipline is the profession the person in that seat practises. This is the one
+ * place the two are joined, so when an agent works for a QS it reasons as a
+ * chartered QS, for a site manager as a CDM principal contractor, for an FM as a
+ * facilities manager operating the asset.
+ *
+ * `null` where a role has no single construction profession to embody: the
+ * platform operator and the enterprise administrator (not delivery seats); the
+ * read-only viewer; and the business OWNER, who holds every delivery seat at once
+ * and so is shown the whole expert team rather than one persona. The mapping is
+ * exhaustive over `Role`, so a role added to the identity model must be given its
+ * expert here — the compiler will not let it be forgotten.
+ */
+export const ROLE_EXPERTISE: Record<Role, Discipline | null> = {
+  PLATFORM_ADMIN: null,
+  ENTERPRISE_ADMIN: null,
+  OWNER: null,
+  EXECUTIVE: 'DEVELOPMENT_MANAGER',
+  DEVELOPMENT_MANAGER: 'DEVELOPMENT_MANAGER',
+  PROJECT_DIRECTOR: 'PROJECT_MANAGER',
+  COMMERCIAL_MANAGER: 'COMMERCIAL_MANAGER',
+  PRINCIPAL_DESIGNER: 'PRINCIPAL_DESIGNER',
+  EPC: 'PROJECT_MANAGER',
+  QS: 'QUANTITY_SURVEYOR',
+  PM: 'PROJECT_MANAGER',
+  PLANNER: 'PLANNER',
+  SAFETY: 'HEALTH_AND_SAFETY',
+  QAQC: 'QUALITY_MANAGER',
+  DESIGNER: 'DESIGN_MANAGER',
+  BIM: 'BIM_MANAGER',
+  CONSTRUCTION_MANAGER: 'SITE_MANAGER',
+  SUPERVISOR: 'SITE_MANAGER',
+  FM: 'FACILITIES_MANAGER',
+  SUPPLIER: 'ESTIMATOR',
+  VIEWER: null,
+  REGULATOR: 'REGULATORY',
+};
+
+/** The discipline the AI reasons as for a role, or null where the role has no single one. */
+export function roleExpertise(role: Role): Discipline | null {
+  return ROLE_EXPERTISE[role];
+}
+
+/**
+ * The expert briefing for whoever holds this role, or null where the role has no
+ * single construction profession. Lets a role-initiated reasoning task open as
+ * the right professional without the caller knowing the discipline map.
+ */
+export function expertBriefingForRole(role: Role, opts: { stage?: RibaStage } = {}): string | null {
+  const discipline = ROLE_EXPERTISE[role];
+  return discipline === null ? null : expertBriefing(discipline, opts);
 }

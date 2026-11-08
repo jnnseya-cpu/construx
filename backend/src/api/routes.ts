@@ -329,6 +329,7 @@ import { PERMISSION_MATRIX, type CapabilityArea, type PermissionCode,
   TENANT_GRANTABLE_ROLES,
 } from '../identity/roles.ts';
 import { customRoleRegister, GRANTABLE_AREAS } from '../identity/customroles.ts';
+import { roleExpertise, expertRole } from '../ai/expertise.ts';
 import { authorise, AUTHZ_OPTIONS, currentPhase, registerEvidence, write } from '../engines/context.ts';
 import { ulid } from '../core/ids.ts';
 import { LIFECYCLE_ORDER, PHASE_GATES } from '../lifecycle/phases.ts';
@@ -1477,11 +1478,21 @@ function teamPosition(platform: Platform, tenantId: string) {
 
   const active = rows.filter((row) => row.state === 'ACTIVE');
   const second = active.filter((row) => row.mfa.passkey || row.mfa.authenticator).length;
-  const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => ({
-    role,
-    areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
-    holders: active.filter((row) => row.roles.includes(role)).length,
-  }));
+  const roleCatalogue = TENANT_GRANTABLE_ROLES.map((role) => {
+    // The AI expert the platform reasons as on this role's behalf — its "AI
+    // agent". Null where the role has no single construction profession (the
+    // administrator, the viewer, and the owner, who holds every seat's expert).
+    const discipline = roleExpertise(role);
+    const expert = discipline
+      ? { discipline, ...expertRole(discipline) }
+      : null;
+    return {
+      role,
+      areas: Object.entries(PERMISSION_MATRIX[role]).map(([area, codes]) => ({ area, codes })),
+      holders: active.filter((row) => row.roles.includes(role)).length,
+      expert,
+    };
+  });
 
   return {
     summary: {
@@ -7959,6 +7970,19 @@ export const ROUTES: Route[] = [
       // would otherwise have to hard-code which roles are operator-only, and
       // that rule would then drift from this one.
       tenantGrantableRoles: [...TENANT_GRANTABLE_ROLES],
+      // The AI expert behind each role — the experienced construction
+      // professional the platform's agents reason as on that role's behalf, with
+      // the real UK standards that profession works to. Published here, keyed by
+      // role, so the "what your role can do" screen can show a person who their
+      // AI agent is without the browser restating the mapping. Null where a role
+      // has no single construction profession (the administrator, the viewer,
+      // and the owner, who holds every seat's expert at once).
+      roleExpertise: Object.fromEntries(
+        TENANT_GRANTABLE_ROLES.map((role) => {
+          const discipline = roleExpertise(role);
+          return [role, discipline ? { discipline, ...expertRole(discipline) } : null];
+        }),
+      ),
     }),
   },
 

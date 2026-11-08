@@ -3281,6 +3281,34 @@ no-fabrication, propose-not-decide discipline; every RIBA stage 0–7 carries a 
 stage, outcome, contractor focus and watch-for; a discipline composes with a stage
 so both the professional and the stage context are present).
 
+**Every platform role has an AI agent: the professional it reasons as.** Sixteen
+disciplines are now framed, and `ROLE_EXPERTISE` (in `expertise.ts`) joins the
+identity model's roles (`roles.ts`) to them — the one place a *seat in the
+business* is mapped to the *profession* the person in it practises, so an agent
+working for a QS reasons as a chartered QS, for a site manager as a CDM principal
+contractor, for an FM as a facilities manager operating the asset, for a BIM
+manager as an ISO 19650 information manager. The map is exhaustive over `Role`
+(the compiler refuses a role added without an expert), and is `null` only for the
+seats that are not a construction profession: the platform operator and enterprise
+administrator, the read-only viewer, and the OWNER (who holds every delivery seat
+at once and is shown the whole team). Five disciplines were added for the seats
+that had no professional yet — PROJECT_MANAGER (NEC/JCT PM role), QUALITY_MANAGER
+(ISO 9001, ITP, NCR/CAPA), BIM_MANAGER (ISO 19650, CDE, COBie), PRINCIPAL_DESIGNER
+(CDM 2015 pre-construction duty) and FACILITIES_MANAGER (ISO 41001, SFG20,
+statutory compliance, soft landings). `roleExpertise(role)` and
+`expertBriefingForRole(role, { stage })` expose the mapping. It is **surfaced in
+the platform**: `GET /v1/permissions/matrix` publishes `roleExpertise` (role →
+{ discipline, title, judgement, standards }), and the "What your role can do"
+screen (`permissions.js`) now opens with *the AI expert behind your role* — who
+reasons for you and the real UK standards they work to — and a table of the whole
+AI expert team across every role, with the signed-in person's own seat marked.
+Covered in `expertise.test.ts` (the map covers every role and no stale key; every
+delivery seat maps to a defined discipline whose briefing opens as the professional
+and keeps the no-fabrication discipline; the administrative and read-only seats map
+to null; a stage carries through to the role briefing) and `api.test.ts` (the
+matrix endpoint publishes the per-role expert, with the PM's discipline and
+standards and a null for the viewer).
+
 **An AI construction-expert review of the tender for clarifications.** The
 mechanical reader catches what arithmetic catches — weightings that do not add
 up, a clause that cannot be insured. It does not read the scope the way a bid

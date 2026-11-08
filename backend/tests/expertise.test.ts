@@ -3,11 +3,15 @@ import { describe, it } from 'node:test';
 import {
   DISCIPLINES,
   RIBA_STAGE_NUMBERS,
+  ROLE_EXPERTISE,
   expertBriefing,
+  expertBriefingForRole,
   expertRole,
   ribaStage,
+  roleExpertise,
   stageBriefing,
 } from '../src/ai/expertise.ts';
+import { ALL_ROLES } from '../src/identity/roles.ts';
 
 /**
  * The construction-expertise framing shared by the AI engines. What matters is
@@ -102,5 +106,61 @@ describe('RIBA lifecycle framing', () => {
   it('omits stage context when no stage is given, so tender-time reasoning is unchanged', () => {
     const briefing = expertBriefing('BID_MANAGER');
     assert.doesNotMatch(briefing, /RIBA Stage/);
+  });
+});
+
+/**
+ * Every seat in the business has an AI agent: the experienced professional the
+ * platform reasons as on that role's behalf. The mapping must cover every role
+ * the identity model defines (a role added without an expert is a seat whose AI
+ * reasons as nobody), map each real delivery seat to a real discipline, and
+ * leave only the seats that are not a construction profession unmapped.
+ */
+describe('the AI expert behind each platform role', () => {
+  it('maps every role in the identity model', () => {
+    for (const role of ALL_ROLES) {
+      assert.ok(role in ROLE_EXPERTISE, `${role} has an expert mapping (or an explicit null)`);
+    }
+    // And no stale key the identity model no longer has.
+    for (const role of Object.keys(ROLE_EXPERTISE)) {
+      assert.ok((ALL_ROLES as string[]).includes(role), `${role} is still a real role`);
+    }
+  });
+
+  it('gives every construction delivery seat a real discipline', () => {
+    const deliverySeats = ['QS', 'PM', 'PLANNER', 'SAFETY', 'QAQC', 'DESIGNER', 'BIM', 'CONSTRUCTION_MANAGER', 'FM', 'PRINCIPAL_DESIGNER', 'COMMERCIAL_MANAGER', 'DEVELOPMENT_MANAGER'] as const;
+    for (const role of deliverySeats) {
+      const discipline = roleExpertise(role);
+      assert.ok(discipline, `${role} reasons as a real professional`);
+      assert.ok(DISCIPLINES.includes(discipline!), `${role}'s discipline is a defined one`);
+      const briefing = expertBriefingForRole(role);
+      assert.ok(briefing && briefing.startsWith('You are a '), `${role} opens as the professional`);
+      assert.match(briefing!, /never\s+invent/i, `${role} keeps the no-fabrication discipline`);
+    }
+  });
+
+  it('leaves the administrative and read-only seats without a single profession', () => {
+    for (const role of ['PLATFORM_ADMIN', 'ENTERPRISE_ADMIN', 'OWNER', 'VIEWER'] as const) {
+      assert.equal(roleExpertise(role), null, `${role} has no single construction profession`);
+      assert.equal(expertBriefingForRole(role), null, `${role} returns no role briefing`);
+    }
+  });
+
+  it('maps the roles that name a profession to the matching discipline', () => {
+    assert.equal(roleExpertise('QS'), 'QUANTITY_SURVEYOR');
+    assert.equal(roleExpertise('PM'), 'PROJECT_MANAGER');
+    assert.equal(roleExpertise('SAFETY'), 'HEALTH_AND_SAFETY');
+    assert.equal(roleExpertise('QAQC'), 'QUALITY_MANAGER');
+    assert.equal(roleExpertise('BIM'), 'BIM_MANAGER');
+    assert.equal(roleExpertise('CONSTRUCTION_MANAGER'), 'SITE_MANAGER');
+    assert.equal(roleExpertise('FM'), 'FACILITIES_MANAGER');
+    assert.equal(roleExpertise('PRINCIPAL_DESIGNER'), 'PRINCIPAL_DESIGNER');
+    assert.equal(roleExpertise('REGULATOR'), 'REGULATORY');
+  });
+
+  it('carries a stage through to the role briefing', () => {
+    const briefing = expertBriefingForRole('FM', { stage: 7 });
+    assert.match(briefing!, /facilities manager/i);
+    assert.match(briefing!, /RIBA Stage 7/);
   });
 });
