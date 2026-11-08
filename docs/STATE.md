@@ -3232,6 +3232,22 @@ they land OPEN, to be sent and answered, exactly as a hand-raised one is
 a mandatory certificate gap becomes a client-side draft linked to its
 requirement, a scored question does not, and a second press raises nothing new.
 
+**One press puts every question on the clipboard to send.** The platform drafts
+and registers the questions; it is not wired into the buyer's portal, so the one
+manual step left is copying each one out to paste there — a question at a time,
+which is where the deadline gets missed. The **"Copy all N questions to send"**
+button on the Clarification register (Tender & Procurement) collects every open
+*client-side* question — not the internal notes or bidders' own queries —
+numbers them, keeps each one's reference and what it concerns, and puts the lot
+on the clipboard in one press, with a reminder that the paste into the portal is
+still the human's to do before the deadline. It reads from the register already
+on the page and invents nothing; the register now carries each question's full
+text (`tenderIntelPosition` exposes `question`, not only the short `subject`), so
+what is copied is the real question the buyer answers. Frontend-only action
+(`procurement.js`), backed by the one projection field; covered in
+`tenderintel.test.ts` (the register exposes the full question, distinct from its
+subject).
+
 **A compliance undertaking is drafted, not bounced back.** Many mandatory lines
 are answered by a statement, not a document — "comply with CDM 2015", "the
 tender remains open 90 days", "submit via In-Tend". The matrix used to list

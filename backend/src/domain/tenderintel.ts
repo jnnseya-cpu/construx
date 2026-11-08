@@ -1178,6 +1178,8 @@ export type TenderIntelPosition = {
     reference: string;
     side: ClarificationSide;
     subject: string;
+    /** The question itself, in full — what goes to the buyer, not the short subject. */
+    question: string;
     status: string;
     confidentiality: Confidentiality;
     links: InformationLink;
@@ -1276,6 +1278,7 @@ export function tenderIntelPosition(ctx: EngineContext): TenderIntelPosition {
       reference: String(record.state.reference),
       side: (record.state.side as ClarificationSide) ?? (record.state.rfqId ? 'BIDDER' : 'INTERNAL'),
       subject: String(record.state.subject ?? record.state.question ?? ''),
+      question: String(record.state.question ?? record.state.subject ?? ''),
       status: String(record.state.status),
       confidentiality: (record.state.confidentiality as Confidentiality) ?? 'OPEN',
       links: (record.state.links as InformationLink) ?? {},

@@ -390,6 +390,12 @@ export async function procurement(root) {
     .catch(() => ({ routes: [], summary: '' }));
   const openRoutes = routes.routes.filter((r) => r.status === 'OPEN');
   const unanswered = intel.clarifications.filter((c) => c.status === 'OPEN');
+  // The client-side questions still to be sent to the buyer's portal. The
+  // platform drafts and registers them; it does not transmit to the portal, so
+  // the one friction left is copying each question out by hand. These are the
+  // ones a single "copy all" collects — open, client-side, not the internal
+  // notes or the bidders' own queries.
+  const toSendToClient = intel.clarifications.filter((c) => c.status === 'OPEN' && c.side === 'CLIENT');
 
   // The firm's own rate library, grouped by unit so a measured line can be
   // priced by picking a stored rate rather than retyping it — and crucially
@@ -1257,7 +1263,14 @@ export async function procurement(root) {
         intel.clarifications.length === 0
           ? ''
           : html`<div class="card pad0" style="margin-bottom:14px">
-              <h2 style="padding:15px 17px 0">Clarification register</h2>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:15px 17px 0">
+                <h2 style="padding:0">Clarification register</h2>
+                ${
+                  toSendToClient.length > 0
+                    ? html`<button class="btn quiet sm" data-copy-clarifications="1" title="Put every open client-side question on your clipboard, numbered, to paste into the buyer’s portal.">Copy all ${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} to send</button>`
+                    : ''
+                }
+              </div>
               ${
                 intel.clarificationStanding && (intel.clarificationStanding.overdue > 0 || intel.clarificationStanding.dueSoon > 0)
                   ? html`<div style="padding:10px 17px 0"><div class="notice ${intel.clarificationStanding.overdue > 0 ? 'bad' : 'warn'}"><div>
@@ -4664,6 +4677,40 @@ export async function procurement(root) {
         toast('Copied', `${(sched.lines ?? []).length} priced lines on your clipboard — paste them into your Appendix B.`, 'ok');
       } catch (error) {
         toast('Could not export the schedule', error?.message ?? 'No complete estimate to export yet — finish pricing the bill first.', 'err');
+      }
+      return;
+    }
+
+    // Every open client-side question, numbered, on the clipboard — so the one
+    // manual step the platform cannot do (it is not wired into the buyer's
+    // portal) is one press, not one copy per question. Built from the register
+    // already on the page, not re-fetched: the questions are the tenant's own.
+    const copyClarifications = event.target.closest('[data-copy-clarifications]');
+    if (copyClarifications) {
+      if (toSendToClient.length === 0) {
+        toast('Nothing to copy', 'No open question is waiting to go to the client.', 'warn');
+        return;
+      }
+      const lines = toSendToClient.map((c, i) => {
+        const about = [c.links?.document, c.links?.clause && `clause ${c.links.clause}`, c.links?.drawing, c.links?.package, c.links?.scopeItem]
+          .filter(Boolean)
+          .join(', ');
+        return `${i + 1}. [${c.reference}] ${c.question}${about ? ` (re: ${about})` : ''}`;
+      });
+      const text = [
+        `Tender clarification questions — ${intel.projectName ?? 'this tender'}`,
+        '',
+        ...lines,
+      ].join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        toast(
+          'Copied',
+          `${toSendToClient.length} question${toSendToClient.length === 1 ? '' : 's'} on your clipboard. Paste ${toSendToClient.length === 1 ? 'it' : 'them'} into the buyer’s portal before the clarification deadline — the platform does not transmit to the portal itself.`,
+          'ok',
+        );
+      } catch {
+        toast('Not copied', 'This browser would not write to the clipboard. The questions are listed in the register below to copy by hand.', 'warn');
       }
       return;
     }
