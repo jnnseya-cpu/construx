@@ -518,16 +518,23 @@ function weightingClarification(stated: number): string | undefined {
   );
 }
 
+/** A stored gap-as-clarification line, which is no longer raised to the buyer. */
+const GAP_CLARIFICATION_RE = / — nothing on file to satisfy this\.?$/i;
+
 /**
- * Replace whatever weightings clarification a record was stored with by the one
- * the current rule stands behind — so an analysis written under the old
- * flatten-and-complain behaviour stops surfacing a concern the reader has since
- * dropped, without needing a re-analysis.
+ * Reconcile the clarifications a record was stored with to the current rules, so
+ * an analysis written under older behaviour stops surfacing questions the reader
+ * no longer stands behind, without needing a re-analysis. Two corrections:
+ * drop every mandatory-gap line (a gap is the bidder's to close, not a buyer
+ * question), and replace any weightings line with the one the current direction
+ * rule produces (or none).
  */
 function reconcileStoredClarifications(stored: string[], stated: number): string[] {
-  const withoutWeighting = stored.filter((c) => !c.startsWith(WEIGHTING_CLARIFICATION_PREFIX));
+  const kept = stored.filter(
+    (c) => !c.startsWith(WEIGHTING_CLARIFICATION_PREFIX) && !GAP_CLARIFICATION_RE.test(c),
+  );
   const current = weightingClarification(stated);
-  return current ? [...withoutWeighting, current] : withoutWeighting;
+  return current ? [...kept, current] : kept;
 }
 
 /**
@@ -774,9 +781,15 @@ export function analyseITT(
   const clarifications = [...assessed.clarifications];
 
   // --- Submission readiness -------------------------------------------------
-  for (const gap of mandatoryGaps) {
-    clarifications.push(`${gap.reference}: ${gap.evidenceRequired} — nothing on file to satisfy this.`);
-  }
+  // A mandatory requirement nothing on file satisfies is NOT a question for the
+  // buyer — it is the bidder's own gap to close (obtain the accreditation, write
+  // the response, file the document), and it is already surfaced that way on the
+  // matrix ("add these to your library", "file a document & assert a claim", the
+  // compliance undertakings). Asking the buyer to "confirm the requirement" that
+  // we become CHAS-accredited reads as a firm that can neither read the tender
+  // nor hold a basic accreditation. So gaps never become buyer clarifications;
+  // only genuine buyer questions — risky commercial terms and a real weighting
+  // shortfall — do.
   const weightingQuestion = weightingClarification(statedTotal);
   if (weightingQuestion) clarifications.push(weightingQuestion);
 
@@ -1212,28 +1225,23 @@ const truncate = (text: string, n = 80): string => (text.length > n ? `${text.sl
 
 /**
  * Turn the "Questions for the buyer" an analysis produced into raisable
- * clarifications. It invents nothing — the questions are the analysis's own:
- *  - every mandatory requirement nothing on file satisfies, linked to that
- *    requirement so the answer is findable against it;
- *  - the commercial-term and weighting questions, carried verbatim and linked
- *    to the invitation.
- * Each carries a link, which is what the register requires and what a plain
- * paste into the batch box never had.
+ * clarifications. It invents nothing, and — crucially — it does not turn the
+ * bidder's own gaps into buyer questions. A mandatory requirement nothing on
+ * file satisfies is the bidder's to close (obtain the accreditation, write the
+ * response, file the document); asking the buyer to "confirm the requirement"
+ * that we hold CHAS or Constructionline Gold reads as a firm that can neither
+ * read the tender nor meet it. So only the analysis's genuine buyer questions —
+ * the commercial-term questions and a real weighting shortfall — become drafts,
+ * carried verbatim and linked to the invitation so the answer is findable.
  */
 export function tenderClarificationDrafts(analysis: StoredITTAnalysis): TenderClarificationDraft[] {
   const drafts: TenderClarificationDraft[] = [];
   const seen = new Set<string>();
 
-  for (const gap of analysis.mandatoryGaps) {
-    const question = `Please confirm the requirement "${gap.requirement}" and the evidence or limit that will satisfy it — nothing on file currently does.`;
-    if (seen.has(question)) continue;
-    seen.add(question);
-    drafts.push({ side: 'CLIENT', subject: truncate(gap.requirement), question, links: { scopeItem: gap.reference } });
-  }
-
   for (const clarification of analysis.clarifications) {
-    // The gap questions above are the ones that end this way; do not raise them twice.
-    if (/nothing on file to satisfy this\.?$/i.test(clarification)) continue;
+    // Defensive against analyses stored before gaps were kept off the buyer
+    // list: a gap line is never raised to the buyer.
+    if (GAP_CLARIFICATION_RE.test(clarification)) continue;
     if (seen.has(clarification)) continue;
     seen.add(clarification);
     const subject = clarification.includes(':') ? truncate(clarification.slice(0, clarification.indexOf(':'))) : truncate(clarification);

@@ -3233,9 +3233,26 @@ with and re-derives the current one, so a re-read clears the old false positive
 without a re-analysis. Covered in `itt.test.ts` (SHORT raises, NESTED does not,
 COMPLETE is clean).
 
+**A gap is the bidder's to close, never a buyer question.** The reader used to
+turn every mandatory requirement nothing on file satisfied into a clarification
+addressed to the buyer — "Please confirm the requirement that we become CHAS
+accredited… nothing on file currently does." That is backwards: the buyer stated
+the requirement clearly, and the gap is that the bidder has not met it yet, so
+the fix is to obtain the accreditation, write the response or file the document —
+all already surfaced on the matrix ("add these to your library", "file a document
+& assert a claim", the compliance undertakings). Asking the buyer to confirm
+their own clear requirement reads as a firm that can neither read the tender nor
+meet it. Now mandatory gaps never become buyer clarifications (removed from both
+`analyseITT` and `tenderClarificationDrafts`); only genuine buyer questions — a
+real weighting shortfall and risky commercial terms — are drafted. Existing
+analyses self-heal on read: `readAnalysis` drops any stored gap line, so a
+re-read clears the old false questions without a re-analysis. Covered in
+`itt.test.ts` (gaps and scored questions stay off the buyer list; the genuine
+question is still drafted).
+
 **The analysis raises its own questions in one act.** The matrix produces the
-"Questions for the buyer" — insurance gaps, a genuine weighting shortfall,
-uninsurable or bar terms — when it reads the invitation. Until now a person
+"Questions for the buyer" — a genuine weighting shortfall, uninsurable or bar
+terms — when it reads the invitation. Until now a person
 had to retype each one into the batch box in a `subject | question | reference`
 format they had no way to know, and a plain paste failed with "must contain at
 least one item" — the agent did the thinking and the human did transcription.

@@ -445,19 +445,25 @@ describe('The analysis raises its own clarifications to the client in one act', 
     analysisId = written.analysisId;
   });
 
-  it('turns the mandatory gaps into client-side drafts linked to the requirement, and leaves scored questions out', () => {
+  it('leaves the bidder’s own gaps and scored questions off the buyer list, and drafts only genuine buyer questions', () => {
     const analysis = itt.complianceMatrix(qs(), analysisId);
     const drafts = itt.tenderClarificationDrafts(analysis);
-    const m1 = drafts.find((d) => d.links.scopeItem === 'M1')!;
-    assert.ok(m1, 'the unmet mandatory requirement becomes a clarification draft');
-    assert.equal(m1.side, 'CLIENT');
-    assert.ok(/ISO 27001/.test(m1.question));
-    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M2'), 'a scored question is answered in the submission, not asked of the buyer');
+    // An unmet mandatory requirement is the bidder's gap to close (obtain ISO
+    // 27001), not a question for the buyer — asking the buyer to "confirm the
+    // requirement" that we hold it reads as a firm that cannot read or meet the
+    // tender.
+    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M1'), 'an unmet mandatory requirement is not asked of the buyer');
+    assert.ok(!drafts.some((d) => /ISO 27001/.test(d.question)), 'the gap is nowhere in the drafts');
+    // A scored question is answered in the submission, not asked.
+    assert.ok(!drafts.some((d) => d.links.scopeItem === 'M2'), 'a scored question is not asked of the buyer');
+    // The one genuine buyer question here — the weightings do not reach 100% —
+    // is still drafted.
+    assert.ok(drafts.some((d) => /under 100%/.test(d.question)), 'a genuine buyer question is drafted');
   });
 
-  it('raises them to the register in one call, and a second press raises nothing new', () => {
+  it('raises the genuine questions to the register in one call, and a second press raises nothing new', () => {
     const first = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
-    assert.ok(first.raised.length >= 1, 'at least the mandatory gap is raised');
+    assert.ok(first.raised.length >= 1, 'the genuine buyer question is raised');
     assert.match(first.raised[0]!.reference, /^TQ-/);
     const second = tenderintel.raiseClarificationsFromAnalysis(qs(), { analysisId });
     assert.equal(second.raised.length, 0, 'already on the register, so nothing is raised twice');
