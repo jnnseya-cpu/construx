@@ -3293,7 +3293,20 @@ every briefing and persona closes on `CHARTERED_CONDUCT` — bring professional
 judgement and a duty of care, work within your competence, and refer a point on to
 another chartered discipline rather than reach past what you know or what the
 evidence supports. A chartership is a standard of conduct, so the reasoning carries
-the conduct, not only the letters. `ROLE_EXPERTISE` (in `expertise.ts`) joins the
+the conduct, not only the letters. And beyond conduct, every briefing and persona
+carries `WORK_STANDARD` — the quality bar the *deliverable* is judged by, which is
+what the user is actually paying for: be specific and quantified (a figure, a rate,
+a clause number, a date, a named party, never a generality that fits any project),
+take a clear reasoned position rather than hedging, make every point traceable, say
+what to do and who owns it by when, catch the omissions and contradictions an
+experienced hand would, and — where the facts do not support a firm answer — say
+exactly what is missing and what it would take to close it, because a generic or
+hedged answer is not professional work however fluent. The framing raises the floor
+of what every agent produces; the *ceiling* is the live reasoning provider
+(`AI_MODE=production`) and the verification loops (e.g. the red-team evaluator that
+marks a bid draft and drives a rewrite) — a prompt shapes quality but does not
+manufacture a capability the model lacks, and the platform is honest about that.
+`ROLE_EXPERTISE` (in `expertise.ts`) joins the
 identity model's roles (`roles.ts`) to them — the one place a *seat in the
 business* is mapped to the *profession* the person in it practises, so an agent
 working for a QS reasons as a chartered QS, for the Construction Manager seat as a

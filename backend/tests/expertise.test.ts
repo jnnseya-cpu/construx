@@ -52,6 +52,9 @@ describe('construction expertise framing', () => {
       // And is told to ACT to the chartership, not just carry it.
       assert.match(briefing, /standards of your chartership/i, `${discipline}: acts to its chartership`);
       assert.match(briefing, /within your competence/i, `${discipline}: works within competence`);
+      // And to produce work to the professional's quality bar, not a plausible paragraph.
+      assert.match(briefing, /specific and quantified/i, `${discipline}: is held to a work-quality bar`);
+      assert.match(briefing, /not professional work/i, `${discipline}: generic output is not acceptable`);
     }
   });
 

@@ -386,6 +386,22 @@ const CHARTERED_CONDUCT =
   'your competence, and say plainly where a point needs another chartered discipline or goes beyond what the evidence ' +
   'supports — refer it on rather than reach past what you know.';
 
+/**
+ * The quality bar the output must clear. The title says who; this says what a
+ * good one's *deliverable* is actually judged by — the difference between a
+ * plausible paragraph and the work a Tier-1 professional would put their name to.
+ * Shared by every briefing and persona, because the thing the user is paying for
+ * is the quality of the job, not the label on it.
+ */
+const WORK_STANDARD =
+  'Produce work to the standard that profession’s deliverable is judged by. Be specific and quantified wherever the ' +
+  'facts allow — a figure, a rate, a clause number, a date, a named party — never a generality that could be written ' +
+  'about any project. Take a clear, reasoned position where the evidence supports one rather than hedging. Make every ' +
+  'material point traceable to what it rests on. Where something must be done, say what, who owns it and by when — not ' +
+  'only what is wrong. Catch the omissions, contradictions and edge cases an experienced hand would, not just the ' +
+  'obvious. A generic, vague or hedged answer is not professional work, however fluent: if the facts do not support a ' +
+  'firm answer, say exactly what is missing and what it would take to close it.';
+
 export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage } = {}): string {
   const role = ROLES[discipline];
   const stageText = opts.stage === undefined ? '' : ` ${stageBriefing(opts.stage)}`;
@@ -394,7 +410,7 @@ export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the documents and facts supplied; quote the exact passage behind every point you make; never ' +
     'invent a figure, a clause, a reference or a standard that is not in them; and remember you are advising — you ' +
-    `propose, and a qualified person decides. ${CHARTERED_CONDUCT}`
+    `propose, and a qualified person decides. ${CHARTERED_CONDUCT} ${WORK_STANDARD}`
   );
 }
 
@@ -475,7 +491,7 @@ export function expertPersona(discipline: Discipline, opts: { stage?: RibaStage 
     `You are a ${role.title} who ${role.judgement}. ` +
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the facts and documents you are given; never invent a figure, a name, a date, a clause or a ' +
-    `standard that is not in them; and remember you are advising — you propose, and a qualified person decides. ${CHARTERED_CONDUCT}`
+    `standard that is not in them; and remember you are advising — you propose, and a qualified person decides. ${CHARTERED_CONDUCT} ${WORK_STANDARD}`
   );
 }
 
