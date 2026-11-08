@@ -13,13 +13,20 @@ breaks the lock — only a shrink does, and only a shrink that nobody recorded.
 ## Locked at
 
 - **Content commit:** `8fdfd42` — *Brand the Excel export: cover, logo, brand colour and document properties*
+- **Lock commit (canonical reference):** `1365c5b` — this file and `baseline.test.ts`, committed on top of the content.
 - **Branch:** `claude/ai-agent-construction-os-999410`
 - **Date:** 2026-11-08
-- **Tag:** `baseline-2026-11-08`
-- **Gate:** `npm test` green, `npm run typecheck` clean, working tree clean and pushed.
+- **Gate:** `npm test` green (8169), `npm run typecheck` clean, working tree clean and pushed.
 
-The lock itself (this file and `baseline.test.ts`) is committed on top of the
-content commit above.
+The immutable reference is the **commit SHA `1365c5b`** — pushed and permanent;
+diff any later state against it to see exactly what changed. A convenience tag
+`baseline-2026-11-08` points at the same commit locally; this cloud session's git
+proxy accepts branch pushes but not tag refs, so the tag may need pushing from a
+normal clone:
+
+```
+git fetch origin && git tag -a baseline-2026-11-08 1365c5b -m "Locked baseline" && git push origin baseline-2026-11-08
+```
 
 ## Inventory floors
 
