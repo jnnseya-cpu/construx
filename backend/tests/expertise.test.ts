@@ -49,6 +49,9 @@ describe('construction expertise framing', () => {
       assert.ok(/propose|decides/i.test(briefing), `${discipline}: proposes, a person decides`);
       // The named professional appears in the opening.
       assert.ok(briefing.startsWith('You are a '), `${discipline}: opens as the professional`);
+      // And is told to ACT to the chartership, not just carry it.
+      assert.match(briefing, /standards of your chartership/i, `${discipline}: acts to its chartership`);
+      assert.match(briefing, /within your competence/i, `${discipline}: works within competence`);
     }
   });
 
@@ -188,6 +191,7 @@ describe('the persona framing for advisory and guide tasks', () => {
     assert.match(persona, /chartered quantity surveyor/i);
     assert.match(persona, /never invent/i);
     assert.match(persona, /propose/i);
+    assert.match(persona, /standards of your chartership/i, 'the persona still acts to its chartership');
     assert.doesNotMatch(persona, /quote the exact passage/i, 'the document-quote clause is for analysis, not advice');
   });
 

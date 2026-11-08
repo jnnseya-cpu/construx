@@ -374,6 +374,18 @@ export function stageBriefing(stage: RibaStage): string {
  * task is at a known point in the lifecycle — the RIBA stage context. Engines
  * prepend this to their task-specific instruction.
  */
+/**
+ * Act as a chartered professional, not just carry the letters. A chartership is a
+ * standard of conduct, so every briefing closes on it: bring professional
+ * judgement and a duty of care, work within your competence, and refer on rather
+ * than reach past what you know or what the evidence supports. This is what makes
+ * the named chartership mean something in the reasoning rather than decorate it.
+ */
+const CHARTERED_CONDUCT =
+  'Act to the standards of your chartership: bring professional judgement and a duty of care to the task, work within ' +
+  'your competence, and say plainly where a point needs another chartered discipline or goes beyond what the evidence ' +
+  'supports — refer it on rather than reach past what you know.';
+
 export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage } = {}): string {
   const role = ROLES[discipline];
   const stageText = opts.stage === undefined ? '' : ` ${stageBriefing(opts.stage)}`;
@@ -382,7 +394,7 @@ export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the documents and facts supplied; quote the exact passage behind every point you make; never ' +
     'invent a figure, a clause, a reference or a standard that is not in them; and remember you are advising — you ' +
-    'propose, and a qualified person decides.'
+    `propose, and a qualified person decides. ${CHARTERED_CONDUCT}`
   );
 }
 
@@ -463,7 +475,7 @@ export function expertPersona(discipline: Discipline, opts: { stage?: RibaStage 
     `You are a ${role.title}. You ${role.judgement}. ` +
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the facts and documents you are given; never invent a figure, a name, a date, a clause or a ' +
-    'standard that is not in them; and remember you are advising — you propose, and a qualified person decides.'
+    `standard that is not in them; and remember you are advising — you propose, and a qualified person decides. ${CHARTERED_CONDUCT}`
   );
 }
 

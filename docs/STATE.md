@@ -3288,7 +3288,12 @@ profession holds** — MRICS (QS, development, commercial, estimating, FM), MCIO
 (project manager), CEng MCIBSE (commissioning), CMIOSH (health & safety), MCQI CQP
 (quality), a RIBA architect or CEng engineer (Principal Designer) and C.Build E
 MCABE (building safety) — so each agent reasons as a chartered professional, not a
-generic one. `ROLE_EXPERTISE` (in `expertise.ts`) joins the
+generic one. And each is told to **act to that chartership, not just carry it**:
+every briefing and persona closes on `CHARTERED_CONDUCT` — bring professional
+judgement and a duty of care, work within your competence, and refer a point on to
+another chartered discipline rather than reach past what you know or what the
+evidence supports. A chartership is a standard of conduct, so the reasoning carries
+the conduct, not only the letters. `ROLE_EXPERTISE` (in `expertise.ts`) joins the
 identity model's roles (`roles.ts`) to them — the one place a *seat in the
 business* is mapped to the *profession* the person in it practises, so an agent
 working for a QS reasons as a chartered QS, for the Construction Manager seat as a
