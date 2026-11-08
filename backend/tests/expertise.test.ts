@@ -54,6 +54,7 @@ describe('construction expertise framing', () => {
     assert.match(expertBriefing('SITE_MANAGER'), /BS 5975|temporary works/i);
     assert.match(expertBriefing('BID_MANAGER'), /Procurement Act 2023/);
     assert.match(expertBriefing('DEVELOPMENT_MANAGER'), /NRM1|viability|Future Homes/);
+    assert.match(expertBriefing('CONSTRUCTION_MANAGER'), /chartered construction manager \(MCIOB\)|CIOB/);
   });
 });
 
@@ -93,10 +94,10 @@ describe('RIBA lifecycle framing', () => {
   });
 
   it('composes a discipline with a stage so the professional and the stage context are both present', () => {
-    const briefing = expertBriefing('SITE_MANAGER', { stage: 5 });
+    const briefing = expertBriefing('CONSTRUCTION_MANAGER', { stage: 5 });
     // The named professional still opens the briefing.
     assert.ok(briefing.startsWith('You are a '), 'opens as the professional');
-    assert.match(briefing, /site manager/i);
+    assert.match(briefing, /construction manager/i);
     // The stage context is woven in.
     assert.match(briefing, /RIBA Stage 5/);
     assert.match(briefing, /Manufacturing and Construction/);
@@ -154,7 +155,8 @@ describe('the AI expert behind each platform role', () => {
     assert.equal(roleExpertise('SAFETY'), 'HEALTH_AND_SAFETY');
     assert.equal(roleExpertise('QAQC'), 'QUALITY_MANAGER');
     assert.equal(roleExpertise('BIM'), 'BIM_MANAGER');
-    assert.equal(roleExpertise('CONSTRUCTION_MANAGER'), 'SITE_MANAGER');
+    assert.equal(roleExpertise('CONSTRUCTION_MANAGER'), 'CONSTRUCTION_MANAGER');
+    assert.equal(roleExpertise('SUPERVISOR'), 'SITE_MANAGER');
     assert.equal(roleExpertise('FM'), 'FACILITIES_MANAGER');
     assert.equal(roleExpertise('PRINCIPAL_DESIGNER'), 'PRINCIPAL_DESIGNER');
     assert.equal(roleExpertise('REGULATOR'), 'REGULATORY');

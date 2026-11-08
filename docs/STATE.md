@@ -3281,21 +3281,28 @@ no-fabrication, propose-not-decide discipline; every RIBA stage 0–7 carries a 
 stage, outcome, contractor focus and watch-for; a discipline composes with a stage
 so both the professional and the stage context are present).
 
-**Every platform role has an AI agent: the professional it reasons as.** Sixteen
+**Every platform role has an AI agent: the professional it reasons as.** Seventeen
 disciplines are now framed, and `ROLE_EXPERTISE` (in `expertise.ts`) joins the
 identity model's roles (`roles.ts`) to them — the one place a *seat in the
 business* is mapped to the *profession* the person in it practises, so an agent
-working for a QS reasons as a chartered QS, for a site manager as a CDM principal
-contractor, for an FM as a facilities manager operating the asset, for a BIM
-manager as an ISO 19650 information manager. The map is exhaustive over `Role`
+working for a QS reasons as a chartered QS, for the Construction Manager seat as a
+**chartered construction manager (MCIOB)** running the works, for an FM as a
+facilities manager operating the asset, for a BIM manager as an ISO 19650
+information manager. The Construction Manager and the Supervisor are kept apart
+(they were one SITE_MANAGER discipline): CONSTRUCTION_MANAGER is the chartered
+construction manager (CIOB Code of Practice, CDM principal contractor, BS 5975
+temporary works, the short-term programme and Last Planner), and SITE_MANAGER is
+now the site supervisor overseeing the works at the coalface — a supervisor is not
+chartered, and the two seats should not read as one person. The map is exhaustive over `Role`
 (the compiler refuses a role added without an expert), and is `null` only for the
 seats that are not a construction profession: the platform operator and enterprise
 administrator, the read-only viewer, and the OWNER (who holds every delivery seat
-at once and is shown the whole team). Five disciplines were added for the seats
-that had no professional yet — PROJECT_MANAGER (NEC/JCT PM role), QUALITY_MANAGER
-(ISO 9001, ITP, NCR/CAPA), BIM_MANAGER (ISO 19650, CDE, COBie), PRINCIPAL_DESIGNER
-(CDM 2015 pre-construction duty) and FACILITIES_MANAGER (ISO 41001, SFG20,
-statutory compliance, soft landings). `roleExpertise(role)` and
+at once and is shown the whole team). Six disciplines were added for the seats
+that had no professional of their own — PROJECT_MANAGER (NEC/JCT PM role),
+QUALITY_MANAGER (ISO 9001, ITP, NCR/CAPA), BIM_MANAGER (ISO 19650, CDE, COBie),
+PRINCIPAL_DESIGNER (CDM 2015 pre-construction duty), FACILITIES_MANAGER (ISO 41001,
+SFG20, statutory compliance, soft landings) and the chartered CONSTRUCTION_MANAGER
+(MCIOB). `roleExpertise(role)` and
 `expertBriefingForRole(role, { stage })` expose the mapping. It is **surfaced in
 the platform**: `GET /v1/permissions/matrix` publishes `roleExpertise` (role →
 { discipline, title, judgement, standards }), and the "What your role can do"

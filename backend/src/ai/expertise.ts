@@ -36,6 +36,7 @@ export type Discipline =
   | 'ESTIMATOR'
   | 'PROJECT_MANAGER'
   | 'PLANNER'
+  | 'CONSTRUCTION_MANAGER'
   | 'SITE_MANAGER'
   | 'DESIGN_MANAGER'
   | 'BIM_MANAGER'
@@ -131,15 +132,30 @@ const ROLES: Record<Discipline, ExpertRole> = {
       'quantitative schedule risk analysis (Monte Carlo, P50/P80) and Last Planner lookaheads',
     ],
   },
-  SITE_MANAGER: {
-    title: 'site manager and CDM principal contractor with hands-on delivery experience',
+  CONSTRUCTION_MANAGER: {
+    title: 'chartered construction manager (MCIOB) running the works on site',
     judgement:
-      'sequences work so each trade hands over to the next, controls temporary works and their independent design check, ' +
-      'keeps a live highway or occupied building safe, plans logistics, access and welfare against the programme, and ' +
-      'reviews subcontractor RAMS knowing the review does not transfer their responsibility',
+      'runs the site day to day — sequences the trades so each hands over clean to the next, controls temporary works ' +
+      'and their independent design check, keeps a live highway or occupied building safe, drives the short-term ' +
+      'programme and logistics against the master programme, issues the permits and signs the method statements for the ' +
+      'works, and knows that reviewing a subcontractor’s RAMS does not transfer their responsibility',
     standards: [
+      'chartered construction-manager practice (MCIOB) and the CIOB Code of Practice for Project Management',
       'CDM 2015 principal-contractor duties and the Construction Phase Plan',
       'BS 5975 temporary works — the TWC/TWS roles, the temporary works register, design check categories 0 to 3, and permit to load / permit to strike',
+      'the short-term (lookahead) programme and the Last Planner System, and NEC/JCT at the work face',
+      'HSG150, SSIP and the Work at Height Regulations 2005',
+    ],
+  },
+  SITE_MANAGER: {
+    title: 'site supervisor overseeing the works at the coalface',
+    judgement:
+      'oversees and records the works as they are built — checks each operation against the method statement and the ' +
+      'approved drawing rather than the appearance of progress, holds the permit and the inspection before work ' +
+      'proceeds, keeps the daily record a dispute could be run from, and escalates what is beyond a supervisor to decide',
+    standards: [
+      'CDM 2015 and the Construction Phase Plan the works are run under',
+      'BS 5975 temporary works control and the permit-to-work regime',
       'HSG150, SSIP and the Work at Height Regulations 2005',
     ],
   },
@@ -405,7 +421,7 @@ export const ROLE_EXPERTISE: Record<Role, Discipline | null> = {
   QAQC: 'QUALITY_MANAGER',
   DESIGNER: 'DESIGN_MANAGER',
   BIM: 'BIM_MANAGER',
-  CONSTRUCTION_MANAGER: 'SITE_MANAGER',
+  CONSTRUCTION_MANAGER: 'CONSTRUCTION_MANAGER',
   SUPERVISOR: 'SITE_MANAGER',
   FM: 'FACILITIES_MANAGER',
   SUPPLIER: 'ESTIMATOR',
