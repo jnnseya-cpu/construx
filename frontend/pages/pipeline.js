@@ -956,6 +956,11 @@ function matrixDetail(analysis, waivers, addenda, coverage) {
             Raised by the analysis rather than typed by somebody. These go through the clarification process and are
             answered to every bidder, so asking late is asking the competition's question for them.
           </p>
+          <button class="btn quiet sm" data-ai-review="${analysis.projectId}" style="margin:0 0 8px"
+            title="A bid-manager read of the tender for genuine clarification questions — contradictions, missing information, ambiguous scope — each quoting the passage it comes from. It proposes; you verify and raise.">
+            Ask the AI to review the tender (expert clarifications)
+          </button>
+          <div data-ai-review-results="${analysis.projectId}" style="margin-bottom:8px"></div>
           ${
             analysis.clarifications.length === 0
               ? html`<div class="empty"><b>No question the analysis can prove</b>
@@ -4190,6 +4195,73 @@ export async function pipeline(root) {
   // clarification register, to the client — the structured form of that list,
   // so nobody retypes the AI's questions into a delimited box. Idempotent: the
   // backend skips a question already raised.
+  // The AI expert review: a bid-manager read of the tender for genuine
+  // clarification questions. It proposes; nothing is raised until a person
+  // presses "Raise this" on one, which puts it on the register where it can be
+  // sent. The whole result is advice, re-fetched each press — nothing is stored.
+  root.addEventListener('click', async (event) => {
+    const reviewBtn = event.target.closest('[data-ai-review]');
+    if (!reviewBtn) return;
+    const reviewProjectId = reviewBtn.dataset.aiReview;
+    const results = root.querySelector(`[data-ai-review-results="${reviewProjectId}"]`);
+    reviewBtn.disabled = true;
+    reviewBtn.textContent = 'Reading the tender…';
+    try {
+      const review = await api.post(`/v1/projects/${reviewProjectId}/tender-clarifications/ai-review`, {});
+      const proposed = review.proposed ?? [];
+      if (!review.available) {
+        if (results) results.innerHTML = '';
+        toast('Review unavailable', review.note ?? 'The expert review could not run on this deployment.', 'warn');
+      } else if (proposed.length === 0) {
+        if (results) results.innerHTML = resolveHtml(html`<div class="empty" style="margin:0"><b>Nothing to ask</b>${review.note ?? ''}</div>`);
+        toast('Reviewed', review.note ?? 'Nothing needs asking.', 'ok');
+      } else if (results) {
+        results.innerHTML = resolveHtml(html`
+          <div class="notice" style="margin:0 0 8px"><div style="font-size:12px">${review.note ?? ''} Each proposal quotes the passage it comes from — verify it, then raise the ones worth sending.</div></div>
+          ${proposed.map(
+            (p) => html`<div class="card pad" style="margin-bottom:8px">
+              <div style="font-weight:600;font-size:13px;margin-bottom:3px">${p.subject}</div>
+              <div style="font-size:12.5px;margin-bottom:5px">${p.question}</div>
+              <div style="font-size:11.5px;color:var(--text-3);margin-bottom:6px"><b>Basis:</b> ${p.basis}</div>
+              <button class="btn quiet sm" data-raise-one="1" data-rp="${reviewProjectId}" data-subject="${p.subject}" data-question="${p.question}">Raise this to the client</button>
+            </div>`,
+          )}`);
+        toast('Reviewed', `${proposed.length} question${proposed.length === 1 ? '' : 's'} proposed. Verify each against the tender before raising.`, 'ok');
+      }
+    } catch (error) {
+      toast('Review failed', error.message, isRoleDenial(error) ? 'warn' : 'err');
+    } finally {
+      reviewBtn.disabled = false;
+      reviewBtn.textContent = 'Ask the AI to review the tender (expert clarifications)';
+    }
+    return;
+  });
+
+  // Raise one AI-proposed question onto the clarification register, verbatim.
+  // From here it follows the ordinary flow — copy and send on Tender & Procurement.
+  root.addEventListener('click', async (event) => {
+    const raiseOne = event.target.closest('[data-raise-one]');
+    if (!raiseOne) return;
+    const rp = raiseOne.dataset.rp;
+    const subject = raiseOne.dataset.subject;
+    const question = raiseOne.dataset.question;
+    raiseOne.disabled = true;
+    raiseOne.textContent = 'Raising…';
+    try {
+      const result = await api.post(`/v1/projects/${rp}/tender-clarifications/batch`, {
+        items: [{ side: 'CLIENT', subject, question, links: { document: 'Invitation' } }],
+      });
+      const ref = result.raised?.[0]?.reference;
+      toast('Raised to the client', `${ref ?? 'The question'} is on the clarification register — copy and send it on Tender & Procurement before the clarification deadline.`, 'ok');
+      raiseOne.textContent = 'Raised ✓';
+    } catch (error) {
+      toast('Not raised', error.message, isRoleDenial(error) ? 'warn' : 'err');
+      raiseOne.disabled = false;
+      raiseOne.textContent = 'Raise this to the client';
+    }
+    return;
+  });
+
   root.addEventListener('click', async (event) => {
     const raiseBtn = event.target.closest('[data-raise-clars]');
     if (!raiseBtn) return;

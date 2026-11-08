@@ -3213,6 +3213,30 @@ click binding was made delegated on the view (the same pattern the other two
 dispatchers already used) so the panel's button fires it, not only the bar on the
 company card.
 
+**An AI construction-expert review of the tender for clarifications.** The
+mechanical reader catches what arithmetic catches — weightings that do not add
+up, a clause that cannot be insured. It does not read the scope the way a bid
+manager does and ask the question a person would: the contradiction between two
+clauses (an ITT demanding schedules "written in ink and the original copy" while
+submission is electronic-only via the portal), the quantity the price list
+omits, the responsibility split left unsaid. `reviewTenderForClarifications`
+(`clarificationreview.ts`, `POST …/tender-clarifications/ai-review`, "Ask the AI
+to review the tender" on Pipeline) is that read — a senior QS / bid manager
+reasoning over the ingested tender documents. It carries the same three guards
+as the rest of the AI surface: it reasons only over the documents that yielded
+text and names them; it is told to quote the passage each question comes from,
+so a person sees the basis rather than trust the question; `requireModel`
+refuses the local stand-in before a penny is charged, because a fabricated
+clarification is the exact thing the mechanical path was just cleaned of; and it
+proposes only — nothing reaches the register until a person presses "Raise this",
+after which it follows the ordinary copy-and-send flow. It is told not to ask the
+buyer to confirm a requirement already stated, nor anything that reveals the
+bidder cannot meet a clear one. Covered in `clarificationreview.test.ts` (refuses
+without a model and charges nothing; says so with nothing ingested; shapes,
+de-duplicates and caps the model's output; proposes with a basis and raises
+nothing). Note: the question *quality* runs on the configured providers and is
+not exercised by the suite, which stubs the model.
+
 **The weighting-reconciliation question is read by direction, not by a flat
 sum.** Weightings are read per requirement line and grouped by category, which
 cannot tell a top-level weight ("Quality 30%") from a sub-criterion weight that

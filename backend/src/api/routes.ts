@@ -160,6 +160,7 @@ import * as bidresponse from '../domain/bidresponse.ts';
 import * as tenderintake from '../domain/tenderintake.ts';
 import * as costintel from '../domain/costintel.ts';
 import * as tenderpackcheck from '../domain/tenderpackcheck.ts';
+import * as clarificationreview from '../domain/clarificationreview.ts';
 import { DURATION_COMPLEXITY } from '../engines/maths/programmeDuration.ts';
 import { morningBriefing } from '../agents/briefing.ts';
 import { AGENT_DIVISIONS, type AgentDivision } from '../agents/types.ts';
@@ -24859,6 +24860,15 @@ export const ROUTES: Route[] = [
       additionalProperties: false,
     },
     handler: (platform, ctx) => tenderintel.raiseClarificationsFromAnalysis(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/tender-clarifications/ai-review',
+    ai: { engine: 'TENDER', taskType: 'tender_clarification_review', capability: 'REASONING' },
+    description:
+      'Review the tender as a construction bid manager and propose genuine clarification questions — contradictions, missing information, ambiguous scope — each quoting the passage it comes from. Advice to verify and raise; writes nothing, and a gap it will not turn into a question is the bidder’s own to close',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => clarificationreview.reviewTenderForClarifications(projectContext(platform, ctx)),
   },
   {
     method: 'POST',
