@@ -3406,27 +3406,32 @@ paragraph marks whether it is specific to THIS scheme's figures or a sentence th
 would fit any scheme, names the faults, and the loose paragraph is rewritten before
 it reaches the brief (production only — the synthetic draft is dropped first, so
 tests are unaffected). The **claims assessment** (change entitlement,
-`claims.ts` `impact_assessment`) took the *safe* variant, for a reason worth
-recording. It writes `IMPACT_ASSESSED` to the hash-chained ledger under the AI
-Output Standard, and that written event carries the AI linkage the stage gate's
-`AI_ACCOUNTED` clause and the human-disposition flow depend on (the `ai` block is
-attached by `runAI` only to `toWrites` events — an advisory call creates no counted
-AI event, which is what makes the advisory loops safe). An independent two-pass loop
-here would have to run the critique between the draft and the final write, and could
-only run against a real provider — so the test suite, which runs the local stand-in,
-could never exercise it. Shipping an untested restructure of a financial-record path
-fails the "proven before done" bar. Instead the single existing call now runs a
-**self-critique**: the change manager drafts the assessment, reviews its own draft
-as the senior commercial reviewer who must sign it would (entitlement founded on a
-cited clause, time kept apart from money, every notice and time bar named with its
-period, no entitlement the contract does not support), and returns only the
-corrected final. One call, one write, one AI event — the gate accounting, the
-disposition flow and the synthetic test path are byte-for-byte unchanged. It is a
-real lift (an explicit self-review step), honestly weaker than the independent loop;
-the fully independent version on this path remains a deliberate, production-only
-restructure, not shipped because it cannot be verified in-suite. The *ceiling* is still the live model — this
-raises the floor and checks the output; it does not manufacture a capability the
-model lacks.
+`claims.ts` `impact_assessment`) carries both forms of the loop, chosen by AI mode,
+for a reason worth recording. It writes `IMPACT_ASSESSED` to the hash-chained ledger
+under the AI Output Standard, and that written event carries the AI linkage the stage
+gate's `AI_ACCOUNTED` clause and the human-disposition flow depend on (the `ai` block
+is attached by `runAI` only to `toWrites` events — an advisory call creates no counted
+AI event, which is what makes the advisory loops safe). The independent two-pass loop
+had to be kept *off* that write: a draft and an independent senior reviewer's critique
+run as **advisory** calls that write nothing, and only their result is carried into the
+single writing call, which still validates to the Output Standard. So in production
+(`AI_MODE` other than `local`) the change manager drafts the assessment, an independent
+reviewer who did not write it marks it (entitlement founded on a cited clause, time kept
+apart from money, every notice and time bar named with its period, no entitlement the
+contract does not support), and the writing call finalises from the draft and those
+marks — still one `IMPACT_ASSESSED` write, one counted AI event, the gate accounting and
+disposition flow unchanged; the two review calls are advisory and uncounted against the
+gate. On the local stand-in (the mode the suite runs) the loop is skipped entirely and
+that same writing call is **byte-for-byte** the single-call self-critique assessment it
+has always been — the change manager drafts and reviews its own draft before answering —
+so the synthetic test path is unchanged. Honest limit: the independent branch runs, and
+can be verified, only against a real provider; the suite exercises the local path (that
+it is byte-identical and the single write is unchanged) and typechecks the production
+branch, but cannot run it — it is verified live on the box, not in-suite. The one write
+both paths make is factored into a shared `impactAssessedWrites` closure so the ledger
+record does not depend on which path produced the validated answer. The *ceiling* is
+still the live model — this raises the floor and checks the output; it does not
+manufacture a capability the model lacks.
 
 **The framing reaches every AI reasoning surface, not a chosen few.** The expert
 opening is now on every judgement task the platform runs — the tender clarification
