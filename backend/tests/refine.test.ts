@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { partitionByCritique, shapeCritiques } from '../src/ai/refine.ts';
+import { partitionByCritique, shapeCritiques, shapeHolisticCritique } from '../src/ai/refine.ts';
 
 /**
  * The verify-and-improve core. The reviewer's marks are shaped into one verdict
@@ -77,5 +77,27 @@ describe('applying a critique to a draft', () => {
     assert.equal(keep.length, 0);
     assert.equal(sharpen.length, 0);
     assert.equal(droppedCount, 2);
+  });
+});
+
+describe('shaping a holistic critique of a single reasoned output', () => {
+  it('keeps substantive faults and drops stubs', () => {
+    const critique = shapeHolisticCritique({
+      sound: false,
+      faults: ['The entitlement is asserted without naming the clause it rests on.', 'no', '  ', 'The time and money impacts are run together rather than separated.'],
+    });
+    assert.equal(critique.sound, false);
+    assert.equal(critique.faults.length, 2);
+  });
+
+  it('reads an empty fault list as "the draft stands"', () => {
+    const critique = shapeHolisticCritique({ sound: true, faults: [] });
+    assert.equal(critique.sound, true);
+    assert.equal(critique.faults.length, 0);
+  });
+
+  it('survives missing or malformed fields', () => {
+    assert.deepEqual(shapeHolisticCritique({}), { sound: false, faults: [] });
+    assert.deepEqual(shapeHolisticCritique({ faults: 'nope' } as unknown as Record<string, unknown>), { sound: false, faults: [] });
   });
 });

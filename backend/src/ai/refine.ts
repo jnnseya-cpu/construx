@@ -73,6 +73,49 @@ export function shapeCritiques(output: Record<string, unknown>, count: number): 
   return out;
 }
 
+// --- The holistic pattern, for a single reasoned output -------------------
+//
+// A list deliverable (clarification questions, gate findings) is marked item by
+// item. A single reasoned output — an entitlement assessment, a feasibility
+// narrative — is marked whole: an independent reviewer says whether it is sound
+// and names the specific faults the rewrite must fix. Same idea, one object
+// instead of a list.
+
+export type HolisticCritique = {
+  /** Whether the output is fundamentally sound, or flawed at the root. */
+  sound: boolean;
+  /** The specific faults the rewrite must fix — empty where there is nothing to improve. */
+  faults: string[];
+};
+
+/** The response schema a reviewer returns for a single reasoned output. */
+export const HOLISTIC_CRITIQUE_SCHEMA = {
+  type: 'object',
+  properties: {
+    sound: { type: 'boolean' },
+    faults: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['sound', 'faults'],
+} as const;
+
+/**
+ * Shape a holistic critique: keep only substantive faults, cap the list, and read
+ * `sound` as a boolean. A reviewer that returns no faults is saying the draft
+ * stands — `faults` empty means the improve pass is skipped. Pure.
+ */
+export function shapeHolisticCritique(output: Record<string, unknown>): HolisticCritique {
+  const sound = Boolean((output as { sound?: unknown }).sound);
+  const rawFaults = Array.isArray((output as { faults?: unknown }).faults) ? (output as { faults: unknown[] }).faults : [];
+  const faults: string[] = [];
+  for (const entry of rawFaults) {
+    const fault = String(entry ?? '').trim();
+    if (fault.length < 8) continue;
+    faults.push(fault);
+    if (faults.length >= 12) break;
+  }
+  return { sound, faults };
+}
+
 export type Partitioned<T> = {
   /** Items the reviewer passed as-is. */
   keep: T[];

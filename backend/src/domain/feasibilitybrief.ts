@@ -1,4 +1,5 @@
 import { expertBriefing } from '../ai/expertise.ts';
+import { HOLISTIC_CRITIQUE_SCHEMA, shapeHolisticCritique } from '../ai/refine.ts';
 import type { DocumentBlock } from '../export/exporter.ts';
 import { runAI, type EngineContext } from '../engines/context.ts';
 import type { FeasibilityScheme } from './feasibility.ts';
@@ -218,6 +219,69 @@ export function feasibilityBriefBlocks(
  * throws out to the caller mid-document: a failure leaves the deterministic
  * prose in place.
  */
+/**
+ * The verify-and-improve pass for one feasibility paragraph. A development
+ * manager who did not write it judges whether it is specific to THIS scheme's
+ * figures or a sentence that would fit any social-housing scheme, and names what
+ * to fix; the loose paragraph is rewritten to those faults. Best-effort: a
+ * failure leaves the first draft standing. Returns the final prose and the ACU
+ * the two passes cost.
+ */
+async function sharpenFeasibilityProse(
+  ctx: EngineContext,
+  heading: string,
+  taskKey: string,
+  draft: string,
+  payload: Record<string, unknown>,
+): Promise<{ text: string; acuConsumed: number }> {
+  let acuConsumed = 0;
+
+  const critique = await runAI(ctx, {
+    engine: 'EXECUTIVE',
+    taskType: `feasibility_brief_critique:${taskKey}`,
+    capability: 'REASONING',
+    inputRefs: [],
+    request: {
+      task:
+        `${expertBriefing('DEVELOPMENT_MANAGER', { stage: 2 })} ` +
+        `A first pass has written the "${heading}" paragraph of a feasibility brief, below. You did not write it. ` +
+        'Judge it as the development manager who signs the brief would: is it specific to THIS scheme’s figures rather ' +
+        'than a sentence that would fit any social-housing scheme; is every claim grounded in the figures supplied; ' +
+        'does it read as professional judgement rather than brochure copy? Return `sound` and `faults`: an array of the ' +
+        'specific things to fix, each in one phrase. If it is already specific, grounded and professional, return no faults.',
+      payload: { ...payload, draft },
+      responseSchema: HOLISTIC_CRITIQUE_SCHEMA,
+    },
+    toWrites: () => [],
+  });
+  acuConsumed += critique.acuConsumed;
+
+  const { faults } = shapeHolisticCritique(critique.output);
+  if (faults.length === 0) return { text: draft, acuConsumed };
+
+  const improve = await runAI(ctx, {
+    engine: 'EXECUTIVE',
+    taskType: `feasibility_brief_improve:${taskKey}`,
+    capability: 'REASONING',
+    inputRefs: [],
+    request: {
+      task:
+        `${expertBriefing('DEVELOPMENT_MANAGER', { stage: 2 })} ` +
+        `Rewrite the "${heading}" paragraph below to fix exactly the faults named: make it specific to this scheme’s ` +
+        'figures, ground every claim in them, and cut anything that would fit any scheme. Two or three sentences of ' +
+        'plain prose; no headings, no lists; state no figure, date, name, reference or quantity that is not in the ' +
+        'scheme figures supplied. Return `narrative`: the rewritten paragraph as a string.',
+      payload: { ...payload, draft, faults },
+      responseSchema: { type: 'object', properties: { narrative: { type: 'string' } }, required: ['narrative'] },
+    },
+    toWrites: () => [],
+  });
+  acuConsumed += improve.acuConsumed;
+
+  const rewritten = String((improve.output as { narrative?: unknown }).narrative ?? '').trim();
+  return { text: rewritten.length > 0 ? rewritten : draft, acuConsumed };
+}
+
 export async function feasibilityNarrative(
   ctx: EngineContext,
   scheme: FeasibilityScheme,
@@ -253,7 +317,18 @@ export async function feasibilityNarrative(
       acuConsumed += result.acuConsumed;
       if (result.synthetic) continue; // the local stand-in reasons about nothing; drop it.
       const text = String((result.output as { narrative?: unknown; text?: unknown }).narrative ?? (result.output as { text?: unknown }).text ?? '').trim();
-      if (text.length > 0) narrative[section.key] = text;
+      if (text.length === 0) continue;
+      // Verify and improve: a development manager who did not write it marks the
+      // paragraph and the loose one is rewritten before it reaches the brief.
+      let finalText = text;
+      try {
+        const sharpened = await sharpenFeasibilityProse(ctx, section.heading, section.key, text, payload);
+        finalText = sharpened.text;
+        acuConsumed += sharpened.acuConsumed;
+      } catch {
+        // A failure in the second pass: the first-draft paragraph stands.
+      }
+      narrative[section.key] = finalText;
     } catch {
       // A provider outage, an empty wallet or a refused engine: the deterministic
       // prose stands. The brief is never blocked on the AI layer.

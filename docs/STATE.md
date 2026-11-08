@@ -3366,10 +3366,22 @@ ones that merely restate a clause, duplicate another or claim an unsupported
 problem are dropped, then the findings split back into risks and actions
 (`shapeGateFindings`, covered in `stagegate.test.ts`; the note says how many were
 dropped and sharpened). Same shared core, a different reviewer rubric — the pattern
-this was built to roll. Still to come: the **claims assessment**, which writes to
-the ledger under the AI Output Standard, so its loop runs the critique between the
-draft and the ledger write rather than around an advisory read — a careful
-follow-up, not the same drop-in. The *ceiling* is still the live model — this
+this was built to roll. And onto the **feasibility brief** (`feasibilitybrief.ts`,
+`sharpenFeasibilityProse`) with the second reusable pattern — a *holistic*
+critique-and-rewrite for a single reasoned output (`HOLISTIC_CRITIQUE_SCHEMA`,
+`shapeHolisticCritique` in `refine.ts`): a development manager who did not write the
+paragraph marks whether it is specific to THIS scheme's figures or a sentence that
+would fit any scheme, names the faults, and the loose paragraph is rewritten before
+it reaches the brief (production only — the synthetic draft is dropped first, so
+tests are unaffected). Still to come, and deliberately not forced: the **claims
+assessment**, which writes `IMPACT_ASSESSED` to the hash-chained ledger under the AI
+Output Standard, and whose written event carries the AI linkage the stage gate's
+`AI_ACCOUNTED` clause and the disposition flow depend on. Unlike the advisory
+deliverables it also runs synthetically in tests (no `requireModel`). A multi-call
+refine there must preserve that linkage through the final write and not create
+undisposed intermediate AI events on a financial record — a deliberate design
+change, not a drop-in, held until it can be done and verified without risking the
+record or the gate. The *ceiling* is still the live model — this
 raises the floor and checks the output; it does not manufacture a capability the
 model lacks.
 
