@@ -2148,6 +2148,26 @@ the approving human through the same engine path any manual command takes. A
 rejection needs a reason and stays in the record. Repeat findings are suppressed
 rather than raised again.
 
+**The autonomy boundary, named and asserted.** `backend/src/goldenthread/autonomy.ts`
+states this boundary in the terms the Tier-1 Agent Delivery OS specification uses
+— the A0–A4 action classes and the §5 reason-code vocabulary — as a typed reading
+of the event catalogue the platform already runs on, not a second system beside
+it. `actionClassOf` derives each catalogue event's class from the attributes it
+already carries: accepting or refusing a thing (`APPROVE`/`REJECT`) is a reserved
+decision (A3), a human act; a formal issue the catalogue lets an agent produce is
+delegated outbound (A2), one it does not is a reserved issue (A3); everything else
+is an internal reversible record (A1); reads (A0) write no event, and prohibited
+acts (A4) are absent by construction. `autonomy.test.ts` asserts the invariant
+across the whole live catalogue — **no accept/refuse event is executable by an AI
+actor** — so the spec's "self-authorising a reserved decision is prohibited" is a
+checked property of the system, not a convention. The module introduces no runtime
+behaviour; it makes the boundary one thing the OS can state and test. (A grounded
+map of the full specification against the codebase found most of its architecture
+already built — the agent-proposes boundary, the hash-chained evidence ledger,
+gates and holds, the tender/bid lifecycle, cost and CPM, commissioning, change and
+notices, handover, portfolio and the red-team — with a durable workflow/timer
+engine and a broad external-connector gateway the two largest genuine gaps.)
+
 The four watchers added for the front end — radar, pipeline, supply chain and
 HSEQ — are observation-only, because none of them can fix what they see. The
 radar notices a shortlisted opportunity running out of days, and a requirement
