@@ -10042,6 +10042,10 @@ export const ROUTES: Route[] = [
         portfolioId: stringField,
         programmeId: { type: 'string' },
         name: stringField,
+        // The client this project is for, so one client can carry many projects.
+        // Optional and a plain label; the create form offers the clients already
+        // used so the same client is one string, not several near-misses.
+        client: { type: 'string', maxLength: 200 },
         // From the shared vocabulary, so the picker the browser renders and the
         // enum this validates against are the same bytes rather than two lists
         // that happen to agree.
@@ -10116,6 +10120,16 @@ export const ROUTES: Route[] = [
       const scope = platform.externalScope(actor);
       const live = structure.liveProjects(platform.ledger, actor.tenantId).map((r) => r.state as { id: string });
       return { projects: scope ? live.filter((project) => scope.projectIds.includes(project.id)) : live };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/clients',
+    readOnly: true,
+    description: 'The clients this tenant already has projects for, each with its project count — so the create-project form can offer an existing client rather than a free-typed name that splits one client into several.',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'PROJECT_SETUP', 'R');
+      return { clients: structure.clientsOf(platform.ledger, actor.tenantId) };
     },
   },
   {

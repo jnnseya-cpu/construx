@@ -11964,6 +11964,26 @@ the standard narrative sections; it does not yet draft a full ten-field policy
 justification per requirement, or embed a scale site-layout drawing (the export
 model has a `DRAWING` block the land budget could drive — a later increment).
 
+## One client, many projects
+
+A project carries an optional `client` label, so one client can hold many
+projects under its name. A plain string rather than a separate entity — the
+firm types it, or picks a client it has used before — which is the simplest
+thing that meets the need without a parallel CRM to keep in step. The
+create-project form offers the existing clients as a datalist (pick-or-type via
+the form builder's `suggestions`), fed by `GET /v1/clients`, whose list is
+`structure.clientsOf` — derived from the projects' own `client` field with a
+count each, not a second register. That derivation is the point: a client cannot
+exist that no project is for, the count cannot drift, and the pick-list is what
+stops one client becoming three near-identical strings nobody can group on. The
+label is trimmed on the way in and absent (no key) when blank, so an internal or
+speculative project keeps the shape it always had. `clientlist.test.ts` pins the
+storage (trimmed; absent when blank) and the grouping (count per client, busiest
+first). Until this, the only "one name, many projects" grouping was the
+portfolio, which is a time/programme dimension — so a firm using portfolios for
+quarters had nowhere to record the client, and the client ended up typed into the
+project name.
+
 ## Concept, stage 6 — C-WF-01 to C-WF-08 and the 6.4 gate
 
 The head of the lifecycle, and the last stage to be built. That is the right way

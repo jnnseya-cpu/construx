@@ -219,7 +219,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company, clients] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -260,6 +260,10 @@ export async function enterprise(root) {
     // Caught rather than thrown: a role that may read this screen and not the
     // company block still gets the screen.
     api.get('/v1/company/issuer').catch(() => null),
+    // The clients this tenancy already has projects for, so the create-project
+    // form can offer an existing client rather than a free-typed name that
+    // splits one client into several near-identical strings.
+    api.get('/v1/clients').catch(() => ({ clients: [] })),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -954,6 +958,19 @@ export async function enterprise(root) {
           options: portfolios.portfolios.map((p) => ({ value: p.id, label: p.name })),
         },
         { name: 'name', label: 'Project name' },
+        // The client this project is for. A datalist, not a dropdown: pick a
+        // client you already have, or type a new one — so one client carries
+        // many projects under the exact same string, while nothing stops a
+        // first-ever client being entered. Optional, for an internal or
+        // speculative project with no external client.
+        {
+          name: 'client',
+          label: 'Client',
+          required: false,
+          placeholder: 'Telford & Wrekin Council',
+          suggestions: (clients?.clients ?? []).map((c) => ({ value: c.name, label: c.projects ? `${c.name} (${c.projects} project${c.projects === 1 ? '' : 's'})` : c.name })),
+          hint: 'Who the work is for. Pick a client you already have, or type a new one — projects group under it.',
+        },
         // Grouped so a reader looking for "Building" finds it, while the value
         // stored stays one of the nine ONS categories.
         { name: 'sectorType', label: 'Sector', type: 'select', options: SECTOR_GROUPED },
