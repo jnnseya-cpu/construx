@@ -3427,7 +3427,10 @@ has always been — the change manager drafts and reviews its own draft before a
 so the synthetic test path is unchanged. Honest limit: the independent branch runs, and
 can be verified, only against a real provider; the suite exercises the local path (that
 it is byte-identical and the single write is unchanged) and typechecks the production
-branch, but cannot run it — it is verified live on the box, not in-suite. The one write
+branch, but cannot run it — it is verified live on the box, not in-suite (the repo-root
+`verify-claims-loop.sh` runbook does exactly that: it raises a change, assesses it, and
+checks three `impact_assessment*` AI executions appear against one `IMPACT_ASSESSED`
+write — PASS — versus one execution in local mode). The one write
 both paths make is factored into a shared `impactAssessedWrites` closure so the ledger
 record does not depend on which path produced the validated answer. The *ceiling* is
 still the live model — this raises the floor and checks the output; it does not
