@@ -251,6 +251,7 @@ import * as conceptduediligence from '../domain/conceptduediligence.ts';
 import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as feasibility from '../domain/feasibility.ts';
+import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
 import { guidedJourney } from '../domain/journey.ts';
@@ -4068,6 +4069,97 @@ export const ROUTES: Route[] = [
         ? input.mix
         : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
       return feasibility.feasibilityScheme({ ...input, mix });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/brief',
+    readOnly: true,
+    description: 'The feasibility scheme assembled into a narrative brief (project description / Employer’s Requirements), as structured document blocks. Deterministic; the AI narrative layer is added only on the downloadable export.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & { suggest?: { densityDph?: number; familyWeighted?: boolean } }>(ctx);
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      const scheme = feasibility.feasibilityScheme({ ...input, mix });
+      return { scheme, blocks: feasibilitybrief.feasibilityBriefBlocks(scheme) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/feasibility/brief.docx',
+    binary: true,
+    description: 'The feasibility brief as a branded, downloadable document (PDF or DOCX) — schedule, land budget, cost plan and programme with narrative. All-electric to the Future Homes Standard. Every figure a concept control to replace with measured design and QS data.',
+    schema: {
+      type: 'object',
+      required: ['schemeName', 'siteAreaHa'],
+      additionalProperties: false,
+      properties: {
+        schemeName: { type: 'string', minLength: 1, maxLength: 200 },
+        authority: { type: 'string', maxLength: 200 },
+        tenure: { type: 'string', maxLength: 120 },
+        siteAreaHa: { type: 'number', exclusiveMinimum: 0, maximum: 1000 },
+        mix: { type: 'array' },
+        assumptions: { type: 'object' },
+        suggest: { type: 'object' },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+        withNarrative: { type: 'boolean' },
+      },
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<feasibility.FeasibilityInput & {
+        suggest?: { densityDph?: number; familyWeighted?: boolean };
+        format?: RenderableFormat;
+        withNarrative?: boolean;
+      }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      const mix = input.mix && input.mix.length > 0
+        ? input.mix
+        : feasibility.suggestMix(input.siteAreaHa, input.suggest?.densityDph, input.suggest?.familyWeighted);
+      const scheme = feasibility.feasibilityScheme({ ...input, mix });
+      // The AI layer is best-effort: it adds advisory prose where a reasoning
+      // provider answers, and is simply absent otherwise. It never blocks the
+      // document, which is complete from the deterministic prose alone.
+      let narrative: Record<string, string> = {};
+      if (input.withNarrative !== false) {
+        try { narrative = (await feasibilitybrief.feasibilityNarrative(tctx, scheme)).narrative; } catch { narrative = {}; }
+      }
+      const blocks = feasibilitybrief.feasibilityBriefBlocks(scheme, narrative);
+      // Tenant-level: no project, so an empty projectId — branding falls back to
+      // the tenancy's, and `#finalise` requires no project record.
+      const document = platform.exports.document(actor, '', {
+        title: `${scheme.schemeName} — Feasibility Brief`,
+        subtitle: scheme.authority,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
     },
   },
   {

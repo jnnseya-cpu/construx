@@ -65,11 +65,39 @@ export async function feasibility(root) {
       .filter((e) => e.code && Number.isFinite(e.count) && e.count > 0);
   }
 
+  function requestBody(format) {
+    const body = {
+      schemeName: form.schemeName || todayName(),
+      authority: form.authority || '',
+      tenure: form.tenure || 'Social rent',
+      siteAreaHa: Number(form.siteAreaHa),
+      suggest: { densityDph: Number(form.densityDph) || 50 },
+    };
+    const mix = parseMix(form.mix);
+    if (mix.length > 0) body.mix = mix;
+    if (format) body.format = format;
+    return body;
+  }
+
+  async function downloadBrief() {
+    if (!(Number(form.siteAreaHa) > 0)) { error = 'Enter a site area in hectares.'; draw(); return; }
+    try {
+      // A branded DOCX of the whole brief — schedule, land budget, cost plan,
+      // programme and narrative. The narrative is AI-enhanced where a reasoning
+      // provider answers and deterministic prose otherwise.
+      await api.download('/v1/feasibility/brief.docx', requestBody('DOCX'));
+    } catch (e) {
+      error = e.message || 'The brief document could not be generated.';
+      draw();
+    }
+  }
+
   function bind() {
     for (const el of root.querySelectorAll('[data-field]')) {
       el.addEventListener('input', (ev) => { form[ev.target.dataset.field] = ev.target.value; });
     }
     root.querySelector('[data-compute]')?.addEventListener('click', () => compute());
+    root.querySelector('[data-download]')?.addEventListener('click', () => downloadBrief());
   }
 
   function draw() {
@@ -107,7 +135,11 @@ export async function feasibility(root) {
             Codes: ${raw(archetypes.map((a) => `<code>${a.code}</code> (${a.label})`).join(' · '))}
           </div>
         </div>
-        <button class="btn" data-compute style="margin-top:12px">Compute the scheme</button>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" data-compute>Compute the scheme</button>
+          <button class="btn quiet" data-download>Download brief (DOCX)</button>
+        </div>
+        <div style="font-size:11.5px;color:var(--text-3);margin-top:6px">The downloadable brief adds narrative prose — AI-written where a reasoning provider is configured, deterministic otherwise.</div>
         ${error ? html`<div class="notice bad" style="margin-top:10px">${error}</div>` : ''}
       </div>
 

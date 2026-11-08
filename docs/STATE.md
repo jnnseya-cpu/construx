@@ -11934,11 +11934,35 @@ schedule sums to the GIA, the GIA drives the cost, the cost lines total, the lan
 uses plus the balance equal the site exactly, M4(2) never drops below policy, and
 an over-dense mix is flagged rather than overflowed.
 
-**What it is not, stated plainly.** It does not yet assemble the narrative brief
-document (the prose, the policy justification, the DOCX/PDF export of the whole
-Employer's Requirements) — that is the next increment, and it would reuse the
-existing document-generation and export pipeline. Today it produces the numbers
-and the schedule the brief is built on, in the console and over the API.
+**The narrative brief and its DOCX/PDF export.** `feasibilitybrief.ts` assembles
+the scheme into a readable project description / Employer's Requirements document
+and renders it through the existing export pipeline. Two layers, with the honesty
+rule between them: the **prose is composed deterministically from the figures**
+(a sentence stating the home count, density and outturn is built from the
+computed totals, so it cannot drift from the tables beside it — it is the figures
+written out, never presented as reasoning), and an **optional AI layer** adds
+advisory prose for the two judgement sections (vision/placemaking, delivery
+strategy) where a model earns its place. `feasibilityNarrative` is best-effort:
+where no reasoning provider answers — or the local stand-in does — the layer is
+absent and the deterministic fallback prose stands, and it never throws out mid-
+document, so the brief is complete with or without a model. `POST
+/v1/feasibility/brief` returns the structured blocks (deterministic); `POST
+/v1/feasibility/brief.docx` renders a branded DOCX or PDF — tenant-level (empty
+projectId, so branding falls back to the tenancy and `#finalise` needs no project
+record), charged through `renderAndCharge` against the tenant wallet exactly as
+the pricing-schedule and bid-submission exports are. The **Feasibility** console
+screen carries a "Download brief (DOCX)" button. Nine tests in
+`feasibilitybrief.test.ts` pin the assembly: the seven numbered sections, the
+schedule/cost/programme tables, the totals row, that the prose carries the
+scheme's own figures (home count, density, outturn) and not invented ones, the
+over-site warning, and that the AI layer is genuinely optional (fallback prose
+when absent, marked advisory when present). The DOCX renderer itself is the one
+`docx.test.ts` already exercises for these block kinds.
+
+**What it is not, stated plainly.** The brief covers the quantitative spine and
+the standard narrative sections; it does not yet draft a full ten-field policy
+justification per requirement, or embed a scale site-layout drawing (the export
+model has a `DRAWING` block the land budget could drive — a later increment).
 
 ## Concept, stage 6 — C-WF-01 to C-WF-08 and the 6.4 gate
 
