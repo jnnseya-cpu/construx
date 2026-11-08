@@ -24225,6 +24225,15 @@ export const ROUTES: Route[] = [
     handler: (platform, ctx) => stagegate.gateFor(projectContext(platform, ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/stage-gate/narrative',
+    ai: { engine: 'EXECUTIVE', taskType: 'stage_gate_narrative', capability: 'REASONING' },
+    description:
+      'The senior professional’s read of the stage-gate verdict — chaired as the discipline that owns this phase: where the gate genuinely stands, the material risks it turns on, and what must close before it can pass, each tied to the clause it rests on. Advice to weigh; writes nothing, and the gate decision stays a person’s act',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => stagegate.gateNarrative(projectContext(platform, ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/stages/design/validate',
     description: 'Steps 1 to 4 of the design gate: what may freeze, what is late for its need date, and what tender is waiting for',

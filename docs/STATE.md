@@ -6605,6 +6605,31 @@ the baseline. Clause 7 is `NOT_ASSESSABLE` for the same honest reason as the
 tender gate's — the worklist is derived without re-entry, but mobilisation tasks
 with owners and dates are not built and the report says so by name.
 
+#### The chair's AI read of the gate
+
+The deterministic report answers *whether* the seven clauses are met. It does not
+say what the verdict means to the person deciding the gate: which outstanding
+clause is the real risk, what a condition would have to cover, what would be
+reckless to pass. That read is the senior professional's, and it differs by stage.
+`gateNarrative(ctx)` (`stagegate.ts`, `POST …/stage-gate/narrative`, "Ask the AI to
+chair this gate" on the Command Centre) is that read, chaired as the discipline
+that owns the phase: a concept gate as a **development manager** (RIBA 2), a design
+gate as a **design manager** (RIBA 4), a tender gate as a **commercial manager**, a
+construction gate as a **project manager** (RIBA 5), a commissioning gate as a
+**commissioning manager**, a handover gate as a **facilities manager** (RIBA 6) —
+through the shared `expertBriefing`. It is grounded entirely on the deterministic
+report: the model is handed the clause results and told to reason only from them,
+name the clause behind every risk and action, and invent no blocker the report does
+not carry; `shapeGateNarrative` binds any clause the model names to a real
+`GATE_CLAUSE` (an invented one becomes null, not a plausible-looking authority) and
+caps each list. It carries the same guards as the rest of the AI surface:
+`requireModel` refuses the local stand-in before a penny is charged (a synthetic
+gate review is not a review, and the free seven-clause report always stands on its
+own); it writes no state; and passing or holding the gate stays a person's act under
+`decideGate`. Covered in `stagegate.test.ts` (the shaper drops stubs, binds clauses
+to real ones and caps at eight; the narrative refuses the stand-in, charges nothing
+and still names the professional who would chair it).
+
 ---
 
 ### Start is an authorisation, not a date

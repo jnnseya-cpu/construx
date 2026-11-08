@@ -772,6 +772,13 @@ export async function control(root) {
                 cannot assess is reported as unassessable and never as passed — a gate that quietly passes what it did not check
                 turns a gap into a signed assurance, and the signature is what somebody relies on two years later.
               </div></div>
+              <div style="padding:12px 17px 0">
+                <button class="btn quiet sm" data-gate-chair="1"
+                  title="A senior professional's read of this gate — chaired as the discipline that owns this phase: where it genuinely stands, the material risks it turns on, and what must close before it can pass. It proposes; the gate decision stays yours.">
+                  Ask the AI to chair this gate
+                </button>
+                <div data-gate-chair-results style="margin-top:8px"></div>
+              </div>
               ${table({
                 headers: ['Clause', 'State', 'What it found'],
                 rows: gate.clauses.map((clause) => [
@@ -2008,6 +2015,51 @@ export async function control(root) {
     const spec = COMMANDS[button.dataset.command];
     if (!spec) return;
     if (await command(spec)) await draw();
+  });
+
+  // The senior professional's read of the gate verdict, chaired as the
+  // discipline that owns this phase. Advice re-fetched each press — it writes
+  // nothing, and the decision form below it stays the act that commits.
+  root.addEventListener('click', async (event) => {
+    const chairBtn = event.target.closest('[data-gate-chair]');
+    if (!chairBtn) return;
+    const results = root.querySelector('[data-gate-chair-results]');
+    chairBtn.disabled = true;
+    chairBtn.textContent = 'Reading the gate…';
+    try {
+      const read = await api.post(`/v1/projects/${projectId}/stage-gate/narrative`, {});
+      if (!read.available) {
+        if (results) results.innerHTML = '';
+        toast('Chair read unavailable', read.note ?? 'The expert gate review could not run on this deployment.', 'warn');
+      } else if (results) {
+        results.innerHTML = resolveHtml(html`
+          <div class="notice ${raw(read.passed ? 'ok' : 'warn')}" style="margin:0 0 8px">
+            <div><b>Chaired as ${read.reviewedAs}.</b><br>${read.verdict}</div>
+          </div>
+          ${read.risks.length === 0 ? '' : html`<div class="card pad" style="margin-bottom:8px">
+            <div style="font-weight:600;font-size:12.5px;margin-bottom:6px">Material risks this gate turns on</div>
+            ${read.risks.map((r) => html`<div style="font-size:12px;margin-bottom:7px">
+              ${r.clause ? badge(humanise(r.clause), 'neutral') : ''} ${r.risk}
+              ${r.basis ? html`<div style="font-size:11px;color:var(--text-3)"><b>Basis:</b> ${r.basis}</div>` : ''}
+            </div>`)}
+          </div>`}
+          ${read.toClose.length === 0 ? '' : html`<div class="card pad" style="margin-bottom:8px">
+            <div style="font-weight:600;font-size:12.5px;margin-bottom:6px">What must close before it can pass</div>
+            ${read.toClose.map((a, i) => html`<div style="font-size:12px;margin-bottom:7px">
+              <b>${i + 1}.</b> ${a.clause ? badge(humanise(a.clause), 'neutral') : ''} ${a.action}
+              ${a.why ? html`<div style="font-size:11px;color:var(--text-3)">${a.why}</div>` : ''}
+            </div>`)}
+          </div>`}
+          <div class="metric-sub" style="font-size:11px">${read.note}</div>
+        `);
+        toast('Gate read', `Chaired as ${read.reviewedAs}. It proposes; the decision stays yours.`, 'ok');
+      }
+    } catch (error) {
+      toast('Chair read failed', error.message, 'err');
+    } finally {
+      chairBtn.disabled = false;
+      chairBtn.textContent = 'Ask the AI to chair this gate';
+    }
   });
 
   // Moving an obligation to another party. A separate command from recording

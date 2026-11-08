@@ -102,6 +102,48 @@ describe('stage gate · seven clauses, each answered from the ledger', () => {
   });
 });
 
+// ── The chair's AI read ─────────────────────────────────────────────────────
+
+describe('stage gate · the chair’s AI read of the verdict', () => {
+  it('shapes the model output, binding every clause it names to a real one', () => {
+    const shaped = stagegate.shapeGateNarrative({
+      verdict: 'The gate is not ready: the price still rests on information that is moving.',
+      risks: [
+        { clause: 'INPUTS_COMPLETE', risk: 'The tender review is not frozen, so the price rests on information still moving.', basis: 'INPUTS_COMPLETE blocking' },
+        { clause: 'NOT_A_REAL_CLAUSE', risk: 'A material risk that names a clause which does not exist.', basis: 'invented' },
+        { clause: 'ONE_CUT_OFF', risk: 'short', basis: 'y' }, // dropped: not a real risk
+      ],
+      toClose: [
+        { clause: 'INPUTS_COMPLETE', action: 'Freeze the tender review', why: 'so the price rests on fixed information' },
+        { clause: 'BLOCKERS_CLOSED', action: 'no', why: 'too short' }, // dropped
+      ],
+    });
+    assert.match(shaped.verdict, /not ready/);
+    assert.equal(shaped.risks.length, 2, 'the one-word risk is dropped');
+    assert.equal(shaped.risks[0]!.clause, 'INPUTS_COMPLETE');
+    assert.equal(shaped.risks[1]!.clause, null, 'an invented clause becomes null, not a plausible authority');
+    assert.equal(shaped.toClose.length, 1, 'the stub action is dropped');
+    assert.equal(shaped.toClose[0]!.clause, 'INPUTS_COMPLETE');
+  });
+
+  it('caps each list at eight', () => {
+    const risks = Array.from({ length: 20 }, (_, i) => ({ clause: 'INPUTS_COMPLETE', risk: `A genuine material risk number ${i} on this gate.`, basis: 'INPUTS_COMPLETE' }));
+    const toClose = Array.from({ length: 20 }, (_, i) => ({ clause: 'INPUTS_COMPLETE', action: `Close outstanding item ${i}`, why: 'it blocks the gate' }));
+    const shaped = stagegate.shapeGateNarrative({ verdict: 'v', risks, toClose });
+    assert.equal(shaped.risks.length, 8);
+    assert.equal(shaped.toClose.length, 8);
+  });
+
+  it('refuses the local stand-in, charges nothing, and leaves the deterministic report to stand', async () => {
+    const narrative = await stagegate.gateNarrative(asPM());
+    assert.equal(narrative.available, false, 'a synthetic gate review is not a review');
+    assert.equal(narrative.acuConsumed, 0, 'nothing is charged');
+    assert.ok(narrative.reviewedAs.length > 0, 'it still names the professional who would chair it');
+    assert.ok(narrative.phase.length > 0);
+    assert.match(narrative.note, /stands on its own|reasoning AI provider/i);
+  });
+});
+
 // ── The honesty rule ────────────────────────────────────────────────────────
 
 describe('stage gate · a clause it cannot assess is not a clause it passed', () => {
