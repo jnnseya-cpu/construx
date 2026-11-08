@@ -1852,6 +1852,12 @@ export function amendProject(
   input: {
     reason: string;
     name?: string;
+    /**
+     * The client this project is for. A correction, so existing projects
+     * recorded before the field existed can be put under their client and group
+     * with the others. An empty string clears it; absent leaves it unchanged.
+     */
+    client?: string;
     assetType?: string;
     sectorType?: SectorType;
     contractValueMinor?: number;
@@ -1911,6 +1917,9 @@ export function amendProject(
   }
 
   move('name', input.name?.trim());
+  // A trimmed client, or an empty string to clear it. `move` records the
+  // from/to and skips a no-op, so re-setting the same client changes nothing.
+  if (input.client !== undefined) move('client', input.client.trim() === '' ? '' : input.client.trim());
   move('assetType', input.assetType?.trim());
   move('sectorType', input.sectorType);
   move('contractValueMinor', input.contractValueMinor);

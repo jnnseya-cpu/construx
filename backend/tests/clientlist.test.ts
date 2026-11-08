@@ -57,6 +57,22 @@ describe('a project carries the client it is for', () => {
   });
 });
 
+describe('an existing project can be put under its client by amendment', () => {
+  it('sets a client on a project recorded without one, and clears it', () => {
+    const id = make('Legacy project, no client');
+    assert.ok(!('client' in (platform.ledger.require({ refType: 'Project', refId: id }).state as Record<string, unknown>)));
+
+    const pctx = platform.context(gov.auth, id);
+    structure.amendProject(pctx, { reason: 'Recorded before the client field existed', client: 'Shropshire Council' });
+    assert.equal((platform.ledger.require({ refType: 'Project', refId: id }).state as { client?: string }).client, 'Shropshire Council');
+    assert.ok(structure.clientsOf(platform.ledger, tenantId).some((c) => c.name === 'Shropshire Council'));
+
+    structure.amendProject(pctx, { reason: 'Client recorded in error, removing it', client: '' });
+    assert.equal((platform.ledger.require({ refType: 'Project', refId: id }).state as { client?: string }).client, '');
+    assert.ok(!structure.clientsOf(platform.ledger, tenantId).some((c) => c.name === 'Shropshire Council'));
+  });
+});
+
 describe('clientsOf groups many projects under one client', () => {
   it('counts the projects per client and sorts by count then name', () => {
     make('Wrockwardine ramp', 'Telford & Wrekin Council');

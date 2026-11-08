@@ -10142,6 +10142,9 @@ export const ROUTES: Route[] = [
       properties: {
         reason: { type: 'string', minLength: 10, maxLength: 500 },
         name: stringField,
+        // Set or correct the client, so projects recorded before the field
+        // existed can be put under their client. Empty clears it.
+        client: { type: 'string', maxLength: 200 },
         assetType: stringField,
         sectorType: { type: 'string', enum: values(SECTOR) },
         contractValueMinor: { type: 'integer', minimum: 0 },

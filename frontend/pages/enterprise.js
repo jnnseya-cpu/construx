@@ -1072,6 +1072,14 @@ export async function enterprise(root) {
       submitLabel: 'Correct it',
       fields: [
         { name: 'name', label: 'Project name', required: false, value: state.project?.name ?? '' },
+        {
+          name: 'client',
+          label: 'Client',
+          required: false,
+          value: state.project?.client ?? '',
+          suggestions: (clients?.clients ?? []).map((c) => ({ value: c.name, label: c.projects ? `${c.name} (${c.projects} project${c.projects === 1 ? '' : 's'})` : c.name })),
+          hint: 'Who the work is for. Pick a client you already use so this project groups with the others; clear it to remove.',
+        },
         { name: 'assetType', label: 'Asset type', required: false, value: state.project?.assetType ?? '' },
         {
           name: 'contractValue',
@@ -1089,6 +1097,9 @@ export async function enterprise(root) {
       transform: (v) => ({
         reason: v.reason,
         ...(v.name ? { name: v.name } : {}),
+        // Include client only when it changed — a new client, or cleared. An
+        // empty string clears it server-side; absent leaves it unchanged.
+        ...(String(v.client ?? '') !== String(state.project?.client ?? '') ? { client: v.client ?? '' } : {}),
         ...(v.assetType ? { assetType: v.assetType } : {}),
         ...(v.contractValue !== '' && v.contractValue !== undefined ? { contractValueMinor: Number(v.contractValue) } : {}),
         ...(v.plannedStart ? { plannedStart: v.plannedStart } : {}),
