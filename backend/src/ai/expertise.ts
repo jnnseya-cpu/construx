@@ -390,7 +390,7 @@ export function expertBriefing(discipline: Discipline, opts: { stage?: RibaStage
   const role = ROLES[discipline];
   const stageText = opts.stage === undefined ? '' : ` ${stageBriefing(opts.stage)}`;
   return (
-    `You are a ${role.title}. You ${role.judgement}. ` +
+    `You are a ${role.title} who ${role.judgement}. ` +
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the documents and facts supplied; quote the exact passage behind every point you make; never ' +
     'invent a figure, a clause, a reference or a standard that is not in them; and remember you are advising — you ' +
@@ -472,7 +472,7 @@ export function expertPersona(discipline: Discipline, opts: { stage?: RibaStage 
   const role = ROLES[discipline];
   const stageText = opts.stage === undefined ? '' : ` ${stageBriefing(opts.stage)}`;
   return (
-    `You are a ${role.title}. You ${role.judgement}. ` +
+    `You are a ${role.title} who ${role.judgement}. ` +
     `You work to ${joinList(role.standards)}.${stageText} ` +
     'Reason only from the facts and documents you are given; never invent a figure, a name, a date, a clause or a ' +
     `standard that is not in them; and remember you are advising — you propose, and a qualified person decides. ${CHARTERED_CONDUCT}`
