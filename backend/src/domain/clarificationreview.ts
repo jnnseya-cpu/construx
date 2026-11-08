@@ -1,6 +1,7 @@
 import { DomainError } from '../core/errors.ts';
 import { authorise, currentPhase, runAI, type EngineContext } from '../engines/context.ts';
 import { ingestedFiles } from '../evidence/pipeline.ts';
+import { expertBriefing } from '../ai/expertise.ts';
 
 /**
  * Review a tender as a construction expert, and propose the clarification
@@ -122,18 +123,17 @@ export async function reviewTenderForClarifications(ctx: EngineContext): Promise
       inputRefs: [],
       request: {
         task:
-          'You are a senior UK construction bid manager and quantity surveyor reviewing an invitation to tender before ' +
-          'pricing. From the documents supplied, identify only genuine clarification questions a competent contractor ' +
-          'would put to the buyer: internal contradictions between clauses; information missing but needed to price ' +
-          '(quantities, limits, responsibilities, provisional sums, access, programme or seasonal constraints); ' +
-          'ambiguous scope or responsibility splits; and conditions that cannot be priced as written. For each question, ' +
-          'quote the exact passage or passages from the documents that give rise to it, as the basis. Rules you must ' +
-          'follow: decide only from the documents supplied; never invent a fact, a figure or a clause; do NOT ask the ' +
-          'buyer to confirm a requirement that is already clearly stated; do NOT ask anything that reveals the bidder ' +
-          'cannot meet a clear requirement — for example, never ask the buyer to confirm that the bidder must hold an ' +
-          'accreditation, because that is the bidder’s to obtain, not a question. Return at most eight questions, ' +
-          'the most material first. If the documents are internally consistent and fully specified, return an empty ' +
-          'list — that is a valid and useful answer.',
+          `${expertBriefing('BID_MANAGER')} ` +
+          'You are reviewing this invitation to tender before pricing. From the documents supplied, identify only ' +
+          'genuine clarification questions a competent contractor would put to the buyer: internal contradictions ' +
+          'between clauses; information missing but needed to price (quantities, limits, responsibilities, provisional ' +
+          'sums, access, programme or seasonal constraints); ambiguous scope or responsibility splits; and conditions ' +
+          'that cannot be priced as written. For each question, quote the exact passage or passages from the documents ' +
+          'that give rise to it, as the basis. Do NOT ask the buyer to confirm a requirement that is already clearly ' +
+          'stated; do NOT ask anything that reveals the bidder cannot meet a clear requirement — for example, never ask ' +
+          'the buyer to confirm that the bidder must hold an accreditation, because that is the bidder’s to obtain, ' +
+          'not a question. Return at most eight questions, the most material first. If the documents are internally ' +
+          'consistent and fully specified, return an empty list — that is a valid and useful answer.',
         payload: { documents },
         responseSchema: {
           type: 'object',

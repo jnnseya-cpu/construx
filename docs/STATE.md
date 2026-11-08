@@ -3233,6 +3233,25 @@ click binding was made delegated on the view (the same pattern the other two
 dispatchers already used) so the panel's button fires it, not only the bar on the
 company card.
 
+**Agents reason as the named construction professional, not a general model.**
+`backend/src/ai/expertise.ts` is the single home for the framing every AI
+reasoning task opens with, so an agent reads a tender as a chartered QS, a
+programme as a planner, a method as a CDM principal contractor — and names the
+real UK standards that profession works to (RICS NRM, NEC4/JCT, CDM 2015, BS 5975
+temporary works, CIBSE Commissioning Code M, the Procurement Act 2023, and so on
+per discipline) rather than reasoning as a model with no feel for the industry.
+`expertBriefing(discipline)` returns the opening — the professional, the
+judgement they bring, the standards they work to — and ends with the discipline
+that separates a professional from a plausible guess and that the whole platform
+keeps: reason only from the documents supplied, quote the passage behind every
+point, never invent a figure, clause, reference or standard, and propose rather
+than decide. It frames the reasoning and relaxes no guard (the orchestrator still
+refuses a synthetic answer where a model is required; no mandate exceeds PROPOSE).
+Wired into the tender clarification review first; the home the other AI engines
+adopt in place of their own hand-written openings. Covered in `expertise.test.ts`
+(every discipline names a real profession and real standards; every briefing
+carries the no-fabrication, propose-not-decide discipline).
+
 **An AI construction-expert review of the tender for clarifications.** The
 mechanical reader catches what arithmetic catches — weightings that do not add
 up, a clause that cannot be insured. It does not read the scope the way a bid
