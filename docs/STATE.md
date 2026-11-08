@@ -3358,7 +3358,15 @@ stated as cause→event→impact with the party, trigger and control, and saying
 it rests on. Advisory (proposes; adding or re-scoring a risk stays a person's act),
 `requireModel` refuses the local stand-in, and it carries the verify-and-improve
 loop — an independent reviewer marks each proposed risk and the weak ones are
-sharpened or dropped. Nineteen disciplines now framed. Covered in `riskreview.test.ts`
+sharpened or dropped. The **Risk & Safety screen** now carries the button that
+calls it ("Ask the risk manager to review the register"), gated on
+`RISK_REGISTER` create — the same gate as "Register risk", so everyone who manages
+the register can ask for the review and nobody is offered an action on a screen
+they cannot open (checked by `navreach.test.ts`); each proposal renders as a card
+(subject, category, owner, cause→event→impact, trigger, control, basis) with the
+unavailable and empty-register paths handled, and nothing is written — registering
+or re-scoring a proposed risk stays the person's act through the existing commands.
+Nineteen disciplines now framed. Covered in `riskreview.test.ts`
 (the shaper keeps a real cause→event→impact with a control, drops stubs and
 duplicates, caps at ten; the review refuses the stand-in and charges nothing;
 proposes from a real model and touches nothing on the register) and
