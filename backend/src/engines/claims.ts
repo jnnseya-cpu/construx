@@ -408,7 +408,16 @@ export async function assessImpact(
         `${expertBriefing('CHANGE_MANAGER', { stage: 5 })} ` +
         'Assess the entitlement basis, the knock-on effects and the notice obligations this change triggers. Found the ' +
         'entitlement on a named clause, separate time from money, flag the notice and any time bar that must be served ' +
-        'to preserve the entitlement, and do not assert an entitlement the contract does not support.',
+        'to preserve the entitlement, and do not assert an entitlement the contract does not support. ' +
+        // Verify-and-improve, in one call: this assessment is written to the
+        // ledger and priced off, so it cannot run the independent two-pass loop
+        // the advisory deliverables do without risking that record — it reviews
+        // its own draft instead, before it answers.
+        'Before you answer, draft the assessment, then review your own draft as the senior commercial reviewer who must ' +
+        'sign it would: is every entitlement founded on a clause that is actually cited; is time kept strictly apart ' +
+        'from money; is every notice and time bar that preserves the entitlement named with its period and trigger; is ' +
+        'any entitlement asserted that the contract does not support. Return only the corrected final assessment that ' +
+        'survives that review, not the first draft.',
       payload: {
         change: changeRequest.state,
         costImpactMinor: input.costImpactMinor,

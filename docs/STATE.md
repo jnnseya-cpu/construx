@@ -3397,15 +3397,26 @@ critique-and-rewrite for a single reasoned output (`HOLISTIC_CRITIQUE_SCHEMA`,
 paragraph marks whether it is specific to THIS scheme's figures or a sentence that
 would fit any scheme, names the faults, and the loose paragraph is rewritten before
 it reaches the brief (production only — the synthetic draft is dropped first, so
-tests are unaffected). Still to come, and deliberately not forced: the **claims
-assessment**, which writes `IMPACT_ASSESSED` to the hash-chained ledger under the AI
-Output Standard, and whose written event carries the AI linkage the stage gate's
-`AI_ACCOUNTED` clause and the disposition flow depend on. Unlike the advisory
-deliverables it also runs synthetically in tests (no `requireModel`). A multi-call
-refine there must preserve that linkage through the final write and not create
-undisposed intermediate AI events on a financial record — a deliberate design
-change, not a drop-in, held until it can be done and verified without risking the
-record or the gate. The *ceiling* is still the live model — this
+tests are unaffected). The **claims assessment** (change entitlement,
+`claims.ts` `impact_assessment`) took the *safe* variant, for a reason worth
+recording. It writes `IMPACT_ASSESSED` to the hash-chained ledger under the AI
+Output Standard, and that written event carries the AI linkage the stage gate's
+`AI_ACCOUNTED` clause and the human-disposition flow depend on (the `ai` block is
+attached by `runAI` only to `toWrites` events — an advisory call creates no counted
+AI event, which is what makes the advisory loops safe). An independent two-pass loop
+here would have to run the critique between the draft and the final write, and could
+only run against a real provider — so the test suite, which runs the local stand-in,
+could never exercise it. Shipping an untested restructure of a financial-record path
+fails the "proven before done" bar. Instead the single existing call now runs a
+**self-critique**: the change manager drafts the assessment, reviews its own draft
+as the senior commercial reviewer who must sign it would (entitlement founded on a
+cited clause, time kept apart from money, every notice and time bar named with its
+period, no entitlement the contract does not support), and returns only the
+corrected final. One call, one write, one AI event — the gate accounting, the
+disposition flow and the synthetic test path are byte-for-byte unchanged. It is a
+real lift (an explicit self-review step), honestly weaker than the independent loop;
+the fully independent version on this path remains a deliberate, production-only
+restructure, not shipped because it cannot be verified in-suite. The *ceiling* is still the live model — this
 raises the floor and checks the output; it does not manufacture a capability the
 model lacks.
 
