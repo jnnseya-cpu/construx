@@ -258,6 +258,7 @@ import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
+import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4489,6 +4490,53 @@ export const ROUTES: Route[] = [
     description: 'Autonomous Consultancy — the lineage of a claim: the cited evidence resolved, and any cited source that has since been superseded.',
     handler: (platform, ctx) =>
       consultancyevidence.claimLineage(projectContext(platform, ctx), ctx.params.claimId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/award',
+    description: 'Autonomous Consultancy — promote a won tender to an award (C05). Links the winning bid and signed terms and transfers only the named commitments; refused without signed terms.',
+    schema: {
+      type: 'object',
+      required: ['winningBidRef', 'signedTermsRef'],
+      properties: {
+        winningBidRef: { type: 'string', minLength: 1, maxLength: 200 },
+        signedTermsRef: { type: 'string', minLength: 1, maxLength: 200 },
+        transferredCommitments: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.promoteAward(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/reappraise',
+    description: 'Autonomous Consultancy — trigger a reappraisal (C08). Produces the decision delta between the approved baseline figures and the revised ones; the approved baseline version persists.',
+    schema: {
+      type: 'object',
+      required: ['event', 'baseline', 'revised'],
+      properties: {
+        event: { type: 'string', minLength: 1, maxLength: 400 },
+        baseline: { type: 'object' },
+        revised: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.triggerReappraisal(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/release',
+    description: 'Autonomous Consultancy — issue a controlled release (C09/C11/C14): authority rechecked at release, a cited superseded source blocks it, and the idempotency key makes a retry yield one side effect.',
+    schema: {
+      type: 'object',
+      required: ['idempotencyKey'],
+      properties: {
+        idempotencyKey: { type: 'string', minLength: 1, maxLength: 200 },
+        citedEvidenceIds: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancylifecycle.release(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
   },
   {
     method: 'GET',

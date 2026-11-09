@@ -30,6 +30,8 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // rests on. Commercially sensitive, like the engagement they belong to.
   ConsultancyEvidence: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
   ConsultancyClaim: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
+  // A controlled release of a consultancy deliverable.
+  ConsultancyRelease: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },

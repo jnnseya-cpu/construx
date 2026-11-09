@@ -1113,12 +1113,33 @@ core flagged; the pack carries its sections and prices the core; a complete bid
 reconciles including tax and disbursements; a mandatory gap and a price mismatch
 are flagged; a blocker counts as addressing a requirement).
 
+**Vertical 5 — award, reappraisal and the controlled release.**
+`backend/src/domain/consultancy/lifecycle.ts` adds the late lifecycle with the
+spec's safety rules made checkable. **Award promotion (C05):** a won tender is
+promoted to an award that links the winning bid and the signed terms and transfers
+*only* the commitments named — refused without signed terms to reconcile against.
+**Reappraisal (C08):** a cost/programme/consent event produces the **decision
+delta** between the approved baseline figures and the revised ones, line by line,
+while the approved baseline version persists — the event does not overwrite it.
+**Controlled release (C09/C11/C14):** a release re-authorises **current
+authority** at release time, so a permission revoked after the work was queued
+fails before exposure (C14); it rechecks the cited **evidence** and blocks a
+release citing a **superseded** source rather than shipping a stale artifact
+(C09); and it is **idempotent** on its key, so a duplicate or a retry after a
+partial failure yields one visible side effect, not two (C11) — via a new
+`ConsultancyRelease` record under a single `CONSULTANCY_RELEASE_ISSUED` event.
+Routes: `POST …/engagements/{id}/award`, `…/reappraise`, `…/release`. Covered in
+`consultancylifecycle.test.ts` (award links bid + terms and transfers only the
+named commitments, refused without terms; the reappraisal delta with the baseline
+persisting; a superseded cited source blocks release then issues once current; a
+repeated idempotency key yields one release; a release by an actor without issue
+authority is refused).
+
 **What is not yet built** (named so it is not mistaken for done): the *full*
 buyer/bidder workspace isolation over a shared procurement object (C03 —
 `partySide` and tenant/engagement scoping are in; the shared-procurement per-party
-view is not), award promotion (C05), the RIBA 5 reappraisal trigger (C08),
-release-time recheck and idempotency (C09/C11/C14), and the agent orchestration
-runtime.
+view is not), and the agent orchestration runtime (the task graph that runs the
+whole appraisal autonomously end to end).
 
 ### The submission export leaked internal citation machinery
 

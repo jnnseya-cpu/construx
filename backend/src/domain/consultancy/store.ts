@@ -80,6 +80,10 @@ export type EngagementState = {
   scopeVersion: number;
   /** A short log of the typed actions taken against the engagement. */
   actions: Array<{ kind: string; note?: string; at: string; by: string }>;
+  /** Set when a tender is won and promoted (C05): the winning bid, signed terms and transferred commitments. */
+  award?: { winningBidRef: string; signedTermsRef: string; transferredCommitments: string[]; awardedAt: string; awardedBy: string };
+  /** Set when a reappraisal is triggered (C08): the event, the baseline it is measured against, and the delta. */
+  reappraisal?: { event: string; baseline: Record<string, number>; revised: Record<string, number>; delta: Record<string, number>; baselineVersion: number; at: string; by: string };
   openedAt: string;
   openedBy: string;
 };

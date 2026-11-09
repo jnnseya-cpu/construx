@@ -101,6 +101,9 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONSULTANCY_EVIDENCE_REGISTERED', 'ConsultancyEvidence', 'CREATE', 'EVIDENCE', { creates: true }),
   def('CONSULTANCY_EVIDENCE_UPDATED', 'ConsultancyEvidence', 'UPDATE', 'EVIDENCE'),
   def('CONSULTANCY_CLAIM_RECORDED', 'ConsultancyClaim', 'CREATE', 'EVIDENCE', { creates: true }),
+  // A controlled release of a consultancy deliverable — idempotent, and rechecked
+  // against superseded evidence and current authority immediately before issue.
+  def('CONSULTANCY_RELEASE_ISSUED', 'ConsultancyRelease', 'ISSUE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),
