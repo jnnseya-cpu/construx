@@ -993,6 +993,54 @@ formatting at all by design. **PowerPoint is not produced by any stage**, so the
 is nothing there to brand; a branded deck would be a new export, built against a
 named deliverable rather than invented.
 
+### Autonomous Consultancy — the Five Case Model business case (vertical 1)
+
+Built to the *CONSTRUX Autonomous Consultancy Feasibility & Business Case*
+developer spec (v1.0). The spec is a large product — engagements, an agent
+workforce, CDE ingestion, buyer/bidder isolation, a monitoring lifecycle — and
+its own build sequence (§8) puts a **vertical slice** first: an agent-led combined
+appraisal that produces a baseline, options, model, forecast, review and a
+controlled deliverable. That slice is what is built and verified here; the rest is
+sequenced, not pretended.
+
+`backend/src/domain/consultancy/` holds three modules. **`model.ts`** is the
+deterministic appraisal service the spec (§5) insists the economics come from, not
+a model writing numbers: operating break-even, the minimum uses within a subsidy
+cap, served-vs-capacity with unmet demand surfaced rather than silently satisfied,
+funding gap and residual, and reproducible demand scenarios. It implements the
+spec's concrete acceptance test **C07** exactly — a service costing 450,000 at a
+net receipt of 3 per use with a 100,000 subsidy cap breaks even at **150,000**
+uses and needs a minimum of **116,667** whole uses within the cap. **`engagement.ts`**
+is the engagement shape and the deterministic decision logic: the minimum-intake
+check that turns missing inputs into recorded blockers (**C02**), the
+hard-constraint **screen** that runs before scoring so *a weighted score cannot
+clear a fatal constraint* (**C06**), and the proceed / hold / stop recommendation a
+complete pack carries, with **STOP** when nothing clears the screen (**C12**) and
+**HOLD** (conditional appraisal) when a confirmation or a residual funding gap
+remains. **`businesscase.ts`** assembles the public **Five Case Model** deliverable
+as export blocks — the figures and the prose built from them deterministic, the
+Economic Case (value for money) and the Financial Case (funding) kept separate per
+the §7 validation contract, the options screen and scenarios reconciling to the
+model run, and the decision and its conditions on the cover. An optional AI layer
+adds advisory judgement prose per case, best-effort and production-only; following
+the spec's conduct rule (§3) it reasons as a competent specialist **without
+claiming chartership**, shows its basis, says what could change the conclusion, and
+never produces a figure — and it runs the Independent-Challenge verify-and-improve
+pass over its own draft. Two routes expose it: `POST /v1/consultancy/appraisal`
+(the deterministic assembly, with blockers, screen, model, scenarios and decision)
+and `POST /v1/consultancy/business-case` (the branded Five Case document, PDF or
+DOCX, through the same exporter every issued document uses). Covered in
+`consultancy.test.ts` (C02, C06, C07, C12 and the document contract — all five
+cases present, value and funding separate, figures reconciling, nothing fabricated
+when no model was run), and proven end-to-end against the spec's Doncaster–Scunthorpe
+UAT fixture: one brief renders a complete branded business case recommending a
+**conditional HOLD** on the outstanding operator confirmation (**C01**). **What is
+not yet built** (and named here so it is not mistaken for done): the stateful
+engagement lifecycle and workboard, CDE/evidence ingestion with lineage, the
+buyer/bidder workspace isolation (C03), award promotion (C05), the RIBA 5
+reappraisal trigger (C08), release-time recheck and idempotency (C09/C11/C14), and
+the agent orchestration runtime — the spec's verticals 3–5.
+
 ### The submission export leaked internal citation machinery
 
 Reading the exported pack the way the buyer would, after the branding door was in

@@ -254,6 +254,8 @@ import * as conceptinitiation from '../domain/conceptinitiation.ts';
 import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as feasibility from '../domain/feasibility.ts';
 import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
+import * as consultancybc from '../domain/consultancy/businesscase.ts';
+import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
 import { guidedJourney } from '../domain/journey.ts';
@@ -4162,6 +4164,101 @@ export const ROUTES: Route[] = [
       const document = platform.exports.document(actor, '', {
         title: `${scheme.schemeName} — Feasibility Brief`,
         subtitle: scheme.authority,
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/appraisal',
+    description:
+      'Autonomous Consultancy — assemble a public Five Case business case from an intake, options and economics. ' +
+      'Screens options against hard constraints before scoring, runs the deterministic service model, and returns the ' +
+      'proceed/hold/stop recommendation with its conditions. Deterministic; no figure is produced by a model.',
+    schema: {
+      type: 'object',
+      required: ['title', 'intake', 'objectives', 'options'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        intake: { type: 'object' },
+        objectives: { type: 'array', items: { type: 'string' } },
+        options: { type: 'array' },
+        preferredOption: { type: 'string', maxLength: 300 },
+        serviceCase: { type: 'object' },
+        capitalCostMinor: { type: 'integer', minimum: 0 },
+        fundingSources: { type: 'array' },
+        programmeMonths: { type: 'integer', minimum: 0 },
+        stage: { type: 'string', maxLength: 60 },
+        outstandingConfirmations: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) => {
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<consultancybc.BusinessCaseInput>(ctx);
+      const assembled = consultancybc.assembleBusinessCase(input);
+      return {
+        blockers: intakeBlockers(input.intake ?? {}),
+        screened: assembled.screened,
+        model: assembled.model,
+        scenarios: assembled.scenarios,
+        decision: assembled.decision,
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/business-case',
+    binary: true,
+    description:
+      'Autonomous Consultancy — the public Five Case Model business case as a branded, downloadable document (PDF or ' +
+      'DOCX). Options are screened on hard constraints before scoring; the deterministic model carries the break-even, ' +
+      'funding gap and scenarios; economic value and funding are kept separate; and the pack carries its decision and ' +
+      'conditions. An advisory AI narrative is added where a reasoning provider answers, and never produces a figure.',
+    schema: {
+      type: 'object',
+      required: ['title', 'intake', 'objectives', 'options'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        intake: { type: 'object' },
+        objectives: { type: 'array', items: { type: 'string' } },
+        options: { type: 'array' },
+        preferredOption: { type: 'string', maxLength: 300 },
+        serviceCase: { type: 'object' },
+        capitalCostMinor: { type: 'integer', minimum: 0 },
+        fundingSources: { type: 'array' },
+        programmeMonths: { type: 'integer', minimum: 0 },
+        stage: { type: 'string', maxLength: 60 },
+        outstandingConfirmations: { type: 'array', items: { type: 'string' } },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+        withNarrative: { type: 'boolean' },
+      },
+    },
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      const tctx = tenantContext(platform, ctx);
+      authorise(tctx, 'PROJECT_SETUP', 'R');
+      const input = body<consultancybc.BusinessCaseInput & { format?: RenderableFormat; withNarrative?: boolean }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      // The AI layer is best-effort: advisory prose where a reasoning provider
+      // answers, absent otherwise. The deterministic document is complete alone.
+      let narrative: Record<string, string> = {};
+      if (input.withNarrative !== false) {
+        try { narrative = (await consultancybc.businessCaseNarrative(tctx, input)).narrative; } catch { narrative = {}; }
+      }
+      const { blocks } = consultancybc.assembleBusinessCase(input, narrative);
+      const document = platform.exports.document(actor, '', {
+        title: `${input.title} — Business Case`,
+        subtitle: input.intake?.client ?? '',
         blocks,
         audience: 'CLIENT',
         format: chosen,
