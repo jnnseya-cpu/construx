@@ -60,6 +60,21 @@ describe('opening an engagement (spec §1, test C02)', () => {
     const { engagementId } = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: COMPLETE_INTAKE });
     assert.equal(workboard(ctx(), engagementId).engagement.partySide, 'BIDDER');
   });
+
+  it('attaches the client requirement at intake, persists it on the workboard, and does not let it gate authorisation', () => {
+    const brief = 'Request for Quotation: a Feasibility Study and Business Case to assess additional rail services between Doncaster and Scunthorpe.';
+    const { engagementId, blockers } = openEngagement(ctx(), {
+      route: 'RESPOND_TO_RFQ',
+      assignment: 'COMBINED',
+      intake: { ...COMPLETE_INTAKE, clientRequirement: brief },
+    });
+    // The requirement is captured evidence, not a mandatory gate: a complete
+    // intake with it attached has no blockers and can be authorised.
+    assert.equal(blockers.length, 0, 'the attached requirement does not add a blocker');
+    const board = workboard(ctx(), engagementId);
+    assert.equal(board.engagement.intake.clientRequirement, brief, 'the brief round-trips through the golden thread');
+    assert.equal(recordAction(ctx(), engagementId, { kind: 'AUTHORISE' }).workflowState, 'IN_PROGRESS');
+  });
 });
 
 describe('authorising and the workflow state machine', () => {

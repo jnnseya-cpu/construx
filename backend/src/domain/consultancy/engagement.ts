@@ -47,6 +47,14 @@ export type MinimumIntake = {
   currentStage?: string;
   expectedOutcome?: string;
   evidenceAccess?: string;
+  /**
+   * The client's own requirement/brief as issued (an RFQ, ITT or instruction),
+   * attached verbatim at intake. Optional — it is captured evidence, not a gate,
+   * so it never blocks authorisation — but once attached it is persisted on the
+   * engagement and seeds the deliverable generators (the mandate of an RFQ, the
+   * strategic case of a business case) rather than being re-keyed.
+   */
+  clientRequirement?: string;
 };
 
 /** The intake fields the spec names as mandatory before execution is authorised. */

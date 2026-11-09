@@ -118,6 +118,7 @@ export async function consultancy(root) {
           partySide: form.partySide,
           assetOrService: form.assetOrService,
           location: form.location,
+          ...(form.clientRequirement && form.clientRequirement.trim() ? { clientRequirement: form.clientRequirement.trim() } : {}),
         },
       });
       engagementId = res.engagementId;
@@ -163,6 +164,118 @@ export async function consultancy(root) {
     }
   };
 
+  // --- Deliverable generators (business case, RFQ issue pack) ----------------
+  // Small, real forms over the tenant-level consultancy engine so the two
+  // deliverables are produced and downloaded from the screen, not by curl. The
+  // appraisal preview and RFQ validation are free (JSON); the branded documents
+  // charge the wallet exactly as any other export does.
+  const toMinor = (v) => {
+    const n = Number.parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''));
+    return Number.isFinite(n) && String(v ?? '').trim() !== '' ? Math.round(n * 100) : undefined;
+  };
+  const lines = (s) => String(s ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const gbp = (minor) => (minor == null ? '—' : `£${(minor / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+
+  const buildBusinessCase = (form) => {
+    const intake = (board && board.engagement.intake) || {};
+    const options = lines(form.options).map((l) => {
+      const [name, ...rest] = l.split('|');
+      const nm = (name || '').trim();
+      return { name: nm, summary: rest.join('|').trim() || nm };
+    });
+    const payload = {
+      title: (form.title || '').trim(),
+      intake: {
+        decisionRequested: intake.decisionRequested || (form.title || '').trim(),
+        decisionAuthority: intake.decisionAuthority || '',
+        client: intake.client || '',
+        partySide: intake.partySide || 'CLIENT',
+        assetOrService: intake.assetOrService || '',
+        location: intake.location || '',
+        // Carry the client's attached brief through so the narrative AI reads it.
+        ...(intake.clientRequirement ? { clientRequirement: intake.clientRequirement } : {}),
+      },
+      objectives: lines(form.objectives),
+      options,
+    };
+    const op = toMinor(form.operatingCost);
+    const rec = toMinor(form.receiptPerUse);
+    if (op !== undefined && rec !== undefined) {
+      payload.serviceCase = { operatingCostMinor: op, netReceiptPerUseMinor: rec };
+      const cap = toMinor(form.subsidyCap);
+      if (cap !== undefined) payload.serviceCase.subsidyCapMinor = cap;
+      const dem = Number.parseInt(form.demandUses, 10);
+      if (Number.isFinite(dem)) payload.serviceCase.demandUses = dem;
+    }
+    const capex = toMinor(form.capitalCost);
+    if (capex !== undefined) payload.capitalCostMinor = capex;
+    return payload;
+  };
+
+  const previewAppraisal = async (form, resultEl) => {
+    try {
+      const r = await api.post('/v1/consultancy/appraisal', buildBusinessCase(form));
+      const m = r.model;
+      const tone = r.decision.recommendation === 'STOP' ? 'bad' : r.decision.recommendation === 'HOLD' ? 'warn' : 'ok';
+      render(resultEl, html`<div class="notice" style="margin-top:8px">
+        ${badge(r.decision.recommendation, tone)} <b style="margin-left:6px">${r.decision.rationale}</b>
+        ${m ? html`<div class="muted" style="margin-top:4px">Break-even ${m.breakEvenUses.toLocaleString()} use(s)/yr${m.minUsesWithinCap != null ? `; ${m.minUsesWithinCap.toLocaleString()} within the subsidy cap` : ''}${m.residualGapMinor ? ` · residual funding gap ${gbp(m.residualGapMinor)}` : ''}.</div>` : ''}
+        ${r.screened && r.screened.some((o) => !o.eligible) ? html`<div class="muted" style="margin-top:4px">Excluded on a hard constraint: ${r.screened.filter((o) => !o.eligible).map((o) => o.name).join(', ')}.</div>` : ''}
+        ${r.decision.conditions && r.decision.conditions.length ? html`<div class="muted" style="margin-top:4px">Conditions: ${r.decision.conditions.join('; ')}</div>` : ''}
+        ${r.blockers && r.blockers.length ? html`<div class="muted" style="margin-top:4px">Intake still open: ${r.blockers.join('; ')}</div>` : ''}
+      </div>`);
+    } catch (error) { toast('Could not appraise', error.message, 'err'); }
+  };
+
+  const downloadBusinessCase = async (form, format) => {
+    try {
+      await api.download('/v1/consultancy/business-case', { ...buildBusinessCase(form), format });
+      toast('Business case generated', `Downloaded the branded ${format}`, 'ok');
+    } catch (error) { toast('Could not generate the business case', error.message, 'err'); }
+  };
+
+  const buildRfq = (form) => ({
+    title: (form.title || '').trim(),
+    organisation: (form.organisation || '').trim(),
+    mandate: (form.mandate || '').trim(),
+    scope: (form.scope || '').trim(),
+    deadline: (form.deadline || '').trim(),
+    evaluation: lines(form.evaluation).map((l) => {
+      const [name, weight, type] = l.split('|').map((x) => (x || '').trim());
+      return { name, weightPct: Number.parseFloat(weight) || 0, type: type === 'PRICE' ? 'PRICE' : 'QUALITY' };
+    }),
+    deliverables: lines(form.deliverables).map((l) => {
+      const [deliverable, ...rest] = l.split('|');
+      return { deliverable: (deliverable || '').trim(), acceptanceTest: rest.join('|').trim() };
+    }),
+    priceLines: lines(form.priceLines).map((l) => {
+      const [item, basis, amount] = l.split('|').map((x) => (x || '').trim());
+      const line = { item, basis: basis === 'OPTION' ? 'OPTION' : 'CORE' };
+      const minor = toMinor(amount);
+      if (minor !== undefined) line.amountMinor = minor;
+      return line;
+    }),
+    instructions: (form.instructions || '').trim() || undefined,
+  });
+
+  const validateRfq = async (form, resultEl) => {
+    try {
+      const { issues } = await api.post('/v1/consultancy/rfq/validate', buildRfq(form));
+      if (!issues.length) {
+        render(resultEl, html`<div class="notice" style="margin-top:8px">${badge('ISSUABLE', 'ok')} <b style="margin-left:6px">The pack reconciles — mandate, scope, priced core, deliverable acceptance and weights summing to 100%.</b></div>`);
+      } else {
+        render(resultEl, html`<div class="notice" style="margin-top:8px">${badge('NOT ISSUABLE', 'bad')}<ul style="margin:6px 0 0;padding-left:18px">${issues.map((i) => html`<li>${i.detail}</li>`)}</ul></div>`);
+      }
+    } catch (error) { toast('Could not validate the RFQ', error.message, 'err'); }
+  };
+
+  const downloadRfq = async (form, format) => {
+    try {
+      await api.download('/v1/consultancy/rfq', { ...buildRfq(form), format });
+      toast('RFQ issue pack generated', `Downloaded the branded ${format}`, 'ok');
+    } catch (error) { toast('Could not generate the RFQ', error.message, 'err'); }
+  };
+
   function draw() {
     const canWrite = can('BUSINESS_DEVELOPMENT', 'C');
     const parts = [];
@@ -187,6 +300,8 @@ export async function consultancy(root) {
           <label class="field"><span>Decision authority</span><input name="decisionAuthority" value="North Lincolnshire Council"></label>
           <label class="field"><span>Asset or service</span><input name="assetOrService" placeholder="Doncaster–Scunthorpe rail service"></label>
           <label class="field"><span>Location</span><input name="location" placeholder="North Lincolnshire"></label>
+          <label class="field" style="grid-column:1/-1"><span>Client requirement / brief <span class="muted">(optional — paste the RFQ, ITT or instruction; it seeds the deliverables)</span></span>
+            <textarea name="clientRequirement" rows="4" placeholder="Paste the client's issued requirement here — e.g. the Request for Quotation for a Feasibility Study and Business Case to assess additional rail services between Doncaster and Scunthorpe…"></textarea></label>
           <div style="grid-column:1/-1"><button class="btn" type="submit">Open engagement</button></div>
         </form>` : html`<p class="muted">You do not hold the business-development permission needed to open an engagement.</p>`}
       </div>`);
@@ -212,6 +327,10 @@ export async function consultancy(root) {
         <div style="display:flex;justify-content:space-between;font-size:12px"><span>Verified digital coverage</span><span>${c.coveredAndValidated}/${c.requiredDigital} (${c.percent}%)</span></div>
         <div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${c.percent}%;background:var(--ok)"></div></div>
       </div>
+      ${e.intake && e.intake.clientRequirement ? html`<details style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:12.5px">Client requirement / brief (as attached at intake)</summary>
+        <div style="white-space:pre-wrap;font-size:12.5px;margin-top:6px;padding:8px 10px;background:var(--line);border-radius:6px;max-height:220px;overflow:auto">${e.intake.clientRequirement}</div>
+      </details>` : ''}
       ${canWrite ? html`<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn quiet sm" data-act="AUTHORISE">Authorise</button>
         <button class="btn quiet sm" data-act="SCOPE_CHANGE">Scope change</button>
@@ -300,6 +419,56 @@ export async function consultancy(root) {
       </div>` : ''}
     </div>`);
 
+    // Deliverable generators — seeded from the engagement's intake and the
+    // client requirement attached at intake, so the two documents are produced
+    // from the screen without re-keying what was captured when it opened.
+    const i = e.intake || {};
+    const scopeSeed = [i.assetOrService, i.location].filter(Boolean).join(' — ');
+    parts.push(html`<div class="card pad0" style="margin-top:14px">
+      <h2 style="padding:14px 16px 0;margin:0">Generate deliverables</h2>
+      <p class="muted" style="padding:2px 16px 0;margin:0;font-size:12px">Preview and validation are free; the branded PDF/DOCX draws the export charge like any other document.</p>
+      <div class="grid g-2" style="gap:0;align-items:start">
+        <form id="bc-form" class="grid" style="gap:8px;padding:12px 16px;border-right:1px solid var(--line)">
+          <b>Five Case business case</b>
+          <label class="field"><span>Title</span><input name="title" value="${i.decisionRequested || i.assetOrService || ''}"></label>
+          <label class="field"><span>Objectives <span class="muted">(one per line)</span></span><textarea name="objectives" rows="2">${i.decisionRequested || ''}</textarea></label>
+          <label class="field"><span>Options <span class="muted">(Name | summary, one per line)</span></span><textarea name="options" rows="3">Do minimum | Retain the current position
+${i.assetOrService || 'Preferred option'} | ${i.decisionRequested || ''}</textarea></label>
+          <div class="grid g-2" style="gap:8px">
+            <label class="field"><span>Annual operating cost £</span><input name="operatingCost" inputmode="decimal" placeholder="e.g. 450000"></label>
+            <label class="field"><span>Net receipt per use £</span><input name="receiptPerUse" inputmode="decimal" placeholder="e.g. 3.00"></label>
+            <label class="field"><span>Subsidy cap £ <span class="muted">(opt)</span></span><input name="subsidyCap" inputmode="decimal" placeholder="e.g. 200000"></label>
+            <label class="field"><span>Capital cost £ <span class="muted">(opt)</span></span><input name="capitalCost" inputmode="decimal"></label>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn quiet sm" type="button" data-bc="preview">Preview appraisal</button>
+            <button class="btn sm" type="button" data-bc="PDF">Download PDF</button>
+            <button class="btn sm" type="button" data-bc="DOCX">Download DOCX</button>
+          </div>
+          <div id="bc-result"></div>
+        </form>
+        <form id="rfq-form" class="grid" style="gap:8px;padding:12px 16px">
+          <b>RFQ issue pack</b>
+          <label class="field"><span>Title</span><input name="title" value="${i.decisionRequested || ''}"></label>
+          <label class="field"><span>Issuing organisation</span><input name="organisation" value="${i.client || i.decisionAuthority || ''}"></label>
+          <label class="field"><span>Mandate</span><textarea name="mandate" rows="2">${i.clientRequirement || i.decisionRequested || ''}</textarea></label>
+          <label class="field"><span>Scope</span><textarea name="scope" rows="2">${scopeSeed}</textarea></label>
+          <label class="field"><span>Submission deadline</span><input name="deadline" value="${i.deadline || ''}" placeholder="e.g. 2026-12-01"></label>
+          <label class="field"><span>Evaluation <span class="muted">(Criterion | weight | QUALITY/PRICE — weights sum to 100)</span></span><textarea name="evaluation" rows="2">Quality | 60 | QUALITY
+Price | 40 | PRICE</textarea></label>
+          <label class="field"><span>Deliverables <span class="muted">(Deliverable | acceptance test)</span></span><textarea name="deliverables" rows="2">Feasibility study | Meets the agreed scope and evidence standard
+Business case (Five Case) | Complete and internally consistent</textarea></label>
+          <label class="field"><span>Price lines <span class="muted">(Item | CORE/OPTION | £amount)</span></span><textarea name="priceLines" rows="2">Feasibility study and business case | CORE | </textarea></label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn quiet sm" type="button" data-rfq="validate">Validate</button>
+            <button class="btn sm" type="button" data-rfq="PDF">Download PDF</button>
+            <button class="btn sm" type="button" data-rfq="DOCX">Download DOCX</button>
+          </div>
+          <div id="rfq-result"></div>
+        </form>
+      </div>
+    </div>`);
+
     render(root, html`${parts}`);
 
     root.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => action(b.dataset.act)));
@@ -317,6 +486,19 @@ export async function consultancy(root) {
     if (cf) cf.addEventListener('submit', (ev) => { ev.preventDefault(); recordClaim(Object.fromEntries(new FormData(cf).entries())); cf.reset(); });
     const pf = root.querySelector('#proc-form');
     if (pf) pf.addEventListener('submit', (ev) => { ev.preventDefault(); openProcurement(new FormData(pf).get('reference')); pf.reset(); });
+
+    const bcForm = root.querySelector('#bc-form');
+    if (bcForm) bcForm.querySelectorAll('[data-bc]').forEach((b) => b.addEventListener('click', () => {
+      const data = Object.fromEntries(new FormData(bcForm).entries());
+      if (b.dataset.bc === 'preview') previewAppraisal(data, root.querySelector('#bc-result'));
+      else downloadBusinessCase(data, b.dataset.bc);
+    }));
+    const rfqForm = root.querySelector('#rfq-form');
+    if (rfqForm) rfqForm.querySelectorAll('[data-rfq]').forEach((b) => b.addEventListener('click', () => {
+      const data = Object.fromEntries(new FormData(rfqForm).entries());
+      if (b.dataset.rfq === 'validate') validateRfq(data, root.querySelector('#rfq-result'));
+      else downloadRfq(data, b.dataset.rfq);
+    }));
   }
 
   draw();

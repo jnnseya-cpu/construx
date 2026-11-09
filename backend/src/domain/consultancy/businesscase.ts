@@ -266,6 +266,10 @@ export async function businessCaseNarrative(
     decision: input.intake.decisionRequested,
     assetOrService: input.intake.assetOrService,
     location: input.intake.location,
+    // The client's own issued brief, where it was attached at intake, so the
+    // reasoning layer grounds the narrative in the requirement as written rather
+    // than only in the structured fields derived from it.
+    ...(input.intake.clientRequirement ? { clientRequirement: input.intake.clientRequirement } : {}),
     objectives: input.objectives,
     options: input.options.map((o) => ({ name: o.name, summary: o.summary })),
     preferredOption: input.preferredOption,

@@ -1036,6 +1036,26 @@ when no model was run), and proven end-to-end against the spec's Doncaster–Scu
 UAT fixture: one brief renders a complete branded business case recommending a
 **conditional HOLD** on the outstanding operator confirmation (**C01**).
 
+Both generators have a **console door on the Consultancy screen**, so neither is
+curl-only. The workboard carries a *Generate deliverables* panel with two seeded
+forms: a Five Case **business case** (title, objectives, options, and optional
+service economics in £ — operating cost, net receipt per use, subsidy cap, capex)
+with a free **Preview appraisal** that shows the recommendation, break-even and any
+residual gap from `POST …/appraisal` before the branded **PDF/DOCX** is drawn from
+`POST …/business-case`; and an **RFQ issue pack** (mandate, scope, deadline,
+evaluation weights, deliverable acceptance, price lines) with a free **Validate**
+against `POST …/rfq/validate` before the branded document from `POST …/rfq`.
+Preview and validation are free JSON; only the documents charge the wallet, exactly
+as any export does. The forms are **seeded from the engagement's intake** — and the
+open-engagement form now carries an optional **client requirement / brief** that is
+attached verbatim at intake, persisted on the engagement (it is captured evidence,
+never a gate, so it does not block authorisation — proven in
+`consultancystore.test.ts`), shown back under the engagement header, seeds the RFQ
+mandate rather than being re-keyed, and is **carried into the business-case
+narrative AI's payload** so the reasoning layer grounds the Five Case prose in the
+client's own words — the brief reaches the agents that work on it, not just the
+ledger.
+
 **Vertical 2 — the stateful engagement and workboard.** The appraisal now has a
 home that persists. `backend/src/domain/consultancy/store.ts` writes a
 `ConsultancyEngagement` and its `ConsultancyTask` work-packages through the one
