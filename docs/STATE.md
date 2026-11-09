@@ -1152,10 +1152,33 @@ Consultancy screen (an orchestration summary line). Covered in
 does not unblock, a chain lays into ordered waves, independent tasks share a wave,
 a cycle is detected, and completeness needs every required task done).
 
-**What is not yet built** (named so it is not mistaken for done): the *full*
-buyer/bidder workspace isolation over a shared procurement object (C03 —
-`partySide` and tenant/engagement scoping are in; the shared-procurement per-party
-view is the remaining piece).
+**Vertical 7 — buyer/bidder isolation (C03).** `backend/src/domain/consultancy/isolation.ts`
+is the per-party visibility rule the spec (§1, C03) demands: "A party acting as a
+bidder must not see buyer deliberations or another bidder's data … Evaluations and
+bidder margins stay compartmentalised." Tenant isolation already keeps different
+organisations apart; this is the finer filter for when buyer and bidders look at
+the *same* procurement. `partyView` is pure and total, and builds the view by
+**copying in only what the viewer is entitled to** rather than hiding fields with
+a flag: the published pack is visible to all; buyer deliberations and evaluations
+are the buyer's alone; a **bidder sees only their own submission, with their own
+margin**, never another bidder's and never any margin but their own; and the
+**buyer sees every submission's content but not any bidder's internal margin** —
+margins are compartmentalised to the bidder, stripped even from the buyer. An
+`isolationLeaks` self-check expresses the guarantee as a property a caller or test
+can run over any view. Covered in `consultancyisolation.test.ts` (a bidder sees
+only their own submission with margin and no deliberations/evaluations/other
+bidders; a bidder with no submission sees the pack but no submissions; the buyer
+sees all content and evaluations but no margins; and the leak-check is clean for
+both). The deterministic filter *is* C03's guarantee; binding it to a persisted,
+cross-tenant shared procurement object (through the existing group/sharing
+infrastructure) is the remaining integration step.
+
+With this the Autonomous Consultancy spec's build sequence (§8) is complete across
+all seven verticals: the Five Case business case, the stateful engagement and
+workboard, evidence and lineage, RFQ and bid packs, award/reappraisal/release, the
+orchestration runtime, and buyer/bidder isolation — every spec acceptance test
+that is deterministic (C01, C02, C03, C05, C06, C07, C08, C09, C11, C12, C14) made
+checkable and green.
 
 ### The submission export leaked internal citation machinery
 
