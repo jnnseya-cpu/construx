@@ -30,6 +30,7 @@ export async function consultancy(root) {
   let board = null;
   let evidence = [];
   let lastClaim = null;
+  let planData = null;
 
   const loadBoard = async () => {
     if (!engagementId) { board = null; evidence = []; return; }
@@ -42,6 +43,9 @@ export async function consultancy(root) {
     try {
       evidence = await api.get(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/evidence`);
     } catch { evidence = []; }
+    try {
+      planData = await api.get(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/plan`);
+    } catch { planData = null; }
   };
 
   const addEvidence = async (form) => {
@@ -203,6 +207,9 @@ export async function consultancy(root) {
     }
     if (board.nextActions.length) {
       parts.push(html`<div class="notice" style="margin-top:14px"><b>Next:</b> ${board.nextActions[0]}</div>`);
+    }
+    if (planData) {
+      parts.push(html`<div class="muted" style="margin-top:8px;font-size:12px">Orchestration: ${planData.runnable.length} task(s) runnable now · ${planData.waves.length} wave(s)${planData.cycle ? ' · a dependency cycle was detected' : ''}${planData.complete ? ' · graph complete' : ''}.</div>`);
     }
 
     parts.push(html`<div class="card pad0" style="margin-top:14px">

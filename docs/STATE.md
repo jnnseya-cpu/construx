@@ -1135,11 +1135,27 @@ persisting; a superseded cited source blocks release then issues once current; a
 repeated idempotency key yields one release; a release by an actor without issue
 authority is refused).
 
+**Vertical 6 — the orchestration runtime.** `backend/src/domain/consultancy/orchestrator.ts`
+is the deterministic scheduler the spec's orchestration sequence (§4) needs:
+"Build dependency graph … Schedule independent analyses concurrently." The
+*execution* of a task is the agent work; this owns the **scheduling** — reading
+the dependency graph off the engagement's own tasks (`dependsOn` carries task
+keys) and computing which tasks are **runnable** now (QUEUED with every dependency
+done, where *done* means COMPLETE **and** validated, so nothing unblocks on an
+unvalidated predecessor), which are **waiting** and on what, the concurrent
+**waves** the graph resolves into (a Kahn's-algorithm layering, so independent
+analyses land in the same wave), and whether the graph is **complete**. A cycle is
+**detected and returned**, not looped on — a scheduler that can deadlock is worse
+than none. Exposed at `GET …/engagements/{id}/plan` with its door on the
+Consultancy screen (an orchestration summary line). Covered in
+`consultancyorchestrator.test.ts` (runnable vs waiting, an unvalidated dependency
+does not unblock, a chain lays into ordered waves, independent tasks share a wave,
+a cycle is detected, and completeness needs every required task done).
+
 **What is not yet built** (named so it is not mistaken for done): the *full*
 buyer/bidder workspace isolation over a shared procurement object (C03 —
 `partySide` and tenant/engagement scoping are in; the shared-procurement per-party
-view is not), and the agent orchestration runtime (the task graph that runs the
-whole appraisal autonomously end to end).
+view is the remaining piece).
 
 ### The submission export leaked internal citation machinery
 

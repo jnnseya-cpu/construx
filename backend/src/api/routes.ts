@@ -259,6 +259,7 @@ import * as consultancystore from '../domain/consultancy/store.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
+import * as consultancyorchestrator from '../domain/consultancy/orchestrator.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4537,6 +4538,16 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) =>
       consultancylifecycle.release(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/plan',
+    description: 'Autonomous Consultancy — the orchestration plan for an engagement: which tasks are runnable now, which wait on what, the concurrent waves the dependency graph resolves into (or a cycle if the graph has one), and whether it is complete.',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const board = consultancystore.workboard(engineCtx, ctx.params.engagementId as string);
+      return consultancyorchestrator.plan(board.tasks);
+    },
   },
   {
     method: 'GET',
