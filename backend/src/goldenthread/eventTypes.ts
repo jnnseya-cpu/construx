@@ -104,6 +104,12 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // A controlled release of a consultancy deliverable — idempotent, and rechecked
   // against superseded evidence and current authority immediately before issue.
   def('CONSULTANCY_RELEASE_ISSUED', 'ConsultancyRelease', 'ISSUE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  // A shared procurement and the bids received against it. The per-party view is
+  // filtered at read time so a bidder never sees buyer deliberations, the
+  // evaluations, or another bidder's submission or margin (C03).
+  def('CONSULTANCY_PROCUREMENT_OPENED', 'ConsultancyProcurement', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_PROCUREMENT_UPDATED', 'ConsultancyProcurement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CONSULTANCY_SUBMISSION_RECEIVED', 'ConsultancySubmission', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),

@@ -260,6 +260,7 @@ import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
 import * as consultancyorchestrator from '../domain/consultancy/orchestrator.ts';
+import * as consultancyprocurement from '../domain/consultancy/procurement.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4548,6 +4549,61 @@ export const ROUTES: Route[] = [
       const board = consultancystore.workboard(engineCtx, ctx.params.engagementId as string);
       return consultancyorchestrator.plan(board.tasks);
     },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements',
+    description: 'Autonomous Consultancy — open a shared procurement (the opener is its buyer). Buyer deliberations and evaluations are visible only to the buyer; each bidder sees only their own submission (C03).',
+    schema: {
+      type: 'object',
+      required: ['reference', 'published'],
+      properties: {
+        reference: { type: 'string', minLength: 1, maxLength: 120 },
+        published: { type: 'object' },
+      },
+    },
+    handler: (platform, ctx) => consultancyprocurement.openProcurement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/deliberations',
+    description: 'Autonomous Consultancy — record a buyer deliberation (buyer-only; never visible to any bidder).',
+    schema: { type: 'object', required: ['note'], properties: { note: { type: 'string', minLength: 1, maxLength: 2000 } } },
+    handler: (platform, ctx) => {
+      consultancyprocurement.addDeliberation(projectContext(platform, ctx), ctx.params.procurementId as string, body<{ note: string }>(ctx).note);
+      return { recorded: true };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/evaluations',
+    description: 'Autonomous Consultancy — record an evaluation of a bidder (buyer-only; never visible to any bidder).',
+    schema: {
+      type: 'object',
+      required: ['bidderId', 'score'],
+      properties: { bidderId: { type: 'string', maxLength: 120 }, score: { type: 'number' }, note: { type: 'string', maxLength: 2000 } },
+    },
+    handler: (platform, ctx) => {
+      consultancyprocurement.recordEvaluation(projectContext(platform, ctx), ctx.params.procurementId as string, body(ctx));
+      return { recorded: true };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/submissions',
+    description: 'Autonomous Consultancy — submit a bid against a procurement (the submitter is the bidder; the buyer cannot bid on their own procurement).',
+    schema: {
+      type: 'object',
+      required: ['content'],
+      properties: { content: { type: 'string', minLength: 1, maxLength: 20000 }, marginMinor: { type: 'integer' } },
+    },
+    handler: (platform, ctx) => consultancyprocurement.submitBid(projectContext(platform, ctx), ctx.params.procurementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/procurements/:procurementId/view',
+    description: 'Autonomous Consultancy — the caller’s entitled view of a procurement (C03). The viewer’s side is derived from who is asking: a bidder sees only their own submission; buyer deliberations, evaluations and other bidders never enter the view.',
+    handler: (platform, ctx) => consultancyprocurement.viewProcurement(projectContext(platform, ctx), ctx.params.procurementId as string),
   },
   {
     method: 'GET',

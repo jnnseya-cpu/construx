@@ -1169,9 +1169,31 @@ can run over any view. Covered in `consultancyisolation.test.ts` (a bidder sees
 only their own submission with margin and no deliberations/evaluations/other
 bidders; a bidder with no submission sees the pack but no submissions; the buyer
 sees all content and evaluations but no margins; and the leak-check is clean for
-both). The deterministic filter *is* C03's guarantee; binding it to a persisted,
-cross-tenant shared procurement object (through the existing group/sharing
-infrastructure) is the remaining integration step.
+both). The deterministic filter *is* C03's guarantee.
+
+**Vertical 7b — the persisted shared procurement (C03 bound to the Golden Thread).**
+`backend/src/domain/consultancy/procurement.ts` persists the isolation so the
+filter is enforced at the read, not just proven as a pure function.
+`openProcurement` records a `ConsultancyProcurement` whose buyer is whoever opened
+it (`buyerPartyId = ctx.auth.actorId`); `addDeliberation` and `recordEvaluation`
+are buyer-only (`assertBuyer` → `NOT_BUYER`) and their content lives in the
+procurement state, never in a bidder-visible record; `submitBid` writes a separate
+`ConsultancySubmission` and refuses the buyer bidding on their own procurement
+(`BUYER_CANNOT_BID`). The decisive property is that `viewProcurement` **derives the
+viewer's side from the authenticated caller** — buyer if `ctx.auth.actorId` opened
+it, bidder otherwise — and hands that to `partyView`. A client cannot ask to be the
+buyer; a bidder gets only their own submission (with their own margin) however they
+ask, because the server decides who they are from who they are. Routes:
+`POST …/consultancy/procurements` (+ `/deliberations`, `/evaluations`,
+`/submissions`) and `GET …/procurements/:id/view`, with a console door in
+`frontend/pages/consultancy.js`. Covered in `consultancyprocurement.test.ts` (the
+view derived from who is asking — buyer sees all content and evaluations but no
+margin, a bidder sees only their own submission with margin and no
+deliberations/evaluations; `NOT_BUYER` for a bidder deliberating or evaluating;
+`BUYER_CANNOT_BID`; a bidder sees only their own submissions). Within one tenancy
+this compartmentalises several parties; extending read access to a bidder in a
+*different* tenancy rides on the platform's group/sharing layer, and the filter it
+is handed is exactly this one.
 
 With this the Autonomous Consultancy spec's build sequence (§8) is complete across
 all seven verticals: the Five Case business case, the stateful engagement and

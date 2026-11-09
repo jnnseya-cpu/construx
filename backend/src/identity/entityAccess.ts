@@ -32,6 +32,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   ConsultancyClaim: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
   // A controlled release of a consultancy deliverable.
   ConsultancyRelease: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // A shared procurement and the bids received against it. The per-party view is
+  // filtered at read time (C03); the records are commercially sensitive.
+  ConsultancyProcurement: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  ConsultancySubmission: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },

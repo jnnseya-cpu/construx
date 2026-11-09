@@ -31,6 +31,27 @@ export async function consultancy(root) {
   let evidence = [];
   let lastClaim = null;
   let planData = null;
+  let procurementId = null;
+  let procView = null;
+
+  const openProcurement = async (reference) => {
+    try {
+      const res = await api.post(`/v1/projects/${projectId}/consultancy/procurements`, {
+        reference, published: { title: reference, scope: 'Shared procurement', deadline: '' },
+      });
+      procurementId = res.procurementId;
+      toast('Procurement opened', reference, 'ok');
+      await loadProcView();
+      draw();
+    } catch (error) { toast('Could not open procurement', error.message, 'err'); }
+  };
+
+  const loadProcView = async () => {
+    if (!procurementId) { procView = null; return; }
+    try {
+      procView = await api.get(`/v1/projects/${projectId}/consultancy/procurements/${procurementId}/view`);
+    } catch { procView = null; }
+  };
 
   const loadBoard = async () => {
     if (!engagementId) { board = null; evidence = []; return; }
@@ -264,6 +285,21 @@ export async function consultancy(root) {
       ${lastClaim ? html`<div style="padding:0 16px 12px"><button class="btn quiet xs" data-lineage="${lastClaim.id}">View lineage of “${lastClaim.statement.slice(0, 40)}”</button></div>` : ''}
     </div>`);
 
+    // Shared procurement (C03) — the per-party view. Opened here as the buyer;
+    // the view the server returns is filtered to who is asking, so a bidder would
+    // see only their own submission, never deliberations or another bidder.
+    parts.push(html`<div class="card pad" style="margin-top:14px">
+      <h2 style="margin:0 0 8px">Shared procurement (buyer/bidder isolation)</h2>
+      ${canWrite ? html`<form id="proc-form" style="display:flex;gap:8px;flex-wrap:wrap">
+        <input name="reference" placeholder="Procurement reference (e.g. ITT-001)" required>
+        <button class="btn sm" type="submit">Open procurement</button>
+      </form>` : ''}
+      ${procView ? html`<div style="margin-top:8px;font-size:12.5px">
+        <div><b>${procView.reference}</b> — ${procView.published.title}</div>
+        <div class="muted">Your entitled view: ${procView.submissions.length} submission(s)${procView.deliberations ? `, ${procView.deliberations.length} deliberation(s)` : ''}${procView.evaluations ? `, ${procView.evaluations.length} evaluation(s)` : ' — deliberations and evaluations hidden (bidder view)'}.</div>
+      </div>` : ''}
+    </div>`);
+
     render(root, html`${parts}`);
 
     root.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => action(b.dataset.act)));
@@ -279,6 +315,8 @@ export async function consultancy(root) {
     if (ef) ef.addEventListener('submit', (ev) => { ev.preventDefault(); addEvidence(Object.fromEntries(new FormData(ef).entries())); ef.reset(); });
     const cf = root.querySelector('#claim-form');
     if (cf) cf.addEventListener('submit', (ev) => { ev.preventDefault(); recordClaim(Object.fromEntries(new FormData(cf).entries())); cf.reset(); });
+    const pf = root.querySelector('#proc-form');
+    if (pf) pf.addEventListener('submit', (ev) => { ev.preventDefault(); openProcurement(new FormData(pf).get('reference')); pf.reset(); });
   }
 
   draw();
