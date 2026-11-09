@@ -1090,6 +1090,26 @@ task held in the denominator, 100%-and-ready, scope-version bump, terminal cance
 invalid run-state rejected, and workboard scoping so one engagement's tasks do not
 leak into another's).
 
+**Task execution grounded in the client requirement.** A work-package is not only
+a checklist row — it can be **executed by an agent**, and that execution is wired
+to the attached client requirement. `runTask` guards first (the engagement must be
+IN_PROGRESS; the task must be runnable — every dependency COMPLETE *and* validated —
+or it is parked in WAITING_INPUT naming what it waits on, with nothing run), then
+runs the reasoning engine against `taskExecutionBrief(eng, task)` — a pure,
+provider-free function that carries the engagement's `clientRequirement` in
+verbatim (surfaced explicitly, `null` when none is attached, never fabricated), with
+the intake and the task's own capability and title. A completed run records the
+grounded output as the task's `lastRun` and sets COMPLETE but leaves `validated`
+false, so an executed task still owes its Independent Challenge before it counts
+toward coverage (spec §7); a run with no reasoning provider configured releases its
+hold uncharged and parks the task rather than faking a result. Route
+`POST …/consultancy/tasks/{taskId}/run`; the Consultancy screen gains a **Run agent**
+action per task, a ◆ marker on tasks grounded in the brief, and an **Agent outputs**
+panel showing each executed task's result. Covered in `consultancystore.test.ts`
+(the brief grounds in the requirement and is null without one; execution refused
+while unauthorised; a task on an unfinished dependency parked in WAITING_INPUT and
+never run; an already-complete task refused).
+
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
 traces to a cited source, governed assumption or reproducible calculation."

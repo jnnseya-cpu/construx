@@ -98,7 +98,7 @@ export const FIVE_CASE_SECTIONS: Array<{ key: string; heading: string; brief: st
  * deliberately *not* the platform's chartered-expert framing: the spec requires
  * a competent specialist's judgement without a claim of chartership or authority.
  */
-const CONSULTANCY_CONDUCT =
+export const CONSULTANCY_CONDUCT =
   'Apply the judgement and duty of care expected of a competent consultancy specialist in this discipline. ' +
   'Reason only from the evidence and figures supplied; state no figure, date, name or quantity that is not in them. ' +
   'Show the basis for each material claim, and say what could change the conclusion. Do not claim chartership, a ' +

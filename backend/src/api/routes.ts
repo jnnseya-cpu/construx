@@ -4423,6 +4423,18 @@ export const ROUTES: Route[] = [
       consultancystore.updateTask(projectContext(platform, ctx), ctx.params.taskId as string, body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/tasks/:taskId/run',
+    description:
+      'Autonomous Consultancy — execute a work-package task with an agent, grounded in the client requirement attached to its engagement. ' +
+      'Refused unless the engagement is authorised and the task is runnable (every dependency complete and validated); a task waiting on a ' +
+      'dependency, or with no reasoning provider configured, is parked in WAITING_INPUT rather than run. A completed run leaves the task ' +
+      'awaiting independent validation before it counts toward coverage.',
+    schema: { type: 'object', properties: {} },
+    handler: (platform, ctx) =>
+      consultancystore.runTask(projectContext(platform, ctx), ctx.params.taskId as string),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/workboard',
     description: 'Autonomous Consultancy — the engagement workboard: workflow state, tasks, blockers with owners, verified digital coverage (completed and validated required tasks over all required), and the next permissible actions.',

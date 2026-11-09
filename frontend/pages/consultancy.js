@@ -122,7 +122,8 @@ export async function consultancy(root) {
         },
       });
       engagementId = res.engagementId;
-      toast('Engagement opened', `${res.reference} — ${res.blockers.length} intake item(s) outstanding`, res.blockers.length ? 'warn' : 'ok');
+      const briefLen = form.clientRequirement && form.clientRequirement.trim() ? form.clientRequirement.trim().length : 0;
+      toast('Engagement opened', `${res.reference} — ${res.blockers.length} intake item(s) outstanding${briefLen ? ` · brief attached (${briefLen.toLocaleString()} characters)` : ''}`, res.blockers.length ? 'warn' : 'ok');
       await loadBoard();
       draw();
     } catch (error) {
@@ -154,6 +155,43 @@ export async function consultancy(root) {
     }
   };
 
+  // The usual digital work-packages for a feasibility / business-case engagement,
+  // with their dependencies, so the board can be populated in one click rather than
+  // the analyst inventing keys. The set follows the assignment: a feasibility-only
+  // engagement stops at the technical and risk work; a business-case engagement adds
+  // funding/affordability and the Five Case assembly that depends on the rest.
+  const standardWorkPackages = (assignment) => {
+    const base = [
+      { key: 'evidence', capability: 'EVIDENCE', title: 'Evidence base & data register' },
+      { key: 'options', capability: 'OPTIONS_APPRAISAL', title: 'Options identification & appraisal', dependsOn: ['evidence'] },
+      { key: 'demand', capability: 'DEMAND_ANALYSIS', title: 'Demand & benefits analysis', dependsOn: ['evidence'] },
+      { key: 'operations', capability: 'OPERATIONS', title: 'Operational & technical feasibility', dependsOn: ['options'] },
+      { key: 'cost', capability: 'COST_ESTIMATE', title: 'Capital & operating cost estimate', dependsOn: ['options'] },
+      { key: 'risk', capability: 'RISK', title: 'Risk & sensitivity analysis', dependsOn: ['options'] },
+    ];
+    const funding = { key: 'funding', capability: 'FINANCE', title: 'Funding & affordability', dependsOn: ['cost'] };
+    const businessCase = { key: 'businesscase', capability: 'BUSINESS_CASE', title: 'Five Case business case assembly', dependsOn: ['demand', 'operations', 'cost', 'funding', 'risk'] };
+    if (assignment === 'FEASIBILITY_ONLY') return base;
+    if (assignment === 'BUSINESS_CASE_ONLY') return [...base.filter((t) => t.key !== 'operations'), funding, businessCase];
+    return [...base, funding, businessCase];
+  };
+
+  const seedWorkPackages = async () => {
+    const set = standardWorkPackages(board?.engagement?.assignment);
+    let added = 0;
+    try {
+      for (const wp of set) {
+        await api.post(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/tasks`, wp);
+        added += 1;
+      }
+      toast('Work-packages registered', `${added} standard task(s) added for this ${board?.engagement?.assignment || 'engagement'}`, 'ok');
+    } catch (error) {
+      toast(added ? `Registered ${added}, then stopped` : 'Could not register work-packages', error.message, 'err');
+    }
+    await loadBoard();
+    draw();
+  };
+
   const setTaskState = async (taskId, runState, validated) => {
     try {
       await api.post(`/v1/projects/${projectId}/consultancy/tasks/${taskId}`, { runState, validated });
@@ -161,6 +199,18 @@ export async function consultancy(root) {
       draw();
     } catch (error) {
       toast('Could not update task', error.message, 'err');
+    }
+  };
+
+  const runAgentTask = async (taskId) => {
+    try {
+      const t = await api.post(`/v1/projects/${projectId}/consultancy/tasks/${taskId}/run`, {});
+      if (t.runState === 'COMPLETE') toast('Agent ran', `${t.title} — grounded in the client requirement${t.lastRun && t.lastRun.groundedInRequirement ? '' : ' (no brief attached)'}; awaiting validation`, 'ok');
+      else toast('Task parked', t.blocker || `${t.title} is ${t.runState}`, 'warn');
+      await loadBoard();
+      draw();
+    } catch (error) {
+      toast('Could not run the agent', error.message, 'err');
     }
   };
 
@@ -327,8 +377,8 @@ export async function consultancy(root) {
         <div style="display:flex;justify-content:space-between;font-size:12px"><span>Verified digital coverage</span><span>${c.coveredAndValidated}/${c.requiredDigital} (${c.percent}%)</span></div>
         <div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:3px"><div style="height:100%;width:${c.percent}%;background:var(--ok)"></div></div>
       </div>
-      ${e.intake && e.intake.clientRequirement ? html`<details style="margin-top:10px">
-        <summary style="cursor:pointer;font-size:12.5px">Client requirement / brief (as attached at intake)</summary>
+      ${e.intake && e.intake.clientRequirement ? html`<details open style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:12.5px">${badge('BRIEF ATTACHED', 'ok')} Client requirement / brief (as attached at intake) — ${e.intake.clientRequirement.length.toLocaleString()} characters</summary>
         <div style="white-space:pre-wrap;font-size:12.5px;margin-top:6px;padding:8px 10px;background:var(--line);border-radius:6px;max-height:220px;overflow:auto">${e.intake.clientRequirement}</div>
       </details>` : ''}
       ${canWrite ? html`<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
@@ -357,21 +407,42 @@ export async function consultancy(root) {
       ${table({
         headers: ['Task', 'Capability', 'Run state', 'Validated', ''],
         rows: board.tasks.map((t) => [
-          t.title,
+          `${t.title}${t.lastRun && t.lastRun.groundedInRequirement ? ' ◆' : ''}`,
           t.capability,
           resolveHtml(badge(t.runState, runTone(t.runState))),
           t.validated ? '✓' : '—',
-          canWrite ? resolveHtml(html`<button class="btn quiet xs" data-complete="${t.id}">Mark complete & validated</button>`) : '',
+          canWrite ? resolveHtml(html`<span style="display:inline-flex;gap:4px">
+            ${t.runState !== 'COMPLETE' && t.runState !== 'CANCELLED' ? html`<button class="btn quiet xs" data-run="${t.id}">Run agent</button>` : ''}
+            <button class="btn quiet xs" data-complete="${t.id}">Mark complete &amp; validated</button>
+          </span>`) : '',
         ]),
         empty: 'No tasks registered yet.',
       })}
-      ${canWrite ? html`<form id="task-form" class="grid g-3" style="gap:8px;padding:12px 16px">
-        <input name="key" placeholder="key (e.g. options)" required>
-        <input name="capability" placeholder="capability (e.g. ECONOMICS)" required>
-        <input name="title" placeholder="Task title" required>
-        <div style="grid-column:1/-1"><button class="btn sm" type="submit">Register task</button></div>
-      </form>` : ''}
+      <p class="muted" style="padding:0 16px;margin:4px 0 0;font-size:11.5px">◆ executed by an agent grounded in the attached client requirement. A run produces the work-package's output; a task counts toward coverage only once it is also independently validated.</p>
+      ${canWrite ? html`<div style="padding:12px 16px 0">
+        ${board.tasks.length === 0 ? html`<button class="btn sm" type="button" id="seed-wp">Register the standard work-packages</button>
+          <span class="muted" style="margin-left:8px;font-size:11.5px">The usual feasibility / business-case set for this ${e.assignment}, with their dependencies — the agents then work each one.</span>` : ''}
+      </div>
+      <form id="task-form" class="grid g-3" style="gap:8px;padding:10px 16px 6px">
+        <label class="field"><span>Key <span class="muted">(short id, e.g. options)</span></span><input name="key" placeholder="options" required></label>
+        <label class="field"><span>Capability <span class="muted">(the discipline, e.g. ECONOMICS)</span></span><input name="capability" placeholder="OPTIONS_APPRAISAL" required></label>
+        <label class="field"><span>Task title <span class="muted">(what the work-package produces)</span></span><input name="title" placeholder="Options identification & appraisal" required></label>
+        <div style="grid-column:1/-1"><button class="btn sm" type="submit">Add one task</button></div>
+      </form>
+      <p class="muted" style="padding:0 16px 12px;margin:0;font-size:11.5px">A <b>work-package</b> is one unit of the study an agent can run — e.g. the evidence base, the options appraisal, the cost estimate. The <b>key</b> is a short handle other tasks depend on; the <b>capability</b> is the discipline; the <b>title</b> is what it delivers.</p>` : ''}
     </div>`);
+
+    // Agent outputs — the grounded result each executed task produced.
+    const ran = board.tasks.filter((t) => t.lastRun && t.lastRun.summary);
+    if (ran.length) {
+      parts.push(html`<div class="card pad0" style="margin-top:14px">
+        <h2 style="padding:14px 16px 0;margin:0">Agent outputs</h2>
+        <div style="padding:8px 16px 14px">${ran.map((t) => html`<details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12.5px"><b>${t.title}</b> — ${t.capability} ${t.lastRun.groundedInRequirement ? badge('GROUNDED IN BRIEF', 'ok') : badge('NO BRIEF', 'warn')}</summary>
+          <div style="white-space:pre-wrap;font-size:12.5px;margin-top:6px;padding:8px 10px;background:var(--line);border-radius:6px;max-height:280px;overflow:auto">${t.lastRun.summary}</div>
+        </details>`)}</div>
+      </div>`);
+    }
 
     // Evidence & lineage — sources with locators and confidence, and claims that
     // trace to them. A claim can only cite a current source; the lineage button
@@ -473,6 +544,9 @@ Business case (Five Case) | Complete and internally consistent</textarea></label
 
     root.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => action(b.dataset.act)));
     root.querySelectorAll('[data-complete]').forEach((b) => b.addEventListener('click', () => setTaskState(b.dataset.complete, 'COMPLETE', true)));
+    root.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', () => runAgentTask(b.dataset.run)));
+    const seedBtn = root.querySelector('#seed-wp');
+    if (seedBtn) seedBtn.addEventListener('click', () => seedWorkPackages());
     root.querySelectorAll('[data-lineage]').forEach((b) => b.addEventListener('click', () => viewLineage(b.dataset.lineage)));
     const tf = root.querySelector('#task-form');
     if (tf) tf.addEventListener('submit', (ev) => {

@@ -7,6 +7,8 @@ import {
   openEngagement,
   recordAction,
   registerTask,
+  runTask,
+  taskExecutionBrief,
   updateTask,
   workboard,
 } from '../src/domain/consultancy/store.ts';
@@ -155,5 +157,49 @@ describe('the work-package checklist and verified digital coverage (spec §7)', 
     const board = workboard(ctx(), engagementId);
     assert.ok(board.tasks.every((t) => t.key !== 'theirs'), 'the other engagement’s task is not on this workboard');
     assert.ok(board.tasks.some((t) => t.key === 'mine'));
+  });
+});
+
+describe('executing a task with an agent, grounded in the client requirement', () => {
+  const brief = 'RFQ: a Feasibility Study and Business Case to assess additional rail services between Doncaster and Scunthorpe.';
+
+  it('wires the attached client requirement into the task execution brief (and is null when none is attached)', () => {
+    const withBrief = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: { ...COMPLETE_INTAKE, clientRequirement: brief } }).engagementId;
+    registerTask(ctx(), withBrief, { key: 'options', capability: 'ECONOMICS', title: 'Options appraisal' });
+    const board = workboard(ctx(), withBrief);
+    const grounded = taskExecutionBrief(board.engagement, board.tasks[0]!);
+    assert.equal(grounded.clientRequirement, brief, 'the agent works to the client requirement as written');
+    assert.equal(grounded.intake.clientRequirement, brief);
+    assert.equal(grounded.task.capability, 'ECONOMICS');
+
+    const without = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: COMPLETE_INTAKE }).engagementId;
+    registerTask(ctx(), without, { key: 'options', capability: 'ECONOMICS', title: 'Options appraisal' });
+    const b2 = workboard(ctx(), without);
+    assert.equal(taskExecutionBrief(b2.engagement, b2.tasks[0]!).clientRequirement, null, 'no brief attached → null, never a fabricated one');
+  });
+
+  it('refuses to execute a task while the engagement is not authorised', async () => {
+    const id = openEngagement(ctx(), { route: 'DELIVER_COMMISSION', assignment: 'COMBINED', intake: COMPLETE_INTAKE }).engagementId; // stays INTAKE
+    const { taskId } = registerTask(ctx(), id, { key: 'a', capability: 'EVIDENCE', title: 'A' });
+    await assert.rejects(() => runTask(ctx(), taskId), (e) => (e as { code?: string }).code === 'ENGAGEMENT_NOT_AUTHORISED');
+  });
+
+  it('parks a task that waits on an unfinished dependency in WAITING_INPUT, naming it, without executing', async () => {
+    const id = openEngagement(ctx(), { route: 'DELIVER_COMMISSION', assignment: 'COMBINED', intake: COMPLETE_INTAKE }).engagementId;
+    recordAction(ctx(), id, { kind: 'AUTHORISE' });
+    registerTask(ctx(), id, { key: 'a', capability: 'EVIDENCE', title: 'Evidence (predecessor)' });
+    const b = registerTask(ctx(), id, { key: 'b', capability: 'ECONOMICS', title: 'Options (depends on a)', dependsOn: ['a'] });
+    const parked = await runTask(ctx(), b.taskId);
+    assert.equal(parked.runState, 'WAITING_INPUT');
+    assert.match(parked.blocker ?? '', /\ba\b/, 'the unmet dependency is named');
+    assert.equal(parked.lastRun, undefined, 'a parked task never recorded an execution');
+  });
+
+  it('refuses to re-execute a task that is already complete', async () => {
+    const id = openEngagement(ctx(), { route: 'DELIVER_COMMISSION', assignment: 'COMBINED', intake: COMPLETE_INTAKE }).engagementId;
+    recordAction(ctx(), id, { kind: 'AUTHORISE' });
+    const { taskId } = registerTask(ctx(), id, { key: 'a', capability: 'EVIDENCE', title: 'A' });
+    updateTask(ctx(), taskId, { runState: 'COMPLETE', validated: true });
+    await assert.rejects(() => runTask(ctx(), taskId), (e) => (e as { code?: string }).code === 'TASK_NOT_RUNNABLE');
   });
 });

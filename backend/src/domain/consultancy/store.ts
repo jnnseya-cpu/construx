@@ -23,7 +23,8 @@
 
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
-import { authorise, currentPhase, write, type EngineContext } from '../../engines/context.ts';
+import { authorise, currentPhase, runAI, write, type EngineContext } from '../../engines/context.ts';
+import { CONSULTANCY_CONDUCT } from './businesscase.ts';
 import {
   intakeBlockers,
   type Assignment,
@@ -31,6 +32,7 @@ import {
   type MinimumIntake,
   type WorkRoute,
 } from './engagement.ts';
+import { runnable } from './orchestrator.ts';
 
 /** What the automation is doing on a task (spec §4). */
 export type AgentRunState =
@@ -102,6 +104,19 @@ export type TaskState = {
   validated: boolean;
   owner?: string;
   blocker?: string;
+  /**
+   * The last agent execution of this task — its grounded output and whether the
+   * client requirement was present to ground it. Set by `runTask`; absent until
+   * the task has been executed by an agent.
+   */
+  lastRun?: {
+    at: string;
+    /** Whether the engagement carried an attached client requirement the agent worked to. */
+    groundedInRequirement: boolean;
+    /** The agent's output for this work-package, as it was committed. */
+    summary: string;
+    acuConsumed: number;
+  };
   updatedAt: string;
 };
 
@@ -293,6 +308,123 @@ export function updateTask(
     nextState: next,
   });
   return next;
+}
+
+/**
+ * The grounded brief an agent executes a task against — **the point at which the
+ * client requirement is wired into execution**. Pure and side-effect free so the
+ * grounding is testable without a provider: the engagement's attached requirement
+ * is carried in verbatim (and surfaced explicitly as `clientRequirement`), the
+ * intake and the task's own capability and title with it. An agent works to the
+ * requirement as written, not to a field derived from it.
+ */
+export function taskExecutionBrief(
+  eng: EngagementState,
+  task: TaskState,
+): {
+  task: { key: string; capability: string; title: string };
+  engagement: { reference: string; route: WorkRoute; assignment: Assignment };
+  intake: Partial<MinimumIntake>;
+  clientRequirement: string | null;
+} {
+  return {
+    task: { key: task.key, capability: task.capability, title: task.title },
+    engagement: { reference: eng.reference, route: eng.route, assignment: eng.assignment },
+    intake: eng.intake,
+    clientRequirement: eng.intake.clientRequirement ?? null,
+  };
+}
+
+/**
+ * Execute a work-package task with an agent, grounded in the client requirement.
+ *
+ * The guards run before anything is reserved or charged: the engagement must be
+ * authorised (IN_PROGRESS), the task must not already be finished, and it must be
+ * *runnable* — every dependency COMPLETE and validated — or it is parked in
+ * WAITING_INPUT naming what it waits on, with no execution. Only then does the
+ * agent run, against `taskExecutionBrief` so the client's requirement is the
+ * ground truth. A run with no reasoning provider configured releases its hold
+ * uncharged and parks the task in WAITING_INPUT rather than faking a result.
+ *
+ * Completing the agent run sets COMPLETE but leaves `validated` false: a task is
+ * *covered* only once COMPLETE **and** independently validated (spec §7), so an
+ * executed task still owes its Independent Challenge before it counts.
+ */
+export async function runTask(ctx: EngineContext, taskId: string): Promise<TaskState> {
+  authorise(ctx, 'BUSINESS_DEVELOPMENT', 'U', { lifecyclePhase: currentPhase(ctx) });
+  const record = ctx.ledger.require({ refType: 'ConsultancyTask', refId: taskId });
+  const task = record.state as TaskState;
+  if (task.runState === 'COMPLETE' || task.runState === 'CANCELLED') {
+    throw new DomainError('TASK_NOT_RUNNABLE', `This task is ${task.runState} and cannot be executed again`);
+  }
+  const eng = engagement(ctx, task.engagementId);
+  if (eng.workflowState !== 'IN_PROGRESS') {
+    throw new DomainError('ENGAGEMENT_NOT_AUTHORISED', 'The engagement must be authorised (IN_PROGRESS) before its tasks are executed');
+  }
+
+  // Only run when the orchestrator says this task is runnable; otherwise park it
+  // in WAITING_INPUT naming the unfinished dependencies, without executing.
+  const siblings = tasksOf(ctx, task.engagementId);
+  const ready = runnable(siblings.map((t) => ({ key: t.key, dependsOn: t.dependsOn, runState: t.runState, validated: t.validated, requiredDigital: t.requiredDigital })));
+  if (!ready.includes(task.key)) {
+    const doneKeys = new Set(siblings.filter((t) => t.runState === 'COMPLETE' && t.validated).map((t) => t.key));
+    const unmet = task.dependsOn.filter((d) => !doneKeys.has(d));
+    const parked: TaskState = {
+      ...task,
+      runState: 'WAITING_INPUT',
+      blocker: unmet.length ? `Waiting on: ${unmet.join(', ')}` : 'Not yet runnable',
+      updatedAt: new Date().toISOString(),
+    };
+    write(ctx, { eventType: 'CONSULTANCY_TASK_UPDATED', entity: { refType: 'ConsultancyTask', refId: taskId }, nextState: parked });
+    return parked;
+  }
+
+  const brief = taskExecutionBrief(eng, task);
+  try {
+    const result = await runAI(ctx, {
+      engine: 'EXECUTIVE',
+      taskType: `consultancy_task:${task.capability}:${task.key}`,
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'ConsultancyEngagement', refId: eng.id }],
+      request: {
+        task:
+          `${CONSULTANCY_CONDUCT} You are executing the work-package "${task.title}" (capability ${task.capability}) for ` +
+          `engagement ${eng.reference}. Work strictly to the client's requirement and the engagement intake supplied below. ` +
+          'Produce the specialist output this work-package owes, grounded in the requirement; if you cannot complete it, say ' +
+          'precisely what is still needed rather than inventing it.',
+        payload: brief,
+      },
+      toWrites: () => [],
+      requireModel: { code: 'NO_REASONING_PROVIDER', message: 'No reasoning provider is configured to execute this task' },
+    });
+    const summary = String(
+      (result.output as { narrative?: unknown; text?: unknown }).narrative ??
+        (result.output as { text?: unknown }).text ??
+        '',
+    ).trim().slice(0, 8000);
+    const done: TaskState = {
+      ...task,
+      runState: 'COMPLETE',
+      blocker: undefined,
+      lastRun: { at: new Date().toISOString(), groundedInRequirement: brief.clientRequirement !== null, summary, acuConsumed: result.acuConsumed },
+      updatedAt: new Date().toISOString(),
+    };
+    write(ctx, { eventType: 'CONSULTANCY_TASK_UPDATED', entity: { refType: 'ConsultancyTask', refId: taskId }, nextState: done });
+    return done;
+  } catch (error) {
+    // No provider to run the agent: park the task honestly, nothing charged.
+    if (error instanceof DomainError && error.code === 'NO_REASONING_PROVIDER') {
+      const parked: TaskState = {
+        ...task,
+        runState: 'WAITING_INPUT',
+        blocker: 'Awaiting a reasoning provider to execute this task',
+        updatedAt: new Date().toISOString(),
+      };
+      write(ctx, { eventType: 'CONSULTANCY_TASK_UPDATED', entity: { refType: 'ConsultancyTask', refId: taskId }, nextState: parked });
+      return parked;
+    }
+    throw error;
+  }
 }
 
 export type Workboard = {
