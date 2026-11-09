@@ -26,6 +26,10 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // read across to a buyer or another bidder.
   ConsultancyEngagement: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
   ConsultancyTask: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Evidence and the claims that trace to it — the provenance a released finding
+  // rests on. Commercially sensitive, like the engagement they belong to.
+  ConsultancyEvidence: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
+  ConsultancyClaim: { area: 'EVIDENCE_AUDIT', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },

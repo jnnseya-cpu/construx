@@ -96,6 +96,11 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONSULTANCY_ENGAGEMENT_UPDATED', 'ConsultancyEngagement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   def('CONSULTANCY_TASK_REGISTERED', 'ConsultancyTask', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   def('CONSULTANCY_TASK_UPDATED', 'ConsultancyTask', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // Evidence and lineage — a registered source with its locator and confidence,
+  // and a claim that traces to the evidence, assumptions and calculations behind it.
+  def('CONSULTANCY_EVIDENCE_REGISTERED', 'ConsultancyEvidence', 'CREATE', 'EVIDENCE', { creates: true }),
+  def('CONSULTANCY_EVIDENCE_UPDATED', 'ConsultancyEvidence', 'UPDATE', 'EVIDENCE'),
+  def('CONSULTANCY_CLAIM_RECORDED', 'ConsultancyClaim', 'CREATE', 'EVIDENCE', { creates: true }),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),

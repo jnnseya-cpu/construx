@@ -1070,12 +1070,34 @@ task held in the denominator, 100%-and-ready, scope-version bump, terminal cance
 invalid run-state rejected, and workboard scoping so one engagement's tasks do not
 leak into another's).
 
-**What is not yet built** (named so it is not mistaken for done): CDE/evidence
-ingestion with lineage, the *full* buyer/bidder workspace isolation over a shared
-procurement object (C03 — `partySide` and tenant/engagement scoping are in; the
-shared-procurement per-party view is not), award promotion (C05), the RIBA 5
+**Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
+makes the spec's completion measure checkable: "every released material finding
+traces to a cited source, governed assumption or reproducible calculation."
+A `ConsultancyEvidence` record carries the source, its revision, locator (page,
+sheet + scale + method, IFC GUID, cell), authority, time period, licence,
+extraction method and confidence; a `ConsultancyClaim` records a statement with
+its `sourceRefs`, `calculationRefs` and `assumptionRefs` — the lineage, written to
+the chain, not a convenience view. Two invariants hold by construction: a claim
+**cannot be recorded against nothing** (cite a source, assumption or calculation,
+or be refused — no unsupported finding), and it **cannot cite a superseded
+source** (the spec's prohibition on silent reuse of a stale fact); an unknown
+source is refused too. `claimLineage` resolves the cited evidence and flags any
+source **superseded since** the claim was made, so a released finding whose ground
+has moved is visible rather than quietly stale. Routes: `POST …/engagements/{id}/evidence`,
+`…/evidence/{id}/supersede`, `…/engagements/{id}/claims`, `GET …/engagements/{id}/evidence`
+and `GET …/claims/{id}/lineage`, with the two reads given their door on the
+Consultancy screen (an Evidence & lineage panel). Covered in
+`consultancyevidence.test.ts` (register + list, confidence default, lineage
+resolves a cited source, unsupported claim refused, assumption/calculation-only
+claim accepted, unknown and superseded sources refused, supersede-since flagged on
+the lineage, and register scoped to its engagement).
+
+**What is not yet built** (named so it is not mistaken for done): the *full*
+buyer/bidder workspace isolation over a shared procurement object (C03 —
+`partySide` and tenant/engagement scoping are in; the shared-procurement per-party
+view is not), RFQ & bid pack generation (§8.3), award promotion (C05), the RIBA 5
 reappraisal trigger (C08), release-time recheck and idempotency (C09/C11/C14), and
-the agent orchestration runtime — the spec's verticals 3–5.
+the agent orchestration runtime.
 
 ### The submission export leaked internal citation machinery
 

@@ -256,6 +256,7 @@ import * as feasibility from '../domain/feasibility.ts';
 import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
+import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4348,6 +4349,70 @@ export const ROUTES: Route[] = [
     description: 'Autonomous Consultancy — the engagement workboard: workflow state, tasks, blockers with owners, verified digital coverage (completed and validated required tasks over all required), and the next permissible actions.',
     handler: (platform, ctx) =>
       consultancystore.workboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/evidence',
+    description: 'Autonomous Consultancy — register a source against an engagement with its locator, authority, time period, licence, extraction method and confidence.',
+    schema: {
+      type: 'object',
+      required: ['source'],
+      properties: {
+        source: { type: 'string', minLength: 1, maxLength: 400 },
+        revision: { type: 'string', maxLength: 120 },
+        locator: { type: 'string', maxLength: 400 },
+        authority: { type: 'string', maxLength: 200 },
+        period: { type: 'string', maxLength: 120 },
+        licence: { type: 'string', maxLength: 200 },
+        method: { type: 'string', maxLength: 120 },
+        confidence: { type: 'string', enum: ['HIGH', 'MEDIUM', 'LOW', 'UNVERIFIED'] },
+        classification: { type: 'string', maxLength: 120 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancyevidence.registerEvidence(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/evidence/:evidenceId/supersede',
+    description: 'Autonomous Consultancy — mark a registered source superseded; it can no longer back a new claim.',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => {
+      consultancyevidence.supersedeEvidence(projectContext(platform, ctx), ctx.params.evidenceId as string);
+      return { superseded: ctx.params.evidenceId };
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/evidence',
+    description: 'Autonomous Consultancy — the evidence register for an engagement: every source with its locator, authority, confidence and current/superseded status.',
+    handler: (platform, ctx) =>
+      consultancyevidence.evidenceRegister(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/claims',
+    description: 'Autonomous Consultancy — record a claim with its lineage. Refused unless it cites a source, assumption or calculation, and refused if a cited source has been superseded.',
+    schema: {
+      type: 'object',
+      required: ['statement'],
+      properties: {
+        kind: { type: 'string', enum: ['FINDING', 'CONDITIONAL_FINDING', 'ASSUMPTION', 'RECOMMENDATION'] },
+        statement: { type: 'string', minLength: 1, maxLength: 2000 },
+        sourceRefs: { type: 'array', items: { type: 'string' } },
+        calculationRefs: { type: 'array', items: { type: 'string' } },
+        assumptionRefs: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancyevidence.recordClaim(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/claims/:claimId/lineage',
+    description: 'Autonomous Consultancy — the lineage of a claim: the cited evidence resolved, and any cited source that has since been superseded.',
+    handler: (platform, ctx) =>
+      consultancyevidence.claimLineage(projectContext(platform, ctx), ctx.params.claimId as string),
   },
   {
     method: 'GET',

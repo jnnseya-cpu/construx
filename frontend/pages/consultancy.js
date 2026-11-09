@@ -28,14 +28,56 @@ export async function consultancy(root) {
   // Page-local state: the engagement currently open on the board.
   let engagementId = null;
   let board = null;
+  let evidence = [];
+  let lastClaim = null;
 
   const loadBoard = async () => {
-    if (!engagementId) { board = null; return; }
+    if (!engagementId) { board = null; evidence = []; return; }
     try {
       board = await api.get(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/workboard`);
     } catch (error) {
       board = null;
       toast('Workboard unavailable', error.message, 'err');
+    }
+    try {
+      evidence = await api.get(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/evidence`);
+    } catch { evidence = []; }
+  };
+
+  const addEvidence = async (form) => {
+    try {
+      await api.post(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/evidence`, {
+        source: form.source, locator: form.locator, authority: form.authority, confidence: form.confidence,
+      });
+      toast('Evidence registered', form.source, 'ok');
+      await loadBoard();
+      draw();
+    } catch (error) {
+      toast('Could not register evidence', error.message, 'err');
+    }
+  };
+
+  const recordClaim = async (form) => {
+    try {
+      const res = await api.post(`/v1/projects/${projectId}/consultancy/engagements/${engagementId}/claims`, {
+        statement: form.statement, sourceRefs: form.sourceRef ? [form.sourceRef] : [],
+      });
+      lastClaim = { id: res.claimId, statement: form.statement };
+      toast('Claim recorded', 'traced to its source', 'ok');
+      await loadBoard();
+      draw();
+    } catch (error) {
+      toast('Claim refused', error.message, 'err');
+    }
+  };
+
+  const viewLineage = async (claimId) => {
+    try {
+      const l = await api.get(`/v1/projects/${projectId}/consultancy/claims/${claimId}/lineage`);
+      const cited = l.evidence.map((e) => e.source).join(', ') || '—';
+      toast('Lineage', `${l.claim.statement.slice(0, 60)} ← ${cited}${l.supersededSince.length ? ' (a cited source has been superseded)' : ''}`, l.supersededSince.length ? 'warn' : 'ok');
+    } catch (error) {
+      toast('Lineage unavailable', error.message, 'err');
     }
   };
 
@@ -184,16 +226,52 @@ export async function consultancy(root) {
       </form>` : ''}
     </div>`);
 
+    // Evidence & lineage — sources with locators and confidence, and claims that
+    // trace to them. A claim can only cite a current source; the lineage button
+    // reads the server's lineage so a superseded source is never silently relied on.
+    parts.push(html`<div class="card pad0" style="margin-top:14px">
+      <h2 style="padding:14px 16px 0;margin:0">Evidence &amp; lineage</h2>
+      ${table({
+        headers: ['Source', 'Locator', 'Authority', 'Confidence', 'Status'],
+        rows: evidence.map((e) => [
+          `${e.source}${e.id ? ` (${e.id.slice(-6)})` : ''}`,
+          e.locator ?? '—',
+          e.authority ?? '—',
+          e.confidence,
+          resolveHtml(badge(e.status, e.status === 'SUPERSEDED' ? 'warn' : 'ok')),
+        ]),
+        empty: 'No evidence registered yet.',
+      })}
+      ${canWrite ? html`<form id="evidence-form" class="grid g-3" style="gap:8px;padding:12px 16px 4px">
+        <input name="source" placeholder="Source (e.g. ORR station usage 2024-25)" required>
+        <input name="locator" placeholder="Locator (e.g. table 2, p.4)">
+        <input name="authority" placeholder="Authority (e.g. ORR)">
+        <select name="confidence"><option value="UNVERIFIED">UNVERIFIED</option><option value="LOW">LOW</option><option value="MEDIUM">MEDIUM</option><option value="HIGH">HIGH</option></select>
+        <div style="grid-column:1/-1"><button class="btn sm" type="submit">Register evidence</button></div>
+      </form>
+      <form id="claim-form" class="grid g-3" style="gap:8px;padding:4px 16px 12px">
+        <input name="statement" placeholder="Claim (traces to a cited source)" required style="grid-column:1/3">
+        <select name="sourceRef"><option value="">cite a source…</option>${evidence.filter((e) => e.status !== 'SUPERSEDED').map((e) => html`<option value="${e.id}">${e.source}</option>`)}</select>
+        <div style="grid-column:1/-1"><button class="btn sm" type="submit">Record claim</button></div>
+      </form>` : ''}
+      ${lastClaim ? html`<div style="padding:0 16px 12px"><button class="btn quiet xs" data-lineage="${lastClaim.id}">View lineage of “${lastClaim.statement.slice(0, 40)}”</button></div>` : ''}
+    </div>`);
+
     render(root, html`${parts}`);
 
     root.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => action(b.dataset.act)));
     root.querySelectorAll('[data-complete]').forEach((b) => b.addEventListener('click', () => setTaskState(b.dataset.complete, 'COMPLETE', true)));
+    root.querySelectorAll('[data-lineage]').forEach((b) => b.addEventListener('click', () => viewLineage(b.dataset.lineage)));
     const tf = root.querySelector('#task-form');
     if (tf) tf.addEventListener('submit', (ev) => {
       ev.preventDefault();
       addTask(Object.fromEntries(new FormData(tf).entries()));
       tf.reset();
     });
+    const ef = root.querySelector('#evidence-form');
+    if (ef) ef.addEventListener('submit', (ev) => { ev.preventDefault(); addEvidence(Object.fromEntries(new FormData(ef).entries())); ef.reset(); });
+    const cf = root.querySelector('#claim-form');
+    if (cf) cf.addEventListener('submit', (ev) => { ev.preventDefault(); recordClaim(Object.fromEntries(new FormData(cf).entries())); cf.reset(); });
   }
 
   draw();
