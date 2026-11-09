@@ -1092,12 +1092,33 @@ resolves a cited source, unsupported claim refused, assumption/calculation-only
 claim accepted, unknown and superseded sources refused, supersede-since flagged on
 the lineage, and register scoped to its engagement).
 
+**Vertical 4 — RFQ and bid packs with their acceptance contracts.**
+`backend/src/domain/consultancy/rfq.ts` makes the spec's §7 deliverable-validation
+contracts executable. The **RFQ issue pack** composes to branded export blocks
+(mandate, scope, data responsibilities, evaluation, deliverable acceptance,
+pricing schedule, instructions, contract schedules) and validates against its
+contract — the reconciliation that bites being the scoring: **evaluation weights
+must sum to 100%** or the pack scores on a basis that does not add up, alongside
+checks for mandate, scope, deadline, a priced core and an acceptance test on every
+deliverable. The **bid issue pack** validation enforces the other side: **every
+mandatory requirement has a response or a named blocker**, and the **price
+schedule total reconciles including tax, disbursements and optional items** — a
+stated total that does not match its lines is named, not left for the buyer to
+find. Routes: `POST /v1/consultancy/rfq` (branded PDF/DOCX), `…/rfq/validate` and
+`…/bid/validate`. Deterministic throughout — whether a pack is complete and
+reconciles is a check, not an opinion, which is what lets a hold/stop
+recommendation be trusted. Covered in `consultancyrfq.test.ts` (a complete RFQ
+passes; weights ≠ 100% flagged; missing mandate/scope/deadline/scoring/acceptance/
+core flagged; the pack carries its sections and prices the core; a complete bid
+reconciles including tax and disbursements; a mandatory gap and a price mismatch
+are flagged; a blocker counts as addressing a requirement).
+
 **What is not yet built** (named so it is not mistaken for done): the *full*
 buyer/bidder workspace isolation over a shared procurement object (C03 —
 `partySide` and tenant/engagement scoping are in; the shared-procurement per-party
-view is not), RFQ & bid pack generation (§8.3), award promotion (C05), the RIBA 5
-reappraisal trigger (C08), release-time recheck and idempotency (C09/C11/C14), and
-the agent orchestration runtime.
+view is not), award promotion (C05), the RIBA 5 reappraisal trigger (C08),
+release-time recheck and idempotency (C09/C11/C14), and the agent orchestration
+runtime.
 
 ### The submission export leaked internal citation machinery
 

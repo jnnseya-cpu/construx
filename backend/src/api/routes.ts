@@ -257,6 +257,7 @@ import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
+import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4261,6 +4262,81 @@ export const ROUTES: Route[] = [
       const document = platform.exports.document(actor, '', {
         title: `${input.title} — Business Case`,
         subtitle: input.intake?.client ?? '',
+        blocks,
+        audience: 'CLIENT',
+        format: chosen,
+        correlationId: ctx.correlationId,
+      });
+      return renderAndCharge(
+        platform.wallet(actor.tenantId),
+        document,
+        { format: chosen, userId: actor.actorId },
+        { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
+      );
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/rfq/validate',
+    description: 'Autonomous Consultancy — validate an RFQ against its issue-pack contract: mandate, scope, priced core, deliverable acceptance, and evaluation weights that reconcile to 100%.',
+    schema: {
+      type: 'object',
+      required: ['title', 'organisation', 'mandate', 'scope', 'deadline', 'evaluation', 'deliverables', 'priceLines'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 }, organisation: { type: 'string', maxLength: 200 },
+        mandate: { type: 'string' }, scope: { type: 'string' }, deadline: { type: 'string', maxLength: 120 },
+        dataResponsibilities: { type: 'array', items: { type: 'string' } },
+        evaluation: { type: 'array' }, deliverables: { type: 'array' }, priceLines: { type: 'array' },
+        contractSchedules: { type: 'array', items: { type: 'string' } }, instructions: { type: 'string' },
+      },
+    },
+    handler: (platform, ctx) => {
+      tenantContext(platform, ctx); // authenticated
+      return { issues: consultancyrfq.validateRfqInput(body(ctx)) };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/bid/validate',
+    description: 'Autonomous Consultancy — validate a bid pack against its issue-pack contract: every mandatory requirement has a response or a named blocker, and the price schedule total reconciles including tax, disbursements and optional items.',
+    schema: {
+      type: 'object',
+      required: ['requirements', 'priceLines', 'statedTotalMinor'],
+      properties: {
+        requirements: { type: 'array' }, priceLines: { type: 'array' }, statedTotalMinor: { type: 'integer' },
+      },
+    },
+    handler: (platform, ctx) => {
+      tenantContext(platform, ctx);
+      return consultancyrfq.validateBidPack(body(ctx));
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/consultancy/rfq',
+    binary: true,
+    description: 'Autonomous Consultancy — the RFQ issue pack as a branded, downloadable document (PDF or DOCX): mandate, scope, data responsibilities, evaluation, deliverable acceptance, pricing schedule, instructions and contract schedules.',
+    schema: {
+      type: 'object',
+      required: ['title', 'organisation', 'mandate', 'scope', 'deadline', 'evaluation', 'deliverables', 'priceLines'],
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 300 }, organisation: { type: 'string', maxLength: 200 },
+        mandate: { type: 'string' }, scope: { type: 'string' }, deadline: { type: 'string', maxLength: 120 },
+        dataResponsibilities: { type: 'array', items: { type: 'string' } },
+        evaluation: { type: 'array' }, deliverables: { type: 'array' }, priceLines: { type: 'array' },
+        contractSchedules: { type: 'array', items: { type: 'string' } }, instructions: { type: 'string' },
+        format: { type: 'string', enum: ['PDF', 'DOCX'] },
+      },
+    },
+    handler: (platform, ctx) => {
+      const actor = auth(ctx);
+      tenantContext(platform, ctx);
+      const input = body<consultancyrfq.RfqInput & { format?: RenderableFormat }>(ctx);
+      const chosen: RenderableFormat = input.format ?? 'DOCX';
+      const blocks = consultancyrfq.composeRfqBlocks(input);
+      const document = platform.exports.document(actor, '', {
+        title: `${input.title} — Request for Quotation`,
+        subtitle: input.organisation,
         blocks,
         audience: 'CLIENT',
         format: chosen,
