@@ -89,6 +89,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // score an opportunity; it may not decide to pursue one.
   def('BID_NO_BID_DECIDED', 'Opportunity', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
   def('OPPORTUNITY_CONVERTED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // Autonomous Consultancy — the stateful engagement and its work-package tasks.
+  // A consultancy engagement is a business-development record: an opportunity or
+  // commission worked by the agents, with a workboard of required digital tasks.
+  def('CONSULTANCY_ENGAGEMENT_OPENED', 'ConsultancyEngagement', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_ENGAGEMENT_UPDATED', 'ConsultancyEngagement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  def('CONSULTANCY_TASK_REGISTERED', 'ConsultancyTask', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('CONSULTANCY_TASK_UPDATED', 'ConsultancyTask', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),

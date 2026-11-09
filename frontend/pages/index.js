@@ -19,6 +19,7 @@ import { commands } from './commands.js';
 import { commercial } from './commercial.js';
 import { company } from './company.js';
 import { concept } from './concept.js';
+import { consultancy } from './consultancy.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { construction } from './construction.js';
@@ -81,6 +82,7 @@ export const PAGES = {
   group,
   pipeline,
   feasibility,
+  consultancy,
   programme,
   field,
   construction,

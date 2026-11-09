@@ -156,6 +156,11 @@ export const NAV = [
       // gated on a project; it reads reference data and the deterministic compute
       // route, offering no write action of its own.
       { id: 'feasibility', label: 'Feasibility', area: 'BUSINESS_DEVELOPMENT', icon: 'meter', tenantScoped: true, hostOnly: true },
+      // Autonomous Consultancy — the stateful engagement workboard. Project-scoped
+      // (the engagement and its tasks are golden-thread records on the project),
+      // so unlike Feasibility it is not tenant-level; it offers business-development
+      // writes and is gated on that area, which every such writer can also read.
+      { id: 'consultancy', label: 'Consultancy', area: 'BUSINESS_DEVELOPMENT', icon: 'clipboard' },
       // Bid-On: bid work delivered for external customers. `module` is what
       // makes it absent rather than locked for everybody else — see
       // `reachable()` — and the value is checked against what the API said this

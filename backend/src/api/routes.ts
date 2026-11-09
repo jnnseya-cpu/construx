@@ -255,6 +255,7 @@ import * as conceptoptions from '../domain/conceptoptions.ts';
 import * as feasibility from '../domain/feasibility.ts';
 import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as consultancybc from '../domain/consultancy/businesscase.ts';
+import * as consultancystore from '../domain/consultancy/store.ts';
 import { intakeBlockers } from '../domain/consultancy/engagement.ts';
 import * as conceptstrategy from '../domain/conceptstrategy.ts';
 import { bidFlow } from '../domain/bidflow.ts';
@@ -4271,6 +4272,82 @@ export const ROUTES: Route[] = [
         { pdf: (d, r) => platform.exports.toPdf(d, r), docx: (d, r) => platform.exports.toDocx(d, r) },
       );
     },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements',
+    description: 'Autonomous Consultancy — open a stateful engagement. Checks the minimum intake and returns any missing inputs as blockers; the engagement opens in INTAKE, never silently authorised.',
+    schema: {
+      type: 'object',
+      required: ['route', 'assignment', 'intake'],
+      properties: {
+        route: { type: 'string', enum: ['COMMISSION_RFQ', 'RESPOND_TO_RFQ', 'DELIVER_COMMISSION', 'REAPPRAISE'] },
+        assignment: { type: 'string', enum: ['FEASIBILITY_ONLY', 'BUSINESS_CASE_ONLY', 'COMBINED'] },
+        profile: { type: 'string', enum: ['PUBLIC_FIVE_CASE', 'PRIVATE_CLIENT'] },
+        intake: { type: 'object' },
+        sponsor: { type: 'string', maxLength: 200 },
+        sector: { type: 'string', maxLength: 120 },
+        stage: { type: 'string', maxLength: 60 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.openEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/actions',
+    description: 'Autonomous Consultancy — record a typed action against an engagement (authorise, scope change, issue, reappraise, cancel) and move its workflow state. Authorising is refused while mandatory intake is outstanding.',
+    schema: {
+      type: 'object',
+      required: ['kind'],
+      properties: {
+        kind: { type: 'string', enum: ['AUTHORISE', 'SCOPE_CHANGE', 'ISSUE', 'REAPPRAISE', 'CANCEL'] },
+        note: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.recordAction(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/tasks',
+    description: 'Autonomous Consultancy — register a required digital work-package task against an engagement (capability, title, dependencies).',
+    schema: {
+      type: 'object',
+      required: ['key', 'capability', 'title'],
+      properties: {
+        key: { type: 'string', minLength: 1, maxLength: 120 },
+        capability: { type: 'string', minLength: 1, maxLength: 120 },
+        title: { type: 'string', minLength: 1, maxLength: 300 },
+        dependsOn: { type: 'array', items: { type: 'string' } },
+        requiredDigital: { type: 'boolean' },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.registerTask(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/consultancy/tasks/:taskId',
+    description: 'Autonomous Consultancy — update a task’s agent-run state, validation, owner or blocker.',
+    schema: {
+      type: 'object',
+      properties: {
+        runState: { type: 'string', enum: ['QUEUED', 'RUNNING', 'WAITING_INPUT', 'WAITING_AUTHORITY', 'RETRYABLE_FAILURE', 'BLOCKED', 'COMPLETE', 'CANCELLED'] },
+        validated: { type: 'boolean' },
+        owner: { type: 'string', maxLength: 200 },
+        blocker: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      consultancystore.updateTask(projectContext(platform, ctx), ctx.params.taskId as string, body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/workboard',
+    description: 'Autonomous Consultancy — the engagement workboard: workflow state, tasks, blockers with owners, verified digital coverage (completed and validated required tasks over all required), and the next permissible actions.',
+    handler: (platform, ctx) =>
+      consultancystore.workboard(projectContext(platform, ctx), ctx.params.engagementId as string),
   },
   {
     method: 'GET',

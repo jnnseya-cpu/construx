@@ -1034,10 +1034,46 @@ DOCX, through the same exporter every issued document uses). Covered in
 cases present, value and funding separate, figures reconciling, nothing fabricated
 when no model was run), and proven end-to-end against the spec's Doncaster–Scunthorpe
 UAT fixture: one brief renders a complete branded business case recommending a
-**conditional HOLD** on the outstanding operator confirmation (**C01**). **What is
-not yet built** (and named here so it is not mistaken for done): the stateful
-engagement lifecycle and workboard, CDE/evidence ingestion with lineage, the
-buyer/bidder workspace isolation (C03), award promotion (C05), the RIBA 5
+**conditional HOLD** on the outstanding operator confirmation (**C01**).
+
+**Vertical 2 — the stateful engagement and workboard.** The appraisal now has a
+home that persists. `backend/src/domain/consultancy/store.ts` writes a
+`ConsultancyEngagement` and its `ConsultancyTask` work-packages through the one
+Golden Thread `write` path — so tenant isolation, the actor, the role-at-action
+and the hash chain apply for free — under four new closed-catalogue event types
+(`CONSULTANCY_ENGAGEMENT_OPENED/UPDATED`, `CONSULTANCY_TASK_REGISTERED/UPDATED`,
+BUSINESS_DEVELOPMENT group, the entities classified COMMERCIAL_L3). Two state
+machines are kept separate as the spec (§4) insists: the engagement's **workflow
+state** (INTAKE → IN_PROGRESS → IN_REVIEW → ISSUED → MONITORING → CLOSED/CANCELLED)
+and each task's **agent-run state** (QUEUED, RUNNING, WAITING_INPUT,
+WAITING_AUTHORITY, RETRYABLE_FAILURE, BLOCKED, COMPLETE, CANCELLED). Opening an
+engagement checks the minimum intake and returns the gaps as blockers, opening in
+INTAKE — never silently authorised; **AUTHORISE is refused while mandatory intake
+is outstanding** (a timeout never implies approval), SCOPE_CHANGE bumps the scope
+version, CANCEL is terminal. The **workboard** reports the live state, the blockers
+with their owners, the next permissible actions, and the spec's completion measure
+(§7): **verified digital coverage = completed *and validated* required tasks over
+all required digital tasks**, with blocked tasks staying in the denominator (a task
+is covered only when COMPLETE *and* independently validated; a non-digital gate is
+excluded from the denominator). Routes: `POST …/consultancy/engagements`,
+`…/engagements/{id}/actions`, `…/engagements/{id}/tasks`, `…/tasks/{taskId}` and
+`GET …/engagements/{id}/workboard`. Reads are tenant- and engagement-scoped, and
+the engagement records its `partySide` — the basis the buyer/bidder isolation
+builds on. The workboard has a real console door — `frontend/pages/consultancy.js`,
+a **Consultancy** screen in the Commercial group (gated on `BUSINESS_DEVELOPMENT`)
+that opens an engagement, registers tasks, drives the actions and renders the live
+coverage bar, blockers and next action from the server's workboard (so `doors`
+and `navreach` both stay satisfied — a read capability is a screen or it is
+nothing). Covered in `consultancystore.test.ts` (intake blockers persisted,
+authorise refused while incomplete, the coverage arithmetic including a blocked
+task held in the denominator, 100%-and-ready, scope-version bump, terminal cancel,
+invalid run-state rejected, and workboard scoping so one engagement's tasks do not
+leak into another's).
+
+**What is not yet built** (named so it is not mistaken for done): CDE/evidence
+ingestion with lineage, the *full* buyer/bidder workspace isolation over a shared
+procurement object (C03 — `partySide` and tenant/engagement scoping are in; the
+shared-procurement per-party view is not), award promotion (C05), the RIBA 5
 reappraisal trigger (C08), release-time recheck and idempotency (C09/C11/C14), and
 the agent orchestration runtime — the spec's verticals 3–5.
 
