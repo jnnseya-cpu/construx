@@ -138,6 +138,7 @@ import * as reliability from '../domain/reliability.ts';
 import * as informationcontrol from '../domain/informationcontrol.ts';
 import * as handoverrequirements from '../domain/handoverrequirements.ts';
 import * as itt from '../domain/itt.ts';
+import * as misfileguard from '../domain/misfileguard.ts';
 import * as addendum from '../domain/addendum.ts';
 import * as clauselibrary from '../domain/clauselibrary.ts';
 import * as answers from '../domain/answers.ts';
@@ -906,6 +907,8 @@ const ITT_ANALYSIS_SCHEMA = {
     reference: stringField,
     clientName: stringField,
     returnBy: stringField,
+    // Override the misfile guard when it flags this ITT as belonging to another project.
+    confirmPlacement: { type: 'boolean' },
     estimatedValueMinor: { type: 'integer', minimum: 0 },
     durationWeeks: { type: 'integer', minimum: 1 },
     requirements: {
@@ -5285,7 +5288,13 @@ export const ROUTES: Route[] = [
     },
     handler: (platform, ctx) => {
       const engineCtx = tenantContext(platform, ctx);
-      const input = body(ctx) as { deliverables: tenderintake.TenderDeliverable[]; analysis: Parameters<typeof itt.analyseITT>[1] };
+      const input = body(ctx) as { deliverables: tenderintake.TenderDeliverable[]; analysis: Parameters<typeof itt.analyseITT>[1] & { confirmPlacement?: boolean } };
+      // Misfile guard: refuse an ITT whose buyer belongs to another tender.
+      misfileguard.assertInvitationPlacement(engineCtx, ctx.params.invitationId as string, {
+        statedClient: input.analysis.clientName,
+        text: `${input.analysis.reference} ${(input.analysis.requirements ?? []).map((r) => r.requirement).join(' ')}`,
+        confirmPlacement: input.analysis.confirmPlacement,
+      });
       const analysis = itt.analyseITT(engineCtx, input.analysis);
       const bound = tenderintake.extractRequirements(engineCtx, ctx.params.invitationId as string, {
         deliverables: input.deliverables,
@@ -14123,7 +14132,18 @@ export const ROUTES: Route[] = [
     pattern: '/v1/projects/:projectId/tender/itt',
     description: 'Analyse an invitation to tender: compliance matrix and commercial terms',
     schema: ITT_ANALYSIS_SCHEMA,
-    handler: (platform, ctx) => itt.analyseITT(projectContext(platform, ctx), body(ctx)),
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      const input = body<Parameters<typeof itt.analyseITT>[1] & { confirmPlacement?: boolean }>(ctx);
+      // Misfile guard: refuse an ITT whose buyer belongs to another project,
+      // unless placement is explicitly confirmed.
+      misfileguard.assertProjectPlacement(engineCtx, {
+        statedClient: input.clientName,
+        text: `${input.reference} ${(input.requirements ?? []).map((r) => r.requirement).join(' ')}`,
+        confirmPlacement: input.confirmPlacement,
+      });
+      return itt.analyseITT(engineCtx, input);
+    },
   },
   {
     method: 'GET',

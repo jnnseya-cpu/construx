@@ -1136,6 +1136,29 @@ without complaint). The target carries no engagement reference into the check �
 internal ENG-id never appears in a client's brief, so comparing against it would
 misfire.
 
+**The misfile guard extended to the bid pipeline.** The same risk exists where a
+tender is recorded — the two North Lincolnshire documents filed against a Telford
+project. The placement check (`misfile.ts`, now a shared `backend/src/domain/`
+module serving both the consultancy engine and the pipeline) is bound to projects
+and tenders by `backend/src/domain/misfileguard.ts`. Its pure `assessAgainstBuyer`
+decides on two signals: a **buyer-name mismatch** (the document names a client that
+shares no distinctive word with the project's established buyer — the high-precision
+signal) and a **content cross-match** against the other projects and opportunities.
+`assertProjectPlacement` guards the project-scoped ITT route
+(`POST …/projects/:projectId/tender/itt`), reading the project's own `client` or the
+client on the opportunity that pursues it; `assertInvitationPlacement` guards the
+pipeline tender route (`POST /v1/pipeline/tenders/:invitationId/requirements`),
+reading the invitation's `clientName`. Both refuse with `MISFILED_DOCUMENT` on a
+clear conflict unless `confirmPlacement` is set, and **no-op where there is no
+established buyer to compare against**, so ordinary use is never obstructed. The
+"Read the invitation into a compliance matrix" form carries a clearly-labelled
+override checkbox for the confirmed case. The project picker now also shows
+**client — project name** (with a short id tie-breaker) so two tenders for the same
+buyer can be told apart before anything is filed. Covered in `misfileguard.test.ts`
+(buyer-mismatch and content-cross-match verdicts; the project and invitation guards
+refusing a misfile, allowing it on `confirmPlacement`, allowing a matching buyer,
+and no-opping with no established buyer or a missing invitation).
+
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
 traces to a cited source, governed assumption or reproducible calculation."

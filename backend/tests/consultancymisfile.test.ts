@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { assessPlacement, extractReferences, identityTokens } from '../src/domain/consultancy/misfile.ts';
+import { assessPlacement, extractReferences, identityTokens } from '../src/domain/misfile.ts';
 
 /**
  * The misfile guard stops a document going into the wrong project. These prove the

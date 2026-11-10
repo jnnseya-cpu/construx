@@ -3550,6 +3550,8 @@ export async function pipeline(root) {
         { name: 'paymentDays', label: 'Payment period (days)', type: 'number', required: false },
         { name: 'retentionPercent', label: 'Retention (%)', type: 'number', required: false },
         { name: 'targetMarginPercent', label: 'Target margin (%)', type: 'number', required: false },
+        { name: 'confirmPlacement', label: 'This really belongs to the tender above (tick only if the misfile check wrongly flagged it)', type: 'checkbox', required: false,
+          hint: 'Leave unticked. If the platform refuses because the client looks like another tender’s, read the message, make sure you picked the right invitation, then tick this to record it anyway.' },
       ],
       transform: (v) => {
         const lines = (value) =>
@@ -3582,6 +3584,7 @@ export async function pipeline(root) {
               ...(String(v.retentionPercent ?? '').trim() === '' ? {} : { retentionPercent: Number(v.retentionPercent) }),
             },
             ...(String(v.targetMarginPercent ?? '').trim() === '' ? {} : { targetMarginPercent: Number(v.targetMarginPercent) }),
+            ...(v.confirmPlacement ? { confirmPlacement: true } : {}),
           },
           deliverables: lines(v.deliverables).map((parts) => ({
             reference: parts[0],

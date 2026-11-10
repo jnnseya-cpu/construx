@@ -32,7 +32,7 @@ import {
   type MinimumIntake,
   type WorkRoute,
 } from './engagement.ts';
-import { assessPlacement, type PlacementAssessment, type PlacementIdentity } from './misfile.ts';
+import { assessPlacement, type PlacementAssessment, type PlacementIdentity } from '../misfile.ts';
 import { runnable } from './orchestrator.ts';
 
 /** What the automation is doing on a task (spec §4). */
