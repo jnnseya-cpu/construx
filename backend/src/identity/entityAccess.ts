@@ -42,6 +42,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Trend Intelligence AI: the ingested demand signal and the scored opportunity derived
+  // from it. Business-development area, commercial-in-confidence — a tenancy's own demand
+  // and what it plans to do about it is not shared across businesses (spec §8).
+  TrendObservation: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  TrendOpportunity: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
 
   // Tenancy and platform — the operator layer, never delivery
   Tenant: { area: 'PLATFORM_ADMINISTRATION' },

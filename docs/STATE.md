@@ -1333,8 +1333,31 @@ Proven by `tests/trendscoring.test.ts` (19 cases), including the spec's own work
 (accepted; unknown field / bad market / unknown channel / reversed window / wrong schema
 version all refused).
 
-**Still to build (named, not pretended):** the persisted observations → clusters →
-opportunity snapshots with tenant isolation and idempotent replay (TI-01); the Growth
+**Slice 2 — persisted signals → scored opportunities, on the Golden Thread (done).**
+`backend/src/domain/trend/store.ts`, embedded in the existing event catalogue, routes and
+console (not a separate store). `recordObservations` ingests a batch idempotently: the
+spec's §15 uniqueness `(installation, source, source record, revision)` is the ledger
+refId, so an exact replay is a counted **duplicate** and the same key with a changed
+evidence hash is **conflicted**, never a silent overwrite (TI-01); it returns
+accepted/duplicate/conflicted counts. `scoreOpportunity` scores a topic from its own
+observation history — demand is the count-feed anomaly the Slice-1 engine computes, with
+corroboration (independent families), coverage and the single-family flag read from the
+data and fit/intent/timing/readiness/source-quality/freshness supplied by the
+platform/strategist — persisting an opportunity snapshot with every numeric input, the
+vetoes and the band. The band is **held at WATCH** whenever the history is thin or the
+count gate is not cleared, so nothing drives a live change on evidence the engine itself
+calls insufficient. Three events (`TREND_OBSERVATION_RECORDED`, `_OPPORTUNITY_SCORED`,
+`_OPPORTUNITY_RESCORED`, all BUSINESS_DEVELOPMENT), two entity classes, routes
+`POST …/trend/observations`, `POST …/trend/opportunities/score`, `GET …/trend/opportunities`,
+and a **Trend Intelligence** console page in the Commercial group (ingest a signal, score a
+topic, read the scored opportunities). Proven by `tests/trendstore.test.ts` (TI-01 replay
+and conflict; a corroborated 5-window spike → a reviewable brief, opt-in → auto; a
+single-family spike capped at confidence 69 and held at WATCH; a thin-history topic held at
+WATCH; a zero-readiness veto; **TI-02** project-scoped isolation — an opportunity scored on
+the delivery project is invisible from another project of the same tenant).
+
+**Still to build (named, not pretended):** clustering of raw signals into topics (this
+slice scores a caller-supplied topic id); the Growth
 Brief store with the effective-brief resolver and expiry (TI-05); the typed action /
 approval / execute / rollback state machine with the owned-surface adapter (TI-07, TI-08);
 experiments and native outcome measurement; the brief-SDK run-time resolution for the SEO

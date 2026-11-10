@@ -126,6 +126,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('COMPANY_PROFILE_SET', 'CompanyProfile', 'UPDATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   def('RADAR_RUN_COMPLETED', 'RadarRun', 'CREATE', 'BUSINESS_DEVELOPMENT'),
 
+  // Trend Intelligence AI — the demand-reading control layer. An observation is a
+  // normalised signal with its provenance, ingested idempotently; an opportunity is the
+  // scored, vetoed assessment of whether the business can serve that demand, re-scored as
+  // the evidence moves. Both sit on the Golden Thread like every other record.
+  def('TREND_OBSERVATION_RECORDED', 'TrendObservation', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('TREND_OPPORTUNITY_SCORED', 'TrendOpportunity', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  def('TREND_OPPORTUNITY_RESCORED', 'TrendOpportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+
   // --- Governance & identity ------------------------------------------------
   def('TENANT_CREATED', 'Tenant', 'CREATE', 'GOVERNANCE'),
   def('ENTERPRISE_CREATED', 'Enterprise', 'CREATE', 'GOVERNANCE'),

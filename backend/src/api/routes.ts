@@ -259,6 +259,7 @@ import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
 import * as gridstore from '../domain/grid/store.ts';
 import * as addonstore from '../billing/addonstore.ts';
+import * as trendstore from '../domain/trend/store.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
@@ -4611,6 +4612,74 @@ export const ROUTES: Route[] = [
     pattern: '/v1/billing/addons/entitlement',
     description: 'Grid Connection AI add-on — this tenant’s effective entitlement and seat usage: the admin grant, the provider status, the derived entitlement, whether new module use is permitted, and the assigned/available seats.',
     handler: (platform, ctx) => addonstore.addonEntitlement(tenantContext(platform, ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/trend/observations',
+    description: 'Trend Intelligence AI — ingest a batch of demand observations idempotently. An exact replay of a known (source, record, revision) is a counted duplicate; the same key with a different evidence hash is a conflict, never an overwrite. Returns accepted / duplicate / conflicted counts.',
+    schema: {
+      type: 'object',
+      required: ['observations'],
+      properties: {
+        observations: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 500,
+          items: {
+            type: 'object',
+            required: ['sourceId', 'sourceFamily', 'sourceRecordId', 'revision', 'topicId', 'observedAt', 'windowStart', 'windowEnd', 'metric', 'value', 'evidenceHash'],
+            properties: {
+              sourceId: { type: 'string', minLength: 1, maxLength: 128 },
+              sourceFamily: { type: 'string', minLength: 1, maxLength: 64 },
+              sourceRecordId: { type: 'string', minLength: 1, maxLength: 200 },
+              revision: { type: 'string', minLength: 1, maxLength: 64 },
+              topicId: { type: 'string', minLength: 1, maxLength: 128 },
+              observedAt: { type: 'string' },
+              windowStart: { type: 'string' },
+              windowEnd: { type: 'string' },
+              geography: { type: 'string', maxLength: 8 },
+              locale: { type: 'string', maxLength: 16 },
+              segment: { type: 'string', maxLength: 64 },
+              metric: { type: 'string', minLength: 1, maxLength: 64 },
+              value: { type: 'number' },
+              unit: { type: 'string', maxLength: 32 },
+              coverage: { type: 'number' },
+              evidenceHash: { type: 'string', minLength: 1, maxLength: 128 },
+              termsVersion: { type: 'string', maxLength: 64 },
+            },
+          },
+        },
+      },
+    },
+    handler: (platform, ctx) => trendstore.recordObservations(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/trend/opportunities/score',
+    description: 'Trend Intelligence AI — score (or re-score) an opportunity for a topic. Demand comes from the topic’s own observation history; fit, intent, timing, readiness, source quality and freshness are the platform/strategist inputs. The band is held at WATCH when the history is thin or the count gate is not cleared, and a veto never reaches brief or auto.',
+    schema: {
+      type: 'object',
+      required: ['topicId', 'market', 'fit', 'intent', 'timing', 'readiness', 'sourceQuality', 'freshness'],
+      properties: {
+        topicId: { type: 'string', minLength: 1, maxLength: 128 },
+        market: { type: 'string', minLength: 2, maxLength: 8 },
+        fit: { type: 'number' },
+        intent: { type: 'number' },
+        timing: { type: 'number' },
+        readiness: { type: 'number' },
+        sourceQuality: { type: 'number' },
+        freshness: { type: 'number' },
+        vetoes: { type: 'array', items: { type: 'string' } },
+        autoOptIn: { type: 'boolean' },
+      },
+    },
+    handler: (platform, ctx) => trendstore.scoreOpportunity(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/trend/opportunities',
+    description: 'Trend Intelligence AI — the scored opportunities on this project, highest score first, each with its band, vetoes, demand, history depth and the inputs it was scored from.',
+    handler: (platform, ctx) => ({ opportunities: trendstore.listOpportunities(projectContext(platform, ctx)) }),
   },
   {
     method: 'POST',

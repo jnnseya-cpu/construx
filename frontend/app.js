@@ -166,6 +166,10 @@ export const NAV = [
       // so unlike Feasibility it is not tenant-level; it offers business-development
       // writes and is gated on that area, which every such writer can also read.
       { id: 'consultancy', label: 'Consultancy', area: 'BUSINESS_DEVELOPMENT', icon: 'clipboard' },
+      // Trend Intelligence AI — the demand-reading control layer. Project-scoped (its
+      // observations and scored opportunities are golden-thread records on the project)
+      // and gated on business development, which every such writer can also read.
+      { id: 'trend', label: 'Trend Intelligence', area: 'BUSINESS_DEVELOPMENT', icon: 'target' },
       // Bid-On: bid work delivered for external customers. `module` is what
       // makes it absent rather than locked for everybody else — see
       // `reachable()` — and the value is checked against what the API said this
