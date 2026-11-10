@@ -1253,8 +1253,26 @@ price and entitlement are decided here, server-side, never from a client. Proven
 `tests/addon.test.ts` (7 cases: the price table, the three-state map, usable-vs-readable,
 and seat capacity).
 
+**Slice 6 — the §9 acceptance plan, proven for everything built (done).**
+`tests/gridacceptance.test.ts` maps all eighteen acceptance scenarios (A01–A18) to
+where each is proven, and proves against the real engine every one that does not
+depend on the deferred billing: **A08** (a distribution offer is grounded on the
+distribution route and still demands a verified authority — no assumed transmission
+approval), **A10/A13** (an electrical acceptance gate holds until a verified record
+exists), **A12** (a withdrawn outage supersedes an approved gate so release cannot read
+it as current), **A14** (a blocked cutover raises a blocker while unaffected work still
+reaches APPROVED), **A15** (no switching/set-point/relay capability exists in the
+catalogue, the conduct rule or the execution brief, and the store exports no path to
+one), and **A17** (a complete synthetic 42-task project carries all eight gates to
+APPROVED, every electrical approval reconciling to an authority record). A11/A16 are
+proven in `gridstore.test.ts`, A02/A03/A05/A06 pricing in `addon.test.ts`, A07/A09/A18
+by the platform's existing account-layer separation, tenant isolation and green core
+suite. The header names, for each, exactly which ones (**A01, A03, A04, A05, A06**) still
+await Slice 5b and why — this file does not assert a behaviour the engine does not
+implement.
+
 **Still to build (named, not pretended):** the **persisted** three-state store and its
-enforcement (Slice 5b), and the A01–A18 acceptance scenarios (Slice 6). Slice 5b is
+enforcement (Slice 5b) — the one remaining piece. It is
 deliberately deferred rather than shipped half-wired, because the add-on's three states
 straddle the account-layer boundary this platform enforces (`tenantContext` bars
 `PLATFORM_ADMIN` from customer data): the **Platform-Admin grant** and the
