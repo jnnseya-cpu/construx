@@ -127,6 +127,11 @@ export const NAV = [
       // in and the one a site manager is judged on; the quality half of the
       // screen authorises itself separately, panel by panel.
       { id: 'construction', label: 'Construction', area: 'SAFETY_RAMS', alsoArea: ['QUALITY_COMMISSIONING', 'FIELD_EXECUTION', 'PROCUREMENT_AWARD'], icon: 'shield' },
+      // Grid Connection AI — the HV grid-connection delivery workboard (42 steps,
+      // eight gates). Project-scoped golden-thread records; gated on
+      // QUALITY_COMMISSIONING, the commissioning/assurance area its gate decisions
+      // and step validations authorise against, which every such writer can read.
+      { id: 'grid', label: 'Grid Connection', area: 'QUALITY_COMMISSIONING', icon: 'link' },
       // Gated on the model alone until the common data environment landed on
       // this screen. The CDE, the review cycle, the RFI register, submittals
       // and the drawing register are all DESIGN_INFORMATION — so the architect

@@ -20,6 +20,7 @@ import { commercial } from './commercial.js';
 import { company } from './company.js';
 import { concept } from './concept.js';
 import { consultancy } from './consultancy.js';
+import { grid } from './grid.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { construction } from './construction.js';
@@ -83,6 +84,7 @@ export const PAGES = {
   pipeline,
   feasibility,
   consultancy,
+  grid,
   programme,
   field,
   construction,

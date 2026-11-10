@@ -1211,8 +1211,19 @@ rejected; a non-electrical gate CANDIDATE_READY→APPROVED; a decision on an unr
 gate refused; an electrical gate AWAITING_AUTHORITY refusing a decision without an
 authority record then advancing with one; a blocked step blocking its gate).
 
-**Still to build (named, not pretended):** the workboard GET route and delivery-tab
-UI (Slice 3); the ten agents' grounded execution and the event-driven reappraisal
+**Slice 3 — the workboard route and delivery UI (done).** `GET …/grid/engagements`
+(the engagements on a project, each with coverage) and `GET …/grid/engagements/{id}/
+workboard` expose the board; `frontend/pages/grid.js` is a **Grid Connection** screen
+in the Deliver group (gated on QUALITY_COMMISSIONING) that opens an engagement, picks
+one, and renders the eight gates as delivery cards — each with its computed gate
+state and an ELECTRICAL AUTHORITY marker on G4–G7 — over the 42 steps with their
+agent-run states, a verified-coverage bar and the next action. A non-electrical gate
+offers an **Approve gate** button only at CANDIDATE_READY; an electrical gate offers
+**Record authority & approve** with a required authority-reference field, and the
+server refuses anything less. `doors`/`navreach` satisfied (the GET routes are
+referenced by the screen; the nav is reachable by every commissioning writer).
+
+**Still to build (named, not pretended):** the ten agents' grounded execution and the event-driven reappraisal
 triggers (Slice 4); the commercial add-on — entitlement/seat model and server-side
 enforcement of the £100 + £50×seat math and the admin-grant / provider-status /
 effective-entitlement states — built on the existing billing abstractions **with

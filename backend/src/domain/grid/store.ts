@@ -178,6 +178,15 @@ export function decideGate(
   return updated;
 }
 
+/** The grid engagements on a project, for the picker, each with its headline coverage. */
+export function listGridEngagements(ctx: EngineContext): Array<{ engagementId: string; reference: string; connection: string; route: string; percent: number }> {
+  authorise(ctx, 'QUALITY_COMMISSIONING', 'R');
+  return ctx.ledger.list(ctx.projectId, 'GridEngagement').map((r) => {
+    const s = r.state as GridEngagementState;
+    return { engagementId: s.id, reference: s.reference, connection: s.connection, route: s.route, percent: coverage(statusMap(s)).percent };
+  });
+}
+
 export type GridWorkboard = {
   engagement: GridEngagementState;
   steps: Array<GridStep & { runState: GridRunState; validated: boolean; owner?: string; blocker?: string }>;

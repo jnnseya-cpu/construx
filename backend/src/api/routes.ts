@@ -4494,6 +4494,19 @@ export const ROUTES: Route[] = [
       gridstore.decideGate(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
   },
   {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/grid/engagements',
+    description: 'Grid Connection AI — the grid-connection engagements on this project, each with its verified digital coverage.',
+    handler: (platform, ctx) => ({ engagements: gridstore.listGridEngagements(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/workboard',
+    description: 'Grid Connection AI — the engagement workboard: every one of the 42 playbook steps with its agent-run state, each gate G0–G7 with its computed state (an electrical gate only APPROVED on a verified authority record), verified digital coverage and the next permissible actions.',
+    handler: (platform, ctx) =>
+      gridstore.gridWorkboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
     method: 'POST',
     pattern: '/v1/projects/:projectId/consultancy/engagements/:engagementId/evidence',
     description: 'Autonomous Consultancy — register a source against an engagement with its locator, authority, time period, licence, extraction method and confidence.',
