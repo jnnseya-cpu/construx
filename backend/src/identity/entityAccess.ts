@@ -73,6 +73,11 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   PaymentReversal: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   PaymentException: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   GroupPurchase: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
+  // A commercial add-on's two halves. The AddonGrant is the operator's provision,
+  // written on the platform tenancy and classified like a ModuleGrant (operator
+  // decision); the AddonSeat is the company's own assignment of a paid seat.
+  AddonGrant: { area: 'PLATFORM_ADMINISTRATION', sensitivity: 'COMMERCIAL_L3' },
+  AddonSeat: { area: 'BILLING_ACU', sensitivity: 'COMMERCIAL_L3' },
   AIRequest: { area: 'AI_EXECUTION' },
 
   // Structure and setup

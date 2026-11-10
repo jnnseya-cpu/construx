@@ -23,9 +23,29 @@ export async function grid(root) {
   let engagements = [];
   let engagementId = null;
   let board = null;
+  let entitlement = null;
 
   const loadList = async () => {
     try { engagements = (await api.get(`/v1/projects/${projectId}/grid/engagements`)).engagements ?? []; } catch { engagements = []; }
+  };
+  const loadEntitlement = async () => {
+    // Every role may read the entitlement; a tenancy with no add-on provision reads
+    // an un-granted, LOCKED one. A failure (e.g. an operator context) leaves it null.
+    try { entitlement = await api.get('/v1/billing/addons/entitlement'); } catch { entitlement = null; }
+  };
+  const assignSeat = async (userId) => {
+    try {
+      await api.post('/v1/billing/addons/seats', { userId });
+      toast('Seat assigned', `${userId} may now use the module`, 'ok');
+      await loadEntitlement(); draw();
+    } catch (error) { toast('Could not assign the seat', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
+  };
+  const releaseSeat = async (userId) => {
+    try {
+      await api.post('/v1/billing/addons/seats/revoke', { userId });
+      toast('Seat released', `${userId} no longer holds a seat`, 'ok');
+      await loadEntitlement(); draw();
+    } catch (error) { toast('Could not release the seat', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
   };
   const loadBoard = async () => {
     if (!engagementId) { board = null; return; }
@@ -91,6 +111,31 @@ export async function grid(root) {
       <h1 style="margin:0 0 4px">Grid Connection AI</h1>
       <p class="muted" style="margin:0">The HV grid-connection delivery playbook — 42 agent-run steps across eight gates (G0 Agreement → G7 Handover). An electrical gate (G4–G7) advances only on a verified authority record; agents never switch, set points or operate plant.</p>
     </div>`);
+
+    // The add-on entitlement and named seats (spec §2). Grant and provider status are
+    // set by the platform operator; a company assigns its own paid seats here.
+    if (entitlement) {
+      const e = entitlement;
+      const canSeat = can('BILLING_ACU', 'U');
+      const effTone = e.effective === 'ACTIVE' || e.effective === 'ENDING' ? 'ok' : e.effective === 'GRACE' ? 'warn' : 'bad';
+      parts.push(html`<div class="card pad" style="margin-top:14px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <b>Add-on entitlement</b>
+          ${badge(e.effective, effTone)}
+          ${badge(e.usable ? 'new use permitted' : 'read-only', e.usable ? 'ok' : 'warn')}
+          <span class="muted">Grant ${e.adminGrant ? 'held' : 'none'} · provider ${e.providerStatus}</span>
+          <span style="margin-left:auto">Seats ${e.assignedSeats}/${e.paidQuantity} (${e.availableSeats} available)</span>
+        </div>
+        ${e.seatUserIds.length ? html`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+          ${e.seatUserIds.map((u) => html`<span class="badge neutral" style="display:inline-flex;gap:6px;align-items:center">${u}${canSeat ? html` <button class="btn quiet xs" data-seat-revoke="${u}">release</button>` : ''}</span>`)}
+        </div>` : html`<p class="muted" style="margin:8px 0 0">No named seats assigned yet.</p>`}
+        ${canSeat && e.adminGrant ? html`<form id="seat-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:end">
+          <label class="field" style="flex:1;min-width:220px"><span>Assign a seat (user id)</span><input name="userId" placeholder="user id" required></label>
+          <button class="btn sm" type="submit" ${e.availableSeats <= 0 ? 'disabled' : ''}>Assign seat</button>
+        </form>` : ''}
+        ${!e.adminGrant ? html`<p class="muted" style="margin:8px 0 0">This tenancy holds no Grid Connection AI grant. The platform operator provisions the add-on before seats can be assigned.</p>` : ''}
+      </div>`);
+    }
 
     // Engagement picker + open form.
     parts.push(html`<div class="card pad" style="margin-top:14px">
@@ -180,8 +225,11 @@ export async function grid(root) {
       ev.preventDefault();
       decideGate(f.dataset.gate, new FormData(f).get('authorityRef'));
     }));
+    const sf = root.querySelector('#seat-form');
+    if (sf) sf.addEventListener('submit', (ev) => { ev.preventDefault(); assignSeat(String(new FormData(sf).get('userId') || '').trim()); });
+    root.querySelectorAll('[data-seat-revoke]').forEach((b) => b.addEventListener('click', () => releaseSeat(b.dataset.seatRevoke)));
   }
 
-  await loadList();
+  await Promise.all([loadList(), loadEntitlement()]);
   draw();
 }

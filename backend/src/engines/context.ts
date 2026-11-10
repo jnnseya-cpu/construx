@@ -16,6 +16,7 @@ import type { AuthContext } from '../identity/auth.ts';
 import { assertAccess, evaluateAccess, type AccessAttributes } from '../identity/abac.ts';
 import type { CapabilityArea, PermissionCode } from '../identity/roles.ts';
 import type { ModuleId } from '../identity/modules.ts';
+import type { AddonGrantRecord } from '../billing/addongrant.ts';
 import type { GoldenThreadLedger, CommitInput } from '../goldenthread/ledger.ts';
 import type { ActorRef, EntityRef, EventSource, GoldenThreadEvent } from '../goldenthread/types.ts';
 import { hashEvidence } from '../core/canonical.ts';
@@ -83,6 +84,15 @@ export type EngineContext = {
    * reads this one.
    */
   heldModules: readonly ModuleId[];
+  /**
+   * The Platform-Admin provision for a commercial add-on this tenancy holds, if any
+   * — the operator's grant, the verified provider status and the paid seat quantity,
+   * resolved once beside `grantedModules`. Undefined for almost every tenancy, which
+   * is the point: an add-on is provisioned per company. `billing/addonstore.ts`
+   * derives the tenant's entitlement and enforces seats from this; it is never set
+   * from a client. See `billing/addongrant.ts`.
+   */
+  addonGrant?: AddonGrantRecord;
   /**
    * The agent this context is acting on behalf of, where one is.
    *

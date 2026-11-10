@@ -1265,27 +1265,40 @@ reaches APPROVED), **A15** (no switching/set-point/relay capability exists in th
 catalogue, the conduct rule or the execution brief, and the store exports no path to
 one), and **A17** (a complete synthetic 42-task project carries all eight gates to
 APPROVED, every electrical approval reconciling to an authority record). A11/A16 are
-proven in `gridstore.test.ts`, A02/A03/A05/A06 pricing in `addon.test.ts`, A07/A09/A18
-by the platform's existing account-layer separation, tenant isolation and green core
-suite. The header names, for each, exactly which ones (**A01, A03, A04, A05, A06**) still
-await Slice 5b and why — this file does not assert a behaviour the engine does not
+proven in `gridstore.test.ts`, pricing in `addon.test.ts`, the persisted
+grant/seat/entitlement scenarios (**A01, A03, A05, A06**) in `addonstore.test.ts`, and
+A07/A09/A18 by the platform's existing account-layer separation, tenant isolation and
+green core suite. Only **A04** (duplicate / out-of-order provider webhooks) awaits the
+live reconciliation below — this file does not assert a behaviour the engine does not
 implement.
 
-**Still to build (named, not pretended):** the **persisted** three-state store and its
-enforcement (Slice 5b) — the one remaining piece. It is
-deliberately deferred rather than shipped half-wired, because the add-on's three states
-straddle the account-layer boundary this platform enforces (`tenantContext` bars
-`PLATFORM_ADMIN` from customer data): the **Platform-Admin grant** and the
-**provider/billing status** are operator-side records (the grant is an operator decision
-and the status comes from *verified* provider reconciliation — an invoice preview, a UI
-redirect or an unverified webhook must not activate it), written on the platform tenancy
-in the manner of `identity/modules.ts`' `ModuleGrant`; the **named seats** are a
-tenant-side `BILLING_ACU` action within the paid quantity. Wiring that correctly means
-platform-side provisioning + a cross-layer entitlement resolver (mirroring
-`grantedModules`) **with live Stripe activation left behind a flag pending commercial
-sign-off**. No chargeable billing flow — and no manual provider-status write that would
-stand in for a verified one — is wired until that sign-off; the pure contract above is
-the authority all of it will compute against. No agent is given any OT/switching tool.
+**Slice 5b — the persisted three-state store and its enforcement (done).** Built across
+the platform↔tenant account-layer boundary the platform enforces, each half on the side
+that owns it. The **Platform-Admin grant**, the **verified provider status** and the
+**paid seat quantity** are provisioned operator-side by `platform.setAddonGrant`
+(`POST /v1/admin/tenants/:tenantId/addons/grid`, PLATFORM_ADMIN only), written on the
+platform tenancy exactly as `identity/modules.ts`' `ModuleGrant` is — the grant never
+lands on the customer's own ledger (proven) — and resolved onto every engine context as
+`ctx.addonGrant` beside `grantedModules` (`billing/addongrant.ts`). The **named seats**
+are tenant-side: `billing/addonstore.ts` assigns them within the paid quantity
+(`BILLING_ACU:'U'`), idempotently, refusing the overflow, and derives the tenant's
+entitlement (`GET /v1/billing/addons/entitlement`, a door on the Grid Connection screen
+with seat assign/release for the enterprise admin). `requireModuleSeat` enforces the full
+A01 check — active grant AND billing that permits new use AND a held seat — and the grid
+*delivery* write routes are gated on it behind `GRID_CONNECTION_ENFORCE_SEATS` (off by
+default so a deployment provisions and assigns seats before enforcement bites; the
+machinery is always live). A provisioning decrease that would strand an assigned seat is
+refused (A05). Proven by `tests/addonstore.test.ts` (11 cases). The grant/status are
+recorded from verified provisioning or reconciliation, **never from a client** and never
+from a manual write standing in for a verified payment.
+
+**Still to build (named, not pretended):** only the **live provider (Stripe) webhook
+reconciliation** that would set the provider status automatically from a verified
+billing event, and the idempotent handling of duplicate / out-of-order webhooks (A04) —
+**left behind commercial sign-off**. Until then an operator provisions the status
+explicitly through the route above; no chargeable billing flow is wired, and the pure
+`addon.ts` contract is the authority all of it computes against. No agent is given any
+OT/switching tool.
 
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding

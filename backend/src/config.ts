@@ -575,6 +575,16 @@ export const config = {
     tenderReminderEnabled: bool('TENDER_REMINDER_ENABLED', true),
     tenderReminderLeadDays: num('TENDER_REMINDER_LEAD_DAYS', 5),
     tenderReminderIntervalMinutes: num('TENDER_REMINDER_INTERVAL_MINUTES', 360),
+    /**
+     * Whether the Grid Connection AI add-on's delivery routes are hard-gated on a
+     * live entitlement and a named seat (spec §2, A01). The entitlement machinery —
+     * the Platform-Admin grant, the verified provider status, the paid quantity and
+     * the per-user seats — is always live and provisionable; this switch only decides
+     * whether the grid *delivery* routes refuse an unseated user. Off by default so a
+     * deployment provisions and assigns seats before enforcement bites; an operator
+     * turns it on when the add-on goes commercial. No billing is charged either way.
+     */
+    gridConnectionEnforceSeats: bool('GRID_CONNECTION_ENFORCE_SEATS', false),
   },
 
   /**

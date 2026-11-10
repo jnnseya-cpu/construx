@@ -258,6 +258,7 @@ import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
 import * as gridstore from '../domain/grid/store.ts';
+import * as addonstore from '../billing/addonstore.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
@@ -703,6 +704,19 @@ function tenantContext(platform: Platform, ctx: RequestContext) {
     correlationId: ctx.correlationId,
     source: sourceOf(ctx),
   });
+}
+
+/**
+ * A project context for a Grid Connection AI delivery write, gated on the add-on
+ * entitlement where the operator has turned enforcement on. When the flag is off the
+ * machinery is still live and provisionable; it simply does not refuse an unseated
+ * user. When it is on, a write by a user with no grant/active-billing/seat is refused
+ * with the spec's typed error (spec §2, A01) before any state changes.
+ */
+function gridWriteContext(platform: Platform, ctx: RequestContext) {
+  const pctx = projectContext(platform, ctx);
+  if (config.ops.gridConnectionEnforceSeats) addonstore.requireModuleSeat(pctx, pctx.auth.actorId);
+  return pctx;
 }
 
 /**
@@ -4460,7 +4474,7 @@ export const ROUTES: Route[] = [
         capacityNote: { type: 'string', maxLength: 400 },
       },
     },
-    handler: (platform, ctx) => gridstore.openGridEngagement(projectContext(platform, ctx), body(ctx)),
+    handler: (platform, ctx) => gridstore.openGridEngagement(gridWriteContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',
@@ -4476,7 +4490,7 @@ export const ROUTES: Route[] = [
       },
     },
     handler: (platform, ctx) =>
-      gridstore.updateStep(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string, body(ctx)),
+      gridstore.updateStep(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string, body(ctx)),
   },
   {
     method: 'POST',
@@ -4491,7 +4505,7 @@ export const ROUTES: Route[] = [
       },
     },
     handler: (platform, ctx) =>
-      gridstore.decideGate(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
+      gridstore.decideGate(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
   },
   {
     method: 'POST',
@@ -4499,7 +4513,7 @@ export const ROUTES: Route[] = [
     description: 'Grid Connection AI — execute a playbook step with its owning agent, grounded in the project sources. Records the grounded output; does not validate (independent validation is separate). No provider configured parks the step WAITING_EVIDENCE, uncharged. No run can switch, energise or set plant.',
     schema: { type: 'object', properties: {} },
     handler: (platform, ctx) =>
-      gridstore.runStep(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string),
+      gridstore.runStep(gridWriteContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string),
   },
   {
     method: 'POST',
@@ -4515,7 +4529,7 @@ export const ROUTES: Route[] = [
       },
     },
     handler: (platform, ctx) =>
-      gridstore.recordTrigger(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+      gridstore.recordTrigger(gridWriteContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
   },
   {
     method: 'GET',
@@ -4529,6 +4543,74 @@ export const ROUTES: Route[] = [
     description: 'Grid Connection AI — the engagement workboard: every one of the 42 playbook steps with its agent-run state, each gate G0–G7 with its computed state (an electrical gate only APPROVED on a verified authority record), verified digital coverage and the next permissible actions.',
     handler: (platform, ctx) =>
       gridstore.gridWorkboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/admin/tenants/:tenantId/addons/grid',
+    description: 'Grid Connection AI add-on — provision (platform operator only): record the Platform-Admin grant, the verified billing-provider status and the paid seat quantity for a tenant. Entitlement is derived from the grant AND the provider status; neither is taken from a client. A decrease below the seats already assigned is refused.',
+    schema: {
+      type: 'object',
+      required: ['adminGrant', 'providerStatus', 'paidQuantity'],
+      properties: {
+        adminGrant: { type: 'boolean' },
+        providerStatus: { type: 'string', enum: ['PENDING', 'ACTIVE', 'PAST_DUE_GRACE', 'SUSPENDED', 'EXPIRED', 'CANCEL_AT_PERIOD_END'] },
+        paidQuantity: { type: 'integer', minimum: 1 },
+        priceVersion: { type: 'string', maxLength: 32 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      // Operator-only, like a module grant: a tenant administrator cannot provision
+      // their own add-on any more than they can grant themselves a module.
+      const actor = auth(ctx);
+      if (!actor.roles.includes('PLATFORM_ADMIN')) {
+        throw new ForbiddenError('Only the platform operator may provision an add-on', 'PLATFORM_ADMIN_REQUIRED');
+      }
+      const input = body<{
+        adminGrant: boolean;
+        providerStatus: 'PENDING' | 'ACTIVE' | 'PAST_DUE_GRACE' | 'SUSPENDED' | 'EXPIRED' | 'CANCEL_AT_PERIOD_END';
+        paidQuantity: number;
+        priceVersion?: string;
+      }>(ctx);
+      return platform.setAddonGrant({
+        tenantId: ctx.params.tenantId!,
+        adminGrant: input.adminGrant,
+        providerStatus: input.providerStatus,
+        paidQuantity: input.paidQuantity,
+        ...(input.priceVersion ? { priceVersion: input.priceVersion } : {}),
+        decidedBy: actor.actorId,
+      });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/addons/seats',
+    description: 'Grid Connection AI add-on — allocate a named module seat to a user within the paid quantity. Idempotent for a user who already holds one. Requires the tenant to hold an active grant.',
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: { type: 'string', minLength: 1, maxLength: 200 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => addonstore.allocateSeat(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/billing/addons/seats/revoke',
+    description: 'Grid Connection AI add-on — revoke a user’s named module seat, releasing capacity.',
+    schema: {
+      type: 'object',
+      required: ['userId'],
+      properties: { userId: { type: 'string', minLength: 1, maxLength: 200 } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => addonstore.revokeSeat(tenantContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/billing/addons/entitlement',
+    description: 'Grid Connection AI add-on — this tenant’s effective entitlement and seat usage: the admin grant, the provider status, the derived entitlement, whether new module use is permitted, and the assigned/available seats.',
+    handler: (platform, ctx) => addonstore.addonEntitlement(tenantContext(platform, ctx)),
   },
   {
     method: 'POST',

@@ -65,6 +65,8 @@ import {
   type CustomRole,
 } from './identity/customroles.ts';
 import { MODULES, grantRef, isModuleId, moduleRequiresAgreement, type ModuleGrant, type ModuleId , grantLifecycle } from './identity/modules.ts';
+import { GRID_MODULE_KEY, type ProviderStatus } from './billing/addon.ts';
+import { addonGrantRef, type AddonGrantRecord } from './billing/addongrant.ts';
 import {
   clearCredential,
   confirmEnvironmentGone,
@@ -379,6 +381,14 @@ export class Platform {
    * ACTIVE rather than starting a second one that would have to be reconciled.
    */
   readonly #moduleGrants = new Map<string, ModuleGrant>();
+
+  /**
+   * The Platform-Admin provisions for the commercial add-ons, keyed by
+   * `${moduleKey}:${tenantId}`. Like `#moduleGrants` this is the operator's
+   * record about a customer and lives on the platform tenancy; the customer
+   * reads only the entitlement derived from it. See `billing/addongrant.ts`.
+   */
+  readonly #addonGrants = new Map<string, AddonGrantRecord>();
 
   constructor(
     orchestrator = new AIOrchestrator(),
@@ -3006,6 +3016,83 @@ export class Platform {
   }
 
   /**
+   * Provision (or re-provision) a commercial add-on for a tenant: the Platform-Admin
+   * grant, the verified billing-provider status and the paid seat quantity. The
+   * operator-side half of the three states — written on the platform tenancy, never
+   * the customer's, for the same reason `setModuleGrant` is. The named seats are a
+   * separate, tenant-side act; this only sets how many have been paid for.
+   *
+   * It takes a provider status rather than deriving one: the status is a fact from
+   * verified provisioning or reconciliation, which this records. It never activates
+   * an add-on from a client assertion, and a decrease below the seats already
+   * assigned is refused so a provision cannot strand a live seat (spec A05).
+   */
+  setAddonGrant(input: {
+    tenantId: string;
+    moduleKey?: string;
+    adminGrant: boolean;
+    providerStatus: ProviderStatus;
+    paidQuantity: number;
+    priceVersion?: string;
+    decidedBy: string;
+  }): AddonGrantRecord {
+    const moduleKey = input.moduleKey ?? GRID_MODULE_KEY;
+    if (!Number.isInteger(input.paidQuantity) || input.paidQuantity < 1) {
+      throw new DomainError('BAD_SEAT_QUANTITY', 'paidQuantity must be an integer of at least 1 (the base seat)');
+    }
+    // The tenancy has to exist, for the same reason a module grant's does: a typo
+    // in a tenant id would write a provision against a company that does not exist.
+    this.tenant(input.tenantId);
+
+    // A decrease that would strand assignments is refused. The seats live on the
+    // customer's own ledger, so they are counted there.
+    const activeSeats = this.ledger
+      .listByTenant(input.tenantId, 'AddonSeat')
+      .map((r) => r.state as { moduleKey: string; active: boolean })
+      .filter((s) => s.moduleKey === moduleKey && s.active).length;
+    if (input.paidQuantity < activeSeats) {
+      throw new DomainError(
+        'SEAT_CAPACITY_EXCEEDED',
+        `${activeSeats} seats are assigned; unassign ${activeSeats - input.paidQuantity} before reducing to ${input.paidQuantity}`,
+      );
+    }
+
+    const ref = addonGrantRef(moduleKey, input.tenantId);
+    const existing = this.#addonGrants.get(ref);
+    const record: AddonGrantRecord = {
+      moduleKey,
+      tenantId: input.tenantId,
+      adminGrant: input.adminGrant,
+      providerStatus: input.providerStatus,
+      paidQuantity: input.paidQuantity,
+      priceVersion: input.priceVersion ?? existing?.priceVersion ?? 'v1',
+      updatedBy: input.decidedBy,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#addonGrants.set(ref, record);
+
+    this.ledger.commit({
+      // On the platform's own tenancy, like a module grant: the operator's
+      // decision about a company, not the company's record about itself.
+      tenantId: PLATFORM_TENANT_ID,
+      projectId: `${PLATFORM_TENANT_ID}-governance`,
+      actor: { refType: 'User', refId: input.decidedBy },
+      source: 'WEB',
+      correlationId: ulid(),
+      eventType: existing ? 'ADDON_GRANT_CHANGED' : 'ADDON_GRANT_SET',
+      entity: { refType: 'AddonGrant', refId: ref },
+      nextState: { ...record, id: ref },
+    });
+
+    return record;
+  }
+
+  /** The add-on provision for a tenant, or undefined. Resolved onto the engine context. */
+  addonGrant(tenantId: string, moduleKey: string = GRID_MODULE_KEY): AddonGrantRecord | undefined {
+    return this.#addonGrants.get(addonGrantRef(moduleKey, tenantId));
+  }
+
+  /**
    * Set a credential the platform calls a vendor with, from the console.
    *
    * Two writes that must not become one. The **value** goes to the encrypted
@@ -3322,6 +3409,11 @@ export class Platform {
       if (isModuleId(state.moduleId)) {
         this.#moduleGrants.set(grantRef(state.moduleId, state.tenantId), state);
       }
+    }
+
+    for (const record of this.ledger.entitiesOfType('AddonGrant')) {
+      const state = copy<AddonGrantRecord>(record);
+      this.#addonGrants.set(addonGrantRef(state.moduleKey, state.tenantId), state);
     }
 
     // The free trials already taken, counted again from the wallets rather
@@ -4561,6 +4653,11 @@ export class Platform {
       // dropping a module nobody remembered to re-add.
       grantedModules: this.grantedModules(auth.tenantId),
       heldModules: this.heldModules(auth.tenantId),
+      // The commercial add-on provision for this tenancy, resolved once beside the
+      // module grants. Undefined for almost every tenancy — a paid add-on is
+      // provisioned per company. `billing/addonstore.ts` derives entitlement and
+      // seat enforcement from it; the customer never reads this record directly.
+      ...(this.addonGrant(auth.tenantId) ? { addonGrant: this.addonGrant(auth.tenantId)! } : {}),
       // Whether a maker-checker rule has anybody to hand the second act to.
       //
       // Resolved lazily, because almost no command asks: only a gate decision,

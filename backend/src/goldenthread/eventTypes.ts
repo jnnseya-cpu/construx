@@ -2260,6 +2260,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // money the business is waiting for.
   def('TOPUP_CANCELLED', 'TopUpIntent', 'UPDATE', 'AI_BILLING'),
   def('PAYMENT_RECEIVED', 'PaymentReceipt', 'CREATE', 'AI_BILLING', { creates: true }),
+  // The Grid Connection AI (and future) commercial add-ons. The AddonGrant is the
+  // operator-side provision — the Platform-Admin grant, the verified provider status
+  // and the paid seat quantity — written on the platform tenancy. Each AddonSeat is a
+  // named seat a company assigns to its own user, on the customer's own ledger, so
+  // capacity is countable and every assignment is attributable on the thread.
+  def('ADDON_GRANT_SET', 'AddonGrant', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('ADDON_GRANT_CHANGED', 'AddonGrant', 'UPDATE', 'AI_BILLING'),
+  def('ADDON_SEAT_ASSIGNED', 'AddonSeat', 'CREATE', 'AI_BILLING', { creates: true }),
+  def('ADDON_SEAT_REVOKED', 'AddonSeat', 'UPDATE', 'AI_BILLING'),
 
   // --- Concept, stage 6 -----------------------------------------------------
   //
