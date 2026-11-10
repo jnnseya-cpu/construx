@@ -1363,24 +1363,38 @@ single-family spike capped at confidence 69 and held at WATCH; a thin-history to
 WATCH; a zero-readiness veto; **TI-02** project-scoped isolation — an opportunity scored on
 the delivery project is invisible from another project of the same tenant).
 
-**Still to build (named, not pretended) — the invisible driver and its sources:** the
-module is intentionally headless, so its remaining work is the background machinery that
-runs it, not a screen. (1) The **first-party signal source** — the platform's own activity
-turned into observations automatically (the spec's internal-search / event / conversion
-inputs), so `recordObservations` is fed invisibly rather than by a form; built against a
-real event stream, never invented counts. (2) A **platform profile** (spec §9/§16) that
-supplies the per-topic strategist inputs (fit, intent, timing, readiness, source quality,
-freshness) as configuration, so scoring runs without a human scoring each topic. (3) A
-**background trend sweep** (wired in `main.ts` like the collection/marketing sweeps,
-flag-gated) that clusters signals into topics, scores them against the profile and keeps
-bands current. (4) The **Growth Brief store** + effective-brief resolver + expiry (TI-05).
-(5) The typed action / approval / execute / rollback state machine with the owned-surface
-adapter (TI-07, TI-08). (6) Experiments + native outcome measurement. (7) The **brief-SDK
-run-time resolution** that lets the existing SEO/marketing automation (`site/visibility.ts`)
-pick up the effective brief invisibly (TI-06 prompt-injection safety: a brief changes
-priorities, never permissions). The engine and store above are the authority every one of
-those computes against; nothing scores, briefs or acts until its real source is wired, so
-no input is faked to make the layer appear live.
+**Slice 3 — the invisible driver: real activity → demand → marketing retarget (done).**
+The chosen signal (operator decision) is CONSTRUX's own first-party activity, and the
+chosen target is the existing marketing/SEO automation. Two pure modules and one
+flag-gated integration, all headless:
+- `domain/trend/signal.ts` — `activityObservations` turns a stream of Golden-Thread events
+  into per-capability-area, per-week demand observations, counting only **closed** windows
+  so a re-read is an idempotent replay (the count is the evidence hash); `GROUP_TO_AREA`
+  maps each EventGroup to the area the marketing topics carry; `marketingDemand` is the
+  lightweight platform path — real demand per area with no profile and no writes (an area
+  counts as live demand only with enough history and a cleared count gate).
+- `domain/trend/retarget.ts` — pure ordering: `preferredTopic` / `rankByDemand` pick the
+  topic whose area carries the most live demand, and **never drop, add or re-permission a
+  topic** — a weak or absent signal leaves the automation's own order untouched.
+- `site/visibility.ts` — the daily marketing release now prefers the highest-demand
+  uncovered topic **behind `TREND_RETARGET_ENABLED` (default off)**, reading the platform's
+  own recent activity from the ledger. Same topics, same checks, same approvals — only the
+  order changes, and only when real demand says so.
+Proven by `tests/trendsignal.test.ts` (closed-window counting and idempotent hashing; the
+area mapping; an end-to-end case where a real spike in one area becomes a live-demand
+retarget and a flat area does not). Nothing new is visible to users; no demand number is
+invented — every count is real platform activity.
+
+**Still to build (named, not pretended):** (1) A **platform profile** (spec §9/§16) that
+supplies the full per-topic strategist inputs (fit, intent, timing, readiness, source
+quality, freshness) so the richer `store.ts` opportunity scoring (confidence, vetoes, the
+brief/auto bands) runs automatically on a background sweep — the marketing retarget above
+uses demand alone, which needs none of this. (2) The **Growth Brief store** + effective-brief
+resolver + expiry (TI-05). (3) The typed action / approval / execute / rollback state
+machine with the owned-surface adapter (TI-07, TI-08). (4) Experiments + native outcome
+measurement. (5) The **brief-SDK run-time resolution** that lets other existing agents pick
+up the effective brief invisibly (TI-06 prompt-injection safety). The engine, store and
+signal above are the authority every one of those computes against.
 
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding

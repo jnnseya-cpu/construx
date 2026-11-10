@@ -10,6 +10,8 @@ import { sendMail, type SmtpOptions } from '../messaging/smtp.ts';
 import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import type { RequestContext } from '../api/middleware.ts';
 import { hyperlink, postUrl, SHARE_CHANNELS, shareTargets, wordsOf } from './article.ts';
+import { marketingDemand } from '../domain/trend/signal.ts';
+import { preferredTopic } from '../domain/trend/retarget.ts';
 import {
   BLOG_PROJECT_ID,
   type BlogPost,
@@ -1270,7 +1272,20 @@ export async function runDailyRelease(
   if (existing) return { ...existing, alreadyRun: true };
 
   const library = allTopics(platform);
-  const next = library.find((topic) => postForTopic(platform, topic) === undefined);
+  const uncovered = library.filter((topic) => postForTopic(platform, topic) === undefined);
+  // The invisible Trend Intelligence retarget: by default the release keeps its written
+  // order (the first uncovered topic), but when the control layer is on it prefers the
+  // uncovered topic whose capability area carries the most live demand in the platform's
+  // own recent activity. It only reorders what the automation already writes — same
+  // topics, same checks, same approvals — and falls back to the first when no area shows
+  // live demand, so a quiet signal never changes anything.
+  let next = uncovered[0];
+  if (config.ops.trendRetargetEnabled && uncovered.length > 1) {
+    const nowMs = (options.now ?? new Date()).getTime();
+    const since = new Date(nowMs - 77 * 24 * 60 * 60 * 1000).toISOString(); // ~11 weeks of closed windows
+    const demand = marketingDemand(platform.ledger.events({ from: since }), new Date(nowMs).toISOString());
+    next = preferredTopic(uncovered, demand) ?? uncovered[0];
+  }
   let published: MarketingRelease['published'] = null;
   let note: string;
   let sent: Distribution[] = [];

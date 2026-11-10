@@ -585,6 +585,15 @@ export const config = {
      * turns it on when the add-on goes commercial. No billing is charged either way.
      */
     gridConnectionEnforceSeats: bool('GRID_CONNECTION_ENFORCE_SEATS', false),
+    /**
+     * Whether the Trend Intelligence AI layer invisibly re-prioritises the marketing
+     * automation's daily topic choice by live demand. Off by default, so the automation
+     * keeps its written order (the first uncovered topic) until an operator turns the
+     * control layer on; when on, the daily release prefers the uncovered topic whose
+     * capability area is busiest in the platform's own recent activity. It only reorders
+     * what the automation already writes — it never grants a new channel, claim or action.
+     */
+    trendRetargetEnabled: bool('TREND_RETARGET_ENABLED', false),
   },
 
   /**
