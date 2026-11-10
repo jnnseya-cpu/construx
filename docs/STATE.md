@@ -1300,17 +1300,24 @@ explicitly through the route above; no chargeable billing flow is wired, and the
 `addon.ts` contract is the authority all of it computes against. No agent is given any
 OT/switching tool.
 
-### Trend Intelligence AI — the demand-reading control layer (IN PROGRESS)
+### Trend Intelligence AI — the invisible demand-reading control layer (IN PROGRESS)
 
 Built to the *Trend Intelligence AI* spec (v2.3) as a CONSTRUX **module** (not the
 spec's standalone Python/FastAPI reference stack): a control layer that reads a change in
 what a platform's customers are searching for or buying, scores whether the business can
 serve it, and — through a shared, versioned **Growth Brief** — retargets the existing SEO
-and marketing agents at run time without rewriting their prompts. It reuses the
+and marketing automation at run time without rewriting their prompts. It reuses the
 golden-thread ledger, identity/roles, the AI orchestrator + ACU wallet (satisfying the
 spec's "keyless / reuse the host's AI" requirement) and the add-on entitlement machinery.
 Existing agent roles, product facts and brand policy stay authoritative; a brief changes
 priorities, never permissions.
+
+**Invisible by design.** This module has **no user-facing screen, nav entry or user
+route** — it is a background control layer (the spec's own framing: "a control layer for
+existing agents"), wired like the collection / marketing / tender-reminder sweeps that run
+on timers with no UI. Its event types are emitted from `domain/trend/store.ts`, so the
+closed-catalogue invariant holds without any command surface; its records are read by the
+background driver and the agent runtime, never a console page.
 
 **Slice 1 — the detection/scoring engine and the Growth Brief contract (done).** Two
 pure, tested modules, persisting nothing and calling no model:
@@ -1333,9 +1340,10 @@ Proven by `tests/trendscoring.test.ts` (19 cases), including the spec's own work
 (accepted; unknown field / bad market / unknown channel / reversed window / wrong schema
 version all refused).
 
-**Slice 2 — persisted signals → scored opportunities, on the Golden Thread (done).**
-`backend/src/domain/trend/store.ts`, embedded in the existing event catalogue, routes and
-console (not a separate store). `recordObservations` ingests a batch idempotently: the
+**Slice 2 — persisted signals → scored opportunities, on the Golden Thread (done, internal).**
+`backend/src/domain/trend/store.ts`, embedded in the existing event catalogue (not a
+separate store), and **internal — no HTTP route or screen**, called by the background
+driver and the agent runtime. `recordObservations` ingests a batch idempotently: the
 spec's §15 uniqueness `(installation, source, source record, revision)` is the ledger
 refId, so an exact replay is a counted **duplicate** and the same key with a changed
 evidence hash is **conflicted**, never a silent overwrite (TI-01); it returns
@@ -1347,22 +1355,32 @@ platform/strategist — persisting an opportunity snapshot with every numeric in
 vetoes and the band. The band is **held at WATCH** whenever the history is thin or the
 count gate is not cleared, so nothing drives a live change on evidence the engine itself
 calls insufficient. Three events (`TREND_OBSERVATION_RECORDED`, `_OPPORTUNITY_SCORED`,
-`_OPPORTUNITY_RESCORED`, all BUSINESS_DEVELOPMENT), two entity classes, routes
-`POST …/trend/observations`, `POST …/trend/opportunities/score`, `GET …/trend/opportunities`,
-and a **Trend Intelligence** console page in the Commercial group (ingest a signal, score a
-topic, read the scored opportunities). Proven by `tests/trendstore.test.ts` (TI-01 replay
+`_OPPORTUNITY_RESCORED`, all BUSINESS_DEVELOPMENT) and two entity classes — all exercised
+through the internal store functions `recordObservations` / `scoreOpportunity` /
+`listOpportunities`, with **no route or screen**. Proven by `tests/trendstore.test.ts` (TI-01 replay
 and conflict; a corroborated 5-window spike → a reviewable brief, opt-in → auto; a
 single-family spike capped at confidence 69 and held at WATCH; a thin-history topic held at
 WATCH; a zero-readiness veto; **TI-02** project-scoped isolation — an opportunity scored on
 the delivery project is invisible from another project of the same tenant).
 
-**Still to build (named, not pretended):** clustering of raw signals into topics (this
-slice scores a caller-supplied topic id); the Growth
-Brief store with the effective-brief resolver and expiry (TI-05); the typed action /
-approval / execute / rollback state machine with the owned-surface adapter (TI-07, TI-08);
-experiments and native outcome measurement; the brief-SDK run-time resolution for the SEO
-and marketing agents (TI-06 prompt-injection safety); and the console. The engine above is
-the authority every one of those computes against.
+**Still to build (named, not pretended) — the invisible driver and its sources:** the
+module is intentionally headless, so its remaining work is the background machinery that
+runs it, not a screen. (1) The **first-party signal source** — the platform's own activity
+turned into observations automatically (the spec's internal-search / event / conversion
+inputs), so `recordObservations` is fed invisibly rather than by a form; built against a
+real event stream, never invented counts. (2) A **platform profile** (spec §9/§16) that
+supplies the per-topic strategist inputs (fit, intent, timing, readiness, source quality,
+freshness) as configuration, so scoring runs without a human scoring each topic. (3) A
+**background trend sweep** (wired in `main.ts` like the collection/marketing sweeps,
+flag-gated) that clusters signals into topics, scores them against the profile and keeps
+bands current. (4) The **Growth Brief store** + effective-brief resolver + expiry (TI-05).
+(5) The typed action / approval / execute / rollback state machine with the owned-surface
+adapter (TI-07, TI-08). (6) Experiments + native outcome measurement. (7) The **brief-SDK
+run-time resolution** that lets the existing SEO/marketing automation (`site/visibility.ts`)
+pick up the effective brief invisibly (TI-06 prompt-injection safety: a brief changes
+priorities, never permissions). The engine and store above are the authority every one of
+those computes against; nothing scores, briefs or acts until its real source is wired, so
+no input is faked to make the layer appear live.
 
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding

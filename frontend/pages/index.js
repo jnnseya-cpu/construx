@@ -21,7 +21,6 @@ import { company } from './company.js';
 import { concept } from './concept.js';
 import { consultancy } from './consultancy.js';
 import { grid } from './grid.js';
-import { trend } from './trend.js';
 import { communications } from './communications.js';
 import { contracts } from './contracts.js';
 import { construction } from './construction.js';
@@ -86,7 +85,6 @@ export const PAGES = {
   feasibility,
   consultancy,
   grid,
-  trend,
   programme,
   field,
   construction,
