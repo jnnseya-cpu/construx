@@ -1241,12 +1241,33 @@ OT field; a no-provider run parks WAITING_EVIDENCE and never validates; a valida
 step refuses re-run; a trigger reopens a step to STALE and supersedes an approved
 electrical gate; unknown step/gate rejected).
 
-**Still to build (named, not pretended):** the commercial add-on — entitlement/seat model and server-side
-enforcement of the £100 + £50×seat math and the admin-grant / provider-status /
-effective-entitlement states — built on the existing billing abstractions **with
-live Stripe activation left behind a flag pending commercial sign-off** (Slice 5);
-and the A01–A18 acceptance scenarios (Slice 6). No chargeable billing flow is wired
-until that sign-off; no agent is given any OT/switching tool.
+**Slice 5a — the commercial add-on contract (done).** `backend/src/billing/addon.ts`
+is the spec §1–2 money maths and entitlement state machine as **pure, tested logic**:
+`addonMonthlyMinor`/`addonMonthlyMinorForSeats` (£100 base incl. one seat + £50 per
+additional seat, in GBP minor units, integer-validated); the `ProviderStatus` →
+`Effective` map (`effectiveEntitlement` — LOCKED without a Platform-Admin grant
+whatever the provider says; ACTIVE/ENDING usable, GRACE/STOPPED read-only, PENDING
+locked); `moduleUsable`/`historyReadable`; and seat capacity (`canAllocateSeat`,
+`seatsToUnassign`). It **creates no charge, calls no provider and persists nothing** —
+price and entitlement are decided here, server-side, never from a client. Proven by
+`tests/addon.test.ts` (7 cases: the price table, the three-state map, usable-vs-readable,
+and seat capacity).
+
+**Still to build (named, not pretended):** the **persisted** three-state store and its
+enforcement (Slice 5b), and the A01–A18 acceptance scenarios (Slice 6). Slice 5b is
+deliberately deferred rather than shipped half-wired, because the add-on's three states
+straddle the account-layer boundary this platform enforces (`tenantContext` bars
+`PLATFORM_ADMIN` from customer data): the **Platform-Admin grant** and the
+**provider/billing status** are operator-side records (the grant is an operator decision
+and the status comes from *verified* provider reconciliation — an invoice preview, a UI
+redirect or an unverified webhook must not activate it), written on the platform tenancy
+in the manner of `identity/modules.ts`' `ModuleGrant`; the **named seats** are a
+tenant-side `BILLING_ACU` action within the paid quantity. Wiring that correctly means
+platform-side provisioning + a cross-layer entitlement resolver (mirroring
+`grantedModules`) **with live Stripe activation left behind a flag pending commercial
+sign-off**. No chargeable billing flow — and no manual provider-status write that would
+stand in for a verified one — is wired until that sign-off; the pure contract above is
+the authority all of it will compute against. No agent is given any OT/switching tool.
 
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
