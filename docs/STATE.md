@@ -1188,9 +1188,31 @@ electrical; no OT field on any step; the full gate-state table including an
 electrical gate refusing to advance on a decision without authority; coverage
 arithmetic).
 
-**Still to build (named, not pretended):** the persisted `GridEngagement` + gate
-decisions on the Golden Thread (Slice 2); the workboard, routes and delivery-tab UI
-(Slice 3); the ten agents' grounded execution and the event-driven reappraisal
+**Slice 2 — the persisted engagement and gates (done).**
+`backend/src/domain/grid/store.ts` gives the playbook a home. `openGridEngagement`
+writes a `GridEngagement` (connection, route, point of connection, the 42 steps
+started PLANNED) against a project; `updateStep` moves a step through its agent-run
+states (PLANNED, WORKING, WAITING_EVIDENCE, WAITING_AUTHORITY, VALIDATED, RELEASED,
+STALE, BLOCKED) with validation, owner and blocker; `decideGate` records a gate
+decision; `gridWorkboard` returns every step with its run state, each gate's
+computed `gateState`, verified coverage and the next actions. The spec's §6.5
+authority rule is **enforced, not described**: a gate decision is refused with
+`GATE_BLOCKED` unless the gate is at digital readiness, and an electrical gate
+(G4–G7) is refused with `AUTHORITY_REQUIRED` unless a verified authority record
+(`authorityRef`) is supplied — a decision flag alone never advances it. Three new
+closed-catalogue events (`GRID_ENGAGEMENT_OPENED/UPDATED`, `GRID_GATE_DECIDED`, the
+DELIVERY group; entity `GridEngagement`, QUALITY_COMMISSIONING / COMMERCIAL_L3).
+Writes authorise against QUALITY_COMMISSIONING and are **not phase-gated** — a grid
+connection runs G0 (agreement) through G7 (handover) across the whole lifecycle.
+Routes: `POST …/grid/engagements`, `…/engagements/{id}/steps/{stepId}` and
+`…/engagements/{id}/gates/{gateId}/decision`. Covered in `gridstore.test.ts` (open
+with 42 PLANNED steps and every gate PENDING; unknown step and bad run-state
+rejected; a non-electrical gate CANDIDATE_READY→APPROVED; a decision on an unready
+gate refused; an electrical gate AWAITING_AUTHORITY refusing a decision without an
+authority record then advancing with one; a blocked step blocking its gate).
+
+**Still to build (named, not pretended):** the workboard GET route and delivery-tab
+UI (Slice 3); the ten agents' grounded execution and the event-driven reappraisal
 triggers (Slice 4); the commercial add-on — entitlement/seat model and server-side
 enforcement of the £100 + £50×seat math and the admin-grant / provider-status /
 effective-entitlement states — built on the existing billing abstractions **with

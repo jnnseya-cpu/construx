@@ -257,6 +257,7 @@ import * as feasibility from '../domain/feasibility.ts';
 import * as feasibilitybrief from '../domain/feasibilitybrief.ts';
 import * as consultancybc from '../domain/consultancy/businesscase.ts';
 import * as consultancystore from '../domain/consultancy/store.ts';
+import * as gridstore from '../domain/grid/store.ts';
 import * as consultancyevidence from '../domain/consultancy/evidence.ts';
 import * as consultancyrfq from '../domain/consultancy/rfq.ts';
 import * as consultancylifecycle from '../domain/consultancy/lifecycle.ts';
@@ -4444,6 +4445,53 @@ export const ROUTES: Route[] = [
     description: 'Autonomous Consultancy — the engagement workboard: workflow state, tasks, blockers with owners, verified digital coverage (completed and validated required tasks over all required), and the next permissible actions.',
     handler: (platform, ctx) =>
       consultancystore.workboard(projectContext(platform, ctx), ctx.params.engagementId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements',
+    description: 'Grid Connection AI — open an HV grid-connection delivery engagement against a project; the 42 playbook steps start PLANNED across gates G0–G7.',
+    schema: {
+      type: 'object',
+      required: ['connection', 'route'],
+      properties: {
+        connection: { type: 'string', minLength: 1, maxLength: 200 },
+        route: { type: 'string', minLength: 1, maxLength: 120 },
+        pointOfConnection: { type: 'string', maxLength: 200 },
+        capacityNote: { type: 'string', maxLength: 400 },
+      },
+    },
+    handler: (platform, ctx) => gridstore.openGridEngagement(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/steps/:stepId',
+    description: 'Grid Connection AI — update a playbook step’s agent-run state, validation, owner or blocker.',
+    schema: {
+      type: 'object',
+      properties: {
+        runState: { type: 'string', enum: ['PLANNED', 'WORKING', 'WAITING_EVIDENCE', 'WAITING_AUTHORITY', 'VALIDATED', 'RELEASED', 'STALE', 'BLOCKED'] },
+        validated: { type: 'boolean' },
+        owner: { type: 'string', maxLength: 200 },
+        blocker: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.updateStep(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/gates/:gateId/decision',
+    description: 'Grid Connection AI — record a gate decision. The gate must be at digital readiness; an electrical gate (G4–G7) advances only with a verified authority record (authorityRef), never on a decision flag alone.',
+    schema: {
+      type: 'object',
+      properties: {
+        decisionApproved: { type: 'boolean' },
+        authorityRef: { type: 'string', maxLength: 300 },
+        note: { type: 'string', maxLength: 2000 },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.decideGate(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
   },
   {
     method: 'POST',

@@ -110,6 +110,13 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('CONSULTANCY_PROCUREMENT_OPENED', 'ConsultancyProcurement', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
   def('CONSULTANCY_PROCUREMENT_UPDATED', 'ConsultancyProcurement', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   def('CONSULTANCY_SUBMISSION_RECEIVED', 'ConsultancySubmission', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true }),
+  // Grid Connection AI — the HV grid-connection delivery engagement and its 42-step,
+  // eight-gate workboard. A delivery record: the engagement opens, its steps move
+  // through agent-run states, and a gate decision is an approval. An electrical gate
+  // (G4–G7) advances only on a verified authority record — never AI-approved.
+  def('GRID_ENGAGEMENT_OPENED', 'GridEngagement', 'CREATE', 'DELIVERY', { creates: true }),
+  def('GRID_ENGAGEMENT_UPDATED', 'GridEngagement', 'UPDATE', 'DELIVERY'),
+  def('GRID_GATE_DECIDED', 'GridEngagement', 'APPROVE', 'DELIVERY'),
   // Corporate memory. Captured on the project that produced it and read across
   // the business, because a lesson only pays for itself on a different job.
   def('LESSON_CAPTURED', 'LessonLearned', 'CREATE', 'RISK_SAFETY', { requiresEvidence: true }),

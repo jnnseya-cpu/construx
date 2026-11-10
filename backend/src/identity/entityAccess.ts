@@ -36,6 +36,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // filtered at read time (C03); the records are commercially sensitive.
   ConsultancyProcurement: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
   ConsultancySubmission: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
+  // Grid Connection AI — the HV grid-connection delivery engagement (42 steps, eight
+  // gates). A commissioning/assurance delivery record; commercially sensitive.
+  GridEngagement: { area: 'QUALITY_COMMISSIONING', sensitivity: 'COMMERCIAL_L3' },
   LessonLearned: { area: 'RISK_REGISTER' },
   CompanyProfile: { area: 'BUSINESS_DEVELOPMENT' },
   RadarRun: { area: 'BUSINESS_DEVELOPMENT', sensitivity: 'COMMERCIAL_L3' },
