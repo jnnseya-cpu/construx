@@ -1159,6 +1159,45 @@ buyer can be told apart before anything is filed. Covered in `misfileguard.test.
 refusing a misfile, allowing it on `confirmPlacement`, allowing a matching buyer,
 and no-opping with no established buyer or a missing invitation).
 
+### Grid Connection AI — the HV grid-connection delivery module (IN PROGRESS)
+
+Built to the *CONSTRUX Grid Connection AI* add-on spec (v1.0): an optional module
+that runs the 42-step, eight-gate HV Grid Connection Delivery Playbook as executable
+CONSTRUX workflows. It is being built in tested vertical slices on the primitives
+that already exist — the Autonomous Consultancy engine (engagements, agent tasks,
+verified coverage, evidence & lineage, grounded task execution), `stagegate.ts`, the
+`misfileguard`, and the existing billing layer (`billing/{subscription, seats,
+entitlement, stripe, webhookdelivery}.ts`) — rather than rebuilding any of it.
+
+**Slice 1 — the playbook domain pack (done).**
+`backend/src/domain/grid/playbook.ts` is the module's engineering truth as a closed,
+validated catalogue: the **42 steps** (id, gate, owning agent capability, what the
+agent executes, the controlled output, required-digital flag), the **eight gates
+G0–G7** (with the electrical-authority gates G4–G7 marked), the **ten agent
+capabilities** (§4), and the deterministic gate logic. `gateState` enforces the
+spec's §6.5 rule: a gate is PENDING until its required digital steps are validated,
+BLOCKED if one is blocked, then — for a non-electrical gate — CANDIDATE_READY and
+APPROVED on its decision, but for an **electrical gate AWAITING_AUTHORITY until a
+verified authority record exists** (digital readiness alone never advances it;
+EXPIRED/SUPERSEDED take precedence on a reopened candidate). Safety is in the shape
+of the data: a step is a digital task an agent owns, and there is **no field for a
+switching, set-point or relay action** to be carried. `coverage` gives verified
+digital-task coverage. Covered in `gridplaybook.test.ts` (42 ordered unique steps;
+every step on a known gate and capability; the gate step-ranges; only G4–G7
+electrical; no OT field on any step; the full gate-state table including an
+electrical gate refusing to advance on a decision without authority; coverage
+arithmetic).
+
+**Still to build (named, not pretended):** the persisted `GridEngagement` + gate
+decisions on the Golden Thread (Slice 2); the workboard, routes and delivery-tab UI
+(Slice 3); the ten agents' grounded execution and the event-driven reappraisal
+triggers (Slice 4); the commercial add-on — entitlement/seat model and server-side
+enforcement of the £100 + £50×seat math and the admin-grant / provider-status /
+effective-entitlement states — built on the existing billing abstractions **with
+live Stripe activation left behind a flag pending commercial sign-off** (Slice 5);
+and the A01–A18 acceptance scenarios (Slice 6). No chargeable billing flow is wired
+until that sign-off; no agent is given any OT/switching tool.
+
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
 traces to a cited source, governed assumption or reproducible calculation."
