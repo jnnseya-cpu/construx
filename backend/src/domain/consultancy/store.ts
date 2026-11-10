@@ -32,6 +32,7 @@ import {
   type MinimumIntake,
   type WorkRoute,
 } from './engagement.ts';
+import { assessPlacement, type PlacementAssessment, type PlacementIdentity } from './misfile.ts';
 import { runnable } from './orchestrator.ts';
 
 /** What the automation is doing on a task (spec §4). */
@@ -138,6 +139,11 @@ function tasksOf(ctx: EngineContext, engagementId: string): TaskState[] {
  * opens in `INTAKE`, never silently authorised — a timeout, or a missing field,
  * never implies approval.
  */
+/** This engagement's identity, as the misfile guard compares documents against it. */
+function engagementIdentity(ref: string | undefined, intake: Partial<MinimumIntake>): PlacementIdentity {
+  return { reference: ref, client: intake.client, authority: intake.decisionAuthority, assetOrService: intake.assetOrService, location: intake.location };
+}
+
 export function openEngagement(
   ctx: EngineContext,
   input: {
@@ -148,8 +154,10 @@ export function openEngagement(
     sponsor?: string;
     sector?: string;
     stage?: string;
+    /** Override the misfile guard when it flags the attached brief as belonging elsewhere. */
+    confirmPlacement?: boolean;
   },
-): { engagementId: string; reference: string; workflowState: WorkflowState; blockers: string[] } {
+): { engagementId: string; reference: string; workflowState: WorkflowState; blockers: string[]; placement?: PlacementAssessment } {
   authorise(ctx, 'BUSINESS_DEVELOPMENT', 'C', { lifecyclePhase: currentPhase(ctx) });
 
   const engagementId = ulid();
@@ -157,6 +165,26 @@ export function openEngagement(
   const reference = `ENG-${String(seq).padStart(4, '0')}`;
   const blockers = intakeBlockers(input.intake);
   const now = new Date().toISOString();
+
+  // Misfile guard: a client requirement attached at intake is checked against this
+  // engagement's identity and the other engagements in the project. A document that
+  // belongs to a different engagement is refused unless placement is confirmed.
+  let placement: PlacementAssessment | undefined;
+  const brief = input.intake.clientRequirement;
+  if (brief && brief.trim().length >= 200) {
+    const others = ctx.ledger
+      .list(ctx.projectId, 'ConsultancyEngagement')
+      .map((r) => r.state as EngagementState)
+      .map((e) => engagementIdentity(e.reference, e.intake));
+    // The target carries no reference: an engagement's internal ENG-id never
+    // appears in a client's brief, so comparing against it would misfire. The
+    // candidates keep their references only to label where a document belongs.
+    const assessment = assessPlacement(engagementIdentity(undefined, input.intake), brief, others);
+    if (assessment.verdict === 'CONFLICT' && !input.confirmPlacement) {
+      throw new DomainError('MISFILED_DOCUMENT', `${assessment.reason} Re-submit with confirmPlacement to attach it here anyway.`);
+    }
+    if (assessment.verdict !== 'OK') placement = assessment;
+  }
 
   const state: EngagementState = {
     id: engagementId,
@@ -182,7 +210,7 @@ export function openEngagement(
     nextState: state,
   });
 
-  return { engagementId, reference, workflowState: 'INTAKE', blockers };
+  return { engagementId, reference, workflowState: 'INTAKE', blockers, ...(placement ? { placement } : {}) };
 }
 
 /** The typed actions the spec's `POST .../actions` carries (§6). */

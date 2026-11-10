@@ -4368,6 +4368,7 @@ export const ROUTES: Route[] = [
         sponsor: { type: 'string', maxLength: 200 },
         sector: { type: 'string', maxLength: 120 },
         stage: { type: 'string', maxLength: 60 },
+        confirmPlacement: { type: 'boolean' },
       },
     },
     handler: (platform, ctx) =>

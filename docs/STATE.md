@@ -1110,6 +1110,32 @@ panel showing each executed task's result. Covered in `consultancystore.test.ts`
 while unauthorised; a task on an unfinished dependency parked in WAITING_INPUT and
 never run; an already-complete task refused).
 
+**The misfile guard — stop a document going into the wrong project.** With several
+live engagements in one tenancy, the operational risk is not cross-tenant leakage
+(the platform already prevents that) but filing the right document against the
+*wrong* engagement — pasting one tender's brief into another's workspace.
+`backend/src/domain/consultancy/misfile.ts` is a pure, deterministic check:
+`assessPlacement(target, documentText, others)` compares a document's own identity
+signals — the client, authority, asset/service and location words it actually
+contains, and any reference codes it cites — against the engagement it is being
+filed under and the other engagements in the project. It returns **CONFLICT** (the
+document matches another engagement far more closely, or cites a reference that is
+not this engagement's), **REVIEW** (it mentions none of this engagement's identity
+at all), or **OK**, and it never raises a false CONFLICT on a weak or absent signal.
+`openEngagement` runs it over a client requirement attached at intake: a CONFLICT is
+**refused with `MISFILED_DOCUMENT`** unless `confirmPlacement` is set (the human
+takes responsibility), and a REVIEW is returned as a non-blocking warning. The
+Consultancy screen catches the refusal and offers an explicit "attach anyway"
+confirm. Covered in `consultancymisfile.test.ts` (identity-token extraction with
+generic words dropped; reference-code extraction across shapes; the NLC brief OK on
+its own engagement but CONFLICT on a South Yorkshire one; a foreign-reference
+conflict; a REVIEW with no identity match; and no false positive on weak/empty
+input) and `consultancystore.test.ts` (a misfiled brief refused at
+`openEngagement`, allowed only on `confirmPlacement`, and a matching brief filed
+without complaint). The target carries no engagement reference into the check — an
+internal ENG-id never appears in a client's brief, so comparing against it would
+misfire.
+
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
 traces to a cited source, governed assumption or reproducible calculation."

@@ -203,3 +203,43 @@ describe('executing a task with an agent, grounded in the client requirement', (
     await assert.rejects(() => runTask(ctx(), taskId), (e) => (e as { code?: string }).code === 'TASK_NOT_RUNNABLE');
   });
 });
+
+describe('the misfile guard — stop a brief going into the wrong engagement', () => {
+  const nlcBrief =
+    'Request for Quotation TM0000000265-1. North Lincolnshire Council invites tenders for a Feasibility Study and ' +
+    'Business Case to assess additional rail services between Doncaster and Scunthorpe operated by Northern Trains, ' +
+    'restoring links for communities in North Lincolnshire, to be completed by June 2027.';
+  const symcaIntake = {
+    decisionRequested: 'Supply two road-rail vehicles for the Supertram network',
+    decisionAuthority: 'South Yorkshire Mayoral Combined Authority',
+    client: 'South Yorkshire Mayoral Combined Authority',
+    partySide: 'BIDDER' as const,
+    assetOrService: 'Supertram road-rail vehicles',
+    location: 'Sheffield',
+  };
+
+  it('refuses a brief that belongs to another engagement, and allows it only on explicit confirmation', () => {
+    // The North Lincolnshire brief is attached correctly to its own engagement.
+    const nlc = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: { ...COMPLETE_INTAKE, clientRequirement: nlcBrief } });
+    assert.ok(nlc.engagementId);
+
+    // The same brief pasted by mistake into a South Yorkshire engagement is refused.
+    assert.throws(
+      () => openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: { ...symcaIntake, clientRequirement: nlcBrief } }),
+      (e) => (e as { code?: string }).code === 'MISFILED_DOCUMENT',
+    );
+
+    // With an explicit override it is allowed through (the human took responsibility).
+    const forced = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: { ...symcaIntake, clientRequirement: nlcBrief }, confirmPlacement: true });
+    assert.ok(forced.engagementId);
+  });
+
+  it('attaches a matching brief without complaint', () => {
+    const symcaBrief =
+      'Invitation to tender from the South Yorkshire Mayoral Combined Authority for the supply of two road-rail vehicles ' +
+      'for the Sheffield Supertram network, including pantograph integration, testing, acceptance and warranty support.';
+    const res = openEngagement(ctx(), { route: 'RESPOND_TO_RFQ', assignment: 'COMBINED', intake: { ...symcaIntake, clientRequirement: symcaBrief } });
+    assert.ok(res.engagementId);
+    assert.equal(res.placement, undefined, 'a consistent brief raises no placement warning');
+  });
+});

@@ -106,27 +106,35 @@ export async function consultancy(root) {
     }
   };
 
-  const openEngagement = async (form) => {
+  const openEngagement = async (form, confirmPlacement = false) => {
+    const intake = {
+      decisionRequested: form.decisionRequested,
+      decisionAuthority: form.decisionAuthority,
+      client: form.client,
+      partySide: form.partySide,
+      assetOrService: form.assetOrService,
+      location: form.location,
+      ...(form.clientRequirement && form.clientRequirement.trim() ? { clientRequirement: form.clientRequirement.trim() } : {}),
+    };
     try {
       const res = await api.post(`/v1/projects/${projectId}/consultancy/engagements`, {
-        route: form.route,
-        assignment: form.assignment,
-        intake: {
-          decisionRequested: form.decisionRequested,
-          decisionAuthority: form.decisionAuthority,
-          client: form.client,
-          partySide: form.partySide,
-          assetOrService: form.assetOrService,
-          location: form.location,
-          ...(form.clientRequirement && form.clientRequirement.trim() ? { clientRequirement: form.clientRequirement.trim() } : {}),
-        },
+        route: form.route, assignment: form.assignment, intake, ...(confirmPlacement ? { confirmPlacement: true } : {}),
       });
       engagementId = res.engagementId;
       const briefLen = form.clientRequirement && form.clientRequirement.trim() ? form.clientRequirement.trim().length : 0;
       toast('Engagement opened', `${res.reference} — ${res.blockers.length} intake item(s) outstanding${briefLen ? ` · brief attached (${briefLen.toLocaleString()} characters)` : ''}`, res.blockers.length ? 'warn' : 'ok');
+      // A non-blocking placement warning (the brief mentions nothing of this engagement).
+      if (res.placement && res.placement.verdict === 'REVIEW') toast('Check the attached brief', res.placement.reason, 'warn');
       await loadBoard();
       draw();
     } catch (error) {
+      // Misfile guard: the brief looks like it belongs to another engagement.
+      if (error.code === 'MISFILED_DOCUMENT' || /MISFILED_DOCUMENT/.test(error.message || '')) {
+        const ok = window.confirm(`${error.message}\n\nAttach it to this engagement anyway?`);
+        if (ok) return openEngagement(form, true);
+        toast('Not opened', 'The brief looks like it belongs to another engagement — nothing was filed.', 'warn');
+        return;
+      }
       toast('Could not open engagement', error.message, 'err');
     }
   };
