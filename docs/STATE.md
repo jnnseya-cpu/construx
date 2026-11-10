@@ -1385,6 +1385,16 @@ area mapping; an end-to-end case where a real spike in one area becomes a live-d
 retarget and a flat area does not). Nothing new is visible to users; no demand number is
 invented — every count is real platform activity.
 
+**Slice 4 — the retarget is auditable (done).** The daily `MarketingRelease` record now
+carries a `retarget` block — the audit answer to "why this topic today": the area whose
+demand drove it, the demand score, the topic the written order would otherwise have taken,
+and whether demand actually changed the choice (`applied`). It rides in the existing
+`MARKETING_RELEASE_RUN` golden-thread event — no new event type — so the invisible decision
+is traceable without a screen. `tests/trendretarget.test.ts` proves the production wiring:
+with the control layer on, the release still publishes, falls back to the written order
+when no area carries live demand (a quiet signal changes nothing), and stays idempotent for
+the day.
+
 **Still to build (named, not pretended):** (1) A **platform profile** (spec §9/§16) that
 supplies the full per-topic strategist inputs (fit, intent, timing, readiness, source
 quality, freshness) so the richer `store.ts` opportunity scoring (confidence, vetoes, the

@@ -11,7 +11,7 @@ import { PLATFORM_TENANT_ID, type Platform } from '../platform.ts';
 import type { RequestContext } from '../api/middleware.ts';
 import { hyperlink, postUrl, SHARE_CHANNELS, shareTargets, wordsOf } from './article.ts';
 import { marketingDemand } from '../domain/trend/signal.ts';
-import { preferredTopic } from '../domain/trend/retarget.ts';
+import { opportunityForTopic, preferredTopic } from '../domain/trend/retarget.ts';
 import {
   BLOG_PROJECT_ID,
   type BlogPost,
@@ -1237,6 +1237,15 @@ export type MarketingRelease = {
   failed: Distribution[];
   skipped: Array<{ channel: DistributionChannel; because: string }>;
   note: string;
+  /**
+   * The invisible Trend Intelligence decision, where the control layer was on and there
+   * was a choice to make. It is the audit answer to "why this topic today": the area whose
+   * demand drove it, the demand score, and the topic the written order would otherwise have
+   * taken. `applied` is true only when demand actually changed the choice; when it is
+   * false the layer was consulted and agreed with the baseline. Absent when the layer is
+   * off or there was nothing to choose between.
+   */
+  retarget?: { applied: boolean; chosenTopic: string; area: string; demandScore: number; defaultTopic: string };
 };
 
 export function releaseDay(now: Date = new Date()): string {
@@ -1280,11 +1289,23 @@ export async function runDailyRelease(
   // topics, same checks, same approvals — and falls back to the first when no area shows
   // live demand, so a quiet signal never changes anything.
   let next = uncovered[0];
+  let retarget: MarketingRelease['retarget'];
   if (config.ops.trendRetargetEnabled && uncovered.length > 1) {
     const nowMs = (options.now ?? new Date()).getTime();
     const since = new Date(nowMs - 77 * 24 * 60 * 60 * 1000).toISOString(); // ~11 weeks of closed windows
     const demand = marketingDemand(platform.ledger.events({ from: since }), new Date(nowMs).toISOString());
-    next = preferredTopic(uncovered, demand) ?? uncovered[0];
+    const preferred = preferredTopic(uncovered, demand);
+    if (preferred) {
+      const opp = opportunityForTopic(preferred, demand);
+      retarget = {
+        applied: preferred.id !== uncovered[0]!.id,
+        chosenTopic: preferred.id,
+        area: opp?.topicId ?? '',
+        demandScore: Math.round((opp?.score ?? 0) * 100) / 100,
+        defaultTopic: uncovered[0]!.id,
+      };
+      next = preferred;
+    }
   }
   let published: MarketingRelease['published'] = null;
   let note: string;
@@ -1337,6 +1358,7 @@ export async function runDailyRelease(
     failed,
     skipped,
     note: note.trim(),
+    ...(retarget ? { retarget } : {}),
   };
 
   platform.ledger.commit({
