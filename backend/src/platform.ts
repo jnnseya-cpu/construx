@@ -3059,13 +3059,28 @@ export class Platform {
 
     const ref = addonGrantRef(moduleKey, input.tenantId);
     const existing = this.#addonGrants.get(ref);
+    // Re-provisioning the same grant, status and quantity is idempotent — it
+    // returns the existing record rather than writing a no-op event (which the
+    // ledger refuses) with only a new timestamp to distinguish it. Mirrors
+    // `setModuleGrant`; without it a reconciliation that re-asserts the current
+    // state would error instead of being the safe no-op it is.
+    const priceVersion = input.priceVersion ?? existing?.priceVersion ?? 'v1';
+    if (
+      existing &&
+      existing.adminGrant === input.adminGrant &&
+      existing.providerStatus === input.providerStatus &&
+      existing.paidQuantity === input.paidQuantity &&
+      existing.priceVersion === priceVersion
+    ) {
+      return existing;
+    }
     const record: AddonGrantRecord = {
       moduleKey,
       tenantId: input.tenantId,
       adminGrant: input.adminGrant,
       providerStatus: input.providerStatus,
       paidQuantity: input.paidQuantity,
-      priceVersion: input.priceVersion ?? existing?.priceVersion ?? 'v1',
+      priceVersion,
       updatedBy: input.decidedBy,
       updatedAt: new Date().toISOString(),
     };
