@@ -1270,21 +1270,40 @@ function walletPercent() {
  * With one project it renders as plain text. A picker offering a single choice
  * is a control that does nothing, and it invites the press that proves it.
  */
+// A project's label carries BOTH its client and its project name, so two projects
+// for the same client — or two named alike — can be told apart. Filing a document
+// against the wrong project starts with picking the wrong one here, and "Telford
+// and Wrekin Council · Tender" twice over is exactly that trap.
+function projectLabel(project) {
+  const client = String(project.client ?? '').trim();
+  const name = String(project.name ?? '').trim();
+  if (client && name && client.toLowerCase() !== name.toLowerCase()) return `${client} — ${name}`;
+  return name || client || 'Untitled project';
+}
+
 function projectPicker() {
   const current = state.project?.name ?? (state.session?.projectId ? 'Loading…' : 'no project yet');
   const projects = state.projects ?? [];
   if (projects.length < 2) return html`<b>${current}</b>`;
+
+  // Count the core labels so any that still read identically can be tie-broken.
+  const cores = projects.map(projectLabel);
+  const counts = new Map();
+  for (const c of cores) counts.set(c, (counts.get(c) ?? 0) + 1);
 
   return html`<select
     class="project-pick"
     id="project-pick"
     aria-label="Project — changing this changes what you are looking at"
   >
-    ${projects.map((project) => {
+    ${projects.map((project, i) => {
       const id = project.id ?? project.projectId;
       const phase = project.phase ? ` · ${humanise(project.phase)}` : '';
+      // When two projects would read the same, append a short id so they are
+      // never confused for one another in the list.
+      const tie = counts.get(cores[i]) > 1 ? ` · …${String(id).slice(-5)}` : '';
       return html`<option value="${id}" ${raw(id === state.session?.projectId ? 'selected' : '')}>
-        ${project.name}${phase}
+        ${cores[i]}${tie}${phase}
       </option>`;
     })}
   </select>`;
