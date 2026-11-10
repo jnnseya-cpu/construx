@@ -1300,6 +1300,47 @@ explicitly through the route above; no chargeable billing flow is wired, and the
 `addon.ts` contract is the authority all of it computes against. No agent is given any
 OT/switching tool.
 
+### Trend Intelligence AI — the demand-reading control layer (IN PROGRESS)
+
+Built to the *Trend Intelligence AI* spec (v2.3) as a CONSTRUX **module** (not the
+spec's standalone Python/FastAPI reference stack): a control layer that reads a change in
+what a platform's customers are searching for or buying, scores whether the business can
+serve it, and — through a shared, versioned **Growth Brief** — retargets the existing SEO
+and marketing agents at run time without rewriting their prompts. It reuses the
+golden-thread ledger, identity/roles, the AI orchestrator + ACU wallet (satisfying the
+spec's "keyless / reuse the host's AI" requirement) and the add-on entitlement machinery.
+Existing agent roles, product facts and brand policy stay authoritative; a brief changes
+priorities, never permissions.
+
+**Slice 1 — the detection/scoring engine and the Growth Brief contract (done).** Two
+pure, tested modules, persisting nothing and calling no model:
+- `backend/src/domain/trend/scoring.ts` — the spec §5/§17 maths: `logLift`, the robust
+  anomaly `z` (MAD-based, with the 0.2 floor), the count-feed gate (`c≥20 ∧ z≥2`), the
+  thin-history floor (<4 comparable periods), the count-feed demand map `clamp(50+10z)`,
+  corroboration 0/80/100, the 0–100 **opportunity score** (25/25/20/15/15) and the
+  independently-computed **confidence** (35/25/20/20, single-family capped at 69), the
+  hard vetoes (including readiness = 0), and the decision bands (archive / watch / brief /
+  auto — a veto never reaches brief or auto; auto needs both scores ≥85 **and** an
+  explicit tenant opt-in). Full precision, rounded only for display.
+- `backend/src/domain/trend/brief.ts` — the Growth Brief v1 **closed** contract
+  (`validateGrowthBrief`): enumerated channels, ISO alpha-2 (or ZZ) market, bounded
+  lengths, window-after-start, unknown fields refused — because an agent treats a brief as
+  authority and must never honour an unvalidated extra field.
+
+Proven by `tests/trendscoring.test.ts` (19 cases), including the spec's own worked example
+(**TI-03**: component inputs → 86.25 opportunity / 83.5 confidence, un-rounded, a
+*reviewable brief*), the veto and band rules, the §5.3 movement maths, and the §6 fixture
+(accepted; unknown field / bad market / unknown channel / reversed window / wrong schema
+version all refused).
+
+**Still to build (named, not pretended):** the persisted observations → clusters →
+opportunity snapshots with tenant isolation and idempotent replay (TI-01); the Growth
+Brief store with the effective-brief resolver and expiry (TI-05); the typed action /
+approval / execute / rollback state machine with the owned-surface adapter (TI-07, TI-08);
+experiments and native outcome measurement; the brief-SDK run-time resolution for the SEO
+and marketing agents (TI-06 prompt-injection safety); and the console. The engine above is
+the authority every one of those computes against.
+
 **Vertical 3 — evidence and lineage.** `backend/src/domain/consultancy/evidence.ts`
 makes the spec's completion measure checkable: "every released material finding
 traces to a cited source, governed assumption or reproducible calculation."
