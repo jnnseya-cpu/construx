@@ -53,6 +53,26 @@ export async function grid(root) {
     } catch (error) { toast('Could not update step', error.message, 'err'); }
   };
 
+  const runStep = async (stepId) => {
+    try {
+      const s = await api.post(`/v1/projects/${projectId}/grid/engagements/${engagementId}/steps/${stepId}/run`, {});
+      const rec = s.steps?.[stepId];
+      if (rec?.runState === 'WAITING_EVIDENCE') toast('Step parked', rec.blocker || 'Awaiting a reasoning provider', 'warn');
+      else toast('Agent ran', `Step ${stepId} — ${rec?.lastRun ? 'output recorded, awaiting validation' : 'ran'}`, 'ok');
+      await loadBoard(); draw();
+    } catch (error) { toast('Could not run the agent', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
+  };
+
+  const recordTrigger = async (form) => {
+    const affectedSteps = String(form.affectedSteps ?? '').split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+    const affectedGates = String(form.affectedGates ?? '').split(/[,\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+    try {
+      await api.post(`/v1/projects/${projectId}/grid/engagements/${engagementId}/triggers`, { event: form.event, affectedSteps, affectedGates });
+      toast('Reappraisal recorded', `${affectedSteps.length} step(s) reopened`, 'ok');
+      await loadBoard(); draw();
+    } catch (error) { toast('Could not record trigger', error.message, 'err'); }
+  };
+
   const decideGate = async (gateId, authorityRef) => {
     try {
       await api.post(`/v1/projects/${projectId}/grid/engagements/${engagementId}/gates/${gateId}/decision`, {
@@ -101,6 +121,12 @@ export async function grid(root) {
         </div>
         <div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px"><div style="height:100%;width:${c.percent}%;background:var(--ok)"></div></div>
         ${board.nextActions.length ? html`<div class="notice" style="margin-top:10px"><b>Next:</b> ${board.nextActions[0]}</div>` : ''}
+        ${canWrite ? html`<form id="trigger-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:end">
+          <label class="field" style="flex:1;min-width:220px"><span>Reappraisal trigger</span><input name="event" placeholder="Protection revision B after FAT" required></label>
+          <label class="field"><span>Reopen steps</span><input name="affectedSteps" placeholder="25, 26"></label>
+          <label class="field"><span>Supersede gates</span><input name="affectedGates" placeholder="G4"></label>
+          <button class="btn sm" type="submit">Reopen</button>
+        </form>` : ''}
       </div>`);
 
       // One card per gate (the delivery tabs), each with its state and its steps.
@@ -127,6 +153,7 @@ export async function grid(root) {
               resolveHtml(badge(s.runState, runTone(s.runState))),
               s.validated ? '✓' : '—',
               ...(canWrite ? [resolveHtml(html`<span style="display:inline-flex;gap:4px">
+                ${s.validated || s.runState === 'RELEASED' ? '' : html`<button class="btn quiet xs" data-run="${s.id}">Run agent</button>`}
                 ${s.validated ? '' : html`<button class="btn quiet xs" data-validate="${s.id}">Validate</button>`}
                 ${s.runState === 'BLOCKED' ? '' : html`<button class="btn quiet xs" data-block="${s.id}">Block</button>`}
               </span>`)] : []),
@@ -143,7 +170,10 @@ export async function grid(root) {
     if (pick) pick.addEventListener('change', async () => { engagementId = pick.value || null; await loadBoard(); draw(); });
     const of = root.querySelector('#open-form');
     if (of) of.addEventListener('submit', (ev) => { ev.preventDefault(); openEngagement(Object.fromEntries(new FormData(of).entries())); });
+    root.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', () => runStep(b.dataset.run)));
     root.querySelectorAll('[data-validate]').forEach((b) => b.addEventListener('click', () => setStep(b.dataset.validate, { runState: 'VALIDATED', validated: true })));
+    const tf = root.querySelector('#trigger-form');
+    if (tf) tf.addEventListener('submit', (ev) => { ev.preventDefault(); recordTrigger(Object.fromEntries(new FormData(tf).entries())); tf.reset(); });
     root.querySelectorAll('[data-block]').forEach((b) => b.addEventListener('click', () => setStep(b.dataset.block, { runState: 'BLOCKED' })));
     root.querySelectorAll('[data-approve]').forEach((b) => b.addEventListener('click', () => decideGate(b.dataset.approve)));
     root.querySelectorAll('.gate-auth').forEach((f) => f.addEventListener('submit', (ev) => {

@@ -1223,8 +1223,25 @@ offers an **Approve gate** button only at CANDIDATE_READY; an electrical gate of
 server refuses anything less. `doors`/`navreach` satisfied (the GET routes are
 referenced by the screen; the nav is reachable by every commissioning writer).
 
-**Still to build (named, not pretended):** the ten agents' grounded execution and the event-driven reappraisal
-triggers (Slice 4); the commercial add-on — entitlement/seat model and server-side
+**Slice 4 — agent execution and reappraisal triggers (done).** Reusing the
+consultancy task-execution pattern: `stepExecutionBrief` (pure, provider-free)
+grounds a step in the connection identity and the step's own instruction and
+expected output under `GRID_CONDUCT` — a conduct rule that forbids any claim of
+chartership or electrical authority and any instruction to switch, energise or set
+plant; `runStep` executes the owning agent against it, records the grounded output
+as the step's `lastRun` **without validating it** (the agent produces a readiness
+candidate; independent validation is separate), and a run with no reasoning provider
+**parks the step WAITING_EVIDENCE, uncharged, faking nothing**. `recordTrigger` is
+the event-driven reappraisal (§6.3): a revision, withdrawn outage, failed test or
+new notification reopens the named steps to STALE (losing their validation) and
+marks the named gates SUPERSEDED. Routes `POST …/steps/{stepId}/run` and
+`POST …/engagements/{id}/triggers`; the screen gains a **Run agent** action per step
+and a reopen-trigger control. Covered in `gridstore.test.ts` (grounding carries no
+OT field; a no-provider run parks WAITING_EVIDENCE and never validates; a validated
+step refuses re-run; a trigger reopens a step to STALE and supersedes an approved
+electrical gate; unknown step/gate rejected).
+
+**Still to build (named, not pretended):** the commercial add-on — entitlement/seat model and server-side
 enforcement of the £100 + £50×seat math and the admin-grant / provider-status /
 effective-entitlement states — built on the existing billing abstractions **with
 live Stripe activation left behind a flag pending commercial sign-off** (Slice 5);

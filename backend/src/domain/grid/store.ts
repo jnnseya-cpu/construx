@@ -16,7 +16,7 @@
 
 import { DomainError } from '../../core/errors.ts';
 import { ulid } from '../../core/ids.ts';
-import { authorise, write, type EngineContext } from '../../engines/context.ts';
+import { authorise, runAI, write, type EngineContext } from '../../engines/context.ts';
 import {
   coverage,
   gateMeta,
@@ -47,7 +47,30 @@ const RUN_STATES: ReadonlySet<string> = new Set<GridRunState>([
   'PLANNED', 'WORKING', 'WAITING_EVIDENCE', 'WAITING_AUTHORITY', 'VALIDATED', 'RELEASED', 'STALE', 'BLOCKED',
 ]);
 
-type StepRecord = { runState: GridRunState; validated: boolean; owner?: string; blocker?: string; updatedAt: string };
+type StepRecord = {
+  runState: GridRunState;
+  validated: boolean;
+  owner?: string;
+  blocker?: string;
+  updatedAt: string;
+  /** The last agent execution of this step — its grounded output, if any. */
+  lastRun?: { at: string; summary: string; acuConsumed: number };
+};
+
+/**
+ * The professional-conduct preface for a grid agent. It reasons as a competent
+ * connection-delivery specialist, but never presents itself as chartered or
+ * authorised electrical personnel, and never generates an instruction to operate,
+ * switch or set plant — those are external facts the platform records, not acts an
+ * agent takes.
+ */
+export const GRID_CONDUCT =
+  'Apply the judgement and duty of care of an experienced HV grid-connection delivery specialist. Reason only from the ' +
+  'project sources supplied; state no value, date, rating, setting or quantity that is not in them, and do not equate MW ' +
+  'and MVA without a verified power-factor basis. You are not chartered or authorised electrical personnel: never claim ' +
+  'to be, and never issue, imply or draft any instruction to switch, energise, set a relay or operate equipment — those ' +
+  'are external authorised acts. Where evidence, authority or a reading is missing, say precisely what is needed rather ' +
+  'than assuming it.';
 type GateRecord = { authorityRecorded: boolean; authorityRef?: string; decisionApproved: boolean; decidedBy?: string; at?: string; note?: string; superseded?: boolean; expired?: boolean };
 
 export type GridEngagementState = {
@@ -175,6 +198,111 @@ export function decideGate(
   };
   const updated: GridEngagementState = { ...state, gates: { ...state.gates, [gateId]: record } };
   write(ctx, { eventType: 'GRID_GATE_DECIDED', entity: { refType: 'GridEngagement', refId: engagementId }, nextState: updated });
+  return updated;
+}
+
+/**
+ * The grounded brief an agent executes a step against — pure and provider-free, so
+ * the grounding is testable without a provider. It carries the engagement's
+ * connection identity and the step's own instruction and expected output, under the
+ * conduct rule. No switching, set-point or relay action can be expressed in it.
+ */
+export function stepExecutionBrief(state: GridEngagementState, stepId: string): {
+  connection: { reference: string; connection: string; route: string; pointOfConnection?: string };
+  step: { id: string; gate: GateId; capability: string; executes: string; output: string };
+} {
+  const step = GRID_STEPS.find((s) => s.id === stepId);
+  if (!step) throw new DomainError('UNKNOWN_STEP', `${stepId} is not a playbook step`);
+  return {
+    connection: { reference: state.reference, connection: state.connection, route: state.route, ...(state.pointOfConnection ? { pointOfConnection: state.pointOfConnection } : {}) },
+    step: { id: step.id, gate: step.gate, capability: step.capability, executes: step.executes, output: step.output },
+  };
+}
+
+/**
+ * Execute a playbook step with its owning agent, grounded in the project sources.
+ * A completed run records the grounded output on the step; it does not set
+ * `validated` — the agent produces a readiness candidate, and independent validation
+ * is a separate act (spec §4, §8). A run with no reasoning provider configured
+ * releases its hold uncharged and parks the step WAITING_EVIDENCE rather than faking
+ * a result. No run can switch, energise or set plant — there is no such tool.
+ */
+export async function runStep(ctx: EngineContext, engagementId: string, stepId: string): Promise<GridEngagementState> {
+  authorise(ctx, 'QUALITY_COMMISSIONING', 'U');
+  const state = require(ctx, engagementId);
+  const step = GRID_STEPS.find((s) => s.id === stepId);
+  if (!step) throw new DomainError('UNKNOWN_STEP', `${stepId} is not a playbook step`);
+  const current = state.steps[stepId];
+  if (current && (current.validated || current.runState === 'RELEASED')) {
+    throw new DomainError('STEP_NOT_RUNNABLE', `step ${stepId} is ${current.validated ? 'validated' : 'released'} and cannot be re-run`);
+  }
+
+  const brief = stepExecutionBrief(state, stepId);
+  const patch = (next: Partial<StepRecord>): GridEngagementState => {
+    const base = state.steps[stepId] ?? { runState: 'PLANNED' as GridRunState, validated: false, updatedAt: new Date().toISOString() };
+    const updated: GridEngagementState = { ...state, steps: { ...state.steps, [stepId]: { ...base, ...next, updatedAt: new Date().toISOString() } } };
+    write(ctx, { eventType: 'GRID_ENGAGEMENT_UPDATED', entity: { refType: 'GridEngagement', refId: engagementId }, nextState: updated });
+    return updated;
+  };
+
+  try {
+    const result = await runAI(ctx, {
+      engine: 'EXECUTIVE',
+      taskType: `grid_step:${brief.step.gate}:${step.capability}:${stepId}`,
+      capability: 'REASONING',
+      inputRefs: [{ refType: 'GridEngagement', refId: engagementId }],
+      request: {
+        task:
+          `${GRID_CONDUCT} You are the ${step.capability} agent executing step ${stepId} of the HV grid-connection ` +
+          `delivery playbook for connection ${brief.connection.reference}. Execute: ${step.executes}. Produce the ` +
+          `controlled output (${step.output}), grounded strictly in the project sources; name what is still needed rather ` +
+          'than inventing it.',
+        payload: brief,
+      },
+      toWrites: () => [],
+      requireModel: { code: 'NO_REASONING_PROVIDER', message: 'No reasoning provider is configured to execute this step' },
+    });
+    const summary = String((result.output as { narrative?: unknown; text?: unknown }).narrative ?? (result.output as { text?: unknown }).text ?? '').trim().slice(0, 8000);
+    return patch({ runState: 'WORKING', blocker: undefined, lastRun: { at: new Date().toISOString(), summary, acuConsumed: result.acuConsumed } });
+  } catch (error) {
+    if (error instanceof DomainError && error.code === 'NO_REASONING_PROVIDER') {
+      return patch({ runState: 'WAITING_EVIDENCE', blocker: 'Awaiting a reasoning provider to execute this step' });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Record a reappraisal trigger — a drawing/vendor revision, a withdrawn outage, a
+ * failed test, a new notification (spec §6.3) — that reopens impacted work: the named
+ * steps drop to STALE and lose their validation, and the named gates are marked
+ * SUPERSEDED so a reopened candidate cannot read as still approved.
+ */
+export function recordTrigger(
+  ctx: EngineContext,
+  engagementId: string,
+  input: { event: string; affectedSteps?: string[]; affectedGates?: GateId[] },
+): GridEngagementState {
+  authorise(ctx, 'QUALITY_COMMISSIONING', 'U');
+  const state = require(ctx, engagementId);
+  const now = new Date().toISOString();
+
+  const steps = { ...state.steps };
+  for (const id of input.affectedSteps ?? []) {
+    if (!GRID_STEPS.some((s) => s.id === id)) throw new DomainError('UNKNOWN_STEP', `${id} is not a playbook step`);
+    const base = steps[id] ?? { runState: 'PLANNED' as GridRunState, validated: false, updatedAt: now };
+    steps[id] = { ...base, runState: 'STALE', validated: false, blocker: `Reopened: ${input.event}`, updatedAt: now };
+  }
+
+  const gates = { ...state.gates };
+  for (const g of input.affectedGates ?? []) {
+    if (!GATE_IDS.includes(g)) throw new DomainError('UNKNOWN_GATE', `${g} is not a gate`);
+    const base = gates[g] ?? { authorityRecorded: false, decisionApproved: false };
+    gates[g] = { ...base, superseded: true, note: `Reopened: ${input.event}` };
+  }
+
+  const updated: GridEngagementState = { ...state, steps, gates };
+  write(ctx, { eventType: 'GRID_ENGAGEMENT_UPDATED', entity: { refType: 'GridEngagement', refId: engagementId }, nextState: updated });
   return updated;
 }
 

@@ -4494,6 +4494,30 @@ export const ROUTES: Route[] = [
       gridstore.decideGate(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.gateId as gridstore.GateId, body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/steps/:stepId/run',
+    description: 'Grid Connection AI — execute a playbook step with its owning agent, grounded in the project sources. Records the grounded output; does not validate (independent validation is separate). No provider configured parks the step WAITING_EVIDENCE, uncharged. No run can switch, energise or set plant.',
+    schema: { type: 'object', properties: {} },
+    handler: (platform, ctx) =>
+      gridstore.runStep(projectContext(platform, ctx), ctx.params.engagementId as string, ctx.params.stepId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/triggers',
+    description: 'Grid Connection AI — record a reappraisal trigger (a revision, withdrawn outage, failed test or new notification) that reopens impacted steps to STALE and marks impacted gates SUPERSEDED.',
+    schema: {
+      type: 'object',
+      required: ['event'],
+      properties: {
+        event: { type: 'string', minLength: 1, maxLength: 300 },
+        affectedSteps: { type: 'array', items: { type: 'string' } },
+        affectedGates: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    handler: (platform, ctx) =>
+      gridstore.recordTrigger(projectContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/grid/engagements',
     description: 'Grid Connection AI — the grid-connection engagements on this project, each with its verified digital coverage.',
