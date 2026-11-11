@@ -1020,4 +1020,36 @@ describe('tender intake · assigning every blocking return at once', () => {
       'NOTHING_TO_ASSIGN',
     );
   });
+
+  it('refuses a bulk fill that would leave every return still blocking on a missing date, instead of reporting a hollow success', () => {
+    // The real defect behind "I keep assigning returns and the gate never
+    // clears": the bulk door fills the source (it defaults to the invitation)
+    // and the owner, so a run with no internal date changed something and read
+    // as a success — yet every mandatory return still lacked its date and still
+    // blocked the submission. The gate stayed at the same number with nothing
+    // explaining why. The bulk door must now refuse and name the missing date.
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    extract(ctx, invitationId, [
+      { reference: 'R-01', title: 'Procurement questionnaire', mandatory: true },
+      { reference: 'R-02', title: 'Non-collusion certificate', mandatory: true },
+    ]);
+
+    throwsCode(
+      // Owner given, no internal date — the shape the modal allowed before.
+      () => tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER' }),
+      'BULK_ASSIGN_INCOMPLETE',
+    );
+
+    // Nothing was written: the returns are untouched, not half-assigned.
+    const stuck = tenderintake.tenderPosition(ctx, invitationId, { today: '2026-12-01' });
+    assert.equal(stuck.returns.find((d) => d.reference === 'R-01')!.owner, undefined, 'a refused bulk fill still wrote a partial assignment');
+    assert.equal(stuck.returns.find((d) => d.reference === 'R-01')!.source, undefined, 'a refused bulk fill still defaulted the source');
+
+    // Supplying the date clears all of them in one act, and the register no
+    // longer blocks — the gate can pass.
+    const done = tenderintake.assignDeliverablesBulk(ctx, invitationId, { owner: 'OWNER', internalDueBy: '2027-01-10' });
+    assert.equal(done.assigned, 2);
+    assert.deepEqual(done.blockers, [], 'the register still blocks after the date was supplied');
+  });
 });

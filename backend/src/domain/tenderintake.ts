@@ -856,6 +856,32 @@ export function assignDeliverablesBulk(
     return next;
   });
 
+  // The bulk door promises to clear *every* blocking return, so it must either
+  // do that or say why it could not — never write a half-assignment and report
+  // a success. The source always fills (it defaults to the invitation) and the
+  // owner usually defaults to the director, so a run that supplies no internal
+  // date would otherwise write owner+source, count them as "assigned", and
+  // leave all of them still blocking on the date they never got — the gate
+  // stuck at the same number with nothing explaining it. Refuse before writing,
+  // naming exactly what is still missing, so one more run with it set clears
+  // the lot. Checked before NOTHING_TO_ASSIGN, which only means "already
+  // complete" when nothing is still blocking.
+  const stillBlocking = deliverables.filter(
+    (d) => d.mandatory && (!d.owner || !d.internalDueBy || !d.source),
+  );
+  if (stillBlocking.length > 0) {
+    const missing: string[] = [];
+    if (stillBlocking.some((d) => !d.owner)) missing.push('an owner');
+    if (stillBlocking.some((d) => !d.internalDueBy)) missing.push('our internal date');
+    if (stillBlocking.some((d) => !d.source)) missing.push('a source');
+    throw new DomainError(
+      'BULK_ASSIGN_INCOMPLETE',
+      `${stillBlocking.length} mandatory ${stillBlocking.length === 1 ? 'return is' : 'returns are'} still missing ` +
+        `${missing.join(' and ')}. Set ${missing.length === 1 ? 'it' : 'them'} for all of them above and run this again — ` +
+        'the owner defaults to you and the source fills itself from the invitation, so the internal date is usually the one to add.',
+    );
+  }
+
   if (assigned === 0) {
     throw new DomainError(
       'NOTHING_TO_ASSIGN',

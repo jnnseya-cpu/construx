@@ -3709,8 +3709,9 @@ export async function pipeline(root) {
         { name: 'invitationId', label: 'Tender', type: 'select', options: scopedInvitationOptions },
         { name: 'owner', label: 'Owner for all of them', type: 'select', options: roleOptions, value: 'OWNER',
           hint: 'For a one-director business this is you. Any return that already has an owner keeps it.' },
-        { name: 'internalDueBy', label: 'Our internal date for all of them', type: 'date', required: false,
-          hint: 'Earlier than the buyer’s return. Any return that already has a date keeps it.' },
+        { name: 'internalDueBy', label: 'Our internal date for all of them', type: 'date', required: true,
+          hint: 'Required: a return with no date still blocks the submission. Earlier than the buyer’s return. ' +
+            'Any return that already has its own date keeps it.' },
         { name: 'sourceDocument', label: 'Source document', type: 'text', required: false,
           placeholder: 'Leave blank to use the invitation',
           hint: 'Left blank, the source is the invitation these returns were read from — which is the honest answer.' },

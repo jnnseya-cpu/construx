@@ -1338,7 +1338,7 @@ export async function procurement(root) {
           ? html`
             <div class="card pad0" style="margin-bottom:14px">
               <h2 style="padding:15px 17px 0">
-                Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} weeks on site` : ''}
+                Estimate build-up${estimate.durationWeeks ? ` — ${estimate.durationWeeks} week${estimate.durationWeeks === 1 ? '' : 's'} on site` : ''}
               </h2>
               <p style="padding:4px 17px 0;font-size:12.5px;color:var(--text-3);margin:0">
                 Each head is priced on the basis it actually has. Site staff, welfare, logistics, safety and quality are

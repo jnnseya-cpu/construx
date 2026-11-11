@@ -33460,3 +33460,24 @@ U+2012 figure dash → en dash, U+2015 → em dash, U+2212 minus → "-", and th
 narrow / figure / thin spaces → a normal space. Rendering is at download time over the
 frozen content, so re-downloading an already-issued document picks up the fix without
 changing its hash. Covered by `pdf.test.ts`.
+
+## 2026-11 the return-register gate could not be cleared from the bulk door
+
+"I keep assigning returns and the gate never passes" was a real defect, not a
+misread. `assignDeliverablesBulk` (backend/src/domain/tenderintake.ts) fills the
+source (which defaults to the invitation) and the owner (which the modal
+defaults to the director), but filled the internal date only when one was
+supplied — and the bulk modal left that date optional. So "Assign every blocking
+return" with no date changed the source and owner, counted them as assigned,
+reported success, and left every mandatory return still blocking on the date it
+never got. The journey's RETURN_REGISTER step then stayed at the same "N still
+without an owner, a source or a date" with nothing explaining it.
+
+Fix: the bulk door now refuses to write a half-assignment. After the merge, if
+any mandatory return is still missing owner, date or source it throws
+`BULK_ASSIGN_INCOMPLETE` naming exactly what is absent, before writing anything,
+so one more run with the date set clears the lot. The `NOTHING_TO_ASSIGN` path
+now means only "already complete" (nothing still blocking). The modal's internal
+date is now required. Covered by tenderintake.test.ts. Single-return assignment
+is unchanged — it is the deliberate incremental door and the returnables table
+shows what each return is still missing honestly.
