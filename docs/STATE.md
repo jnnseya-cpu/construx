@@ -33192,8 +33192,21 @@ ACU funding, Golden-Thread provenance) rather than replacing it.
 Proven by `tests/aigateway.test.ts` (routing per the spec's AT-01/02/04/05/06, Vertex
 skipped cleanly, the state machine, approval classification).
 
+**Increment 3 — the request lifecycle service (done).** `gateway/service.ts`'s
+`runGatewayTask` drives a canonical task through the whole §6 lifecycle — received →
+policy-checked → routed → run (walking the task-specific fallback chain, recording every
+attempt) → validated → either `AWAITING_APPROVAL` (a consequential output is a proposal,
+never auto-committed) or `COMPLETED` — emitting a `construx.ai.*` event at each transition.
+It composes the Inc.1–2 pieces and executes through an **injected seam** (`GatewayExecutor`)
+so the logic is pure and fully tested: a prohibited instruction is refused before any
+provider runs, no eligible route fails closed with nothing fabricated, an empty wallet
+contacts no provider, a failed required validator fails closed, and **the user-safe response
+never carries a provider, model or cost** (the admin record does). Covered by the service
+tests in `tests/aigateway.test.ts` (AT-04/05/06/07, wallet, validators, event emission).
+
 **Still to build (the spec's later increments, named not pretended):** the canonical
-`POST /v1/ai/requests` endpoint + execution wiring over the orchestrator (Inc.3), evidence/
+`POST /v1/ai/requests` endpoint + the production executor adapter over the orchestrator
+(Inc.3b), evidence/
 confidence fail-closed validators and the context builder (Inc.4), the approval service as a
 persisted gateway state (Inc.5), the `construx.ai.*` event set + ACU/audit alignment (Inc.6),
 resilience/circuit-breaker surfacing (Inc.7), and the migration that blocks direct provider
