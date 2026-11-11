@@ -3,7 +3,8 @@ import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
 import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
-import { groupOf } from './group/directory.ts';
+import { groupOf, groupOfTenant } from './group/directory.ts';
+import { primaryCompanyOf } from './group/onboarding.ts';
 import { SyncEngine } from './field/sync.ts';
 import { ACUWallet, TRIAL_GRANT_NOTE, type ACUCaps, type ACUEntry , type WalletSignal } from './billing/acu.ts';
 import { statfsSync } from 'node:fs';
@@ -3799,6 +3800,39 @@ export class Platform {
     return { ...subscription, grantedFree: false };
   }
 
+  /**
+   * Whether this tenancy holds its paid add-ons free of charge — the test the Grid
+   * add-on's entitlement reads through `ctx.freeExempt`.
+   *
+   * A free grant on the subscription is *not* enough on its own, because a company
+   * of an ordinary **paying** group carries one too: `coverCompany` marks every
+   * member granted-free to mean "not billed individually — the group pays
+   * centrally", which is coverage, not exemption. The add-on is a priced product
+   * that a paying group still owes for. The honest question is whether the entity
+   * that actually settles this tenancy's bill is itself exempt:
+   *
+   *   - a company standing alone settles its own subscription, so its own free
+   *     grant is the answer;
+   *   - a company in a group is billed on the group's **primary** subscription, so
+   *     the primary's free grant is the answer — true only for a genuinely exempt
+   *     group (the operator granted the group free, e.g. the one account free until
+   *     a fixed term), false for a paying group whose members are merely covered.
+   *
+   * Both reads go through `subscription`, so the exemption's **term is already
+   * applied**: once it lapses this answers false and the add-on becomes chargeable.
+   */
+  #addonFreeExempt(tenantId: string, now: Date): boolean {
+    if (!this.#subscriptions.has(tenantId)) return false;
+    if (this.subscription(tenantId, now).grantedFree !== true) return false;
+    const group = groupOfTenant(this, tenantId);
+    if (!group) return true; // stands alone and is directly exempt
+    const primary = primaryCompanyOf(this, group);
+    if (!primary || primary.tenantId === tenantId) return true; // this is (or stands in for) the paying entity, and it is exempt
+    // A member: free only when the group's paying entity is itself exempt, never
+    // from the coverage flag the member carries for a paying group.
+    return this.#subscriptions.has(primary.tenantId) && this.subscription(primary.tenantId, now).grantedFree === true;
+  }
+
   subscription(tenantId: string, now = new Date()): Subscription {
     const subscription = this.#subscriptions.get(tenantId);
     if (!subscription) throw new NotFoundError(`No subscription for tenant ${tenantId}`);
@@ -4673,17 +4707,13 @@ export class Platform {
       // provisioned per company. `billing/addonstore.ts` derives entitlement and
       // seat enforcement from it; the customer never reads this record directly.
       ...(this.addonGrant(auth.tenantId) ? { addonGrant: this.addonGrant(auth.tenantId)! } : {}),
-      // Whether this tenancy's package is granted free of charge right now — the
-      // operator's exemption or a group's cover — resolved through the one
-      // subscription accessor so the term is already applied: an exemption that
-      // has run out reads false here, and the add-on it was covering becomes
-      // chargeable that day. A free-exempt tenancy holds its paid add-ons free
-      // too; `billing/addonstore.ts` is the only reader. Guarded because an
-      // unprovisioned tenancy has no subscription and this must not throw where
-      // `standing` is already fail-closing on the same absence.
-      ...(this.#subscriptions.has(auth.tenantId) && this.subscription(auth.tenantId).grantedFree === true
-        ? { freeExempt: true }
-        : {}),
+      // Whether this tenancy holds its paid add-ons free of charge right now — a
+      // genuine operator exemption, its own or the one on its group's paying
+      // company, never the coverage flag a member of a *paying* group carries.
+      // `#addonFreeExempt` draws that line and applies the exemption's term, so an
+      // exemption that has run out reads false here and the add-on becomes
+      // chargeable that day. `billing/addonstore.ts` is the only reader.
+      ...(this.#addonFreeExempt(auth.tenantId, new Date()) ? { freeExempt: true } : {}),
       // Whether a maker-checker rule has anybody to hand the second act to.
       //
       // Resolved lazily, because almost no command asks: only a gate decision,

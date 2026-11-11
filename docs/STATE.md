@@ -1293,17 +1293,28 @@ The add-on is **fully priced and whoever is allocated it must pay**: the allocat
 it usable only once the billing provider confirms an active charge.
 
 **The one exception — a free-exemption account (done).** A tenancy whose package the
-operator has granted free of charge (the group/exemption account, e.g. one free until a
-fixed term) holds the paid add-on **free too**: its allocation alone makes the add-on
-ACTIVE and usable, with no billing provider in the loop, and every use is free (no named
-seat need be bought). This is resolved onto the context as `freeExempt` (from the single
-subscription accessor, so the exemption's **term is already applied**): the day the term
-ends `freeExempt` reads false and the add-on falls straight back to the grant-AND-provider
-machine — **chargeable like everyone else**. The grant is still required; an exemption
-covers the *charge*, it does not allocate the module. `effectiveEntitlement(adminGrant,
-providerStatus, { freeExempt })` is the pure rule; `addonEntitlement` surfaces `freeExempt`
-so the console shows "included free" rather than a price the company will never be asked
-for.
+operator has granted free of charge holds the paid add-on **free too**: its allocation
+alone makes the add-on ACTIVE and usable, with no billing provider in the loop, and every
+use is free (no named seat need be bought). This is resolved onto the context as
+`freeExempt` (from the single subscription accessor, so the exemption's **term is already
+applied**): the day the term ends `freeExempt` reads false and the add-on falls straight
+back to the grant-AND-provider machine — **chargeable like everyone else**. The grant is
+still required; an exemption covers the *charge*, it does not allocate the module.
+`effectiveEntitlement(adminGrant, providerStatus, { freeExempt })` is the pure rule;
+`addonEntitlement` surfaces `freeExempt` so the console shows "included free" rather than a
+price the company will never be asked for.
+
+*Exemption vs. group coverage — the line that matters (done).* "Granted free" on a
+subscription is **not** sufficient on its own, because `coverCompany` marks every company
+of an ordinary **paying** group granted-free to mean "the group pays centrally, nothing is
+billed to me" — coverage, not exemption, and the add-on is a priced product that paying
+group still owes for. `Platform.#addonFreeExempt` draws the line by the entity that
+actually settles the bill: a company standing alone answers on its own free grant; a
+company in a group answers on the group's **primary** company's free grant — true only for
+a genuinely exempt group (e.g. the one account free until a fixed term), false for a
+paying group whose members merely carry coverage. Proven by `tests/addonfreeexempt.test.ts`
+(a paying group's member is LOCKED until paid; an exempt group's member and its primary are
+free; a solo company is free only by its own exemption).
 
 The **named seats** are tenant-side: `billing/addonstore.ts` assigns them within the paid
 quantity (`BILLING_ACU:'U'`), idempotently, refusing the overflow — except for a free-exempt

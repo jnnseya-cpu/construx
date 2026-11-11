@@ -94,16 +94,24 @@ export type EngineContext = {
    */
   addonGrant?: AddonGrantRecord;
   /**
-   * Whether this tenancy's package is granted free of charge right now — the
-   * operator's exemption or a group's cover, resolved once beside `addonGrant`
-   * from the subscription and with its term already applied, so a grant that
-   * has run out reads `false` here on the day after it ends.
+   * Whether this tenancy holds its **paid add-ons free of charge** right now — a
+   * genuine operator exemption, resolved once beside `addonGrant` and with its
+   * term already applied, so an exemption that has run out reads `false` here on
+   * the day after it ends.
    *
-   * A free-exempt tenancy holds its **paid add-ons free too**: an add-on the
-   * operator has allocated to it is usable without the billing provider ever
-   * confirming a charge, for as long as the exemption lasts. The moment the term
-   * ends the add-on falls back to the ordinary grant-AND-provider machine and
-   * becomes chargeable like everyone else. Absent means not exempt, which is
+   * "Genuine" is load-bearing. A company of an ordinary **paying** group also
+   * carries a free grant on its own subscription — coverage, meaning "the group
+   * pays centrally, nothing is billed to me", not exemption — and the add-on is a
+   * priced product the group still owes for. So this is true only when the entity
+   * that actually settles the bill is itself exempt: the company's own free grant
+   * when it stands alone, or its group's **primary** company's free grant when it
+   * is in a group (true for a genuinely exempt group, false for a paying one). See
+   * `Platform.#addonFreeExempt`.
+   *
+   * A free-exempt tenancy's allocated add-on is usable without the billing
+   * provider ever confirming a charge, for as long as the exemption lasts; the
+   * moment the term ends it falls back to the ordinary grant-AND-provider machine
+   * and becomes chargeable like everyone else. Absent means not exempt, which is
    * every ordinary tenancy. `billing/addonstore.ts` is the only reader.
    */
   freeExempt?: boolean;
