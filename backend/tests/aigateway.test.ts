@@ -12,6 +12,13 @@ import { selectRoute, routeIsEligible, type ProviderStatus } from '../src/ai/gat
 import { approvalRequirement, assertGrantAllowed, screenInstruction } from '../src/ai/gateway/policy.ts';
 import { runGatewayTask, type ExecutorResult, type GatewayExecutor } from '../src/ai/gateway/service.ts';
 import type { AITaskRequest, ValidationKind } from '../src/ai/gateway/contract.ts';
+import { confidenceBand, executionDescriptor, orchestratorExecutor } from '../src/ai/gateway/executor.ts';
+import { WIRED_PROVIDERS } from '../src/ai/gateway/contract.ts';
+import type { ProviderAvailability } from '../src/ai/gateway/router.ts';
+import { AIOrchestrator } from '../src/ai/orchestrator.ts';
+import { ACUWallet } from '../src/billing/acu.ts';
+import type { EngineContext } from '../src/engines/context.ts';
+import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
 
 /**
  * The CONSTRUX AI Gateway, Increment 1–2: the canonical contract, the versioned
@@ -224,5 +231,156 @@ describe('service — events are emitted across the lifecycle', () => {
     assert.ok(events.includes('construx.ai.route.selected'));
     assert.ok(events.includes('construx.ai.provider.attempted'));
     assert.ok(events.includes('construx.ai.request.completed'));
+  });
+});
+
+/**
+ * Increment 3b — the production executor over the real orchestrator.
+ *
+ * These exercise `orchestratorExecutor` for real (not the deterministic test
+ * double above): a genuine `AIOrchestrator` with a funded `ACUWallet`, driven
+ * through `runGatewayTask` exactly as the `POST /v1/ai/requests` endpoint does.
+ * They prove the three things the endpoint relies on: the vendor reply is
+ * normalised to a user-safe result, the ACU hold is actually settled, and the
+ * provider identity never crosses into the user response.
+ */
+
+/** A reasoning provider that answers with a narrative + confidence, like a real adapter. */
+function narratingProvider(opts: { confidence?: number; synthetic?: boolean; cost?: number } = {}): AIProviderAdapter & { calls: number } {
+  const p = {
+    name: 'OPENAI' as const,
+    capability: 'REASONING' as const,
+    multimodal: false,
+    transmits: true,
+    calls: 0,
+    estimateCostMinor: () => opts.cost ?? 100,
+    costAtTokensMinor: () => opts.cost ?? 100,
+    healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      p.calls += 1;
+      return {
+        provider: 'OPENAI',
+        modelClass: request.modelClass ?? 'default',
+        output: { narrative: 'The invitation is met on 14 of 15 clauses.' },
+        rawCostMinor: opts.cost ?? 100,
+        latencyMs: 9,
+        ...(opts.confidence !== undefined ? { confidence: opts.confidence } : {}),
+        ...(opts.synthetic ? { synthetic: true } : {}),
+      };
+    },
+  };
+  return p as AIProviderAdapter & { calls: number };
+}
+
+function gatewayContext(orchestrator: AIOrchestrator, wallet: ACUWallet): EngineContext {
+  // The executor reads only this narrow slice of the context — the orchestrator,
+  // the wallet, the ids and the actor's roles. Built directly so the test stays
+  // about the gateway, not the whole platform boot.
+  return {
+    orchestrator,
+    wallet,
+    tenantId: 'tenant-1',
+    projectId: 'project-1',
+    auth: { actorId: 'user-1', roles: [], regulatorAiEnabled: false },
+  } as unknown as EngineContext;
+}
+
+const everyWiredUp: ProviderAvailability = (provider) => ({
+  wired: (WIRED_PROVIDERS as readonly string[]).includes(provider),
+  healthy: true,
+  cleared: true,
+});
+
+describe('executor — confidence (0–1) maps to the user-facing band', () => {
+  it('banishes the raw number for a band', () => {
+    assert.equal(confidenceBand(0.9), 'HIGH');
+    assert.equal(confidenceBand(0.5), 'MEDIUM');
+    assert.equal(confidenceBand(0.2), 'LOW');
+    assert.equal(confidenceBand(undefined), 'MEDIUM');
+  });
+});
+
+describe('executor — descriptor is the one source for engine/capability/taskType', () => {
+  it('a vision profile runs on PERCEPTION, a reasoning profile on REASONING', () => {
+    assert.equal(executionDescriptor('vision.drawing_extract').capability, 'PERCEPTION');
+    assert.equal(executionDescriptor('contract.obligation_analysis').capability, 'REASONING');
+    assert.equal(executionDescriptor('tender.compliance_matrix').taskType, 'gateway:tender.compliance_matrix');
+  });
+});
+
+describe('executor — a real orchestrator run through the gateway (Inc.3b)', () => {
+  it('COMPLETED, ACU settled from the hold, no provider/model leak to the user', async () => {
+    const wallet = new ACUWallet('tenant-1');
+    wallet.grantTrialCredit(10_000);
+    const orchestrator = new AIOrchestrator({
+      reasoning: narratingProvider({ confidence: 0.9 }),
+      perception: narratingProvider({ confidence: 0.9 }),
+    });
+    const ctx = gatewayContext(orchestrator, wallet);
+
+    const { user, admin } = await runGatewayTask({
+      request: req({ inputRefs: [] }),
+      availability: everyWiredUp,
+      execute: orchestratorExecutor(ctx),
+      requestId: 'prod-1',
+      reserveAcu: () => ({ ok: true, reserved: 12 }),
+    });
+
+    assert.equal(user.status, 'COMPLETED');
+    assert.equal(user.result?.confidenceBand, 'HIGH');
+    assert.match(user.result?.summary ?? '', /invitation is met/);
+    // The user-safe response names no vendor, model or raw cost.
+    const serialised = JSON.stringify(user);
+    assert.equal(serialised.includes('OPENAI'), false);
+    assert.equal(serialised.includes('rawCostMinor'), false);
+    assert.equal('selectedProvider' in (user as Record<string, unknown>), false);
+    // The admin record does, and the hold was really settled (acu consumed > 0).
+    assert.ok(admin.selectedProvider !== null);
+    assert.ok((admin.providerUsage.acuConsumed ?? 0) > 0, 'ACU was settled, not left on a hold');
+  });
+
+  it('labels a deterministic stand-in as not model reasoning (never passes it off)', async () => {
+    const wallet = new ACUWallet('tenant-1');
+    wallet.grantTrialCredit(10_000);
+    const orchestrator = new AIOrchestrator({
+      reasoning: narratingProvider({ confidence: 0.9, synthetic: true }),
+      perception: narratingProvider({ confidence: 0.9, synthetic: true }),
+    });
+    const ctx = gatewayContext(orchestrator, wallet);
+
+    const { user } = await runGatewayTask({
+      request: req({ inputRefs: [] }),
+      availability: everyWiredUp,
+      execute: orchestratorExecutor(ctx),
+      requestId: 'prod-2',
+      reserveAcu: () => ({ ok: true, reserved: 12 }),
+    });
+
+    assert.equal(user.status, 'COMPLETED');
+    assert.ok((user.result?.limitations ?? []).some((l) => /stand-in|not model reasoning/i.test(l)));
+  });
+
+  it('fails closed when an input of unknown provenance cannot be cleared (never fabricates)', async () => {
+    // A ref the orchestrator cannot resolve is classified at the highest
+    // sensitivity, and no provider is cleared for it — so the whole chain is
+    // refused and the gateway returns FAILED rather than an invented answer.
+    const wallet = new ACUWallet('tenant-1');
+    wallet.grantTrialCredit(10_000);
+    const orchestrator = new AIOrchestrator({
+      reasoning: narratingProvider({ confidence: 0.9 }),
+      perception: narratingProvider({ confidence: 0.9 }),
+    });
+    const ctx = gatewayContext(orchestrator, wallet);
+
+    const { user } = await runGatewayTask({
+      request: req({ inputRefs: ['opaque-handle'] }),
+      availability: everyWiredUp,
+      execute: orchestratorExecutor(ctx),
+      requestId: 'prod-3',
+      reserveAcu: () => ({ ok: true, reserved: 12 }),
+    });
+
+    assert.equal(user.status, 'FAILED');
+    assert.equal(user.result, undefined, 'no result body on a fail-closed refusal');
   });
 });

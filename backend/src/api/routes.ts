@@ -27,6 +27,10 @@ import * as notificationRender from '../notifications/render.ts';
 import type { EventSource } from '../goldenthread/types.ts';
 import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
+import { runGatewayTask } from '../ai/gateway/service.ts';
+import { executionDescriptor, orchestratorExecutor } from '../ai/gateway/executor.ts';
+import { isTaskProfile, WIRED_PROVIDERS, type AITaskRequest, type TaskProfile } from '../ai/gateway/contract.ts';
+import type { ProviderAvailability } from '../ai/gateway/router.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, actBudget, envelopeRegister, grantEnvelope, projectAutonomousSpend, revokeEnvelope, setActBudget } from '../agents/mandate.ts';
@@ -27405,6 +27409,100 @@ export const ROUTES: Route[] = [
         wallet: engineCtx.wallet,
         projectId,
       });
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/ai/requests',
+    description: 'Run one canonical CONSTRUX AI task through the provider-neutral gateway and return a user-safe result',
+    schema: {
+      type: 'object',
+      required: ['projectId', 'taskProfile', 'instruction'],
+      properties: {
+        projectId: stringField,
+        taskProfile: stringField,
+        instruction: stringField,
+        inputRefs: { type: 'array', items: { type: 'string', minLength: 1 } },
+        outputSchema: { type: 'string', minLength: 1 },
+        approvalPolicy: { type: 'string', minLength: 1 },
+        acuSponsor: { type: 'string', minLength: 1 },
+        idempotencyKey: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: async (platform, ctx) => {
+      const input = body<{
+        projectId: string;
+        taskProfile: string;
+        instruction: string;
+        inputRefs?: string[];
+        outputSchema?: string;
+        approvalPolicy?: string;
+        acuSponsor?: string;
+        idempotencyKey?: string;
+      }>(ctx);
+
+      // The task profile is the whole contract — an unknown one is a client
+      // error, named as one, before a project is even resolved.
+      if (!isTaskProfile(input.taskProfile)) {
+        throw new DomainError('AI_UNKNOWN_TASK_PROFILE', `${input.taskProfile} is not a CONSTRUX AI task profile`, 400);
+      }
+      const taskProfile: TaskProfile = input.taskProfile;
+
+      // The gateway is an AI action: it funnels through the same project
+      // resolution, the same AI_EXECUTION authority and the same phase gate as
+      // every other AI route, so a caller who may not run AI here is refused
+      // before any provider is contacted.
+      const engineCtx = projectContext(platform, ctx, input.projectId);
+      authorise(engineCtx, 'AI_EXECUTION', 'X', { lifecyclePhase: currentPhase(engineCtx) });
+
+      // Price the work under the project's wallet so the gateway can fail
+      // closed on an empty wallet *before* a provider is contacted (spec §14,
+      // P07). The real debit is taken by the orchestrator on settlement.
+      const descriptor = executionDescriptor(taskProfile);
+      const quote = platform.orchestrator.quote({
+        capability: descriptor.capability,
+        engine: descriptor.engine,
+        taskType: descriptor.taskType,
+        wallet: engineCtx.wallet,
+        projectId: input.projectId,
+      });
+
+      // Every wired provider is offered to the router as reachable; the
+      // orchestrator applies the real clearance, health and context-window
+      // constraints when it runs, throwing if the chosen provider cannot serve
+      // the work — which the gateway service catches to walk the fallback chain
+      // or fail closed. (Data-classification clearance in the router itself is
+      // Increment 4's context builder.)
+      const availability: ProviderAvailability = (provider) => ({
+        wired: (WIRED_PROVIDERS as readonly string[]).includes(provider),
+        healthy: true,
+        cleared: true,
+      });
+
+      const request: AITaskRequest = {
+        taskProfile,
+        tenantId: engineCtx.tenantId,
+        projectId: input.projectId,
+        inputRefs: input.inputRefs ?? [],
+        instruction: input.instruction,
+        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
+        ...(input.approvalPolicy ? { approvalPolicy: input.approvalPolicy } : {}),
+        ...(input.acuSponsor ? { acuSponsor: input.acuSponsor } : {}),
+        idempotencyKey: input.idempotencyKey ?? ulid(),
+      };
+
+      const outcome = await runGatewayTask({
+        request,
+        availability,
+        execute: orchestratorExecutor(engineCtx),
+        reserveAcu: () => ({ ok: quote.affordable, reserved: quote.estimatedChargeMinor }),
+        requestId: request.idempotencyKey,
+      });
+
+      // Only ever the user-safe half — the provider, model and raw cost on the
+      // admin record never cross this boundary (spec P03).
+      return outcome.user;
     },
   },
 

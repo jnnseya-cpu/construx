@@ -33204,11 +33204,32 @@ contacts no provider, a failed required validator fails closed, and **the user-s
 never carries a provider, model or cost** (the admin record does). Covered by the service
 tests in `tests/aigateway.test.ts` (AT-04/05/06/07, wallet, validators, event emission).
 
-**Still to build (the spec's later increments, named not pretended):** the canonical
-`POST /v1/ai/requests` endpoint + the production executor adapter over the orchestrator
-(Inc.3b), evidence/
-confidence fail-closed validators and the context builder (Inc.4), the approval service as a
-persisted gateway state (Inc.5), the `construx.ai.*` event set + ACU/audit alignment (Inc.6),
+**Increment 3b — the canonical endpoint + the production executor (done).**
+`gateway/executor.ts`'s `orchestratorExecutor(ctx)` is the one place the provider-neutral
+gateway meets the real `AIOrchestrator`: it **reuses** `orchestrator.execute` (adapter
+selection, ACU reserve/settle, the provider call) rather than re-implementing any of it,
+forces the gateway's chosen provider by passing every *other* wired provider as
+`avoidProviders`, settles the ACU hold on success, and normalises the vendor reply into the
+canonical `UserSafeResult` — a summary, a confidence **band** (not the raw number) and
+source-anchored evidence — with the provider name, model and raw cost kept on the admin
+record and never crossing to the user. A deterministic stand-in is labelled as such in the
+result's limitations, never passed off as model reasoning. `executionDescriptor(profile)` is
+the single source mapping a task profile → `{engine, capability, taskType}`, used by both the
+executor and the endpoint's cost quote. `POST /v1/ai/requests` (`backend/src/api/routes.ts`)
+is the canonical entry point: it resolves the project, authorises `AI_EXECUTION:X` under the
+current phase gate like every other AI route, quotes the work to **fail closed on an empty
+wallet before any provider is contacted**, runs `runGatewayTask`, and returns **only** the
+user-safe half. Covered by the Inc.3b tests in `tests/aigateway.test.ts` (real orchestrator +
+funded wallet: COMPLETED with the ACU hold actually settled and no provider/model/cost leak;
+a synthetic stand-in labelled; and an input of unknown provenance failing closed with no
+fabricated body). Validation is deliberately left empty by the executor — an honest "not yet
+checked", not a faked pass — until Inc.4 installs the canonical validators.
+
+**Still to build (the spec's later increments, named not pretended):** evidence/confidence
+fail-closed validators and the context builder that resolves and redacts input refs by real
+sensitivity (Inc.4), the approval service as a persisted gateway state with the read-back and
+approve endpoints (Inc.5), the `construx.ai.*` event set written onto the Golden Thread +
+ACU/audit alignment so the user-safe ACU figures reflect settled actuals (Inc.6),
 resilience/circuit-breaker surfacing (Inc.7), and the migration that blocks direct provider
 egress (Inc.8). **Vertex AI** is named in policy but not wired — it awaits Google Cloud
 credentials; the router already skips it as `NOT_WIRED`.
