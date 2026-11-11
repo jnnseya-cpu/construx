@@ -33378,10 +33378,37 @@ a provider not cleared for it (fail-closed, proven by the unknown-provenance tes
 gateway rides on that single source rather than duplicating it (rule 2). What a later pass
 adds here is redaction of the resolved refs into a provider-safe view.
 
-**Still to build (the spec's later increments, named not pretended):** the approval service as
-a persisted gateway state with the read-back and
-approve endpoints (Inc.5), the `construx.ai.*` event set written onto the Golden Thread +
-ACU/audit alignment so the user-safe ACU figures reflect settled actuals (Inc.6),
-resilience/circuit-breaker surfacing (Inc.7), and the migration that blocks direct provider
-egress (Inc.8). **Vertex AI** is named in policy but not wired — it awaits Google Cloud
-credentials; the router already skips it as `NOT_WIRED`.
+**Increment 5 — the persisted request + human approval gate (done).** `gateway/store.ts`
+turns a run's user-safe outcome into a durable Golden-Thread record and governs its release.
+`persistGatewayRequest` writes `AI_GATEWAY_REQUESTED` (a new `AIGatewayRequest` entity,
+classified `AI_EXECUTION` so it is operator-blind and tenant-read) carrying **only the
+user-safe half** — summary, confidence band, evidence, approval state, ACU figures — and the
+approval authority the task demands; the provider, model and raw cost on the admin record are
+never written to this customer-scoped entity (spec P03, proven by a leak-scan test).
+`readGatewayRequest` reads it back, scoped to the project it was raised in (a sibling project
+in the same tenant cannot see it). `approveGatewayRequest` / `rejectGatewayRequest` are the
+release gate: each authorises the stored `{area, code}` capability — so a user without the
+task's authority is refused (e.g. the QS cannot release a `CONTRACTS_CLAIMS:A` contract
+output) — and writes `AI_GATEWAY_APPROVED` / `AI_GATEWAY_REJECTED`, both `aiAllowed: false`
+in the catalogue, which is what structurally stops the gateway approving its own proposal. A
+rejection withholds the result and records the reason; a decision on a request not
+`AWAITING_APPROVAL` is refused. Four new routes: `POST /v1/ai/requests` now persists the
+outcome and is idempotent on a caller-supplied key (a replay returns the stored request,
+nothing re-runs), `GET /v1/projects/:projectId/ai/requests` lists a project's requests
+(held ones first for the reviewer, then the decided record), `GET
+/v1/projects/:projectId/ai/requests/:requestId` reads one back (user-safe only), and `POST
+/v1/projects/:projectId/ai/requests/:requestId/approvals` takes the approve/reject decision.
+The **console door** is a panel on the project **Autopilot** screen (`frontend/pages/autopilot.js`):
+it lists the held outputs, shows each one's summary/evidence/limitations on demand (re-reading
+the single request), and offers Release / Refuse — the decide buttons appearing only for the
+person who holds the task's own authority, read from the output's own `approval.roles`. Covered
+by the Inc.5 tests in `tests/aigateway.test.ts` (persist + read-back, provider-leak scan,
+idempotency, project scoping, authority-gated release, reject-withholds-result, not-awaiting
+refusal, empty-reason refusal, project list) and by `tests/doors.test.ts` (every read route has
+a console door).
+
+**Still to build (the spec's later increments, named not pretended):** the `construx.ai.*`
+event set written onto the Golden Thread + ACU/audit alignment so the user-safe ACU figures
+reflect settled actuals (Inc.6), resilience/circuit-breaker surfacing (Inc.7), and the
+migration that blocks direct provider egress (Inc.8). **Vertex AI** is named in policy but
+not wired — it awaits Google Cloud credentials; the router already skips it as `NOT_WIRED`.

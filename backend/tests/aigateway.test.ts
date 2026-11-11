@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { before, describe, it } from 'node:test';
 import {
   TASK_PROFILES,
   canTransition,
@@ -19,6 +19,20 @@ import { AIOrchestrator } from '../src/ai/orchestrator.ts';
 import { ACUWallet } from '../src/billing/acu.ts';
 import type { EngineContext } from '../src/engines/context.ts';
 import type { AIProviderAdapter, ProviderRequest, ProviderResponse } from '../src/ai/providers/types.ts';
+import {
+  approveGatewayRequest,
+  listGatewayRequests,
+  persistGatewayRequest,
+  readGatewayRequest,
+  rejectGatewayRequest,
+} from '../src/ai/gateway/store.ts';
+import type { UserSafeResponse } from '../src/ai/gateway/contract.ts';
+import { ROUTES } from '../src/api/routes.ts';
+import { lookupEventType } from '../src/goldenthread/eventTypes.ts';
+import { classifyEntity } from '../src/identity/entityAccess.ts';
+import { Platform } from '../src/platform.ts';
+import { seedDemoProject, type SeedResult } from '../src/seed.ts';
+import { throwsCode } from './helpers.ts';
 
 /**
  * The CONSTRUX AI Gateway, Increment 1–2: the canonical contract, the versioned
@@ -477,5 +491,160 @@ describe('executor — a required floor failing refuses the whole task (Inc.4 en
     const { user } = await run({ narrative: 'Forecast final cost reconciled.', calc: { op: 'sum', operands: [100, 200], result: 300 } });
     assert.equal(user.status, 'COMPLETED');
     assert.match(user.result?.summary ?? '', /reconciled/);
+  });
+});
+
+/**
+ * Increment 5 — the persisted request + human approval gate (spec §6, §11, §16).
+ *
+ * The pure service drives a task to a terminal state in memory; this increment
+ * makes that outcome a durable Golden-Thread record that can be read back by id
+ * and, where the output is consequential, held until a named, authorised person
+ * releases it. These run against a real platform, ledger and identity model —
+ * the same `persistGatewayRequest` / `readGatewayRequest` / `approve…` / `reject…`
+ * the endpoint calls — so the scope, the authority and the provider-hiding are
+ * proven end to end rather than asserted about a double.
+ */
+describe('gateway store — a request is persisted, read back, and held for a human (Inc.5)', () => {
+  let platform: Platform;
+  let seed: SeedResult;
+
+  before(async () => {
+    platform = new Platform();
+    seed = await seedDemoProject(platform);
+  });
+
+  // The requester is any delivery user who may write; the approver must hold the
+  // task's approval authority. A tender compliance task is released by the bid
+  // authority (ESTIMATE_TENDER:A) — the owner holds it, the QS does not.
+  const asQS = () => platform.context(seed.users.qs!.auth, seed.projectId, { source: 'WEB' });
+  const asOwner = () => platform.context(seed.users.owner!.auth, seed.projectId, { source: 'WEB' });
+
+  const held = (id: string): UserSafeResponse => ({
+    requestId: id,
+    status: 'AWAITING_APPROVAL',
+    taskProfile: 'tender.compliance_matrix',
+    result: { summary: 'The invitation is met on 14 of 15 clauses.', findings: [], evidence: [{ sourceId: 'itt-1' }], limitations: [], confidenceBand: 'HIGH' },
+    approval: { required: true, roles: ['ESTIMATE_TENDER:A'] },
+    acu: { reserved: 12, settled: 0 },
+  });
+  const AUTH = { area: 'ESTIMATE_TENDER', code: 'A' } as const;
+
+  it('is reachable, classified, and the decision events refuse an AI author', () => {
+    for (const [method, pattern] of [
+      ['POST', '/v1/ai/requests'],
+      ['GET', '/v1/projects/:projectId/ai/requests'],
+      ['GET', '/v1/projects/:projectId/ai/requests/:requestId'],
+      ['POST', '/v1/projects/:projectId/ai/requests/:requestId/approvals'],
+    ] as const) {
+      assert.ok(ROUTES.some((r) => r.method === method && r.pattern === pattern), `${method} ${pattern} has no route`);
+    }
+    // The persisted request is an AI-execution entity (operator-blind, tenant-read).
+    assert.deepEqual(classifyEntity('AIGatewayRequest'), { area: 'AI_EXECUTION' });
+    // Releasing or rejecting a held output is a human decision — no AI actor may author it.
+    assert.equal(lookupEventType('AI_GATEWAY_APPROVED')?.aiAllowed, false);
+    assert.equal(lookupEventType('AI_GATEWAY_REJECTED')?.aiAllowed, false);
+    // The run that produced the output may be AI-authored; the entity is created by it.
+    assert.equal(lookupEventType('AI_GATEWAY_REQUESTED')?.aiAllowed, true);
+    assert.equal(lookupEventType('AI_GATEWAY_REQUESTED')?.creates, true);
+  });
+
+  it('persists a held request and reads it back, with no provider/model/cost on it', () => {
+    const { response, reused } = persistGatewayRequest(asQS(), { response: held('g-read'), authority: AUTH });
+    assert.equal(reused, false);
+    assert.equal(response.status, 'AWAITING_APPROVAL');
+
+    const back = readGatewayRequest(asQS(), 'g-read');
+    assert.ok(back);
+    assert.equal(back!.status, 'AWAITING_APPROVAL');
+    assert.equal(back!.approval.required, true);
+    assert.match(back!.result?.summary ?? '', /14 of 15/);
+    // Nothing the operator keeps ever crossed into the persisted customer record.
+    const serialised = JSON.stringify(back);
+    for (const leak of ['OPENAI', 'ANTHROPIC', 'GEMINI', 'rawCost', 'providerCost', 'selectedModel', 'selectedProvider']) {
+      assert.equal(serialised.includes(leak), false, `persisted request leaked ${leak}`);
+    }
+  });
+
+  it('is idempotent on the request id — a repeat returns the stored request unchanged', () => {
+    const first = persistGatewayRequest(asQS(), { response: held('g-idem'), authority: AUTH });
+    assert.equal(first.reused, false);
+    // A second persist under the same id (e.g. an idempotent replay) does not duplicate.
+    const second = persistGatewayRequest(asQS(), { response: { ...held('g-idem'), status: 'COMPLETED' }, authority: AUTH });
+    assert.equal(second.reused, true);
+    assert.equal(second.response.status, 'AWAITING_APPROVAL', 'the stored state wins, not the replayed one');
+  });
+
+  it('a request is read back only inside its own project, not a sibling in the same tenant', () => {
+    persistGatewayRequest(asQS(), { response: held('g-scope'), authority: AUTH });
+    // The governance scope is a different project ledger in the same tenant.
+    const governance = platform.context(seed.users.qs!.auth, `${seed.tenantId}-governance`, { source: 'WEB' });
+    assert.equal(readGatewayRequest(governance, 'g-scope'), undefined);
+  });
+
+  it('the bid authority releases a held output; the result stays, the gate closes', () => {
+    persistGatewayRequest(asQS(), { response: held('g-approve'), authority: AUTH });
+    const out = approveGatewayRequest(asOwner(), 'g-approve');
+    assert.equal(out.status, 'COMPLETED');
+    assert.equal(out.approval.required, false);
+    assert.match(out.result?.summary ?? '', /14 of 15/);
+    // And the read-back reflects the decision.
+    assert.equal(readGatewayRequest(asQS(), 'g-approve')?.status, 'COMPLETED');
+  });
+
+  it('a user without the task authority cannot release the output', () => {
+    // A contract-obligation output is released by the contract authority
+    // (CONTRACTS_CLAIMS:A). The QS authors commercial documents but holds no
+    // approve right there — by construction, so one person is never both ends.
+    const contractHeld: UserSafeResponse = {
+      requestId: 'g-denied',
+      status: 'AWAITING_APPROVAL',
+      taskProfile: 'contract.obligation_analysis',
+      result: { summary: 'Clause 60.1(12) carries the risk.', findings: [], evidence: [{ sourceId: 'c-1' }], limitations: [], confidenceBand: 'HIGH' },
+      approval: { required: true, roles: ['CONTRACTS_CLAIMS:A'] },
+      acu: { reserved: 12, settled: 0 },
+    };
+    persistGatewayRequest(asQS(), { response: contractHeld, authority: { area: 'CONTRACTS_CLAIMS', code: 'A' } });
+    assert.throws(() => approveGatewayRequest(asQS(), 'g-denied'));
+    // Still held — a refused approval changes nothing.
+    assert.equal(readGatewayRequest(asQS(), 'g-denied')?.status, 'AWAITING_APPROVAL');
+    // And the proper authority can still release it.
+    assert.equal(approveGatewayRequest(asOwner(), 'g-denied').status, 'COMPLETED');
+  });
+
+  it('rejecting a held output withholds the result and records the reason', () => {
+    persistGatewayRequest(asQS(), { response: held('g-reject'), authority: AUTH });
+    const out = rejectGatewayRequest(asOwner(), 'g-reject', { reason: 'Clause 14 reading is wrong; re-run against the addendum.' });
+    assert.equal(out.status, 'REJECTED');
+    assert.equal(out.result, undefined, 'a rejected output is not released');
+    assert.equal(out.approval.required, false);
+  });
+
+  it('a decision on a request that is not awaiting approval is refused', () => {
+    persistGatewayRequest(asQS(), { response: { ...held('g-done'), status: 'COMPLETED', approval: { required: false, roles: [] } }, authority: AUTH });
+    throwsCode(() => approveGatewayRequest(asOwner(), 'g-done'), 'AI_GATEWAY_NOT_AWAITING_APPROVAL');
+    throwsCode(() => rejectGatewayRequest(asOwner(), 'g-done', { reason: 'too late' }), 'AI_GATEWAY_NOT_AWAITING_APPROVAL');
+  });
+
+  it('a rejection needs a reason; an empty one is refused', () => {
+    persistGatewayRequest(asQS(), { response: held('g-noreason'), authority: AUTH });
+    throwsCode(() => rejectGatewayRequest(asOwner(), 'g-noreason', { reason: '  ' }), 'AI_GATEWAY_REJECT_REASON');
+  });
+
+  it('reading an unknown id returns nothing (and the endpoint turns that into a 404)', () => {
+    assert.equal(readGatewayRequest(asQS(), 'no-such-request'), undefined);
+    throwsCode(() => approveGatewayRequest(asOwner(), 'no-such-request'), 'AI_GATEWAY_REQUEST_NOT_FOUND');
+  });
+
+  it('lists a project\'s requests newest-first with the awaiting count, for the review panel', () => {
+    persistGatewayRequest(asQS(), { response: held('g-list-1'), authority: AUTH });
+    persistGatewayRequest(asQS(), { response: { ...held('g-list-2'), status: 'COMPLETED', approval: { required: false, roles: [] } }, authority: AUTH });
+
+    const listed = listGatewayRequests(asQS());
+    const ids = listed.requests.map((r) => r.requestId);
+    assert.ok(ids.includes('g-list-1') && ids.includes('g-list-2'), 'both requests are listed');
+    assert.ok(listed.awaiting >= 1, 'the held one is counted as awaiting');
+    // The list carries no provider identity either.
+    assert.equal(JSON.stringify(listed).includes('OPENAI'), false);
   });
 });

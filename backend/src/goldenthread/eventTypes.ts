@@ -1388,6 +1388,16 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
    * decision a person takes.
    */
   def('AGENT_ACT_EXECUTED', 'AgentProposal', 'UPDATE', 'AI_BILLING', { aiAllowed: true }),
+  // The CONSTRUX AI Gateway's own request lifecycle (provider-neutral; §16). The
+  // requested event records the run and its user-safe result; it carries no
+  // provider, model or raw cost, which stay on the operator's route record and
+  // never on this customer-scoped entity (spec P03). A consequential output is
+  // held here and released only by a human — the approve/reject events are
+  // decisions, so no AI actor may author one, which is what stops the gateway
+  // approving its own proposal.
+  def('AI_GATEWAY_REQUESTED', 'AIGatewayRequest', 'AI_EXECUTE', 'AI_BILLING', { aiAllowed: true, creates: true }),
+  def('AI_GATEWAY_APPROVED', 'AIGatewayRequest', 'APPROVE', 'AI_BILLING'),
+  def('AI_GATEWAY_REJECTED', 'AIGatewayRequest', 'REJECT', 'AI_BILLING'),
   // Granting a machine the authority to act without asking is the single
   // highest-consequence decision anybody makes about this platform, so it is a
   // governed event and no AI actor may author one. That is what stops an agent

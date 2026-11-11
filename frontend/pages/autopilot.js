@@ -45,7 +45,7 @@ const AI_COMMAND_PATHS = {
 export async function autopilot(root) {
   const projectId = state.session.projectId;
 
-  const [proposals, fleet, runs, ladder, envelopes, ai, plane] = await Promise.all([
+  const [proposals, fleet, runs, ladder, envelopes, ai, plane, gateway] = await Promise.all([
     api.get(`/v1/projects/${projectId}/proposals`).catch(() => ({ proposals: [] })),
     api.get('/v1/agents').catch(() => ({ agents: [] })),
     api.get(`/v1/projects/${projectId}/entities/AgentRun`).catch(() => ({ entities: [] })),
@@ -61,6 +61,10 @@ export async function autopilot(root) {
     // arithmetic over the record when no provider is configured, and a reader
     // judging the agents has to know which of the two they are judging.
     api.get('/v1/ai/control-plane').catch(() => null),
+    // Outputs from the provider-neutral AI gateway that were held because they
+    // are consequential — a proposal nobody has released or refused. The gateway
+    // persists them; this is where a named, authorised person decides.
+    api.get(`/v1/projects/${projectId}/ai/requests`).catch(() => ({ requests: [], awaiting: 0 })),
   ]);
 
   const open = proposals.proposals ?? [];
@@ -178,6 +182,8 @@ export async function autopilot(root) {
 
       ${dispositionPanel(ai)}
 
+      ${gatewayPanel(gateway)}
+
       <div class="card pad0" style="margin-top:14px">
         <h2 style="padding:15px 17px 0">The fleet and what each agent may do</h2>
         ${table({
@@ -240,6 +246,70 @@ export async function autopilot(root) {
   // --- decisions --------------------------------------------------------------
 
   wireLookups(root, LOOKUPS);
+
+  // Releasing or refusing a held gateway output. The decision is authorised by
+  // the task's own authority on the server, so a press by somebody who does not
+  // hold it comes back as a refusal shown beside the card rather than a silent
+  // failure. "View the full output" re-reads the single request so the reviewer
+  // sees the evidence and limitations before deciding, not only the summary.
+  root.querySelector('#gateway-held')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-gateway]');
+    if (!button) return;
+    const card = button.closest('[data-request]');
+    const requestId = card.dataset.request;
+    const action = button.dataset.gateway;
+    const errorBox = card.querySelector('.cmd-error');
+    errorBox.hidden = true;
+
+    if (action === 'view') {
+      button.disabled = true;
+      try {
+        const full = await api.get(`/v1/projects/${projectId}/ai/requests/${requestId}`);
+        const detail = card.querySelector('.gateway-detail');
+        detail.innerHTML = resolveHtml(html`
+          <div class="metric-sub" style="margin-top:8px">${full.result?.summary ?? 'No summary was produced.'}</div>
+          ${(full.result?.limitations ?? []).length > 0
+            ? html`<div class="metric-sub" style="margin-top:6px"><b>Limitations:</b> ${full.result.limitations.join('; ')}</div>`
+            : ''}
+          <div class="metric-sub" style="margin-top:6px">${(full.result?.evidence ?? []).length} source${(full.result?.evidence ?? []).length === 1 ? '' : 's'} cited · confidence ${humanise(full.result?.confidenceBand ?? 'unknown')}</div>
+        `);
+        detail.hidden = false;
+      } catch (error) {
+        errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+        errorBox.hidden = false;
+      }
+      button.disabled = false;
+      return;
+    }
+
+    if (action === 'reject') {
+      const reason = card.querySelector('[name="reason"]').value.trim();
+      if (!reason) {
+        errorBox.textContent = 'A reason is required — the rejection stays on the record.';
+        errorBox.hidden = false;
+        return;
+      }
+      await decide(() => api.post(`/v1/projects/${projectId}/ai/requests/${requestId}/approvals`, { decision: 'REJECT', reason }), 'Rejected');
+      return;
+    }
+    await decide(() => api.post(`/v1/projects/${projectId}/ai/requests/${requestId}/approvals`, { decision: 'APPROVE' }), 'Released');
+
+    async function decide(request, verb) {
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = 'Working…';
+      try {
+        await request();
+        toast(verb, verb === 'Released' ? 'The output is released and the request is complete' : 'The output was refused and not released', 'ok');
+        await draw();
+      } catch (error) {
+        errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+        errorBox.hidden = false;
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+  });
 
   root.querySelector('#run')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
@@ -455,6 +525,80 @@ function dispositionPanel(ai) {
             </div>`,
           )
     }
+  </div>`;
+}
+
+/**
+ * Held outputs from the provider-neutral AI gateway.
+ *
+ * The gateway runs a canonical task, validates the result and — where the task
+ * is consequential — holds it rather than committing it. A held output is a
+ * proposal: it waits here until the person who holds the task's own authority
+ * releases it or refuses it. The panel never names the provider, the model or
+ * the raw cost; the gateway does not put them on the customer record, so there
+ * is nothing here to leak. Which authority each one needs is read from the
+ * output itself, so the decide buttons appear only for the person who holds it.
+ */
+function gatewayPanel(gateway) {
+  const requests = gateway?.requests ?? [];
+  if (requests.length === 0) return '';
+  const held = requests.filter((request) => request.status === 'AWAITING_APPROVAL');
+  const decided = requests.filter((request) => request.status !== 'AWAITING_APPROVAL');
+
+  return html`<div id="gateway-held" style="margin-top:14px">
+    <div class="card" style="margin-bottom:${raw(held.length > 0 ? '12px' : '0')}">
+      <h2>CONSTRUX AI outputs awaiting release</h2>
+      <div class="metric-sub" style="margin-top:8px">
+        ${held.length === 0
+          ? 'Nothing is held. A consequential AI output waits here for a named, authorised person before it is used; none is outstanding.'
+          : `${held.length} consequential output${held.length === 1 ? '' : 's'} produced and validated, held until released. Each is a proposal until someone who holds the authority decides.`}
+      </div>
+    </div>
+
+    ${held.map((request) => {
+      const [area, code] = String(request.approval?.roles?.[0] ?? '').split(':');
+      const mayRelease = area && code ? can(area, code) : false;
+      return html`<div class="card proposal" data-request="${request.requestId}" style="margin-bottom:12px">
+        <div style="display:flex;gap:11px;align-items:center;margin-bottom:11px">
+          ${badge(humanise(request.taskProfile ?? 'ai task'), 'ai')}
+          ${request.result ? badge(`confidence ${humanise(request.result.confidenceBand ?? 'unknown')}`, 'neutral') : ''}
+          <div class="metric-sub mono" style="margin-left:auto;font-size:11px">${reference(request.requestId)}</div>
+        </div>
+
+        <div style="font-size:14px;font-weight:600;margin-bottom:6px">${request.result?.summary ?? 'Output held for review.'}</div>
+        <div class="gateway-detail" hidden></div>
+
+        <div class="cmd-error" hidden></div>
+
+        <div class="input-zone" style="margin-top:11px">
+          <div class="field">
+            <label for="reason-${request.requestId}">Reason, if refusing <span class="opt">required to refuse</span></label>
+            <input id="reason-${request.requestId}" name="reason" type="text" placeholder="Why the output is not being released">
+          </div>
+          <div class="actions">
+            <button class="btn quiet sm" data-gateway="view">View the full output</button>
+            ${mayRelease
+              ? html`<button class="btn" data-gateway="approve">Release it</button>
+                  <button class="btn quiet" data-gateway="reject">Refuse it</button>`
+              : html`<span class="metric-sub">Released by ${request.approval?.roles?.[0] ?? 'an authorised role'} — not yours to decide.</span>`}
+          </div>
+        </div>
+      </div>`;
+    })}
+
+    ${decided.length > 0
+      ? html`<div class="card" style="margin-bottom:0">
+          <h3 style="margin:0 0 8px">Decided</h3>
+          <div class="split-list">
+            ${decided.slice(0, 8).map(
+              (request) => html`<div class="row">
+                <span class="lbl">${humanise(request.taskProfile ?? 'ai task')}</span>
+                <span class="val">${badge(humanise(request.status), request.status === 'COMPLETED' ? 'ok' : request.status === 'REJECTED' ? 'bad' : 'neutral')}</span>
+              </div>`,
+            )}
+          </div>
+        </div>`
+      : ''}
   </div>`;
 }
 

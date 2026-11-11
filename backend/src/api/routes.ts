@@ -31,6 +31,14 @@ import { runGatewayTask } from '../ai/gateway/service.ts';
 import { executionDescriptor, orchestratorExecutor } from '../ai/gateway/executor.ts';
 import { isTaskProfile, WIRED_PROVIDERS, type AITaskRequest, type TaskProfile } from '../ai/gateway/contract.ts';
 import type { ProviderAvailability } from '../ai/gateway/router.ts';
+import { approvalRequirement } from '../ai/gateway/policy.ts';
+import {
+  approveGatewayRequest,
+  listGatewayRequests,
+  persistGatewayRequest,
+  readGatewayRequest,
+  rejectGatewayRequest,
+} from '../ai/gateway/store.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
 import { AUTOMATABLE_COMMANDS, LADDER, actBudget, envelopeRegister, grantEnvelope, projectAutonomousSpend, revokeEnvelope, setActBudget } from '../agents/mandate.ts';
@@ -27551,6 +27559,14 @@ export const ROUTES: Route[] = [
         idempotencyKey: input.idempotencyKey ?? ulid(),
       };
 
+      // Idempotent replay (spec §15.2): a caller-supplied key that already names
+      // a persisted request returns that request unchanged — nothing re-runs and
+      // no second provider call or ACU reservation is made.
+      if (input.idempotencyKey) {
+        const prior = readGatewayRequest(engineCtx, request.idempotencyKey);
+        if (prior) return prior;
+      }
+
       const outcome = await runGatewayTask({
         request,
         availability,
@@ -27559,9 +27575,68 @@ export const ROUTES: Route[] = [
         requestId: request.idempotencyKey,
       });
 
-      // Only ever the user-safe half — the provider, model and raw cost on the
-      // admin record never cross this boundary (spec P03).
-      return outcome.user;
+      // Persist the user-safe half to the Golden Thread so it can be read back by
+      // id and, where consequential, held for a named approver. The provider,
+      // model and raw cost on the admin record never cross this boundary (P03),
+      // so they are never written to this customer-scoped entity.
+      const authority = approvalRequirement(taskProfile, input.approvalPolicy).authority;
+      const persisted = persistGatewayRequest(engineCtx, {
+        response: outcome.user,
+        ...(authority ? { authority } : {}),
+      });
+      return persisted.response;
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ai/requests',
+    readOnly: true,
+    description: 'Every persisted CONSTRUX AI request for a project — the held ones a reviewer acts on, and the decided record',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'AI_EXECUTION', 'R');
+      return listGatewayRequests(engineCtx);
+    },
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/ai/requests/:requestId',
+    readOnly: true,
+    description: 'Read one persisted CONSTRUX AI request by id — the user-safe view only',
+    handler: (platform, ctx) => {
+      const engineCtx = projectContext(platform, ctx);
+      authorise(engineCtx, 'AI_EXECUTION', 'R');
+      const found = readGatewayRequest(engineCtx, ctx.params.requestId as string);
+      if (!found) {
+        throw new DomainError('AI_GATEWAY_REQUEST_NOT_FOUND', `No AI request ${ctx.params.requestId}`, 404);
+      }
+      return found;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/ai/requests/:requestId/approvals',
+    description: 'Approve or reject a held AI output. A decision only a named, authorised person may take.',
+    schema: {
+      type: 'object',
+      required: ['decision'],
+      properties: {
+        decision: { type: 'string', enum: ['APPROVE', 'REJECT'] },
+        reason: { type: 'string', minLength: 1 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => {
+      const input = body<{ decision: 'APPROVE' | 'REJECT'; reason?: string }>(ctx);
+      // projectContext resolves and tenant-scopes; the authority the specific
+      // task demands is checked inside the store against the persisted request,
+      // so an approver who lacks that capability is refused even here.
+      const engineCtx = projectContext(platform, ctx);
+      const requestId = ctx.params.requestId as string;
+      if (input.decision === 'APPROVE') {
+        return approveGatewayRequest(engineCtx, requestId);
+      }
+      return rejectGatewayRequest(engineCtx, requestId, { reason: input.reason ?? '' });
     },
   },
 
