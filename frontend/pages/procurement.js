@@ -2684,9 +2684,9 @@ export async function procurement(root) {
           required: false,
           hint: 'Only if you chose “a new package” above. Otherwise leave this blank.',
         },
-        { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on.' },
-        { name: 'discipline', label: 'Discipline', type: 'text', placeholder: 'STRUCTURES' },
-        { name: 'sheetId', label: 'Sheet', type: 'text', placeholder: '25133-TDC-FN-ZZ-DR-S-1600', hint: 'The drawing the measurement was taken off.' },
+        { name: 'costCodePrefix', label: 'Cost code prefix', type: 'text', required: false, placeholder: 'WALL', hint: 'Codes run WALL.001, WALL.002 and so on. Optional — defaults to ITEM.' },
+        { name: 'discipline', label: 'Discipline', type: 'text', required: false, placeholder: 'STRUCTURES', hint: 'Optional. Defaults to “By hand” for a measurement taken off your own sheets.' },
+        { name: 'sheetId', label: 'Sheet', type: 'text', required: false, placeholder: '25133-TDC-FN-ZZ-DR-S-1600', hint: 'The drawing the measurement was taken off. Leave blank if there is no drawing — a fee or services bill has none.' },
         {
           name: 'items',
           label: 'The items, one per line',
@@ -2697,23 +2697,31 @@ export async function procurement(root) {
           hint: 'description | unit | quantity — and optionally a fourth field naming a different sheet for that line.',
         },
       ],
-      transform: (v) => ({
-        // A new package takes the name typed below; otherwise the chosen package's
-        // exact id is used, so re-measuring into an existing package never forks it.
-        packageId: v.packageId === NEW_PACKAGE ? String(v.newPackageName ?? '').trim() : v.packageId,
-        costCodePrefix: v.costCodePrefix,
-        sources: [{ discipline: v.discipline, sheetId: v.sheetId }],
-        items: String(v.items ?? '')
-          .split('\n')
-          .map((line) => line.split('|').map((part) => part.trim()))
-          .filter((parts) => parts.length >= 3 && parts[0])
-          .map((parts) => ({
-            description: parts[0],
-            unit: parts[1],
-            quantity: Number(parts[2]),
-            sourceSheet: parts[3] || v.sheetId,
-          })),
-      }),
+      transform: (v) => {
+        // A measurement taken off your own sheets may have no drawing number at
+        // all — a fee or services bill has none. Rather than refuse eleven lines
+        // with a validation error about an empty sheet, a blank one is recorded
+        // honestly as "By hand", which is exactly what it was.
+        const sheet = String(v.sheetId ?? '').trim() || 'By hand';
+        const discipline = String(v.discipline ?? '').trim() || 'Professional services';
+        return {
+          // A new package takes the name typed below; otherwise the chosen package's
+          // exact id is used, so re-measuring into an existing package never forks it.
+          packageId: v.packageId === NEW_PACKAGE ? String(v.newPackageName ?? '').trim() : v.packageId,
+          costCodePrefix: String(v.costCodePrefix ?? '').trim() || 'ITEM',
+          sources: [{ discipline, sheetId: sheet }],
+          items: String(v.items ?? '')
+            .split('\n')
+            .map((line) => line.split('|').map((part) => part.trim()))
+            .filter((parts) => parts.length >= 3 && parts[0])
+            .map((parts) => ({
+              description: parts[0],
+              unit: parts[1],
+              quantity: Number(parts[2]),
+              sourceSheet: parts[3] || sheet,
+            })),
+        };
+      },
     },
     'price-fee-schedule': {
       title: 'Price as a fee — day-rates',
