@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { badge, html, render, table, toast } from '../lib/ui.js';
 import { can, state } from '../app.js';
 
 /**
@@ -417,12 +417,12 @@ export async function consultancy(root) {
         rows: board.tasks.map((t) => [
           `${t.title}${t.lastRun && t.lastRun.groundedInRequirement ? ' ◆' : ''}`,
           t.capability,
-          resolveHtml(badge(t.runState, runTone(t.runState))),
+          badge(t.runState, runTone(t.runState)),
           t.validated ? '✓' : '—',
-          canWrite ? resolveHtml(html`<span style="display:inline-flex;gap:4px">
+          canWrite ? html`<span style="display:inline-flex;gap:4px">
             ${t.runState !== 'COMPLETE' && t.runState !== 'CANCELLED' ? html`<button class="btn quiet xs" data-run="${t.id}">Run agent</button>` : ''}
             <button class="btn quiet xs" data-complete="${t.id}">Mark complete &amp; validated</button>
-          </span>`) : '',
+          </span>` : '',
         ]),
         empty: 'No tasks registered yet.',
       })}
@@ -464,7 +464,7 @@ export async function consultancy(root) {
           e.locator ?? '—',
           e.authority ?? '—',
           e.confidence,
-          resolveHtml(badge(e.status, e.status === 'SUPERSEDED' ? 'warn' : 'ok')),
+          badge(e.status, e.status === 'SUPERSEDED' ? 'warn' : 'ok'),
         ]),
         empty: 'No evidence registered yet.',
       })}

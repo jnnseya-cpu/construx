@@ -1,5 +1,5 @@
 import { api } from '../lib/api.js';
-import { badge, html, render, resolveHtml, table, toast } from '../lib/ui.js';
+import { badge, html, render, table, toast } from '../lib/ui.js';
 import { can, state } from '../app.js';
 
 /**
@@ -244,13 +244,17 @@ export async function grid(root) {
               `${s.id}${s.validated ? ' ◆' : ''}`,
               s.capability,
               s.executes,
-              resolveHtml(badge(s.runState, runTone(s.runState))),
+              // Pass the marked markup straight to `table()`, which renders a
+              // marked cell raw but *escapes* a plain string — `resolveHtml` here
+              // would flatten these to a string and the table would print the
+              // literal <span>/<button> tags.
+              badge(s.runState, runTone(s.runState)),
               s.validated ? '✓' : '—',
-              ...(canWrite ? [resolveHtml(html`<span style="display:inline-flex;gap:4px">
+              ...(canWrite ? [html`<span style="display:inline-flex;gap:4px">
                 ${s.validated || s.runState === 'RELEASED' ? '' : html`<button class="btn quiet xs" data-run="${s.id}">Run agent</button>`}
                 ${s.validated ? '' : html`<button class="btn quiet xs" data-validate="${s.id}">Validate</button>`}
                 ${s.runState === 'BLOCKED' ? '' : html`<button class="btn quiet xs" data-block="${s.id}">Block</button>`}
-              </span>`)] : []),
+              </span>`] : []),
             ]),
             empty: 'No steps.',
           })}

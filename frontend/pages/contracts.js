@@ -275,7 +275,7 @@ export async function contracts(root) {
                   d.dispatchKey,
                   d.kind,
                   d.recipient,
-                  resolveHtml(badge(d.state.replace(/_/g, ' '), d.state === 'RECEIPT_VERIFIED' ? 'ok' : d.state === 'UNKNOWN_OUTCOME' ? 'warn' : d.state === 'REJECTED' ? 'bad' : 'neutral')),
+                  badge(d.state.replace(/_/g, ' '), d.state === 'RECEIPT_VERIFIED' ? 'ok' : d.state === 'UNKNOWN_OUTCOME' ? 'warn' : d.state === 'REJECTED' ? 'bad' : 'neutral'),
                   String(d.attempts),
                   d.receiptRef ?? '—',
                 ]),
