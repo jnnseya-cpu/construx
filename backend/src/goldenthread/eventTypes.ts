@@ -1382,6 +1382,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // granting itself an envelope: the registry declares *eligibility*, this
   // records *authority*, and the commit refuses an AI author outright.
   def('AGENT_ENVELOPE_GRANTED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  // The per-project cumulative cap on the aggregate value of unattended acts (spec §1 A2):
+  // the envelope caps a single act, this caps the running total across every agent.
+  def('AGENT_ACT_BUDGET_SET', 'AgentActBudget', 'APPROVE', 'GOVERNANCE', { creates: true }),
+  def('AGENT_ACT_BUDGET_CHANGED', 'AgentActBudget', 'APPROVE', 'GOVERNANCE'),
   // Withdrawal is equally governed, and equally human. An agent that could
   // revoke could also decline to.
   def('AGENT_ENVELOPE_REVOKED', 'AgentEnvelope', 'APPROVE', 'GOVERNANCE'),

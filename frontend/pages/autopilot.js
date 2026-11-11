@@ -213,6 +213,16 @@ export async function autopilot(root) {
         ],
       })}
 
+      ${
+        envelopes?.error
+          ? ''
+          : html`<div class="notice" style="margin-bottom:12px">
+              <b>Cumulative autonomous-act budget.</b>
+              ${envelopes?.actBudget
+                ? html`This project caps the aggregate value of unattended acts at <b>${(envelopes.actBudget.cumulativeBudgetMinor / 100).toFixed(2)}</b>, across every agent and envelope. Committed so far: <b>${((envelopes.autonomousSpendMinor ?? 0) / 100).toFixed(2)}</b>. An act that would pass it falls back to a proposal a person decides.`
+                : html`No aggregate cap is set — each act is bound only by its own envelope ceiling. An enterprise administrator can cap the running total across all agents.`}
+            </div>`
+      }
       ${positionReport({
         title: 'Grants of unattended authority',
         intent:

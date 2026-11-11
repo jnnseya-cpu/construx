@@ -14075,6 +14075,25 @@ that is not true, which is worse than a narrow one that is.
 to `PROPOSE` and attaches the reason. Refusing outright would trade a small
 safety gain for the loss of the finding entirely.
 
+**A per-project cumulative budget caps the aggregate, not just the single act**
+(Tier-1 Agent Delivery OS spec §1 A2 / AT-22, filled after a gap audit found the
+enforcement model otherwise already complete). The envelope's `valueCeilingMinor`
+caps one act; `setActBudget` (`agents/mandate.ts`, `ENTERPRISE_STRUCTURE` `G`,
+events `AGENT_ACT_BUDGET_SET`/`_CHANGED`) caps the running total of unattended-act
+value across every agent and envelope in the project. `mayActUnattended` sums
+`projectAutonomousSpend` and refuses — falling back to a proposal — when this act
+would pass the budget, so a fleet cannot inch past a cap one in-ceiling act at a
+time. Additive and off by default (no budget = the prior behaviour); shown on the
+autopilot screen beside the grants (`GET …/agents/envelopes` now returns the
+budget and committed spend). Today's one ACT-eligible agent (`health`) carries a
+value of zero, so this is the aggregate safety rail for a future value-bearing
+autonomous act, exactly as the per-act ceiling already is. Proven by
+`tests/actbudget.test.ts` (set/validate/authorise; the running total sums only
+executed enveloped acts; the aggregate ceiling refuses the act that would pass it
+and permits it once raised; no budget = no cap). The audit confirmed the rest of
+the Tier-1 §1 enforcement (A0–A4, reserved decisions, delegation envelope, no-OT)
+was already built; this was the one genuine money-safety gap worth closing now.
+
 Exactly one agent is ACT-eligible — `health` — and its envelope carries a value
 ceiling of zero and writes no governed state: it may tell somebody the platform
 is unwell, and that is all. It is the only act on this platform where waiting

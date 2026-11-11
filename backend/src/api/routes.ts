@@ -29,7 +29,7 @@ import type { Engine } from '../ai/orchestrator.ts';
 import type { ProviderCapability } from '../ai/providers/types.ts';
 import * as agents from '../agents/runtime.ts';
 import { fleetManifest } from '../agents/runtime.ts';
-import { AUTOMATABLE_COMMANDS, LADDER, envelopeRegister, grantEnvelope, revokeEnvelope } from '../agents/mandate.ts';
+import { AUTOMATABLE_COMMANDS, LADDER, actBudget, envelopeRegister, grantEnvelope, projectAutonomousSpend, revokeEnvelope, setActBudget } from '../agents/mandate.ts';
 import { egressPosition, flush as flushEgress } from '../ops/otlp.ts';
 import { assurancePosition, sweep } from '../ops/assurance.ts';
 import * as consistencySweep from '../ops/consistencysweep.ts';
@@ -23868,8 +23868,31 @@ export const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/v1/projects/:projectId/agents/envelopes',
-    description: 'Every grant of unattended authority ever made, live or withdrawn',
-    handler: (platform, ctx) => ({ envelopes: envelopeRegister(projectContext(platform, ctx)) }),
+    description: 'Every grant of unattended authority ever made, live or withdrawn, with the project’s cumulative autonomous-act budget and the value of unattended acts committed against it',
+    handler: (platform, ctx) => {
+      const pctx = projectContext(platform, ctx);
+      const budget = actBudget(pctx);
+      return {
+        envelopes: envelopeRegister(pctx),
+        actBudget: budget ?? null,
+        autonomousSpendMinor: projectAutonomousSpend(pctx),
+      };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/agents/act-budget',
+    description: 'Set the project’s cumulative cap on the aggregate value of unattended agent acts, across every agent and envelope (the per-act envelope ceiling caps one act; this caps the running total). Governance over the enterprise.',
+    schema: {
+      type: 'object',
+      required: ['cumulativeBudgetMinor', 'note'],
+      properties: {
+        cumulativeBudgetMinor: { type: 'integer', minimum: 0 },
+        note: { type: 'string', minLength: 8 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => setActBudget(projectContext(platform, ctx), body(ctx)),
   },
   {
     method: 'POST',

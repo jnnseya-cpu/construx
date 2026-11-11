@@ -754,6 +754,7 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // must be readable by the people who govern the enterprise, and it must not
   // be reachable by holding the capability to run AI, which every role holds.
   AgentEnvelope: { area: 'ENTERPRISE_STRUCTURE' },
+  AgentActBudget: { area: 'ENTERPRISE_STRUCTURE' },
   // The developer surface is enterprise governance, not project data: who holds
   // a credential against this tenancy, and where its data is being sent.
   ApiKey: { area: 'ENTERPRISE_STRUCTURE' },
