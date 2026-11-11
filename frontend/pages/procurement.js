@@ -2719,9 +2719,11 @@ export async function procurement(root) {
       title: 'Price as a fee — day-rates',
       intent:
         'For a professional-services or consultancy bid priced by resource and day-rate rather than a measured ' +
-        'construction bill — a fee bid has no drawings to measure. Each line is a role, the days, and the day-rate; ' +
-        'disbursements are expenses carried at cost and never marked up. It files the lines and prices them in one ' +
-        'step, and the quotation and pricing schedule follow exactly as for any priced bill.',
+        'construction bill — a fee bid has no drawings to measure. Each line is a role and its day-rate; add a day ' +
+        'count in the middle only if you are pricing a fee for a defined scope. With rates alone it is a schedule of ' +
+        'rates — what a framework or DPS tenders, applied by the buyer to its own call-off volumes. Disbursements are ' +
+        'expenses carried at cost and never marked up. It files the lines and prices them in one step, and the ' +
+        'quotation and pricing schedule follow exactly as for any priced bill.',
       path: `/v1/projects/${projectId}/tender/fee-schedule`,
       submitLabel: 'Price the fee',
       fields: [
@@ -2738,8 +2740,11 @@ export async function procurement(root) {
           label: 'Resource lines, one per line',
           type: 'textarea',
           rows: 6,
-          placeholder: 'Director | 5 | 600\nSenior consultant | 10 | 400\nCAD technician | 8 | 250',
-          hint: 'role | days | day-rate in pounds — e.g. “Director | 5 | 600” is 5 days at £600/day.',
+          placeholder: 'Project Director | 875\nSenior Project Manager | 725\nQuantity Surveyor | 575',
+          hint:
+            'role | day-rate in pounds — e.g. “Project Director | 875”. That is a schedule of rates, which is what a ' +
+            'framework or DPS tenders. To price a fee for a defined scope instead, add the days in the middle: ' +
+            '“Project Director | 5 | 875” is 5 days at £875.',
         },
         {
           name: 'disbursements',
@@ -2775,8 +2780,14 @@ export async function procurement(root) {
         resources: String(v.resources ?? '')
           .split('\n')
           .map((line) => line.split('|').map((part) => part.trim()))
-          .filter((parts) => parts.length >= 3 && parts[0] && parts[1] && parts[2])
-          .map((parts) => ({ role: parts[0], days: Number(parts[1]), dayRateMinor: Math.round(Number(parts[2]) * 100) })),
+          // Two columns is a rate card (role | rate); three is an extended fee
+          // (role | days | rate). Keep a line when it has a role and a final rate.
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[parts.length - 1])
+          .map((parts) =>
+            parts.length >= 3
+              ? { role: parts[0], days: Number(parts[1]), dayRateMinor: Math.round(Number(parts[2]) * 100) }
+              : { role: parts[0], dayRateMinor: Math.round(Number(parts[1]) * 100) },
+          ),
         disbursements: String(v.disbursements ?? '')
           .split('\n')
           .map((line) => line.split('|').map((part) => part.trim()))

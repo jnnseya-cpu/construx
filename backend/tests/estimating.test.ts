@@ -406,14 +406,41 @@ describe('Estimating through the engine', () => {
     assert.equal(boq.length, 2);
   });
 
-  it('refuses a fee schedule with no resource lines, or a line with no days or rate', async () => {
+  it('prices a schedule of rates — a rate card with no day counts, which is what a DPS tenders', async () => {
+    const ctx = qsCtx();
+    // A framework/DPS rate card: role and day-rate, no committed days. The bidder
+    // tenders the rates and the buyer applies them to its own call-off volumes.
+    const result = await tender.priceDayRateSchedule(ctx, {
+      packageName: 'DPS day-rates',
+      resources: [
+        { role: 'Project Director / Lead Consultant', dayRateMinor: 87_500 }, // £875
+        { role: 'Senior Project Manager', dayRateMinor: 72_500 }, // £725
+        { role: 'Quantity Surveyor', dayRateMinor: 57_500 }, // £575
+      ],
+    });
+
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: result.estimateId });
+    // It completes rather than reading INCOMPLETE — a rate card is a valid submission.
+    assert.equal(record.state.status, 'DRAFT');
+    assert.equal((record.state.omissions as unknown[]).length, 0);
+    // Each line priced at one person-day, so the schedule carries the rate itself:
+    // 875 + 725 + 575 = £2,175.
+    assert.equal(result.totalMinor, 87_500 + 72_500 + 57_500);
+    // The estimate says plainly it is a schedule of rates, not an extended fee.
+    assert.match(String(record.state.basisOfEstimate), /schedule of rates/i);
+    // All three roles are on the bill.
+    const boq = ctx.ledger.list(ctx.projectId, 'BoQItem').filter((r) => result.boqItemIds.includes(r.refId));
+    assert.equal(boq.length, 3);
+  });
+
+  it('refuses a fee schedule with no resource lines, or a line with an explicit bad day count or rate', async () => {
     await rejectsCode(() => tender.priceDayRateSchedule(qsCtx(), { resources: [] }), 'FEE_SCHEDULE_EMPTY');
     await rejectsCode(
       () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', days: 0, dayRateMinor: 60_000 }] }),
       'FEE_DAYS_INVALID',
     );
     await rejectsCode(
-      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', days: 5, dayRateMinor: 0 }] }),
+      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', dayRateMinor: 0 }] }),
       'FEE_RATE_INVALID',
     );
   });

@@ -33222,6 +33222,20 @@ action beside "Enter measured quantities" on the procurement screen. Covered by
 `estimating.test.ts` (a fee estimate completes with no omissions and totals labour +
 disbursements; empty/zero-day/zero-rate lines are refused).
 
+**Day counts are optional — a rate card is what a framework/DPS actually tenders.**
+Reported live: a bidder pasted an 18-role day-rate schedule (role + rate, no day counts)
+and the path refused it ("must contain at least 1 item") because every line without a
+middle `days` column was dropped. On a DPS the bidder tenders the *rates* and the buyer
+applies them to its own call-off volumes, so forcing committed days was wrong. `days` is
+now optional at every layer — the engine (`DayRateResource.days?`), the route schema, and
+the frontend parser (which accepts `role | rate` as well as `role | days | rate`). A line
+with no days prices at one person-day so the rate itself is what the pricing schedule
+carries, and when every line is a rate the estimate's basis says "Schedule of rates …
+not extended to committed day counts" so the total (the sum of the rates) is never read
+as a committed fee. An explicit day count of zero is still refused. Covered by
+`estimating.test.ts` (a three-role rate card with no days completes, totals the rates, and
+is labelled a schedule of rates).
+
 ## 2026-11 the red team's evidence lens no longer looks in the wrong drawer
 
 Reported live on a contract-heavy DPS: ~57 high "X asks for evidence nothing answers"

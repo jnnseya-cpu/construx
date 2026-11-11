@@ -14264,7 +14264,9 @@ export const ROUTES: Route[] = [
           minItems: 1,
           items: {
             type: 'object',
-            required: ['role', 'days', 'dayRateMinor'],
+            // Days are optional: a framework/DPS rate card tenders rates with no
+            // committed day counts, and prices as a schedule of rates.
+            required: ['role', 'dayRateMinor'],
             properties: {
               role: { type: 'string', minLength: 1, maxLength: 200 },
               days: { type: 'number', exclusiveMinimum: 0 },

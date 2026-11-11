@@ -587,7 +587,19 @@ const FEE_BID_EXCLUDED_HEADS: ReadonlyArray<Exclude<CostHead, 'DIRECT_WORKS' | '
   'HEALTH_AND_SAFETY', 'QUALITY', 'RISK', 'INFLATION',
 ];
 
-export type DayRateResource = { role: string; days: number; dayRateMinor: number };
+export type DayRateResource = {
+  role: string;
+  /**
+   * The number of days of this role the fee covers. Optional: a framework/DPS
+   * submission is a **schedule of rates** — the bidder tenders the day-rates and
+   * the buyer applies them to its own call-off volumes, so there are no committed
+   * day counts to state. When omitted the line is priced as one person-day at the
+   * rate (so the rate itself is what the pricing schedule carries), and the
+   * estimate records that it is a rate schedule, not an extended fee.
+   */
+  days?: number;
+  dayRateMinor: number;
+};
 export type DayRateScheduleInput = {
   /** The package the fee lines are filed under; defaults to "Professional services". */
   packageName?: string;
@@ -631,13 +643,21 @@ export async function priceDayRateSchedule(
     if (!r.role || r.role.trim().length === 0) {
       throw new DomainError('FEE_ROLE_MISSING', 'Every fee line needs a role.');
     }
-    if (!Number.isFinite(r.days) || r.days <= 0) {
+    // Days are optional (a rate card states none); when given they must be real.
+    if (r.days !== undefined && (!Number.isFinite(r.days) || r.days <= 0)) {
       throw new DomainError('FEE_DAYS_INVALID', `${r.role}: the number of days must be greater than zero.`);
     }
     if (!Number.isFinite(r.dayRateMinor) || r.dayRateMinor <= 0) {
       throw new DomainError('FEE_RATE_INVALID', `${r.role}: the day-rate must be greater than zero.`);
     }
   }
+
+  // A line with no day count is a rate-card line, priced at one person-day so the
+  // rate is what the schedule carries. If every line is like that, the result is
+  // a schedule of rates rather than an extended fee — said plainly on the basis so
+  // the total (the sum of the rates) is never mistaken for a committed price.
+  const daysFor = (r: DayRateResource): number => r.days ?? 1;
+  const isRateCard = resources.every((r) => r.days === undefined);
 
   const packageName = input.packageName && input.packageName.trim().length > 0 ? input.packageName.trim() : 'Professional services';
 
@@ -646,7 +666,7 @@ export async function priceDayRateSchedule(
   const takeoffInput = {
     packageId: packageName,
     sources: [{ discipline: packageName, sheetId: 'Fee schedule' }] as TakeoffSource[],
-    items: resources.map((r) => ({ description: r.role.trim(), unit: 'person-day', quantity: r.days, sourceSheet: 'Fee schedule' })),
+    items: resources.map((r) => ({ description: r.role.trim(), unit: 'person-day', quantity: daysFor(r), sourceSheet: 'Fee schedule' })),
     costCodePrefix: 'FEE',
     measuredBy: 'PERSON' as const,
   };
@@ -675,7 +695,7 @@ export async function priceDayRateSchedule(
       boqItemId: takeoff.boqItemIds[index],
       description: r.role.trim(),
       unit: 'person-day',
-      quantity: r.days,
+      quantity: daysFor(r),
       // Own time is own labour: it prices into DIRECT_WORKS, the only works head
       // a fee bid carries.
       labourRateMinor: r.dayRateMinor,
@@ -688,7 +708,9 @@ export async function priceDayRateSchedule(
     basisOfEstimate:
       input.basisOfEstimate && input.basisOfEstimate.trim().length > 0
         ? input.basisOfEstimate.trim()
-        : 'Professional-services fee, priced by resource and day-rate.',
+        : isRateCard
+          ? 'Schedule of rates — day-rates tendered per person-day; not extended to committed day counts. Applied by the buyer to its own call-off volumes.'
+          : 'Professional-services fee, priced by resource and day-rate.',
     assumptions: [],
   });
 
