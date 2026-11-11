@@ -1384,6 +1384,17 @@ export type EvidenceCoverage = {
 };
 
 /**
+ * The references whose requirement the bidder has already answered with a
+ * confirmed compliance undertaking — a statement ("We confirm that, if awarded …")
+ * the person has declared true. It answers the requirement in prose exactly as a
+ * drafted section does, so the red team must not report such a reference as
+ * "evidence nothing answers".
+ */
+export function confirmedUndertakingReferences(ctx: EngineContext, analysisId: string): string[] {
+  return undertakingsOf(requireAnalysis(ctx, analysisId)).map((u) => u.reference);
+}
+
+/**
  * Read the evidence register against a compliance matrix and say, per
  * requirement, what covers it and what held evidence could.
  */

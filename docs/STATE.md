@@ -33244,6 +33244,18 @@ clause with no section still is). Recorded as still-open: the ITT analysis sets
 than answers), so references with neither a section nor a claim can still over-report on
 a terms-heavy agreement — that is an `analyseITT` extraction question, not a lens one.
 
+**Extended (same area):** a reference answered by a **confirmed compliance undertaking**
+is no longer reported as unevidenced either. Many contractual clauses are answered not by
+a method-statement section but by a declared statement — the "We confirm that, if awarded …,
+we will meet this requirement in full" undertakings the bidder confirms one by one. The
+lens never saw them, so a bidder who had confirmed every undertaking still faced a wall of
+"nothing answers" findings for exactly those clauses — the work they had already done went
+unrewarded. `itt.ts` now exports `confirmedUndertakingReferences`, `challengeSubmission`
+passes them to the lens as `undertakingRefs`, and a reference with a confirmed undertaking
+counts as answered. On a terms-heavy DPS this clears the bulk of the remaining evidence
+findings. Covered by a `redteam.test.ts` case (a confirmed clause is not flagged; an
+unconfirmed one still is).
+
 ## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
 
 Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral

@@ -6,7 +6,7 @@ import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { openImpacts } from './addendum.ts';
 import type { BidResponsePack, BidSection } from './bidresponse.ts';
 import { evidenceRegister } from './evidenceclaim.ts';
-import { complianceMatrix, liveWaivers, type MatrixLine } from './itt.ts';
+import { complianceMatrix, confirmedUndertakingReferences, liveWaivers, type MatrixLine } from './itt.ts';
 
 /**
  * Adversarial self-challenge — `L7.3`, §16, §4.7.3.
@@ -391,8 +391,11 @@ export function evaluatorFindings(input: {
   waivedKeys: Set<string>;
   claims: Array<{ reference: string; claim: string; covers: string[]; standing: string; expiresAt?: string }>;
   staleKeys: Map<string, string>;
+  /** References answered by a confirmed compliance undertaking — a declared statement, not a document. */
+  undertakingRefs?: Set<string>;
 }): AssuranceFinding[] {
   const { pack, matrix, waivedKeys, claims, staleKeys } = input;
+  const undertakingRefs = input.undertakingRefs ?? new Set<string>();
   const lineOf = new Map(matrix.map((line) => [line.reference, line]));
   const findings: AssuranceFinding[] = [];
   const returnBy = pack.returnBy.slice(0, 10);
@@ -632,8 +635,11 @@ export function evaluatorFindings(input: {
     if (!line.evidenceRequired) continue;
     const covering = claims.filter((claim) => claim.covers.includes(line.reference));
     const held = line.evidenceHeld !== undefined && line.evidenceHeld !== '';
+    // A requirement the bidder has answered — a drafted method statement, or a
+    // confirmed compliance undertaking they have declared true — is answered.
+    const answeredByProseOrUndertaking = answeredInProse.has(line.reference) || undertakingRefs.has(line.reference);
 
-    if (covering.length === 0 && !held && !answeredInProse.has(line.reference)) {
+    if (covering.length === 0 && !held && !answeredByProseOrUndertaking) {
       findings.push(
         finding({
           lens: 'EVIDENCE',
@@ -890,6 +896,7 @@ export async function challengeSubmission(
       ...(claim.expiresAt === undefined ? {} : { expiresAt: claim.expiresAt }),
     })),
     staleKeys,
+    undertakingRefs: new Set(confirmedUndertakingReferences(ctx, pack.analysisId)),
   });
 
   const { challenge, added, acuConsumed } = await modelChallenge(ctx, pack, analysis.matrix);

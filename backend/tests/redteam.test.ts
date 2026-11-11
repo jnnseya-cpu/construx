@@ -639,6 +639,31 @@ describe('the evidence lens, on the day the buyer reads it', () => {
     const empty = run([]);
     assert.equal(empty.some((f) => f.reference === 'C-1' && f.title.includes('asks for evidence nothing answers')), true, 'a genuinely unanswered clause stopped firing');
   });
+
+  it('does not report a clause answered by a confirmed compliance undertaking as unevidenced', () => {
+    const line = {
+      reference: 'C-9', category: 'CONTRACT', requirement: 'Comply with the terms of this agreement',
+      mandatory: true, owner: 'OWNER', evidenceRequired: 'Comply with the terms of this agreement', status: 'GAP',
+    };
+    const pack = {
+      id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+      returnBy: '2027-03-01T12:00:00.000Z', sections: [], deadlines: [], status: 'DRAFTING', passes: 1,
+      plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+    } as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+    const base = {
+      pack,
+      matrix: [line] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'],
+      waivedKeys: new Set<string>(), claims: [], staleKeys: new Map<string, string>(),
+    };
+
+    // No section, no claim, but the bidder has confirmed the undertaking → answered.
+    const confirmed = redteam.evaluatorFindings({ ...base, undertakingRefs: new Set(['C-9']) });
+    assert.equal(confirmed.some((f) => f.title.includes('asks for evidence nothing answers')), false, 'a confirmed undertaking was treated as unevidenced');
+
+    // Nothing confirmed → still fires.
+    const notConfirmed = redteam.evaluatorFindings({ ...base, undertakingRefs: new Set<string>() });
+    assert.equal(notConfirmed.some((f) => f.reference === 'C-9' && f.title.includes('asks for evidence nothing answers')), true, 'an unconfirmed clause stopped firing');
+  });
 });
 
 describe('the measurable-commitment lens', () => {
