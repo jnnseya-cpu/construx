@@ -24,26 +24,54 @@ export async function grid(root) {
   let engagementId = null;
   let board = null;
   let entitlement = null;
+  let people = [];
+  let autoSeatTried = false;
 
   const loadList = async () => {
     try { engagements = (await api.get(`/v1/projects/${projectId}/grid/engagements`)).engagements ?? []; } catch { engagements = []; }
   };
+  const loadPeople = async () => {
+    // The company's own people, so a seat is assigned by name rather than by
+    // asking somebody to know another person's internal id. A failure (an
+    // external or operator context) leaves the list empty and the picker falls
+    // back to showing ids.
+    try { people = (await api.get('/v1/users')).users ?? []; } catch { people = []; }
+  };
+  // A seat holder's readable name, falling back to the raw id if the person is
+  // not in the loaded list (an id kept from before they left, say).
+  const nameOf = (id) => people.find((p) => p.id === id)?.name ?? id;
   const loadEntitlement = async () => {
     // Every role may read the entitlement; a tenancy with no add-on provision reads
     // an un-granted, LOCKED one. A failure (e.g. an operator context) leaves it null.
     try { entitlement = await api.get('/v1/billing/addons/entitlement'); } catch { entitlement = null; }
   };
+  // The base fee includes one named seat, so a usable add-on should not sit at
+  // zero: the first seat is assigned automatically to the admin setting it up,
+  // once, silently, who can then release it or seat someone else. Only when the
+  // module is usable, the viewer may assign seats, and nobody holds one yet.
+  const ensureIncludedSeat = async () => {
+    if (autoSeatTried) return;
+    autoSeatTried = true;
+    const me = state.me?.user?.id ?? state.session?.user?.id;
+    const e = entitlement;
+    if (!me || !e || !e.adminGrant || !e.usable || e.assignedSeats > 0 || !can('BILLING_ACU', 'U')) return;
+    if (!e.freeExempt && e.availableSeats <= 0) return; // no included capacity to take
+    try {
+      await api.post('/v1/billing/addons/seats', { userId: me });
+      await loadEntitlement();
+    } catch { /* capacity race or a stricter rule — the manual picker remains */ }
+  };
   const assignSeat = async (userId) => {
     try {
       await api.post('/v1/billing/addons/seats', { userId });
-      toast('Seat assigned', `${userId} may now use the module`, 'ok');
+      toast('Seat assigned', `${nameOf(userId)} may now use the module`, 'ok');
       await loadEntitlement(); draw();
     } catch (error) { toast('Could not assign the seat', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
   };
   const releaseSeat = async (userId) => {
     try {
       await api.post('/v1/billing/addons/seats/revoke', { userId });
-      toast('Seat released', `${userId} no longer holds a seat`, 'ok');
+      toast('Seat released', `${nameOf(userId)} no longer holds a seat`, 'ok');
       await loadEntitlement(); draw();
     } catch (error) { toast('Could not release the seat', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
   };
@@ -123,22 +151,34 @@ export async function grid(root) {
           <b>Add-on entitlement</b>
           ${badge(e.effective, effTone)}
           ${badge(e.usable ? 'new use permitted' : 'read-only', e.usable ? 'ok' : 'warn')}
-          <span class="muted">Grant ${e.adminGrant ? 'held' : 'none'} · provider ${e.providerStatus}</span>
-          <span style="margin-left:auto">Seats ${e.assignedSeats}/${e.paidQuantity} (${e.availableSeats} available)</span>
+          <span class="muted">Grant ${e.adminGrant ? 'held' : 'none'} · ${e.freeExempt ? 'included free' : `provider ${e.providerStatus}`}</span>
+          <span style="margin-left:auto">${e.freeExempt ? html`Seats ${e.assignedSeats} assigned · included free (no cap)` : html`Seats ${e.assignedSeats}/${e.paidQuantity} (${e.availableSeats} available)`}</span>
         </div>
+        ${e.adminGrant ? html`<p class="muted" style="margin:8px 0 0;font-size:0.85em">A named seat is one person in your company who may use Grid Connection AI. The base includes ${e.includedSeats} seat${e.includedSeats === 1 ? '' : 's'}${e.freeExempt ? ' (free on your account)' : '; further seats are £50/month each'}.</p>` : ''}
         ${e.seatUserIds.length ? html`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-          ${e.seatUserIds.map((u) => html`<span class="badge neutral" style="display:inline-flex;gap:6px;align-items:center">${u}${canSeat ? html` <button class="btn quiet xs" data-seat-revoke="${u}">release</button>` : ''}</span>`)}
+          ${e.seatUserIds.map((u) => html`<span class="badge neutral" style="display:inline-flex;gap:6px;align-items:center">${nameOf(u)}${canSeat ? html` <button class="btn quiet xs" data-seat-revoke="${u}">release</button>` : ''}</span>`)}
         </div>` : html`<p class="muted" style="margin:8px 0 0">No named seats assigned yet.</p>`}
-        ${canSeat && e.adminGrant ? html`<form id="seat-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:end">
-          <label class="field" style="flex:1;min-width:220px"><span>Assign a seat (user id)</span><input name="userId" placeholder="user id" required></label>
-          <button class="btn sm" type="submit" ${e.availableSeats <= 0 ? 'disabled' : ''}>Assign seat</button>
-        </form>` : ''}
+        ${canSeat && e.adminGrant ? (() => {
+          const seated = new Set(e.seatUserIds);
+          const assignable = people.filter((p) => !seated.has(p.id));
+          const atCap = !e.freeExempt && e.availableSeats <= 0;
+          return html`<form id="seat-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:end">
+          <label class="field" style="flex:1;min-width:220px"><span>Add a seat — choose a person</span>
+            ${assignable.length ? html`<select name="userId" required>
+              <option value="">— choose a person —</option>
+              ${assignable.map((p) => html`<option value="${p.id}">${p.name}${p.email ? ` · ${p.email}` : ''}</option>`)}
+            </select>` : html`<input name="userId" placeholder="user id" required>`}
+          </label>
+          <button class="btn sm" type="submit" ${atCap ? 'disabled' : ''}>Add seat</button>
+        </form>${atCap ? html`<p class="muted" style="margin:6px 0 0;font-size:0.85em">All paid seats are assigned. Add a seat (£50/month) by provisioning more, or release one above.</p>` : ''}`;
+        })() : ''}
         ${!e.adminGrant ? html`<p class="muted" style="margin:8px 0 0">This tenancy holds no Grid Connection AI grant. The platform operator provisions the add-on before seats can be assigned.</p>` : ''}
       </div>`);
     }
 
     // Engagement picker + open form.
     parts.push(html`<div class="card pad" style="margin-top:14px">
+      <p class="muted" style="margin:0 0 10px;font-size:0.85em">An <b>engagement</b> is one HV grid connection you are delivering — a specific point of connection taken through the whole 42-step, eight-gate playbook (G0 Agreement → G7 Handover). Choose an existing connection to open its workboard, or start a new one below.</p>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <label class="field" style="min-width:260px"><span>Engagement</span>
           <select id="eng-pick">
@@ -230,6 +270,7 @@ export async function grid(root) {
     root.querySelectorAll('[data-seat-revoke]').forEach((b) => b.addEventListener('click', () => releaseSeat(b.dataset.seatRevoke)));
   }
 
-  await Promise.all([loadList(), loadEntitlement()]);
+  await Promise.all([loadList(), loadEntitlement(), loadPeople()]);
+  await ensureIncludedSeat();
   draw();
 }

@@ -65,6 +65,7 @@ describe('before any provision', () => {
     assert.equal(ent.effective, 'LOCKED');
     assert.equal(ent.usable, false);
     assert.equal(ent.paidQuantity, 0);
+    assert.equal(ent.includedSeats, 0); // no grant → nothing included
 
     assert.throws(() => allocateSeat(adminCtx(), { userId: 'u-1' }), (e) => (e as { code?: string }).code === 'NO_ADDON_GRANT');
     assert.throws(() => requireModuleSeat(adminCtx(), 'u-1'), (e) => (e as { code?: string }).code === 'NO_ADDON_GRANT');
@@ -81,6 +82,7 @@ describe('the operator provisions the add-on and a company assigns its seats', (
     assert.equal(ent.effective, 'ACTIVE');
     assert.equal(ent.usable, true);
     assert.equal(ent.paidQuantity, 2);
+    assert.equal(ent.includedSeats, 1); // the £100 base always includes one named seat
     assert.equal(ent.assignedSeats, 0);
     assert.equal(ent.availableSeats, 2);
   });

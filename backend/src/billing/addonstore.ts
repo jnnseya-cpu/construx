@@ -138,11 +138,22 @@ export type AddonEntitlement = {
    * free rather than a settled billing arrangement.
    */
   freeExempt: boolean;
+  /**
+   * The named seats the base fee already covers — one, always, because the £100
+   * base includes a single named seat (`addon.ts`); further seats are £50 each.
+   * The console shows it so a granted add-on reads "1 seat included" rather than
+   * "0 seats" the moment it is active, and so the first seat is understood as
+   * already paid for rather than an extra.
+   */
+  includedSeats: number;
   paidQuantity: number;
   assignedSeats: number;
   availableSeats: number;
   seatUserIds: string[];
 };
+
+/** The named seats the base fee includes — one, for a held add-on; none otherwise. */
+const INCLUDED_SEATS = 1;
 
 /** The tenant's own entitlement and seat usage for the module (what the console shows). */
 export function addonEntitlement(ctx: EngineContext, moduleKey = GRID_MODULE_KEY): AddonEntitlement {
@@ -163,6 +174,7 @@ export function addonEntitlement(ctx: EngineContext, moduleKey = GRID_MODULE_KEY
     effective,
     usable: moduleUsable(effective),
     freeExempt,
+    includedSeats: adminGrant ? INCLUDED_SEATS : 0,
     paidQuantity,
     assignedSeats: seats.length,
     // The remaining-seat count describes the billing provision, which an exempt

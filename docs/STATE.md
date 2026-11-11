@@ -1331,6 +1331,20 @@ term ends) and `tests/addon.test.ts` (the free-exempt override in the pure contr
 grant/status are recorded from verified provisioning or reconciliation, **never from a
 client** and never from a manual write standing in for a verified payment.
 
+**Slice 5c — the seat console reads for a human, not an id (done).** The Grid Connection
+screen's seat panel (`frontend/pages/grid.js`) was asking for a raw user id, which nobody
+knows, and started at zero seats. It now (1) assigns a seat by **choosing a person** from a
+name/email picker fed by `GET /v1/users` (the raw-id input survives only as the fallback
+when that list cannot be read), shows seat holders and the toasts by **name**, not id;
+(2) reflects the **included seat** — the base fee covers one named seat (`addonEntitlement`
+now returns `includedSeats`), shown as "1 seat included" and, for a free-exempt account,
+"included free (no cap)"; and (3) **auto-assigns that included seat once** to the admin
+setting it up when the add-on is usable and no seat is held yet, so the module is usable
+immediately rather than sitting at zero (idempotent, silent, guarded; they can release it or
+seat someone else). The screen also carries a one-line explanation of what an **engagement**
+is (one HV grid connection run through the whole G0–G7 playbook). `includedSeats` covered in
+`tests/addonstore.test.ts`.
+
 **Still to build (named, not pretended):** only the **live provider (Stripe) webhook
 reconciliation** that would set the provider status automatically from a verified
 billing event, and the idempotent handling of duplicate / out-of-order webhooks (A04) —
