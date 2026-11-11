@@ -120,15 +120,40 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   const governanceInvitations = ctx.ledger
     .list(`${ctx.tenantId}-governance`, 'TenderInvitation')
     .map((record) => record.state);
+  // The opportunity this open job *is*: a pursuit linked to the project at
+  // registration carries `projectId`; a win converted into it carries
+  // `convertedProjectId`. This is the exact link the pipeline board resolves
+  // each tender's returns through, so reading the invitation this way makes the
+  // guide and the board agree by construction.
+  //
+  // Without it, a tenancy running several tenders at once fell to the fuzzy
+  // name match below, whose `.at(-1)` picked the LAST-recorded invitation whose
+  // buyer name merely overlapped the project name. With two "Telford and Wrekin
+  // Council" tenders on the board, the guide reported one tender's "27 returns
+  // still without an owner" while the board showed the tender actually in focus
+  // with every return owned — a gate the user could never clear, because the
+  // screen the guide pointed them at was not the tender the guide was counting.
+  const linkedOpportunityId = ctx.ledger
+    .list(`${ctx.tenantId}-governance`, 'Opportunity')
+    .map((record) => record.state)
+    .find(
+      (state) =>
+        String(state.projectId ?? '') === ctx.projectId || String(state.convertedProjectId ?? '') === ctx.projectId,
+    )?.id;
   const projectName = String(project?.name ?? '').toLowerCase().trim();
   const invitation =
     // 1. Recorded directly against the project — somebody put it there on purpose.
     ctx.ledger.list(ctx.projectId, 'TenderInvitation').map((record) => record.state).at(-1) ??
-    // 2. The invitation on the opportunity this project was converted from.
+    // 2. The opportunity this job is — the same opportunity→invitation link the
+    //    board resolves returns through, so the two never disagree.
+    (linkedOpportunityId
+      ? governanceInvitations.filter((state) => String(state.opportunityId ?? '') === String(linkedOpportunityId)).at(-1)
+      : undefined) ??
+    // 3. The invitation on the opportunity this project was converted from.
     (originOpportunityId
       ? governanceInvitations.filter((state) => String(state.opportunityId ?? '') === originOpportunityId).at(-1)
       : undefined) ??
-    // 3. A project created outside "convert a won opportunity into a project"
+    // 4. A project created outside "convert a won opportunity into a project"
     //    carries no originOpportunityId, so it has no stored link to the
     //    invitation that lives on the opportunity. That left the flow telling
     //    the user to "Record an ITT" for an invitation already recorded — a

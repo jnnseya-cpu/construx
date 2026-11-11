@@ -33481,3 +33481,22 @@ now means only "already complete" (nothing still blocking). The modal's internal
 date is now required. Covered by tenderintake.test.ts. Single-return assignment
 is unchanged — it is the deliberate incremental door and the returnables table
 shows what each return is still missing honestly.
+
+## 2026-11 the guide read the wrong tender's returns when several were live
+
+Root cause of "the gate never passes, no matter how many returns I assign": the
+bid-flow guide (`backend/src/domain/bidflow.ts`) resolved which invitation a job
+is about by, as a last resort, a fuzzy match of the buyer's name against the
+project name, taking `.at(-1)` of whatever matched. A tenancy running several
+tenders for the same buyer (e.g. two "Telford and Wrekin Council" pursuits) had
+the guide count the LAST-recorded invitation's unassigned returns while the
+pipeline board showed the tender actually in focus with every return owned. The
+two disagreed, and assigning returns on the right screen never moved the gate,
+because the gate was reading a different tender.
+
+Fix: the guide now resolves the invitation through the same opportunity→project
+link the board uses — the opportunity whose `projectId` (pursuit linked at
+registration) or `convertedProjectId` (a won job) is the open project — and only
+falls back to the name match when no such link exists. Deterministic, and the
+guide and board now agree by construction. Covered by journey.test.ts
+("reads the invitation of the tender in focus, not the one recorded last").

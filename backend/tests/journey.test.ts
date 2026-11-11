@@ -6,6 +6,8 @@ import * as structure from '../src/domain/structure.ts';
 import { setCompanyProfile, type CompanyProfile } from '../src/domain/radar.ts';
 import { bidFlow } from '../src/domain/bidflow.ts';
 import { guidedJourney } from '../src/domain/journey.ts';
+import * as business from '../src/domain/business.ts';
+import * as tenderintake from '../src/domain/tenderintake.ts';
 
 /**
  * The guided walkthrough, from an empty account to an open job.
@@ -116,6 +118,66 @@ describe('the guided journey', () => {
     // Every WIN stage carried its flow identity across unchanged.
     const win = journey.stages.find((s) => s.group === 'WIN');
     assert.ok(win && win.title.length > 0 && win.screen.length > 0);
+  });
+
+  it('reads the invitation of the tender in focus, not the one recorded last, when several are live', () => {
+    // The gate that "could never pass": a tenancy running several tenders at
+    // once, each a pursuit linked to its own project but all named for the same
+    // buyer. The guide resolved the invitation by a fuzzy name match whose
+    // `.at(-1)` picked the LAST-recorded one, so the job in focus — every return
+    // owned — was reported against a different tender's unassigned returns, and
+    // no amount of assigning on the right screen moved the gate. The guide must
+    // read the invitation of the opportunity the open project actually is.
+    const w = workspace();
+    setCompanyProfile(w.governance, PROFILE);
+
+    const openNamed = (name: string) => {
+      const enterpriseId = String(w.platform.ledger.listByTenant(w.tenantId, 'Enterprise')[0]?.state.id ?? '');
+      const { portfolioId } = structure.createPortfolio(w.governance, {
+        name: `${name} portfolio`, enterpriseId, governanceModel: 'Sole director', continentCode: 'EU', city: 'Telford',
+      });
+      const { projectId } = structure.createProject(w.governance, {
+        portfolioId, name, sectorType: 'RMI', assetType: 'Dwelling',
+        location: { continentCode: 'EU', countryCode: 'GB', city: 'Telford' },
+        contractValueMinor: 5_000_000, currency: 'GBP', plannedStart: '2026-12-01', plannedCompletion: '2027-03-31',
+      });
+      return { projectId, ctx: w.platform.context(w.auth, projectId, { source: 'WEB' }) };
+    };
+    const inv = (oppId: string, reference: string, issuedAt: string, deliverables: tenderintake.TenderDeliverable[]) => {
+      const { invitationId } = tenderintake.recordInvitation(w.governance, oppId, {
+        reference, issuedAt, returnLocal: '2027-01-04T12:00', timeZone: 'Europe/London', timeZoneStated: true, channel: 'PORTAL',
+      });
+      tenderintake.extractRequirements(w.governance, invitationId, { deliverables, analysisId: `an-${invitationId}` });
+      return invitationId;
+    };
+    // A pursuit linked to a project takes its title, sector and value from that
+    // project, so they are left to derive rather than restated.
+    const opp = (projectId: string) =>
+      business.registerOpportunity(w.governance, {
+        clientName: 'Telford and Wrekin Council', sectorType: 'RMI', estimatedValueMinor: 5_000_000,
+        source: 'In-Tend', projectId,
+      }).opportunityId;
+
+    // Two returns each, so both read as a submission to write (not a bare price).
+    const owned = (reference: string, title: string): tenderintake.TenderDeliverable => ({
+      reference, title, mandatory: true, owner: 'OWNER', internalDueBy: '2026-12-20', source: { document: 'ITT' },
+    });
+    // Job A — in focus — has both mandatory returns fully owned, dated and sourced.
+    const a = openNamed('Telford and Wrekin Council A');
+    inv(opp(a.projectId), 'TWC-A', '2026-11-01T09:00:00.000Z', [owned('A-1', 'Questionnaire'), owned('A-2', 'Declaration')]);
+    // Job B — recorded LATER — has bare, unassigned mandatory returns.
+    const b = openNamed('Telford and Wrekin Council B');
+    inv(opp(b.projectId), 'TWC-B', '2026-11-02T09:00:00.000Z', [
+      { reference: 'B-1', title: 'Bare return', mandatory: true },
+      { reference: 'B-2', title: 'Bare return two', mandatory: true },
+    ]);
+
+    // Job A's guide sees A's own register — owned, done — not B's unassigned one.
+    const regA = bidFlow(w.platform, a.ctx).steps.find((s) => s.id === 'RETURN_REGISTER')!;
+    assert.equal(regA.state, 'DONE', `job A return register should be done, got: ${regA.detail}`);
+    // Job B still shows its own blocking return, so the fix did not simply hide the block.
+    const regB = bidFlow(w.platform, b.ctx).steps.find((s) => s.id === 'RETURN_REGISTER')!;
+    assert.notEqual(regB.state, 'DONE', 'job B still has an unassigned mandatory return and must not read as done');
   });
 
   it('when a job’s flow cannot be read, still guides setup rather than failing', () => {
