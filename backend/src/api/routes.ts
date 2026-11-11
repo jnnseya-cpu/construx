@@ -1044,6 +1044,43 @@ async function storeBrandImage(
 }
 
 /**
+ * The same, but for a logo — which the PDF carries inline (`logoRef`) rather
+ * than resolving from the store the way it resolves a cover. A logo is embedded
+ * into every page, so it must be a format a PDF can embed: PNG (FlateDecode) or
+ * JPEG (DCTDecode). WebP is fine for a cover, which is resolved and decoded by a
+ * different path, but a PDF reader cannot embed it as a logo — so it is refused
+ * here with a sentence that says what to do rather than failing silently at
+ * render time with the mark simply missing from the page.
+ */
+async function storeLogoImage(
+  platform: Platform,
+  tenantId: string,
+  bytes: Buffer,
+): Promise<{ hash: string; bytes: number; contentType: string; dataUri: string }> {
+  // Format is decided from the bytes before the store is touched, so a WebP
+  // logo — valid as a cover, unembeddable as a logo — is refused with advice
+  // whether or not an object store is configured, exactly as a non-image is.
+  const signature = SIGNATURES.find((candidate) => candidate.matches(bytes));
+  if (signature && signature.contentType !== 'image/png' && signature.contentType !== 'image/jpeg') {
+    throw new DomainError(
+      'LOGO_FORMAT',
+      `A logo has to be a PNG or JPEG so it can be embedded on every page of a PDF. ` +
+        `${signature.contentType === 'image/webp' ? 'WebP is fine for a cover image but not for a logo. ' : ''}` +
+        `Re-export the logo as PNG or JPEG and upload it again.`,
+      415,
+    );
+  }
+  // A non-image (no signature), the size ceiling and the store itself are
+  // storeBrandImage's job, with its own refusals.
+  const stored = await storeBrandImage(platform, tenantId, bytes);
+  // The PDF reads the logo from `logoRef` as a data URI, so the bytes travel in
+  // the branding record itself; the evidence hash is kept alongside so the
+  // document's content hash still commits to exactly which mark was on the page.
+  const dataUri = `data:${stored.contentType};base64,${bytes.toString('base64')}`;
+  return { ...stored, dataUri };
+}
+
+/**
  * Commands an approved proposal may run.
  *
  * An explicit allow-list, not a lookup by name into the engines: an agent can
@@ -26496,6 +26533,50 @@ export const ROUTES: Route[] = [
         engine.auth.actorId,
       );
       return stored;
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/branding/logo',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the logo on this tenancy's documents. PNG or JPEG, read from the file itself",
+    handler: async (platform, ctx) => {
+      const actor = auth(ctx);
+      // The same authority the tenancy-level identity itself takes.
+      authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'U');
+      const existing = platform.exports.branding(actor.tenantId);
+      const stored = await storeLogoImage(platform, actor.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(
+        actor.tenantId,
+        { ...existing, logoRef: stored.dataUri, logoEvidenceHash: stored.hash },
+        undefined,
+        actor.actorId,
+      );
+      recordBrandChange(platform, actor);
+      return { hash: stored.hash, bytes: stored.bytes, contentType: stored.contentType };
+    },
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/branding/logo',
+    upload: true,
+    maxBytes: config.site.mediaMaxBytes,
+    description: "Set the logo on this project's client-facing documents",
+    handler: async (platform, ctx) => {
+      const engine = projectContext(platform, ctx);
+      // The same authority the identity itself takes — a role that may set the
+      // name on every document may set the mark above it.
+      authorise(engine, 'PROJECT_SETUP', 'U');
+      const existing = platform.exports.branding(engine.tenantId, engine.projectId);
+      const stored = await storeLogoImage(platform, engine.tenantId, ctx.rawBody ?? Buffer.alloc(0));
+      platform.exports.setBranding(
+        engine.tenantId,
+        { ...existing, logoRef: stored.dataUri, logoEvidenceHash: stored.hash },
+        engine.projectId,
+        engine.auth.actorId,
+      );
+      return { hash: stored.hash, bytes: stored.bytes, contentType: stored.contentType };
     },
   },
   {

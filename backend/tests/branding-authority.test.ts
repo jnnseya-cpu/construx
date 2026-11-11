@@ -134,4 +134,31 @@ describe("the identity a tenancy's documents carry", () => {
     const problem = (await response.json()) as { title?: string };
     assert.equal(problem.title, 'NOT_AN_IMAGE');
   });
+
+  it('refuses a logo from an identity that does not administer the tenancy', async () => {
+    // The logo goes out on every page under the company's name; deciding it is
+    // the same enterprise decision as the name itself, not a project manager's.
+    const response = await fetch(`${base}/v1/branding/logo`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenFor(seed.users.pm!.id)}`, 'content-type': 'image/png' },
+      body: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    assert.equal(response.status, 403);
+  });
+
+  it('refuses a WebP logo with advice, before the store is reached', async () => {
+    // A WebP is a real image and a valid cover, but a PDF reader cannot embed it
+    // on a page as a logo. Rather than succeed and leave the mark silently
+    // missing at render time, the upload is refused with the format to use — and
+    // the refusal lands before the store, so it holds with none configured.
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP')]);
+    const response = await fetch(`${base}/v1/branding/logo`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${tokenFor(seed.users.admin!.id)}`, 'content-type': 'image/webp' },
+      body: webp,
+    });
+    assert.equal(response.status, 415);
+    const problem = (await response.json()) as { title?: string };
+    assert.equal(problem.title, 'LOGO_FORMAT');
+  });
 });

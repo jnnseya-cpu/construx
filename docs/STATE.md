@@ -33500,3 +33500,20 @@ registration) or `convertedProjectId` (a won job) is the open project — and on
 falls back to the name match when no such link exists. Deterministic, and the
 guide and board now agree by construction. Covered by journey.test.ts
 ("reads the invitation of the tender in focus, not the one recorded last").
+
+## 2026-11 a logo is uploaded, not pasted as a data URI
+
+The branding door let a one-director business set its documents' issuer name and
+colour and upload a cover image, but the **logo** was a "paste a data URI" text
+field — asking the user to base64-encode a PNG by hand. So documents went out
+with the right name and no mark. Added `POST /v1/branding/logo` and
+`POST /v1/projects/:projectId/branding/logo` (upload routes mirroring the cover
+ones, ENTERPRISE_STRUCTURE / PROJECT_SETUP update) and an "Upload a logo" button
+beside "Set the cover image" on the documents branding door. The logo is stored
+in the evidence store (its hash kept so the document's content hash still commits
+to the mark) and set as `logoRef`, a data URI the PDF renderer already reads. A
+logo must be PNG or JPEG — the two formats a PDF can embed on a page — and a WebP
+(valid as a cover, not as an embedded logo) is refused with `LOGO_FORMAT` before
+the store is touched, rather than rendering with the mark silently missing.
+Covered by branding-authority.test.ts. The data-URI field is kept for the rare
+caller who wants it; its hint now points at the button.

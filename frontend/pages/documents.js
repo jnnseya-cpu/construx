@@ -478,6 +478,10 @@ export async function documents(root) {
         <div class="actions">
           <button class="btn" id="set-branding">Set the client identity</button>
           <label class="btn quiet" style="cursor:pointer">
+            Upload a logo
+            <input type="file" accept="image/png,image/jpeg" id="logo-file" style="display:none" />
+          </label>
+          <label class="btn quiet" style="cursor:pointer">
             Set the cover image
             <input type="file" accept="image/png,image/jpeg,image/webp" id="cover-file" style="display:none" />
           </label>
@@ -537,12 +541,29 @@ export async function documents(root) {
           value: held?.documentReferencePrefix,
           hint: 'Every document reference starts with this. It is what a page pulled out of a bundle is identified by.',
         },
-        { name: 'logoRef', label: 'Logo, as a data URI', value: held?.logoRef, required: false, hint: 'Optional. A document with no logo is honest; one with somebody else\'s is not.' },
+        { name: 'logoRef', label: 'Logo, as a data URI', value: held?.logoRef, required: false, hint: 'Optional, and the hard way — the "Upload a logo" button takes a PNG or JPEG file instead. A document with no logo is honest; one with somebody else\'s is not.' },
       ],
     });
     if (ok) {
       toast('Identity applied', `${ok.clientName} — every document from here carries it`, 'ok');
       await draw();
+    }
+  });
+
+  document.getElementById('logo-file')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    brandingError('');
+    try {
+      // Uploaded rather than pasted as a data URI: the same mark the account
+      // header carries belongs on the documents it issues, and asking for base64
+      // is asking the one-director business to do the renderer's job by hand.
+      const stored = await api.upload(`/v1/projects/${projectId}/branding/logo`, file);
+      toast('Logo set', `${Math.round(stored.bytes / 1024)}KB · ${stored.contentType} — on every document from here`, 'ok');
+      await draw();
+    } catch (error) {
+      brandingError(`${error.code ? `${error.code} — ` : ''}${error.message}`);
+      event.target.value = '';
     }
   });
 
