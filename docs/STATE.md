@@ -33201,6 +33201,28 @@ format) refreshes, the bidder's assignments (owner, internal date, source) are c
 across. Covered by a new `tenderintake.test.ts` case (read → assign → re-read → the
 owner, date and source survive while the title refreshes).
 
+## 2026-11 the red team's evidence lens no longer looks in the wrong drawer
+
+Reported live on a contract-heavy DPS: ~57 high "X asks for evidence nothing answers"
+findings, one for nearly every contractual clause. The evidence lens
+(`backend/src/domain/redteam.ts`, `evaluatorFindings`) fired for every matrix line
+carrying `evidenceRequired` with no covering claim in the register — but it never
+looked at whether a **drafted response section already answered that reference**. A
+contractual obligation ("Complete the Services with all reasonable skill and care") is
+met in a bid by a **method statement**, which the bidder writes as a section; the
+claims register proves *documentary* assertions (an insurance certificate, a CV, a
+policy) and was never where a method statement lives. So clauses the bidder had written
+full answers for were reported as unevidenced — the lens looking in the wrong drawer.
+
+Fix: a reference with a written (DRAFTED, non-empty) response section is not reported
+as unevidenced. A genuinely documentary line with no section and no claim still fires,
+and the returnables register still tracks the documents a return must carry. Covered by
+a new `redteam.test.ts` case (a clause with a drafted section is not flagged; the same
+clause with no section still is). Recorded as still-open: the ITT analysis sets
+`evidenceRequired` on contractual *acknowledgements* too (terms a bidder accepts rather
+than answers), so references with neither a section nor a claim can still over-report on
+a terms-heavy agreement — that is an `analyseITT` extraction question, not a lens one.
+
 ## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
 
 Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral

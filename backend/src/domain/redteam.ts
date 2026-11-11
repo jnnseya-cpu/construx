@@ -613,13 +613,27 @@ export function evaluatorFindings(input: {
     }
   }
 
+  // A requirement answered by a written response section is answered — in prose,
+  // which is how a contractual obligation ("complete the Services with all
+  // reasonable skill and care") is met in a bid. The claims register proves
+  // documentary assertions — an insurance certificate, a CV, a policy — and was
+  // never where a method statement lives. Reporting "nothing answers this" about
+  // a clause the bidder has written a full method statement against is the lens
+  // looking in the wrong drawer, and on a contract-heavy tender it was the bulk
+  // of the findings. A reference with a drafted section is therefore not reported
+  // as unevidenced; a genuinely documentary line still needs its claim, and the
+  // returnables register tracks the documents a return must carry.
+  const answeredInProse = new Set(
+    pack.sections.filter((s) => s.status === 'DRAFTED' && (s.body ?? []).length > 0).map((s) => s.key),
+  );
+
   // Evidence, against the day the buyer reads it rather than against today.
   for (const line of matrix) {
     if (!line.evidenceRequired) continue;
     const covering = claims.filter((claim) => claim.covers.includes(line.reference));
     const held = line.evidenceHeld !== undefined && line.evidenceHeld !== '';
 
-    if (covering.length === 0 && !held) {
+    if (covering.length === 0 && !held && !answeredInProse.has(line.reference)) {
       findings.push(
         finding({
           lens: 'EVIDENCE',

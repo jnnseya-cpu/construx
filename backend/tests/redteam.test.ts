@@ -614,6 +614,31 @@ describe('the evidence lens, on the day the buyer reads it', () => {
     // Both are the red team's business and neither is a completeness question.
     assert.ok(review.findings.some((entry) => entry.reference === 'R-03'));
   });
+
+  it('does not report a clause answered by a written method statement as unevidenced', () => {
+    const line = (reference: string) => ({
+      reference, category: 'CONTRACT', requirement: 'Complete the Services with all reasonable skill and care',
+      mandatory: true, owner: 'OWNER', evidenceRequired: 'Complete the Services with all reasonable skill and care', status: 'GAP',
+    });
+    const pack = (sections: unknown[]) => ({
+      id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+      returnBy: '2027-03-01T12:00:00.000Z', sections, deadlines: [], status: 'DRAFTING', passes: 1,
+      plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+    }) as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+    const run = (sections: unknown[]) => redteam.evaluatorFindings({
+      pack: pack(sections),
+      matrix: [line('C-1')] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'],
+      waivedKeys: new Set(), claims: [], staleKeys: new Map(),
+    });
+
+    // A written method statement answers the contractual obligation.
+    const answered = run([{ key: 'C-1', title: 'Skill and care', deliverable: 'd', owner: 'OWNER', mandatory: true, status: 'DRAFTED', words: 120, body: ['We will complete the Services with all reasonable skill and care, by the controls below.'] }]);
+    assert.equal(answered.some((f) => f.title.includes('asks for evidence nothing answers')), false, 'a clause with a drafted section was called unevidenced');
+
+    // The same clause with no section written still fires — nothing answers it.
+    const empty = run([]);
+    assert.equal(empty.some((f) => f.reference === 'C-1' && f.title.includes('asks for evidence nothing answers')), true, 'a genuinely unanswered clause stopped firing');
+  });
 });
 
 describe('the measurable-commitment lens', () => {
