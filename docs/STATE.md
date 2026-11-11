@@ -33201,6 +33201,27 @@ format) refreshes, the bidder's assignments (owner, internal date, source) are c
 across. Covered by a new `tenderintake.test.ts` case (read → assign → re-read → the
 owner, date and source survive while the title refreshes).
 
+## 2026-11 a professional-services fee can be priced by day-rates
+
+The pricing-door fix made the by-hand bill reachable, but a consultancy fee still had
+no honest path: the only way was to enter a dummy measured line and fight the twenty
+construction cost heads. `tender.priceDayRateSchedule` (`backend/src/engines/tender.ts`)
+is the schedule-of-rates path — resource lines (a role, the days, the day-rate), with
+optional disbursements carried at cost. Rather than a parallel pricing engine it reuses
+the two steps a construction bid already uses: it files the resource lines as a by-hand
+person take-off (`runTakeoff`, so they appear on the bill and in the pricing schedule
+like any other line), then prices them through the same cost model (`buildEstimate`) —
+own labour at the day-rates into `DIRECT_WORKS`, every construction head excluded, and
+disbursements as fixed sums added after margin and never marked up. Overhead and profit
+are excluded when the rate is all-in (the default) and priced only when the bidder sets
+a markup — without that, a nil margin left both heads zero-but-expected and the estimate
+came back `INCOMPLETE`. The result is an ordinary complete estimate, so the quotation,
+pricing schedule, Appendix B export and PDF all follow unchanged. Exposed as
+`POST /v1/projects/:projectId/tender/fee-schedule` and a **"Price as a fee (day-rates)"**
+action beside "Enter measured quantities" on the procurement screen. Covered by
+`estimating.test.ts` (a fee estimate completes with no omissions and totals labour +
+disbursements; empty/zero-day/zero-rate lines are refused).
+
 ## 2026-11 the red team's evidence lens no longer looks in the wrong drawer
 
 Reported live on a contract-heavy DPS: ~57 high "X asks for evidence nothing answers"

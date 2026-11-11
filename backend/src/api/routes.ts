@@ -14228,6 +14228,49 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/tender/fee-schedule',
+    description: 'Price a bid as a professional-services fee — a schedule of day-rates rather than a measured construction bill',
+    schema: {
+      type: 'object',
+      required: ['resources'],
+      properties: {
+        packageName: { type: 'string', minLength: 1, maxLength: 120 },
+        resources: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['role', 'days', 'dayRateMinor'],
+            properties: {
+              role: { type: 'string', minLength: 1, maxLength: 200 },
+              days: { type: 'number', exclusiveMinimum: 0 },
+              dayRateMinor: { type: 'integer', exclusiveMinimum: 0 },
+            },
+            additionalProperties: false,
+          },
+        },
+        disbursements: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['label', 'amountMinor'],
+            properties: {
+              label: { type: 'string', minLength: 1, maxLength: 200 },
+              amountMinor: { type: 'integer', minimum: 0 },
+            },
+            additionalProperties: false,
+          },
+        },
+        basisOfEstimate: { type: 'string', maxLength: 4000 },
+        overheadPercent: { type: 'number', minimum: 0 },
+        profitPercent: { type: 'number', minimum: 0 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => tender.priceDayRateSchedule(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/tender/estimate',
     description: 'Engine A — build a bottom-up estimate across the twenty tender cost heads',
     schema: {

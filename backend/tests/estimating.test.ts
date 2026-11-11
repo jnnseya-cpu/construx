@@ -382,6 +382,42 @@ describe('Estimating through the engine', () => {
     );
   });
 
+  it('prices a professional-services fee as a complete estimate from day-rates', async () => {
+    const ctx = qsCtx();
+    const result = await tender.priceDayRateSchedule(ctx, {
+      packageName: 'Professional services',
+      resources: [
+        { role: 'Director', days: 5, dayRateMinor: 60_000 }, // 5 × £600 = £3,000
+        { role: 'Senior consultant', days: 10, dayRateMinor: 40_000 }, // 10 × £400 = £4,000
+      ],
+      disbursements: [{ label: 'Travel and subsistence', amountMinor: 50_000 }], // £500
+      basisOfEstimate: 'Fee by day-rate',
+    });
+
+    const record = ctx.ledger.require({ refType: 'Estimate', refId: result.estimateId });
+    // It completes — every construction head is excluded, none left as an omission.
+    assert.equal(record.state.status, 'DRAFT', 'a fee estimate should be complete, not INCOMPLETE');
+    assert.equal((record.state.omissions as unknown[]).length, 0);
+    // Own labour (DIRECT_WORKS) 3,000 + 4,000 = 7,000, margin nil, plus the £500
+    // disbursement carried after margin and not marked up = £7,500.
+    assert.equal(result.totalMinor, 300_000 + 400_000 + 50_000);
+    // The resource lines are on the bill as measured items.
+    const boq = ctx.ledger.list(ctx.projectId, 'BoQItem').filter((r) => result.boqItemIds.includes(r.refId));
+    assert.equal(boq.length, 2);
+  });
+
+  it('refuses a fee schedule with no resource lines, or a line with no days or rate', async () => {
+    await rejectsCode(() => tender.priceDayRateSchedule(qsCtx(), { resources: [] }), 'FEE_SCHEDULE_EMPTY');
+    await rejectsCode(
+      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', days: 0, dayRateMinor: 60_000 }] }),
+      'FEE_DAYS_INVALID',
+    );
+    await rejectsCode(
+      () => tender.priceDayRateSchedule(qsCtx(), { resources: [{ role: 'Director', days: 5, dayRateMinor: 0 }] }),
+      'FEE_RATE_INVALID',
+    );
+  });
+
   it('answers what the tender becomes on a longer programme', () => {
     const ctx = qsCtx();
     const built = tender.buildEstimate(ctx, {

@@ -14,7 +14,7 @@ import {
   type PenaltyProfile,
   type SubmissionInput,
 } from './maths/bidScoring.ts';
-import { costHead, priceEstimate, reprice, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
+import { costHead, priceEstimate, reprice, type CostHead, type CostModelInput, type PricedEstimate } from './maths/costModel.ts';
 import {
   cashflowScoreFor,
   modelFunding,
@@ -568,6 +568,131 @@ export function buildEstimate(
   });
 
   return { estimateId, totalMinor: priced.tenderTotalMinor, breakdown, priced };
+}
+
+/**
+ * The construction cost heads a professional-services fee bid does not carry.
+ *
+ * A consultancy priced by day-rate has its own labour (DIRECT_WORKS) and its
+ * margin (OVERHEAD, PROFIT, taken from the rates or added on top); every other
+ * head — materials, plant, prelims by the week, site management, insurance on a
+ * contract value, testing, commissioning — belongs to a construction job and not
+ * to a fee. They are *excluded* with a plain reason rather than priced at nought,
+ * because a nought against waste is a job with no waste, and the cost model is
+ * built to refuse exactly that: a head neither priced nor excluded is an omission.
+ */
+const FEE_BID_EXCLUDED_HEADS: ReadonlyArray<Exclude<CostHead, 'DIRECT_WORKS' | 'OVERHEAD' | 'PROFIT'>> = [
+  'SUBCONTRACT', 'MATERIALS', 'PLANT', 'PRELIMINARIES', 'SITE_MANAGEMENT', 'TEMPORARY_WORKS',
+  'INSURANCE', 'DESIGN', 'PROFESSIONAL_FEES', 'TESTING', 'COMMISSIONING', 'WASTE', 'LOGISTICS',
+  'HEALTH_AND_SAFETY', 'QUALITY', 'RISK', 'INFLATION',
+];
+
+export type DayRateResource = { role: string; days: number; dayRateMinor: number };
+export type DayRateScheduleInput = {
+  /** The package the fee lines are filed under; defaults to "Professional services". */
+  packageName?: string;
+  resources: DayRateResource[];
+  /** Expenses the fee does not mark up — travel, printing, sub-consultants at cost. */
+  disbursements?: Array<{ label: string; amountMinor: number }>;
+  basisOfEstimate?: string;
+  /** The day-rate is usually all-in, so both default to zero; set them to add a markup. */
+  overheadPercent?: number;
+  profitPercent?: number;
+};
+
+/**
+ * Price a bid as a **schedule of rates** — a professional-services fee, built
+ * from resource lines (a role, the days, the day-rate) rather than a measured
+ * construction bill.
+ *
+ * It is the one honest way a consultancy bidding a DPS prices its work, and the
+ * platform had no path to it: the pricing road ran drawings → measured bill →
+ * twenty construction heads, none of which a fee bid has. Rather than a parallel
+ * pricing engine, this reuses the two steps a construction bid already uses — it
+ * files the resource lines as a by-hand person take-off (so they appear on the
+ * bill and in the pricing schedule exactly like any other line), then prices
+ * them through the same cost model: own labour at the day-rates, every
+ * construction head excluded, and disbursements carried as fixed sums added after
+ * margin and never marked up. The result is an ordinary complete estimate, from
+ * which the existing quotation, pricing schedule, Appendix B export and PDF all
+ * work unchanged.
+ */
+export async function priceDayRateSchedule(
+  ctx: EngineContext,
+  input: DayRateScheduleInput,
+): Promise<{ estimateId: string; totalMinor: number; packageId: string; boqItemIds: string[] }> {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const resources = input.resources ?? [];
+  if (resources.length === 0) {
+    throw new DomainError('FEE_SCHEDULE_EMPTY', 'A fee schedule needs at least one resource line — a role, the days, and the day-rate.');
+  }
+  for (const r of resources) {
+    if (!r.role || r.role.trim().length === 0) {
+      throw new DomainError('FEE_ROLE_MISSING', 'Every fee line needs a role.');
+    }
+    if (!Number.isFinite(r.days) || r.days <= 0) {
+      throw new DomainError('FEE_DAYS_INVALID', `${r.role}: the number of days must be greater than zero.`);
+    }
+    if (!Number.isFinite(r.dayRateMinor) || r.dayRateMinor <= 0) {
+      throw new DomainError('FEE_RATE_INVALID', `${r.role}: the day-rate must be greater than zero.`);
+    }
+  }
+
+  const packageName = input.packageName && input.packageName.trim().length > 0 ? input.packageName.trim() : 'Professional services';
+
+  // File the resource lines as a by-hand person take-off. `runTakeoff` resolves
+  // the package id into its input object in place, so it is read back after.
+  const takeoffInput = {
+    packageId: packageName,
+    sources: [{ discipline: packageName, sheetId: 'Fee schedule' }] as TakeoffSource[],
+    items: resources.map((r) => ({ description: r.role.trim(), unit: 'person-day', quantity: r.days, sourceSheet: 'Fee schedule' })),
+    costCodePrefix: 'FEE',
+    measuredBy: 'PERSON' as const,
+  };
+  const takeoff = await runTakeoff(ctx, takeoffInput);
+  const packageId = takeoffInput.packageId;
+
+  const overheadPercent = input.overheadPercent ?? 0;
+  const profitPercent = input.profitPercent ?? 0;
+
+  // Every construction head is excluded; overhead and profit are excluded too
+  // when the rate is all-in (the usual case — a day-rate already carries them),
+  // and priced only where the bidder sets an explicit markup. Without this, a nil
+  // margin leaves both heads at zero *and* expected, which the model would (
+  // rightly, in general) report as an omission and mark the estimate incomplete.
+  const exclusions: Array<{ head: CostHead; reason: string }> = FEE_BID_EXCLUDED_HEADS.map((head) => ({
+    head,
+    reason: 'Professional-services fee priced by day-rate; this construction head does not apply.',
+  }));
+  if (overheadPercent === 0) exclusions.push({ head: 'OVERHEAD', reason: 'Overhead is carried within the day-rate, not added as a separate head.' });
+  if (profitPercent === 0) exclusions.push({ head: 'PROFIT', reason: 'Profit is carried within the day-rate, not added as a separate head.' });
+
+  const estimate = buildEstimate(ctx, {
+    packageId,
+    durationWeeks: 1,
+    lines: resources.map((r, index) => ({
+      boqItemId: takeoff.boqItemIds[index],
+      description: r.role.trim(),
+      unit: 'person-day',
+      quantity: r.days,
+      // Own time is own labour: it prices into DIRECT_WORKS, the only works head
+      // a fee bid carries.
+      labourRateMinor: r.dayRateMinor,
+    })),
+    exclusions,
+    margin: { overheadPercent, profitPercent },
+    ...(input.disbursements && input.disbursements.length > 0
+      ? { fixedSums: input.disbursements.map((d) => ({ label: d.label, amountMinor: d.amountMinor })) }
+      : {}),
+    basisOfEstimate:
+      input.basisOfEstimate && input.basisOfEstimate.trim().length > 0
+        ? input.basisOfEstimate.trim()
+        : 'Professional-services fee, priced by resource and day-rate.',
+    assumptions: [],
+  });
+
+  return { estimateId: estimate.estimateId, totalMinor: estimate.totalMinor, packageId, boqItemIds: takeoff.boqItemIds };
 }
 
 /**

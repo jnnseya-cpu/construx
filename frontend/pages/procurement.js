@@ -1793,6 +1793,12 @@ export async function procurement(root) {
                         reason: blockedReason('BOQ_TAKEOFF', 'C'),
                       },
                       {
+                        id: 'price-fee-schedule',
+                        label: 'Price as a fee (day-rates)',
+                        permitted: can('ESTIMATE_TENDER', 'C') && can('BOQ_TAKEOFF', 'C'),
+                        reason: blockedReason('ESTIMATE_TENDER', 'C') ?? blockedReason('BOQ_TAKEOFF', 'C'),
+                      },
+                      {
                         id: 'build-estimate',
                         label: 'Price the bill',
                         tone: 'primary',
@@ -2707,6 +2713,78 @@ export async function procurement(root) {
             quantity: Number(parts[2]),
             sourceSheet: parts[3] || v.sheetId,
           })),
+      }),
+    },
+    'price-fee-schedule': {
+      title: 'Price as a fee — day-rates',
+      intent:
+        'For a professional-services or consultancy bid priced by resource and day-rate rather than a measured ' +
+        'construction bill — a fee bid has no drawings to measure. Each line is a role, the days, and the day-rate; ' +
+        'disbursements are expenses carried at cost and never marked up. It files the lines and prices them in one ' +
+        'step, and the quotation and pricing schedule follow exactly as for any priced bill.',
+      path: `/v1/projects/${projectId}/tender/fee-schedule`,
+      submitLabel: 'Price the fee',
+      fields: [
+        {
+          name: 'packageName',
+          label: 'What the fee is for',
+          type: 'text',
+          required: false,
+          placeholder: 'Professional services',
+          hint: 'The package the fee lines are filed under. Leave blank for “Professional services”.',
+        },
+        {
+          name: 'resources',
+          label: 'Resource lines, one per line',
+          type: 'textarea',
+          rows: 6,
+          placeholder: 'Director | 5 | 600\nSenior consultant | 10 | 400\nCAD technician | 8 | 250',
+          hint: 'role | days | day-rate in pounds — e.g. “Director | 5 | 600” is 5 days at £600/day.',
+        },
+        {
+          name: 'disbursements',
+          label: 'Disbursements (optional), one per line',
+          type: 'textarea',
+          rows: 3,
+          required: false,
+          placeholder: 'Travel and subsistence | 500\nPrinting and plotting | 150',
+          hint: 'label | amount in pounds — carried at cost after margin, never marked up.',
+        },
+        {
+          name: 'overheadPercent',
+          label: 'Overhead (%)',
+          type: 'number',
+          step: '0.1',
+          required: false,
+          value: 0,
+          hint: 'Leave at 0 if your day-rate is all-in (the usual case).',
+        },
+        { name: 'profitPercent', label: 'Profit (%)', type: 'number', step: '0.1', required: false, value: 0 },
+        {
+          name: 'basisOfEstimate',
+          label: 'Basis of the fee',
+          type: 'textarea',
+          rows: 2,
+          required: false,
+          placeholder: 'Professional-services fee, priced by resource and day-rate.',
+          hint: 'Travels with the estimate and into the quotation.',
+        },
+      ],
+      transform: (v) => ({
+        ...(String(v.packageName ?? '').trim() ? { packageName: String(v.packageName).trim() } : {}),
+        resources: String(v.resources ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 3 && parts[0] && parts[1] && parts[2])
+          .map((parts) => ({ role: parts[0], days: Number(parts[1]), dayRateMinor: Math.round(Number(parts[2]) * 100) })),
+        disbursements: String(v.disbursements ?? '')
+          .split('\n')
+          .map((line) => line.split('|').map((part) => part.trim()))
+          .filter((parts) => parts.length >= 2 && parts[0] && parts[1])
+          .map((parts) => ({ label: parts[0], amountMinor: Math.round(Number(parts[1]) * 100) })),
+        overheadPercent: Number(v.overheadPercent) || 0,
+        profitPercent: Number(v.profitPercent) || 0,
+        ...(String(v.basisOfEstimate ?? '').trim() ? { basisOfEstimate: String(v.basisOfEstimate).trim() } : {}),
       }),
     },
     'duration-estimate': {
