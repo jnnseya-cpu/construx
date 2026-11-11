@@ -1038,3 +1038,51 @@ describe('carryForwardDispositions', () => {
     assert.equal(again[0]!.disposition?.decision, 'ACCEPTED');
   });
 });
+
+describe('the red team does not mistake the buyer’s own words for the bidder’s mistakes', () => {
+  const section = (over: Record<string, unknown>) => ({
+    key: 'R-1', title: 'T', deliverable: 'd', owner: 'OWNER', mandatory: true,
+    status: 'DRAFTED', authorship: 'AI_DRAFTED', words: 40, ...over,
+  });
+  const matrix = (requirement: string) =>
+    [{ reference: 'R-1', category: 'TECHNICAL', requirement, mandatory: true, owner: 'OWNER', evidenceRequired: 'x', status: 'GAP', weightingPercent: 30 }] as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['matrix'];
+  const pack = (sections: unknown[]) => ({
+    id: 'p', reference: 'BID-0001', projectId: 'x', analysisId: 'a', clientName: 'c',
+    returnBy: '2027-03-01T12:00:00.000Z', sections, deadlines: [], status: 'DRAFTING', passes: 1,
+    plannedAt: '2026-01-01T00:00:00.000Z', plannedBy: 'u',
+  }) as unknown as Parameters<typeof redteam.evaluatorFindings>[0]['pack'];
+  const run = (requirement: string, body: string[]) =>
+    redteam.evaluatorFindings({ pack: pack([section({ body })]), matrix: matrix(requirement), waivedKeys: new Set(), claims: [], staleKeys: new Map() });
+
+  it('does not flag a figure the buyer themselves stated in the requirement', () => {
+    const findings = run(
+      'The tender evaluation will be based 70% Price and 30% Quality.',
+      ['We acknowledge the buyer’s stated basis and will structure the response against the 30% quality weighting the buyer set.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('states a figure')), false, 'the buyer’s own 30% was treated as an invented figure');
+  });
+
+  it('still flags a figure the buyer did not state', () => {
+    const findings = run(
+      'Explain how you will monitor and reduce embodied carbon across the works.',
+      ['We will target a 35% reduction against the scheme baseline.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('states a figure')), true, 'an unsourced 35% slipped through');
+  });
+
+  it('does not flag the buyer’s own bracketed clause text as an unfilled placeholder', () => {
+    const findings = run(
+      'carry out and fulfil, in all respects, the duties of a designer [and principal designer] under the CDM Regulations;',
+      ['We will carry out and fulfil the duties of a designer [and principal designer] under the CDM Regulations.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('placeholder')), false, 'the buyer’s [and principal designer] was treated as a placeholder');
+  });
+
+  it('still flags a bracketed placeholder the bidder left', () => {
+    const findings = run(
+      'carry out and fulfil the duties of a designer under the CDM Regulations;',
+      ['We will complete the works in [NUMBER] phases agreed with the authority.'],
+    );
+    assert.equal(findings.some((f) => f.title.includes('placeholder')), true, 'a real [NUMBER] placeholder slipped through');
+  });
+});

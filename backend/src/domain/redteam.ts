@@ -291,9 +291,41 @@ const FIGURE = /(?:£|\$|€)\s?\d|(?:\b\d[\d,]*\s?(?:%|per\s?cent\b))|\b\d[\d,]
 const QUANTIFIED =
   /\b\d[\d,.]*\s?(?:%|per\s?cent|weeks?|months?|years?|days?|hours?|starts?|places?|apprentices?|apprenticeships?|jobs?|roles?|people|FTE|tonnes?|tCO2e?|kg|miles?|km|visits?|sessions?|students?|pupils?|SMEs?|suppliers?)\b|(?:£|\$|€)\s?\d|\b\d[\d,.]*\s?(?:million|billion|k\b)/i;
 
-/** What a draft leaves behind when the model was told to name what the bid team must insert. */
-const PLACEHOLDER =
-  /\bTBC\b|\bTBA\b|\bXX+\b|\bN\/A\b|\[[^\]]{0,60}\]|<[^>]{0,60}>|\bbid team must (?:insert|supply|confirm)\b|\binsert\b\s+(?:the\s+)?(?:figure|number|name|date)\b|\blorem ipsum\b/i;
+/**
+ * A marker the bidder left behind — always the bidder's own, never the buyer's.
+ * A `TBC`, an instruction to the bid team, an unfilled "insert the number".
+ */
+const PLACEHOLDER_MARKER =
+  /\bTBC\b|\bTBA\b|\bXX+\b|\bN\/A\b|\bbid team must (?:insert|supply|confirm)\b|\binsert\b\s+(?:the\s+)?(?:figure|number|name|date)\b|\blorem ipsum\b/i;
+
+/** A bracketed span — an unfilled `[insert …]`, OR the buyer's own `[and principal designer]`. */
+const BRACKETED = /\[[^\]]{0,60}\]|<[^>]{0,60}>/g;
+
+/**
+ * Figures as comparable tokens, so a figure the buyer stated can be told from one
+ * the model introduced. "30%", "30 %" and "30 per cent" all reduce to the same
+ * token, so a draft that restates the buyer's "70% Price / 30% Quality" is not
+ * accused of inventing a number the buyer themselves wrote.
+ */
+function figureTokens(text: string): string[] {
+  const re = new RegExp(FIGURE.source, 'gi');
+  return (text.match(re) ?? []).map((f) => f.toLowerCase().replace(/per\s?cent/g, '%').replace(/\s+/g, ''));
+}
+
+/**
+ * Whether a drafted section still carries a placeholder of its own.
+ *
+ * The buyer's requirement is discounted first: a drafter told to restate the
+ * buyer's wording will faithfully reproduce the buyer's own square brackets (a
+ * clause written "the duties of a designer [and principal designer]"), and that
+ * is the requirement, not an unfilled blank. A bracketed span that appears in the
+ * requirement is the buyer's; one that does not is the bidder's to resolve.
+ */
+function carriesPlaceholder(body: string, requirement: string): boolean {
+  if (PLACEHOLDER_MARKER.test(body)) return true;
+  const req = requirement.toLowerCase();
+  return (body.match(BRACKETED) ?? []).some((span) => !req.includes(span.toLowerCase()));
+}
 
 function reviewsOf(ctx: EngineContext): AssuranceReview[] {
   return ctx.ledger.list(ctx.projectId, 'AssuranceReview').map((record) => record.state as unknown as AssuranceReview);
@@ -435,8 +467,9 @@ export function evaluatorFindings(input: {
       );
     }
 
-    // A placeholder in a submission is the classic disqualification.
-    if (PLACEHOLDER.test((section.body ?? []).join(' '))) {
+    // A placeholder in a submission is the classic disqualification — but the
+    // buyer's own bracketed clause text, faithfully restated, is not one.
+    if (carriesPlaceholder((section.body ?? []).join(' '), line?.requirement ?? '')) {
       findings.push(
         finding({
           lens: 'ADVERSARIAL',
@@ -454,7 +487,17 @@ export function evaluatorFindings(input: {
 
     // A figure the drafting constraint forbade: the model cannot know it, so
     // wherever one appears it was either invented or inserted without a source.
-    if (section.authorship === 'AI_DRAFTED' && FIGURE.test((section.body ?? []).join(' '))) {
+    // A figure the buyer themselves stated in the requirement is the exception —
+    // restating "70% Price / 30% Quality" is quoting the source, not inventing a
+    // number — so only figures the draft introduces beyond the requirement count.
+    const introducedFigures =
+      section.authorship === 'AI_DRAFTED'
+        ? (() => {
+            const sourced = new Set(figureTokens(line?.requirement ?? ''));
+            return figureTokens((section.body ?? []).join(' ')).filter((f) => !sourced.has(f));
+          })()
+        : [];
+    if (introducedFigures.length > 0) {
       findings.push(
         finding({
           lens: 'CONTRACT',
@@ -463,9 +506,9 @@ export function evaluatorFindings(input: {
           reference: section.key,
           title: `${section.key} states a figure the drafting rule forbade`,
           detail:
-            'An AI-drafted section carries a sum or a percentage. The drafting constraint forbids stated figures ' +
-            'precisely because the model has no source for one, and a number in a submission is a representation to ' +
-            'the buyer.',
+            'An AI-drafted section carries a sum or a percentage the buyer did not state in the requirement. The ' +
+            'drafting constraint forbids stated figures precisely because the model has no source for one, and a ' +
+            'number in a submission is a representation to the buyer.',
           remedy: 'Check the figure against the record it should come from, or take it out.',
         }),
       );
