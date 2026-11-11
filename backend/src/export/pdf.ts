@@ -439,13 +439,21 @@ function renderBlock(
     case 'KEY_VALUES': {
       const labelWidth = 170;
       for (const row of block.rows) {
+        // Both columns wrap within their own width, so a label longer than the
+        // column (a quotation's "Not included — …") wraps down its own side
+        // instead of overrunning into the value and printing one on top of the
+        // other. The row is as tall as the taller of the two columns.
+        const labelLines = wrap(row.label, 'Helvetica', 10, labelWidth - 10);
         const valueLines = wrap(row.value, 'Helvetica', 10, CONTENT_WIDTH - labelWidth - 10);
-        sheet.reserve(valueLines.length * 13 + 4);
-        sheet.text(row.label, { size: 10, colour: [0.42, 0.42, 0.45] });
-        valueLines.forEach((line, index) => {
-          if (index > 0) sheet.advance(13);
-          sheet.text(line, { size: 10, x: MARGIN.left + labelWidth });
-        });
+        const height = Math.max(labelLines.length, valueLines.length);
+        sheet.reserve(height * 13 + 4);
+        for (let line = 0; line < height; line += 1) {
+          if (line > 0) sheet.advance(13);
+          const labelLine = labelLines[line];
+          const valueLine = valueLines[line];
+          if (labelLine) sheet.text(labelLine, { size: 10, colour: [0.42, 0.42, 0.45] });
+          if (valueLine) sheet.text(valueLine, { size: 10, x: MARGIN.left + labelWidth });
+        }
         sheet.advance(15);
       }
       sheet.advance(6);

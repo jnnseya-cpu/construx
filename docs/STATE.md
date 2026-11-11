@@ -33426,3 +33426,24 @@ event set written onto the Golden Thread + ACU/audit alignment so the user-safe 
 reflect settled actuals (Inc.6), resilience/circuit-breaker surfacing (Inc.7), and the
 migration that blocks direct provider egress (Inc.8). **Vertex AI** is named in policy but
 not wired — it awaits Google Cloud credentials; the router already skips it as `NOT_WIRED`.
+
+## 2026-11 the issued quotation reads as a quotation, not a data dump
+
+A real services quotation issued from the console came back unpresentable. Two faults,
+both in how the frozen key-value document renders:
+
+- **Seventeen identical exclusion rows.** A professional-services fee excludes every
+  construction head for the same reason, and `composeQuotation` (`backend/src/domain/quotation.ts`)
+  printed one `Not included N — HEAD: … does not apply` row per head — seventeen near-identical
+  lines over two pages. They now group by the reason they share: one row per distinct reason,
+  listing the heads it covers (`Subcontract costs, Materials, Plant, … — professional-services
+  fee priced by day-rate; this construction head does not apply`). Covered by `quotation.test.ts`
+  (four heads with one reason → one row).
+- **Long labels overran the value column.** The `KEY_VALUES` renderer
+  (`backend/src/export/pdf.ts`) drew the label at the left with no width bound, so a label longer
+  than the 170pt column printed on top of the value. Both columns now wrap within their own
+  width and the row is as tall as the taller column, so nothing collides.
+
+Also pluralised "1 week" (was "1 weeks"). The issued document is a frozen hashed manifest, so
+these apply to the next quotation generated; an already-issued one is superseded by a new
+revision, not edited.

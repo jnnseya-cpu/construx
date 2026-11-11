@@ -168,7 +168,7 @@ export function quoteFromEstimate(
     'Our reference': input.estimateId,
     'Date of this quotation': new Date().toISOString().slice(0, 10),
     'Valid until': input.validUntil.slice(0, 10),
-    'Period on site': `${Number(estimate.durationWeeks ?? 0)} weeks`,
+    'Period on site': `${Number(estimate.durationWeeks ?? 0)} week${Number(estimate.durationWeeks ?? 0) === 1 ? '' : 's'}`,
   };
   if (input.coveringNote) body['Covering note'] = input.coveringNote;
   if (estimate.basisOfEstimate) body['Basis of this price'] = String(estimate.basisOfEstimate);
@@ -235,11 +235,25 @@ export function quoteFromEstimate(
    * belongs on: whatever else changes upstream, a margin head does not get
    * printed on an offer.
    */
-  exclusions
-    .filter((exclusion) => costHead(String(exclusion.head ?? ''))?.basis !== 'MARGIN')
-    .forEach((exclusion, index) => {
-      body[`Not included ${index + 1} — ${exclusion.label ?? exclusion.head ?? ''}`.trim()] = exclusion.reason ?? 'Excluded';
-    });
+  // Grouped by the reason they share, not one row per head. A professional-
+  // services fee excludes seventeen construction heads for the same reason, and
+  // printing seventeen near-identical "Not included N — HEAD: … does not apply"
+  // rows read as a data dump and overran the label column. One row per distinct
+  // reason, listing the heads it covers, says the same thing and reads as a
+  // qualification rather than a dump.
+  const shownExclusions = exclusions.filter((exclusion) => costHead(String(exclusion.head ?? ''))?.basis !== 'MARGIN');
+  const headsByReason = new Map<string, string[]>();
+  for (const exclusion of shownExclusions) {
+    const head = String(exclusion.label ?? exclusion.head ?? '').trim();
+    if (!head) continue;
+    const reason = exclusion.reason ?? 'Excluded';
+    headsByReason.set(reason, [...(headsByReason.get(reason) ?? []), head]);
+  }
+  const reasonGroups = [...headsByReason.entries()];
+  reasonGroups.forEach(([reason, heads], index) => {
+    const label = reasonGroups.length === 1 ? 'Not included' : `Not included (${index + 1})`;
+    body[label] = `${heads.join(', ')} — ${reason}`;
+  });
 
   /*
    * Every row against the limit the document body enforces, named by the row

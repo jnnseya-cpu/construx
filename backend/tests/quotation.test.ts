@@ -101,6 +101,33 @@ describe('a priced estimate becomes a quotation', () => {
     );
   });
 
+  it('groups excluded heads that share a reason into one qualification, not a row each', () => {
+    // A professional-services fee excludes a dozen construction heads for the
+    // same reason. Printing one near-identical "Not included N — HEAD" row per
+    // head read as a data dump on the issued quotation; they collapse to one row
+    // per distinct reason, listing the heads it covers.
+    const reason = 'By others under a separate contract';
+    const estimate = completeEstimate({
+      exclusions: [
+        { head: 'PLANT', reason },
+        { head: 'TEMPORARY_WORKS', reason },
+        { head: 'TESTING', reason },
+        { head: 'COMMISSIONING', reason },
+      ],
+    });
+    const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
+    const body = quoted.document.body;
+
+    const notIncluded = Object.keys(body).filter((key) => key.startsWith('Not included'));
+    assert.equal(notIncluded.length, 1, 'four heads sharing one reason should be one row, not four');
+    const value = String(body[notIncluded[0]!]);
+    assert.match(value, /By others under a separate contract/);
+    // The one row names every head it covers, comma-separated, before the reason.
+    assert.ok(value.split('—')[0]!.includes(','), 'the grouped row should list the heads it covers');
+    // The period reads as English, not "1 weeks".
+    assert.equal(body['Period on site'], '4 weeks');
+  });
+
   it('shows the customer a price and never the margin under it', () => {
     const estimate = completeEstimate();
     const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
