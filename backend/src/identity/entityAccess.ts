@@ -291,6 +291,9 @@ export const ENTITY_ACCESS: Record<string, EntityClassification> = {
   // designer holding `DESIGN_INFORMATION` read could have listed them.
   Clarification: { area: 'PROCUREMENT_AWARD', sensitivity: 'COMMERCIAL_L3' },
   Correspondence: { area: 'DESIGN_INFORMATION' },
+  // The transmission record of an outbound intent (a notice, a bid, a PO), separate from
+  // the thing's own contractual state. Same area as the notices it most often carries.
+  Dispatch: { area: 'DESIGN_INFORMATION' },
   // CN-WF-08. The controlled issue of information, with who acknowledged it.
   Transmittal: { area: 'DESIGN_INFORMATION' },
   StorageEntitlement: { area: 'BILLING_ACU' },

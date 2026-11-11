@@ -93,6 +93,7 @@ import * as oncall from '../ops/oncall.ts';
 import { backupPosition, runBackup } from '../ops/backup.ts';
 import { takeSnapshot } from '../goldenthread/snapshot.ts';
 import * as correspondence from '../domain/correspondence.ts';
+import * as dispatch from '../domain/dispatch.ts';
 import * as procurement from '../domain/procurement.ts';
 import * as programmecontrol from '../domain/programmecontrol.ts';
 import * as qualitycontrol from '../domain/qualitycontrol.ts';
@@ -22027,6 +22028,73 @@ export const ROUTES: Route[] = [
         projectContext(platform, ctx),
         body<Parameters<typeof correspondence.issueCorrespondence>[1]>(ctx),
       ),
+  },
+  {
+    method: 'GET',
+    pattern: '/v1/projects/:projectId/dispatches',
+    description: 'Dispatch reconciliation — the transmission record of every outbound notice/bid/PO on this project, with its state (PENDING, sent-unconfirmed, receipt-verified, unknown-outcome, rejected, cancelled). An unknown outcome is never blindly retried.',
+    handler: (platform, ctx) => ({ dispatches: dispatch.listDispatches(projectContext(platform, ctx)) }),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches',
+    description: 'Open a dispatch for an outbound intent (e.g. a served notice), with a stable idempotency key. The same key with a changed payload is refused.',
+    schema: {
+      type: 'object',
+      required: ['dispatchKey', 'kind', 'subject', 'recipient', 'channel', 'payloadHash'],
+      properties: {
+        dispatchKey: { type: 'string', minLength: 1, maxLength: 200 },
+        kind: { type: 'string', enum: ['NOTICE', 'BID', 'PURCHASE_ORDER', 'OTHER'] },
+        subject: { type: 'object', required: ['refType', 'refId'], properties: { refType: stringField, refId: stringField }, additionalProperties: false },
+        recipient: { type: 'string', minLength: 1, maxLength: 200 },
+        channel: { type: 'string', minLength: 1, maxLength: 120 },
+        payloadHash: { type: 'string', minLength: 1, maxLength: 200 },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => dispatch.openDispatch(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/sent',
+    description: 'Record that the intent was sent and is awaiting confirmation. Valid only from PENDING — never a blind re-send of an intent that may already have landed.',
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markSent(projectContext(platform, ctx), ctx.params.dispatchId as string),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/unknown',
+    description: 'A send timed out in a way that could mean success: park it UNKNOWN_OUTCOME and reconcile before any retry (no blind retries for notices).',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markUnknownOutcome(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/receipt',
+    description: 'Record a verified authorised receipt — the intent arrived. Valid from PENDING (synchronous), sent-unconfirmed, or a now-reconciled unknown outcome.',
+    schema: { type: 'object', required: ['receiptRef'], properties: { receiptRef: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.verifyReceipt(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/reject',
+    description: 'The destination refused the intent.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.markRejected(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/cancel',
+    description: 'Cancel a dispatch that has not completed.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 1 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.cancelDispatch(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
+  },
+  {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/dispatches/:dispatchId/redispatch',
+    description: 'Reconcile an unknown outcome as NOT delivered (how confirmed is recorded), returning it to PENDING so it may be sent afresh. The only edge out of an unknown outcome toward a send — so a retry is always a fresh send, never a blind one.',
+    schema: { type: 'object', required: ['reason'], properties: { reason: { type: 'string', minLength: 4 } }, additionalProperties: false },
+    handler: (platform, ctx) => dispatch.reconcileNotDelivered(projectContext(platform, ctx), ctx.params.dispatchId as string, body(ctx)),
   },
   {
     method: 'POST',

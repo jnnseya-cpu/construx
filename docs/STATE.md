@@ -14094,6 +14094,27 @@ and permits it once raised; no budget = no cap). The audit confirmed the rest of
 the Tier-1 §1 enforcement (A0–A4, reserved decisions, delegation envelope, no-OT)
 was already built; this was the one genuine money-safety gap worth closing now.
 
+**Dispatch reconciliation — no blind retry of a served notice** (Tier-1 spec §5/§7,
+AT-17, the second gap the audit found). `backend/src/domain/dispatch.ts` is the
+transmission lifecycle an outbound intent (a notice, a bid, a PO) has *outside* its own
+contractual state in `correspondence.ts`: `PENDING → SENT_UNCONFIRMED → RECEIPT_VERIFIED`,
+plus `UNKNOWN_OUTCOME`, `REJECTED`, `CANCELLED` (a verified receipt may arrive straight
+from PENDING for a synchronous endpoint). The safety property is **structural**: an
+`UNKNOWN_OUTCOME` has no edge back to `SENT`, so a send that timed out — and may already
+have landed — cannot be blindly retried. The only way back toward a send is
+`reconcileNotDelivered`, a **human-authored** event (`DISPATCH_REDISPATCHED`,
+`aiAllowed: false`) that returns it to PENDING once non-delivery is confirmed on the record,
+so a retry is always a fresh send, never a double service. Idempotent on a stable dispatch
+key — the same key with a changed payload is refused (a changed payload under a used key is
+how a replay becomes a second effect). Routes `…/dispatches` (open + the transitions + a
+GET), shown on the Contracts screen as *Outbound dispatches* with the unknown-outcome ones
+flagged. Proven by `tests/dispatch.test.ts` (idempotency + changed-payload refusal; a
+timed-out send parks UNKNOWN_OUTCOME and a direct re-send is refused; it clears by a verified
+receipt or a reconciled fresh send; the rest of the state machine). The audit's remaining
+items — the agent-*ownership* model and its coverage metric (G1/G2) — are an architectural
+choice held for a decision, and the RIBA-stage playbook structure (G5) is low priority; the
+engine, store and enforcement they would build on already exist.
+
 Exactly one agent is ACT-eligible — `health` — and its envelope carries a value
 ceiling of zero and writes no governed state: it may tell somebody the platform
 is unwell, and that is all. It is the only act on this platform where waiting

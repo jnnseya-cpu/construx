@@ -629,6 +629,18 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // turns on.
   def('RFI_CLOSED', 'RFI', 'APPROVE', 'DESIGN', { requiresEvidence: true }),
   def('CORRESPONDENCE_ISSUED', 'Correspondence', 'ISSUE', 'DESIGN', { aiAllowed: true, creates: true }),
+  // Dispatch reconciliation — the transmission lifecycle of an outbound intent (a notice,
+  // a bid, a purchase order), distinct from the thing's own contractual state. The state
+  // machine makes a blind retry structurally impossible: an UNKNOWN_OUTCOME has no edge
+  // back to SENT, only a human-authored reconciliation (DISPATCH_REDISPATCHED, aiAllowed
+  // off) that returns it to PENDING once non-delivery is confirmed (spec §5/§7, AT-17).
+  def('DISPATCH_OPENED', 'Dispatch', 'CREATE', 'DESIGN', { aiAllowed: true, creates: true }),
+  def('DISPATCH_SENT', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_OUTCOME_UNKNOWN', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_RECEIPT_VERIFIED', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_REJECTED', 'Dispatch', 'UPDATE', 'DESIGN', { aiAllowed: true }),
+  def('DISPATCH_CANCELLED', 'Dispatch', 'UPDATE', 'DESIGN'),
+  def('DISPATCH_REDISPATCHED', 'Dispatch', 'UPDATE', 'DESIGN'),
   // A reply is a distinct fact with its own author and its own date, and on the
   // letters where silence is acceptance the date is the whole point. Recording
   // it as another ISSUE would lose who answered and when.
