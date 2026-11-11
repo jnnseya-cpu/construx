@@ -129,6 +129,13 @@ describe('the text is actually in it', () => {
     assert.ok(!text.includes('(Withheld ? ?412,000 due)'));
   });
 
+  it('maps a non-breaking hyphen and non-breaking space to plain glyphs, not a question mark', () => {
+    // A language model routinely emits U+2011 in "sub-criterion"; WinAnsi has no
+    // code for it, so it printed as "sub?criterion" on a document going to a buyer.
+    const text = latin1(renderPdf(sampleDocument({ blocks: [{ kind: 'PARAGRAPH', text: 'sub‑criterion and non‑compliance' }] })));
+    assert.ok(text.includes('(sub-criterion and non-compliance) Tj'), 'non-breaking hyphen/space render as plain "-"/" "');
+  });
+
   it('substitutes visibly for a character the encoding cannot carry', () => {
     // A question mark is wrong on the page, which is the point. Dropping it
     // silently would leave a sentence that reads correctly and says something

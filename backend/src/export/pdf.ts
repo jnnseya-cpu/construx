@@ -79,6 +79,19 @@ const WIN_ANSI: Record<string, number> = {
   '°': 0xb0,
   '©': 0xa9,
   '®': 0xae,
+  // Unicode punctuation a language model routinely emits that WinAnsi has no
+  // code for — without these they printed as a literal "?" ("sub‑criterion"
+  // became "sub?criterion"), which reads as a text error in a document going to
+  // a buyer. Mapped to the nearest glyph the font does carry.
+  '‐': 0x2d, // hyphen → '-'
+  '‑': 0x2d, // non-breaking hyphen → '-'
+  '‒': 0x96, // figure dash → en dash
+  '―': 0x97, // horizontal bar → em dash
+  '−': 0x2d, // minus sign → '-'
+  ' ': 0x20, // non-breaking space → space
+  ' ': 0x20, // narrow no-break space → space
+  ' ': 0x20, // figure space → space
+  ' ': 0x20, // thin space → space
 };
 
 /** One byte per character, in the encoding the fonts are declared with. */

@@ -33447,3 +33447,16 @@ both in how the frozen key-value document renders:
 Also pluralised "1 week" (was "1 weeks"). The issued document is a frozen hashed manifest, so
 these apply to the next quotation generated; an already-issued one is superseded by a new
 revision, not edited.
+
+## 2026-11 client-facing PDFs no longer print "sub?criterion"
+
+A real tender-submission PDF going to a council rendered "sub-criterion" as "sub?criterion",
+"non-compliance" as "non?compliance" and so on. The cause: a language model routinely emits
+U+2011 (non-breaking hyphen) and friends, and the PDF renderer's `toWinAnsi`
+(`backend/src/export/pdf.ts`) has no WinAnsi code for them, so they fell through to the
+visible-substitute "?". That substitute is right for a character with no near equivalent
+(CJK stays "?") but wrong for punctuation the font can carry: U+2010/2011 hyphens → "-",
+U+2012 figure dash → en dash, U+2015 → em dash, U+2212 minus → "-", and the non-breaking /
+narrow / figure / thin spaces → a normal space. Rendering is at download time over the
+frozen content, so re-downloading an already-issued document picks up the fix without
+changing its hash. Covered by `pdf.test.ts`.
