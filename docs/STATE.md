@@ -1230,6 +1230,13 @@ offers an **Approve gate** button only at CANDIDATE_READY; an electrical gate of
 **Record authority & approve** with a required authority-reference field, and the
 server refuses anything less. `doors`/`navreach` satisfied (the GET routes are
 referenced by the screen; the nav is reachable by every commissioning writer).
+The screen's write-check is **phase-exempt** (`can('QUALITY_COMMISSIONING','C',
+{ phaseExempt: true })`): grid writes carry no `lifecyclePhase` on the server and
+are accepted in any phase, so the browser must not apply the generic
+`QUALITY_COMMISSIONING` phase gate (CONSTRUCTION/COMMISSIONING/HANDOVER) and hide
+an "Open engagement" the API would accept — a grid connection runs G0→G7 across
+the whole lifecycle, including a project still at tender. `blockedReason` gained a
+`phaseExempt` option for exactly this (frontend/backend drift fix).
 
 **Slice 4 — agent execution and reappraisal triggers (done).** Reusing the
 consultancy task-execution pattern: `stepExecutionBrief` (pure, provider-free)

@@ -574,7 +574,7 @@ const WRITE_CODES = new Set(['C', 'U', 'A', 'I', 'G']);
  * so the interface cannot offer a command the platform will refuse, and cannot
  * hide one it would accept. Duplicating either rule here is how the two drift.
  */
-export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
+export function blockedReason(area, code = 'R', { tenantScoped = false, phaseExempt = false } = {}) {
   const roles = state.session?.user?.roles ?? [];
   if (matrix && !roles.some((role) => (matrix[role]?.[area] ?? []).includes(code))) {
     return `${ROLE_DENIAL_PREFIX}${roles.join('/')} holds "${code}" on ${area}`;
@@ -586,7 +586,14 @@ export function blockedReason(area, code = 'R', { tenantScoped = false } = {}) {
   // to have selected is the browser holding a rule the server does not, which
   // is the exact drift this function exists to prevent: the API accepts these
   // commands whatever phase an unrelated project is in.
-  const phase = tenantScoped ? undefined : state.project?.phase;
+  //
+  // `phaseExempt` is the same statement for a command that *is* project-scoped
+  // but whose area the server does not phase-gate here — the Grid Connection AI
+  // playbook runs G0→G7 across the whole lifecycle, so its QUALITY_COMMISSIONING
+  // writes carry no `lifecyclePhase` on the server and are accepted in any phase.
+  // Applying the generic QUALITY_COMMISSIONING gate on the browser would hide a
+  // form the API would accept — the drift this function exists to prevent.
+  const phase = (tenantScoped || phaseExempt) ? undefined : state.project?.phase;
   const allowed = writePhaseGates[area];
   if (WRITE_CODES.has(code) && phase && allowed && !allowed.includes(phase)) {
     return `${humanise(area)} cannot be written during the ${humanise(phase)} phase`;

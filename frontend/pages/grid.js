@@ -132,7 +132,11 @@ export async function grid(root) {
   };
 
   function draw() {
-    const canWrite = can('QUALITY_COMMISSIONING', 'C');
+    // Grid writes are not phase-gated on the server (a grid connection runs the
+    // whole lifecycle, G0→G7), so neither is the form here — otherwise the
+    // browser hides an "Open engagement" the API would accept on a tender-stage
+    // project. See `blockedReason`'s `phaseExempt`.
+    const canWrite = can('QUALITY_COMMISSIONING', 'C', { phaseExempt: true });
     const parts = [];
 
     parts.push(html`<div class="card pad">
