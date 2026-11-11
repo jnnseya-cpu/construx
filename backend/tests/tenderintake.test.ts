@@ -274,6 +274,31 @@ describe('tender intake · the deliverable register', () => {
     );
   });
 
+  it('preserves the bidder’s assignments across a re-read instead of wiping them', () => {
+    const ctx = pipelineCtx('qs');
+    const { invitationId } = record(ctx, opportunity(ctx));
+    // Read once: a mandatory return with nothing assigned yet (owner, internal
+    // date and source are the bidder's, never in the buyer's document).
+    extract(ctx, invitationId, [{ reference: 'D-01', title: 'Pricing schedule', mandatory: true }]);
+    // The bidder owns it.
+    tenderintake.assignDeliverable(ctx, invitationId, {
+      reference: 'D-01',
+      owner: 'QS',
+      internalDueBy: '2027-03-09',
+      source: { document: 'Instructions to Tenderers', clause: '4.2' },
+    });
+    // Read again — a refresh of the buyer's side, same reference, no assignment.
+    extract(ctx, invitationId, [{ reference: 'D-01', title: 'Pricing schedule (rev B)', mandatory: true }]);
+
+    const back = tenderintake
+      .tenderPosition(ctx, invitationId, { today: '2027-01-11' })
+      .returns.find((d) => d.reference === 'D-01')!;
+    assert.equal(back.owner, 'QS', 'the owner survived the re-read');
+    assert.equal(back.internalDueBy, '2027-03-09', 'our internal date survived the re-read');
+    assert.ok(back.source?.document, 'the source survived the re-read');
+    assert.equal(back.title, 'Pricing schedule (rev B)', 'the buyer-side title still refreshed');
+  });
+
   it('raises a critical clarification for an internal date after the return', () => {
     const ctx = pipelineCtx('qs');
     const { invitationId } = record(ctx, opportunity(ctx));

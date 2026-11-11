@@ -33185,6 +33185,22 @@ files but no drawings, `PACK_FILED` stays `READY` ("re-read for a drawing") rath
 than advancing, so the *headline* next-step can still point back at the pack while the
 pricing door sits open in the strip below it — reachable, but not yet the headline.
 
+## 2026-11 re-reading an ITT no longer wipes the bidder's return assignments
+
+A data-loss bug in the return register (`backend/src/domain/tenderintake.ts`,
+`extractRequirements`). A reading of the ITT files the return deliverables; the owner,
+our internal date and the source are the bidder's resourcing decisions, assigned
+afterwards and never present in the buyer's document. `extractRequirements` replaced
+the whole `deliverables` array with the freshly-read set, so **re-reading the ITT after
+assigning the returns silently un-assigned every one of them** — the owner/date/source
+were gone, and the guide and the bid gate both read the register as "nothing assigned"
+on a register the bidder had already owned in full. (Consistent with a live report of a
+guide stuck on "Assign a return" over a board that showed every return owned, dated and
+sourced.) The re-read now merges by reference: the buyer's side (title, mandatory,
+format) refreshes, the bidder's assignments (owner, internal date, source) are carried
+across. Covered by a new `tenderintake.test.ts` case (read → assign → re-read → the
+owner, date and source survive while the title refreshes).
+
 ## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
 
 Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral

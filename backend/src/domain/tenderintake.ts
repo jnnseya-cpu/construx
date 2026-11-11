@@ -548,9 +548,31 @@ export function extractRequirements(
     references.add(deliverable.reference);
   }
 
+  // A re-read refreshes the buyer's side of each return — its title, whether it
+  // is mandatory, any stated format. It must NOT un-assign what a person already
+  // owned: the owner, our internal date and the source are the bidder's
+  // resourcing decisions, they are never in the buyer's document, and a fresh
+  // reading carries none of them. Replacing the array wholesale wiped every
+  // assignment a bidder had made, which read on the guide and the gate as
+  // "nothing is assigned" on a register the bidder had already owned in full.
+  // So the bidder-side fields are carried across by reference.
+  const priorByRef = new Map(
+    ((record.state.deliverables as TenderDeliverable[] | undefined) ?? []).map((d) => [d.reference, d] as const),
+  );
+  const deliverables = input.deliverables.map((incoming) => {
+    const prior = priorByRef.get(incoming.reference);
+    if (!prior) return incoming;
+    return {
+      ...incoming,
+      ...(prior.owner ? { owner: prior.owner } : {}),
+      ...(prior.internalDueBy ? { internalDueBy: prior.internalDueBy } : {}),
+      ...(prior.source ? { source: prior.source } : {}),
+    };
+  });
+
   const returnDeadline = deadlineInForce(record.state);
   const conflicts: Clarification[] = [];
-  for (const deliverable of input.deliverables) {
+  for (const deliverable of deliverables) {
     if (deliverable.internalDueBy && `${deliverable.internalDueBy}T00:00:00Z` > returnDeadline.instant) {
       conflicts.push({
         severity: 'CRITICAL',
@@ -566,7 +588,7 @@ export function extractRequirements(
     entity: { refType: 'TenderInvitation', refId: invitationId },
     nextState: {
       ...record.state,
-      deliverables: input.deliverables,
+      deliverables,
       // Kept when the register is filed ahead of the analysis, rather than
       // overwritten with undefined — a later analysis links itself, and a
       // re-filed register must not unlink one already there.
@@ -582,7 +604,7 @@ export function extractRequirements(
     },
   });
 
-  return { deliverables: input.deliverables.length, blockers: deliverableBlockers(input.deliverables) };
+  return { deliverables: deliverables.length, blockers: deliverableBlockers(deliverables) };
 }
 
 /**
