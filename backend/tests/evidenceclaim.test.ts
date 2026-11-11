@@ -412,3 +412,39 @@ describe('a one-director firm attests its own claim, and the record says so', ()
     assert.equal(events[events.length - 1]!.eventType, 'EVIDENCE_CLAIM_VERIFIED');
   });
 });
+
+describe('a document is filed once and linked to the requirements it answers', () => {
+  const PI_HASH = `sha256:${'a1'.repeat(32)}`;
+  let claimId: string;
+
+  before(() => {
+    claimId = evidence.assertClaim(asQS(), {
+      kind: 'INSURANCE',
+      claim: 'Professional indemnity insurance of £10m, held and current',
+      sourceHash: PI_HASH,
+    }).id;
+  });
+
+  it('exposes the link route', () => {
+    assert.ok(
+      ROUTES.some((route) => route.method === 'POST' && route.pattern === '/v1/evidence/claims/:claimId/link'),
+      'POST /v1/evidence/claims/:claimId/link has no route',
+    );
+  });
+
+  it('adds requirement references to the claim, and is idempotent on one already covered', () => {
+    const linked = evidence.linkClaim(asQS(), { claimId, references: ['18.4', '18.1-18.3'] });
+    assert.deepEqual(linked.covers, ['18.4', '18.1-18.3']);
+    // A document filed once answers the same clause on the next bid: linking a
+    // new reference adds it; one already covered is left as it is.
+    const again = evidence.linkClaim(asQS(), { claimId, references: ['18.4', '7.1'] });
+    assert.deepEqual(again.covers, ['18.4', '18.1-18.3', '7.1']);
+    const events = platform.ledger.eventsForEntity({ refType: 'EvidenceClaim', refId: claimId });
+    assert.equal(events[events.length - 1]!.eventType, 'EVIDENCE_CLAIM_LINKED');
+  });
+
+  it('refuses an empty link, and one that changes nothing', () => {
+    throwsCode(() => evidence.linkClaim(asQS(), { claimId, references: [] }), 'LINK_EMPTY');
+    throwsCode(() => evidence.linkClaim(asQS(), { claimId, references: ['18.4'] }), 'LINK_UNCHANGED');
+  });
+});

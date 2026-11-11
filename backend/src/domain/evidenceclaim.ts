@@ -261,6 +261,67 @@ export function assertClaim(
 }
 
 /**
+ * Link a held claim to the requirements it answers on a tender.
+ *
+ * A claim is filed once — the company's PI certificate, its MD's CV — and lives
+ * on the tenancy, not on a bid. What differs from one tender to the next is which
+ * of *that* tender's requirements the document answers, and until now there was
+ * no way to record it: a claim asserted with no coverage stayed uncovered, the
+ * matrix proposed a match nobody could confirm, and the red team reported
+ * "evidence nothing answers" against a document that was sitting in the register.
+ * This is the confirm. The references are added to the claim's coverage; it
+ * carries them to every bid that shares the reference, which is what makes a
+ * document filed once answer the same clause on every tender that asks it.
+ *
+ * `ESTIMATE_TENDER` `C`: clerical and reversible, the same standing as asserting.
+ */
+export function linkClaim(ctx: EngineContext, input: { claimId: string; references: string[] }): EvidenceClaim {
+  authorise(ctx, 'ESTIMATE_TENDER', 'C', { dataSensitivity: 'COMMERCIAL_L3' });
+
+  const record = requireClaim(ctx, input.claimId);
+  const claim = record.state as unknown as EvidenceClaim;
+  if (claim.status === 'REJECTED') {
+    throw new DomainError(
+      'CLAIM_REJECTED_NOT_LINKABLE',
+      `${claim.reference} was refused by a reviewer. Link better evidence to the requirement, not this.`,
+      409,
+    );
+  }
+
+  const additions = input.references.map((r) => r.trim()).filter((r) => r.length > 0);
+  if (additions.length === 0) {
+    throw new DomainError('LINK_EMPTY', 'Name at least one requirement reference this document answers.', 422, [
+      { field: 'references', message: 'At least one reference' },
+    ]);
+  }
+
+  const covers = [...claim.covers];
+  let added = 0;
+  for (const reference of additions) {
+    if (!covers.includes(reference)) {
+      covers.push(reference);
+      added += 1;
+    }
+  }
+  if (added === 0) {
+    throw new DomainError(
+      'LINK_UNCHANGED',
+      `${claim.reference} already answers ${additions.length === 1 ? 'that requirement' : 'those requirements'}. There is nothing to add.`,
+      409,
+    );
+  }
+
+  const linked: EvidenceClaim = { ...claim, covers };
+  write(ctx, {
+    eventType: 'EVIDENCE_CLAIM_LINKED',
+    entity: { refType: 'EvidenceClaim', refId: claim.id },
+    nextState: linked as unknown as Record<string, unknown>,
+  });
+
+  return linked;
+}
+
+/**
  * Check that the document says what the claim says.
  *
  * `ESTIMATE_TENDER` `A`, `aiAllowed: false`, and the asserter may not do it.

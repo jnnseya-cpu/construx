@@ -3,6 +3,7 @@ import { before, describe, it } from 'node:test';
 import { rejectsCode, throwsCode } from './helpers.ts';
 import * as bidresponse from '../src/domain/bidresponse.ts';
 import * as evidence from '../src/domain/evidenceclaim.ts';
+import * as structure from '../src/domain/structure.ts';
 import * as itt from '../src/domain/itt.ts';
 import * as redteam from '../src/domain/redteam.ts';
 import { ROUTES } from '../src/api/routes.ts';
@@ -1134,5 +1135,83 @@ describe('the red team does not mistake the buyer’s own words for the bidder�
       ['We will complete the works in [NUMBER] phases agreed with the authority.'],
     );
     assert.equal(findings.some((f) => f.title.includes('placeholder')), true, 'a real [NUMBER] placeholder slipped through');
+  });
+});
+
+describe('the red team reads claims where they live — on the tenancy, not the bid', () => {
+  // The production bug the governance-scoped harness above could never catch: a
+  // claim is filed on the tenancy (the Assert-a-claim route runs on governance),
+  // but the red team runs on the bid's own project. Reading only the project's
+  // claims, it saw none and reported "evidence nothing answers" against every
+  // requirement however many certificates were filed and linked. Here the pack
+  // lives on a real project and the claim on governance, so the old read saw
+  // nothing and the finding stood; the fix reads tenant-wide and clears it.
+  const PI_HASH = `sha256:${'b2'.repeat(32)}`;
+  // A fresh tender project, opened at CONCEPT where ESTIMATE_TENDER is allowed,
+  // and crucially NOT the governance project the claim is filed on.
+  let bidProjectId: string;
+  const projectCtx = () => platform.context(seed.users.qs!.auth, bidProjectId, { source: 'WEB' });
+
+  before(() => {
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    bidProjectId = structure.createProject(platform.context(seed.users.admin!.auth, `${seed.tenantId}-governance`, { source: 'WEB' }), {
+      portfolioId, name: 'A tender with evidence filed on the tenancy',
+      sectorType: 'RMI', assetType: 'Professional services',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 33_000_000, currency: 'GBP',
+      plannedStart: '2027-01-01', plannedCompletion: '2027-06-01',
+    }).projectId;
+  });
+
+  function stand(analysisId: string, packId: string): void {
+    platform.ledger.commit({
+      tenantId: seed.tenantId, projectId: bidProjectId,
+      actor: { refType: 'User', refId: seed.users.qs!.auth.actorId }, source: 'WEB',
+      correlationId: analysisId, eventType: 'ITT_ANALYSED',
+      entity: { refType: 'ITTAnalysis', refId: analysisId },
+      nextState: {
+        id: analysisId, reference: 'TENANT-CLAIM-01', clientName: 'the Council', returnBy: '2027-03-01',
+        matrix: [{ reference: 'TECH-9', category: 'Technical', requirement: 'Provide a documented methodology for delivering the works', mandatory: true, evidenceRequired: 'Methodology document', status: 'GAP' }],
+        mandatoryGaps: [], weightings: { stated: 100, complete: true }, terms: [], bars: [],
+        quantifiedExposureMinor: 0, committedCapacityMinor: 0, clarifications: [], readyToPrice: false,
+        analysedAt: new Date().toISOString(), analysedBy: seed.users.qs!.auth.actorId,
+      },
+    });
+    platform.ledger.commit({
+      tenantId: seed.tenantId, projectId: bidProjectId,
+      actor: { refType: 'User', refId: seed.users.qs!.auth.actorId }, source: 'WEB',
+      correlationId: packId, eventType: 'BID_RESPONSE_PLANNED',
+      entity: { refType: 'BidResponsePack', refId: packId },
+      nextState: {
+        id: packId, reference: 'BID-TENANT-01', projectId: bidProjectId, analysisId,
+        clientName: 'the Council', returnBy: '2027-03-01',
+        sections: [], deadlines: [], status: 'DRAFTING', passes: 0,
+      },
+    });
+  }
+
+  it('sees a governance claim linked to the requirement, and clears "nothing answers"', async () => {
+    // Filed on the tenancy, then linked to the requirement it answers on this bid.
+    const claim = evidence.assertClaim(asQS(), {
+      kind: 'INSURANCE', claim: 'Professional indemnity insurance of £10m, held and current', sourceHash: PI_HASH,
+    });
+
+    // Not yet linked → the red team still reports the requirement unanswered.
+    stand('an-tenant-before', 'pk-tenant-before');
+    const before = await redteam.challengeSubmission(projectCtx(), { packId: 'pk-tenant-before' });
+    assert.ok(
+      before.review.findings.some((f) => f.reference === 'TECH-9' && f.title.includes('asks for evidence nothing answers')),
+      'with nothing linked the requirement should read as unanswered',
+    );
+
+    // Link the held claim to the requirement, then run again → cleared.
+    evidence.linkClaim(asQS(), { claimId: claim.id, references: ['TECH-9'] });
+    stand('an-tenant-after', 'pk-tenant-after');
+    const after = await redteam.challengeSubmission(projectCtx(), { packId: 'pk-tenant-after' });
+    assert.equal(
+      after.review.findings.some((f) => f.reference === 'TECH-9' && f.title.includes('asks for evidence nothing answers')),
+      false,
+      'a governance claim linked to the requirement should clear the finding',
+    );
   });
 });

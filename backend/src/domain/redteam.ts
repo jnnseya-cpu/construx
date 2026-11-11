@@ -5,7 +5,7 @@ import { authorise, currentPhase, runAI, write, type EngineContext } from '../en
 import type { EntityRecord } from '../goldenthread/ledger.ts';
 import { openImpacts } from './addendum.ts';
 import type { BidResponsePack, BidSection } from './bidresponse.ts';
-import { evidenceRegister } from './evidenceclaim.ts';
+import { standingOf, type EvidenceClaim } from './evidenceclaim.ts';
 import { complianceMatrix, confirmedUndertakingReferences, liveWaivers, type MatrixLine } from './itt.ts';
 
 /**
@@ -877,7 +877,16 @@ export async function challengeSubmission(
 
   const analysis = complianceMatrix(ctx, pack.analysisId);
   const waivedKeys = new Set(liveWaivers(ctx, pack.analysisId).map((waiver) => waiver.reference));
-  const register = evidenceRegister(ctx, pack.returnBy.slice(0, 10));
+  // Claims are filed on the tenancy, not the bid (the `Assert a claim` route runs
+  // on the governance scope), so a red team that read only this project's claims
+  // saw none — and reported "evidence nothing answers" against every requirement
+  // however many certificates the company had filed and linked. Read them where
+  // they live: tenant-wide, which also means a document linked on one tender
+  // answers the same clause on the next.
+  const asAt = pack.returnBy.slice(0, 10);
+  const tenantClaims = ctx.ledger
+    .listByTenant(ctx.tenantId, 'EvidenceClaim')
+    .map((record) => record.state as unknown as EvidenceClaim);
   const staleKeys = new Map(
     openImpacts(ctx, pack.analysisId)
       .filter((impact) => impact.material)
@@ -888,11 +897,11 @@ export async function challengeSubmission(
     pack,
     matrix: analysis.matrix,
     waivedKeys,
-    claims: register.claims.map((claim) => ({
+    claims: tenantClaims.map((claim) => ({
       reference: claim.reference,
       claim: claim.claim,
       covers: claim.covers,
-      standing: claim.standing,
+      standing: standingOf(claim, asAt),
       ...(claim.expiresAt === undefined ? {} : { expiresAt: claim.expiresAt }),
     })),
     staleKeys,

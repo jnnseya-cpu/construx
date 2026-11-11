@@ -33256,6 +33256,37 @@ counts as answered. On a terms-heavy DPS this clears the bulk of the remaining e
 findings. Covered by a `redteam.test.ts` case (a confirmed clause is not flagged; an
 unconfirmed one still is).
 
+## 2026-11 a document filed once answers the same clause on every bid
+
+The real shape of "don't ask me for the same thing every time". Claims are already
+stored tenant-wide — the `Assert a claim` route runs on the governance scope, so a
+certificate filed on one bid is on the business, not that bid. Two things broke the
+reuse, and both read to the bidder as "I filed it and the warning will not clear":
+
+1. **The red team read the wrong scope.** `challengeSubmission` runs on the tender's own
+   project and read claims from *that* project (`evidenceRegister(ctx)`, project-scoped) —
+   where there are none, because claims live on governance. So it reported "evidence
+   nothing answers" against every requirement however many certificates the company had
+   filed. Fixed: it now reads claims tenant-wide (`ledger.listByTenant(tenantId,
+   'EvidenceClaim')`), which is also what makes a document linked on one tender answer the
+   same clause on the next. Proven by a cross-scope `redteam.test.ts` case — a pack on a
+   real project, a claim on governance: unlinked the finding stands, linked it clears
+   (the governance-scoped harness could never have caught this, which is why it shipped).
+
+2. **A held claim could not be linked to a requirement after assertion.** `covers` was only
+   ever set at assert time; the matrix *proposed* a match ("Consider linking: EVC-0002")
+   but there was no command to confirm it, so the proposal was a dead end. New
+   `linkClaim` (`backend/src/domain/evidenceclaim.ts`) adds requirement references to a
+   held claim's coverage (`EVIDENCE_CLAIM_LINKED` event, `POST
+   /v1/evidence/claims/:claimId/link`, a **"Link held evidence"** action beside "Assert a
+   claim"). Covered by `evidenceclaim.test.ts` (adds references, idempotent, refuses empty
+   / unchanged / rejected).
+
+Together: file the document once (tenant-wide already), link it to each tender's
+requirements as they ask, and the red team — reading where claims live — clears the
+finding. No re-filing per bid. `evidenceCoverage` already read tenant-wide (it runs on
+the governance scope), so the matrix's proposals and the red team now agree.
+
 ## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
 
 Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral

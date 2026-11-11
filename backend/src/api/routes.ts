@@ -5081,6 +5081,22 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/evidence/claims/:claimId/link',
+    description: 'Link a held claim to the requirements it answers on a tender — a document filed once answers the same clause on every bid',
+    schema: {
+      type: 'object',
+      required: ['references'],
+      properties: { references: { type: 'array', minItems: 1, items: stringField } },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      evidenceclaim.linkClaim(tenantContext(platform, ctx), {
+        claimId: ctx.params.claimId as string,
+        references: body<{ references: string[] }>(ctx).references,
+      }),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/evidence/claims/:claimId/verify',
     description: 'Check the document says what the claim says. Refused if you asserted it, or if it has already lapsed',
     schema: {

@@ -1853,6 +1853,10 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   def('ASSURANCE_FINDING_DISPOSED', 'AssuranceReview', 'APPROVE', 'PROCUREMENT'),
 
   def('EVIDENCE_CLAIM_ASSERTED', 'EvidenceClaim', 'CREATE', 'EVIDENCE', { creates: true, aiAllowed: true }),
+  // Linking a held claim to the requirements it answers on a tender. Clerical and
+  // reversible — the same act an agent may do when it files a certificate against
+  // the claim it evidently supports — so `aiAllowed`.
+  def('EVIDENCE_CLAIM_LINKED', 'EvidenceClaim', 'UPDATE', 'EVIDENCE', { aiAllowed: true }),
   def('EVIDENCE_CLAIM_VERIFIED', 'EvidenceClaim', 'APPROVE', 'EVIDENCE'),
   // A one-director owner attesting their own claim: approved, but named as the
   // self-check it is, never as an independent verification.

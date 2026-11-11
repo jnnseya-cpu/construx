@@ -2231,6 +2231,8 @@ export async function pipeline(root) {
           ${raw(commandBar([
             { id: 'assert-claim', label: 'Assert a claim',
               permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
+            { id: 'link-claim', label: 'Link held evidence',
+              permitted: can('ESTIMATE_TENDER', 'C'), reason: blockedReason('ESTIMATE_TENDER', 'C') },
             { id: 'verify-claim', label: 'Verify a claim',
               permitted: can('ESTIMATE_TENDER', 'A'), reason: blockedReason('ESTIMATE_TENDER', 'A') },
             { id: 'reject-claim', label: 'Refuse a claim', tone: 'quiet',
@@ -4888,6 +4890,27 @@ export async function pipeline(root) {
           hint: 'Leave blank for something that does not lapse. A certificate always lapses.' },
       ],
       transform: (v) => Object.fromEntries(Object.entries(v).filter(([, value]) => String(value ?? '').trim())),
+    },
+    'link-claim': {
+      title: 'Link held evidence to a requirement',
+      intent:
+        'Say which of this tender’s requirements a document you have already filed answers. A document is filed once ' +
+        'and lives on the business, not the bid — you link it to the requirements each tender asks, and the same ' +
+        'certificate answers the same clause on the next bid without re-filing it. This is how a proposed match above is ' +
+        'confirmed.',
+      path: (v) => `/v1/evidence/claims/${v.claimId}/link`,
+      submitLabel: 'Link',
+      fields: [
+        { name: 'claimId', label: 'Held evidence', type: 'select',
+          options: (claimRegister?.claims ?? [])
+            .filter((claim) => claim.standing !== 'REJECTED')
+            .map((claim) => ({ value: claim.id, label: `${claim.reference} — ${claim.claim.slice(0, 60)}` })) },
+        { name: 'references', label: 'Requirements it answers', type: 'textarea', rows: 3,
+          hint: 'One matrix reference per line — e.g. "18.4" or "Clause 7.1". Copy them from the "Consider linking" rows above.' },
+      ],
+      transform: ({ references }) => ({
+        references: String(references ?? '').split('\n').map((r) => r.trim()).filter(Boolean),
+      }),
     },
     'verify-claim': {
       title: profile?.singleOwnerBids ? 'Verify or attest a claim' : 'Verify a claim',
