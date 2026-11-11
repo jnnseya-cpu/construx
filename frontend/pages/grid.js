@@ -162,6 +162,11 @@ export async function grid(root) {
           const seated = new Set(e.seatUserIds);
           const assignable = people.filter((p) => !seated.has(p.id));
           const atCap = !e.freeExempt && e.availableSeats <= 0;
+          // Everyone already seated: say so, rather than showing a picker with
+          // nobody in it or a raw id box that reads like it still wants one.
+          if (people.length && assignable.length === 0) {
+            return html`<p class="muted" style="margin:10px 0 0;font-size:0.85em">Everyone in your company already holds a seat. To seat more people, add them on the Team screen first.</p>`;
+          }
           return html`<form id="seat-form" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:end">
           <label class="field" style="flex:1;min-width:220px"><span>Add a seat — choose a person</span>
             ${assignable.length ? html`<select name="userId" required>
@@ -170,7 +175,7 @@ export async function grid(root) {
             </select>` : html`<input name="userId" placeholder="user id" required>`}
           </label>
           <button class="btn sm" type="submit" ${atCap ? 'disabled' : ''}>Add seat</button>
-        </form>${atCap ? html`<p class="muted" style="margin:6px 0 0;font-size:0.85em">All paid seats are assigned. Add a seat (£50/month) by provisioning more, or release one above.</p>` : ''}`;
+        </form>${assignable.length === 0 ? html`<p class="muted" style="margin:6px 0 0;font-size:0.8em">Your team list couldn’t load, so enter a user id directly — or add people on the Team screen.</p>` : ''}${atCap ? html`<p class="muted" style="margin:6px 0 0;font-size:0.85em">All paid seats are assigned. Add a seat (£50/month) by provisioning more, or release one above.</p>` : ''}`;
         })() : ''}
         ${!e.adminGrant ? html`<p class="muted" style="margin:8px 0 0">This tenancy holds no Grid Connection AI grant. The platform operator provisions the add-on before seats can be assigned.</p>` : ''}
       </div>`);
