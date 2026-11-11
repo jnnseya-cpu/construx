@@ -320,7 +320,14 @@ export const PERMISSION_MATRIX: Record<Role, Matrix> = {
     CONTRACTS_CLAIMS: ['R'],
     RISK_REGISTER: ['R'],
     SAFETY_RAMS: ['R'],
-    QUALITY_COMMISSIONING: ['R'],
+    // Commissioning authored and approved by the administrator themselves, by a
+    // deliberate operator decision (not the default split): a small firm where
+    // the administrator is also the person running the connection playbook needs
+    // to open and work a Grid Connection AI engagement without a second identity.
+    // This widens the admin past the usual read-only-on-delivery boundary for the
+    // commissioning area only; `OWNER` still carries everything, and the founder
+    // reconciliation that grants OWNER is unchanged.
+    QUALITY_COMMISSIONING: ['R', 'C', 'U', 'A'],
     BIM_TWIN: ['R'],
     HANDOVER_OM: ['R'],
     EVIDENCE_AUDIT: ['R', 'I'],

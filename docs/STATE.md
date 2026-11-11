@@ -1204,6 +1204,14 @@ closed-catalogue events (`GRID_ENGAGEMENT_OPENED/UPDATED`, `GRID_GATE_DECIDED`, 
 DELIVERY group; entity `GridEngagement`, QUALITY_COMMISSIONING / COMMERCIAL_L3).
 Writes authorise against QUALITY_COMMISSIONING and are **not phase-gated** — a grid
 connection runs G0 (agreement) through G7 (handover) across the whole lifecycle.
+**Operator decision (2026-11): `ENTERPRISE_ADMIN` now holds `QUALITY_COMMISSIONING`
+`C`/`U`/`A`** (was `R` only). This is a deliberate, scoped carve-out from the usual
+read-only-on-delivery boundary so a small firm whose administrator is also the person
+running the connection playbook can open and work a Grid engagement on the admin role
+alone, without standing up a second `OWNER`/delivery identity. It widens the commissioning
+area only — the admin stays read-only on every other delivery area — and `OWNER` (which
+already carries everything) and the founder→OWNER reconciliation are unchanged. Proven in
+`founders.test.ts` (the carve-out is present and scoped; other delivery areas stay `R`).
 Routes: `POST …/grid/engagements`, `…/engagements/{id}/steps/{stepId}` and
 `…/engagements/{id}/gates/{gateId}/decision`. Covered in `gridstore.test.ts` (open
 with 42 PLANNED steps and every gate PENDING; unknown step and bad run-state
