@@ -51,9 +51,25 @@ export type Effective = 'LOCKED' | 'ACTIVE' | 'GRACE' | 'STOPPED' | 'ENDING';
  * confirms billing (spec §2): an invoice preview, a UI redirect or an unverified
  * webhook cannot activate it. Without the grant it is LOCKED whatever the provider
  * says.
+ *
+ * The one exception is a **free-exempt tenancy** — one whose package the operator
+ * has granted free of charge, or a group's cover. The add-on is a fully priced
+ * product that whoever is allocated it must pay for; an exempt company does not.
+ * For as long as the exemption lasts, the operator's allocation alone makes the
+ * add-on ACTIVE and usable, with no billing provider in the loop. The moment the
+ * exemption's term ends, `freeExempt` is false again (the subscription accessor
+ * applies the term) and this falls straight back to the grant-AND-provider machine:
+ * the add-on becomes chargeable like everyone else, which is exactly the intent of
+ * an exemption that ends on a date. The grant is still required — an exemption
+ * covers the *charge*, it does not allocate the module.
  */
-export function effectiveEntitlement(adminGrant: boolean, providerStatus: ProviderStatus): Effective {
+export function effectiveEntitlement(
+  adminGrant: boolean,
+  providerStatus: ProviderStatus,
+  opts: { freeExempt?: boolean } = {},
+): Effective {
   if (!adminGrant) return 'LOCKED';
+  if (opts.freeExempt === true) return 'ACTIVE';
   switch (providerStatus) {
     case 'ACTIVE':
       return 'ACTIVE';

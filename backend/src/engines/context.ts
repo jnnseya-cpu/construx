@@ -94,6 +94,20 @@ export type EngineContext = {
    */
   addonGrant?: AddonGrantRecord;
   /**
+   * Whether this tenancy's package is granted free of charge right now — the
+   * operator's exemption or a group's cover, resolved once beside `addonGrant`
+   * from the subscription and with its term already applied, so a grant that
+   * has run out reads `false` here on the day after it ends.
+   *
+   * A free-exempt tenancy holds its **paid add-ons free too**: an add-on the
+   * operator has allocated to it is usable without the billing provider ever
+   * confirming a charge, for as long as the exemption lasts. The moment the term
+   * ends the add-on falls back to the ordinary grant-AND-provider machine and
+   * becomes chargeable like everyone else. Absent means not exempt, which is
+   * every ordinary tenancy. `billing/addonstore.ts` is the only reader.
+   */
+  freeExempt?: boolean;
+  /**
    * The agent this context is acting on behalf of, where one is.
    *
    * Set by the agent runtime around an unattended act and nowhere else. It

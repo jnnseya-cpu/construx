@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { before, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import type { EngineContext } from '../src/engines/context.ts';
-import { addonEntitlement, allocateSeat, requireModuleSeat, revokeSeat } from '../src/billing/addonstore.ts';
+import { addonEntitlement, allocateSeat, GRID_MODULE_ID, requireModuleSeat, revokeSeat } from '../src/billing/addonstore.ts';
 import type { ProviderStatus } from '../src/billing/addon.ts';
 
 /**
@@ -30,9 +30,31 @@ function provision(input: { adminGrant: boolean; providerStatus: ProviderStatus;
   platform.setAddonGrant({ tenantId: tenantId(), decidedBy: seed.users.operator!.id, ...input });
 }
 
+/**
+ * Turn the package's free-of-charge exemption on or off for the tenancy. The
+ * seeded demonstration tenancy is granted free of charge, which would make the
+ * paid add-on free too — correct behaviour, and the subject of its own block
+ * below, but it must be *off* for the paid three-state machine to be tested in
+ * isolation.
+ */
+function setFree(free: boolean, until?: string): void {
+  const subscription = platform.subscription(tenantId());
+  platform.setSubscriptionPackage({
+    tenantId: tenantId(),
+    package: subscription.package,
+    reason: free ? 'Add-on test: operator exemption' : 'Add-on test: a paying customer',
+    decidedBy: seed.users.operator!.id,
+    grantFree: free,
+    ...(free && until !== undefined ? { grantFreeUntil: until } : {}),
+  });
+}
+
 before(async () => {
   platform = new Platform();
   seed = await seedDemoProject(platform);
+  // The paid machine is proven against a paying tenancy; the exemption gets its
+  // own block, where it is turned back on.
+  setFree(false);
 });
 
 describe('before any provision', () => {
@@ -141,5 +163,75 @@ describe('billing that no longer permits new use (A06)', () => {
     const ent = addonEntitlement(adminCtx());
     assert.equal(ent.effective, 'LOCKED');
     assert.throws(() => requireModuleSeat(adminCtx(), 'u-2'), (e) => (e as { code?: string }).code === 'NO_ADDON_GRANT');
+  });
+});
+
+describe('a free-exemption account holds the fully priced add-on free of charge', () => {
+  // The add-on is a fully priced product that whoever is allocated it must pay
+  // for — except a company on a free-of-charge package (the operator's
+  // exemption, e.g. a group account free until its term ends). For that company
+  // the operator's allocation alone makes the add-on usable, with no billing
+  // provider in the loop, and every use is free; the moment the exemption's term
+  // ends it becomes chargeable like everyone else. The *admin grant* here is the
+  // module allocation itself — the operator's Private-modules dropdown — not a
+  // separate billing provision.
+  before(() => {
+    // Allocate the module to the company (the operator's dropdown allocation),
+    // leave the billing provider explicitly *not* paying-active, and exempt the
+    // package until a fixed term.
+    platform.setModuleGrant({
+      moduleId: GRID_MODULE_ID,
+      tenantId: tenantId(),
+      status: 'ACTIVE',
+      reason: 'Add-on test: Grid allocated to an exempt account',
+      decidedBy: seed.users.operator!.id,
+    });
+    provision({ adminGrant: false, providerStatus: 'SUSPENDED', paidQuantity: 2 });
+    setFree(true, '2027-09-01T00:00:00.000Z');
+  });
+
+  after(() => {
+    setFree(false);
+    platform.setModuleGrant({
+      moduleId: GRID_MODULE_ID,
+      tenantId: tenantId(),
+      status: 'REVOKED',
+      reason: 'Add-on test: cleanup',
+      decidedBy: seed.users.operator!.id,
+    });
+  });
+
+  it('is ACTIVE and usable on the module allocation alone, overriding a non-paying provider', () => {
+    const ent = addonEntitlement(adminCtx());
+    assert.equal(ent.adminGrant, true); // the module allocation IS the Platform-Admin grant
+    assert.equal(ent.freeExempt, true);
+    assert.equal(ent.providerStatus, 'SUSPENDED'); // billing is not active…
+    assert.equal(ent.effective, 'ACTIVE'); // …yet the exemption makes it usable, free
+    assert.equal(ent.usable, true);
+  });
+
+  it('lets any user use it without a named seat being bought (all use is free)', () => {
+    requireModuleSeat(adminCtx(), 'nobody-holds-a-seat'); // does not throw
+  });
+
+  it('allocates named seats beyond the paid quantity without a capacity refusal', () => {
+    const before = addonEntitlement(adminCtx()).assignedSeats;
+    allocateSeat(adminCtx(), { userId: 'free-1' });
+    allocateSeat(adminCtx(), { userId: 'free-2' });
+    allocateSeat(adminCtx(), { userId: 'free-3' }); // past the paid quantity of 2 — allowed, because free
+    assert.equal(addonEntitlement(adminCtx()).assignedSeats, before + 3);
+  });
+
+  it('becomes chargeable the instant the exemption is not in force — the allocation alone no longer suffices', () => {
+    setFree(false);
+    const ent = addonEntitlement(adminCtx());
+    assert.equal(ent.freeExempt, false);
+    assert.equal(ent.adminGrant, true); // still allocated…
+    assert.equal(ent.effective, 'STOPPED'); // …but the provider is suspended and nothing covers the charge now
+    assert.equal(ent.usable, false);
+    assert.throws(
+      () => requireModuleSeat(adminCtx(), 'free-1'),
+      (e) => (e as { code?: string }).code === 'BILLING_NOT_ACTIVE',
+    );
   });
 });

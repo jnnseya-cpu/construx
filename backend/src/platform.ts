@@ -4673,6 +4673,17 @@ export class Platform {
       // provisioned per company. `billing/addonstore.ts` derives entitlement and
       // seat enforcement from it; the customer never reads this record directly.
       ...(this.addonGrant(auth.tenantId) ? { addonGrant: this.addonGrant(auth.tenantId)! } : {}),
+      // Whether this tenancy's package is granted free of charge right now — the
+      // operator's exemption or a group's cover — resolved through the one
+      // subscription accessor so the term is already applied: an exemption that
+      // has run out reads false here, and the add-on it was covering becomes
+      // chargeable that day. A free-exempt tenancy holds its paid add-ons free
+      // too; `billing/addonstore.ts` is the only reader. Guarded because an
+      // unprovisioned tenancy has no subscription and this must not throw where
+      // `standing` is already fail-closing on the same absence.
+      ...(this.#subscriptions.has(auth.tenantId) && this.subscription(auth.tenantId).grantedFree === true
+        ? { freeExempt: true }
+        : {}),
       // Whether a maker-checker rule has anybody to hand the second act to.
       //
       // Resolved lazily, because almost no command asks: only a gate decision,

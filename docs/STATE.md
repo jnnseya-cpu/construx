@@ -1248,10 +1248,13 @@ additional seat, in GBP minor units, integer-validated); the `ProviderStatus` �
 `Effective` map (`effectiveEntitlement` — LOCKED without a Platform-Admin grant
 whatever the provider says; ACTIVE/ENDING usable, GRACE/STOPPED read-only, PENDING
 locked); `moduleUsable`/`historyReadable`; and seat capacity (`canAllocateSeat`,
-`seatsToUnassign`). It **creates no charge, calls no provider and persists nothing** —
-price and entitlement are decided here, server-side, never from a client. Proven by
-`tests/addon.test.ts` (7 cases: the price table, the three-state map, usable-vs-readable,
-and seat capacity).
+`seatsToUnassign`). `effectiveEntitlement` takes an optional `{ freeExempt }` — a
+free-of-charge package makes the add-on ACTIVE on the grant alone, whatever the provider
+says, and reverts to the paid machine the moment the exemption's term lapses. It **creates
+no charge, calls no provider and persists nothing** — price and entitlement are decided
+here, server-side, never from a client. Proven by `tests/addon.test.ts` (10 cases: the
+price table, the three-state map, the free-exempt override and its reversion,
+usable-vs-readable, and seat capacity).
 
 **Slice 6 — the §9 acceptance plan, proven for everything built (done).**
 `tests/gridacceptance.test.ts` maps all eighteen acceptance scenarios (A01–A18) to
@@ -1274,23 +1277,48 @@ implement.
 
 **Slice 5b — the persisted three-state store and its enforcement (done).** Built across
 the platform↔tenant account-layer boundary the platform enforces, each half on the side
-that owns it. The **Platform-Admin grant**, the **verified provider status** and the
-**paid seat quantity** are provisioned operator-side by `platform.setAddonGrant`
+that owns it. The **Platform-Admin grant is the module allocation itself**: Grid
+Connection AI is a catalogued private module (`identity/modules.ts`' `GRID_CONNECTION`),
+so it appears in the admin console's **Private modules** allocation dropdown alongside
+ETABLIX and Bid-On, and the operator allocates it to a company there exactly as for those
+two. Holding that `ModuleGrant` is what confers the add-on's admin grant
+(`billing/addonstore.ts`' `hasAdminGrant`, reading `ctx.grantedModules`; a legacy
+`setAddonGrant.adminGrant` still counts, so a tenancy provisioned before the module was
+catalogued is not silently locked). The **verified provider status** and the **paid seat
+quantity** are still provisioned operator-side by `platform.setAddonGrant`
 (`POST /v1/admin/tenants/:tenantId/addons/grid`, PLATFORM_ADMIN only), written on the
-platform tenancy exactly as `identity/modules.ts`' `ModuleGrant` is — the grant never
-lands on the customer's own ledger (proven) — and resolved onto every engine context as
-`ctx.addonGrant` beside `grantedModules` (`billing/addongrant.ts`). The **named seats**
-are tenant-side: `billing/addonstore.ts` assigns them within the paid quantity
-(`BILLING_ACU:'U'`), idempotently, refusing the overflow, and derives the tenant's
-entitlement (`GET /v1/billing/addons/entitlement`, a door on the Grid Connection screen
-with seat assign/release for the enterprise admin). `requireModuleSeat` enforces the full
-A01 check — active grant AND billing that permits new use AND a held seat — and the grid
-*delivery* write routes are gated on it behind `GRID_CONNECTION_ENFORCE_SEATS` (off by
-default so a deployment provisions and assigns seats before enforcement bites; the
-machinery is always live). A provisioning decrease that would strand an assigned seat is
-refused (A05). Proven by `tests/addonstore.test.ts` (11 cases). The grant/status are
-recorded from verified provisioning or reconciliation, **never from a client** and never
-from a manual write standing in for a verified payment.
+platform tenancy — never landing on the customer's own ledger (proven) — and resolved onto
+every engine context as `ctx.addonGrant` beside `grantedModules` (`billing/addongrant.ts`).
+The add-on is **fully priced and whoever is allocated it must pay**: the allocation makes
+it usable only once the billing provider confirms an active charge.
+
+**The one exception — a free-exemption account (done).** A tenancy whose package the
+operator has granted free of charge (the group/exemption account, e.g. one free until a
+fixed term) holds the paid add-on **free too**: its allocation alone makes the add-on
+ACTIVE and usable, with no billing provider in the loop, and every use is free (no named
+seat need be bought). This is resolved onto the context as `freeExempt` (from the single
+subscription accessor, so the exemption's **term is already applied**): the day the term
+ends `freeExempt` reads false and the add-on falls straight back to the grant-AND-provider
+machine — **chargeable like everyone else**. The grant is still required; an exemption
+covers the *charge*, it does not allocate the module. `effectiveEntitlement(adminGrant,
+providerStatus, { freeExempt })` is the pure rule; `addonEntitlement` surfaces `freeExempt`
+so the console shows "included free" rather than a price the company will never be asked
+for.
+
+The **named seats** are tenant-side: `billing/addonstore.ts` assigns them within the paid
+quantity (`BILLING_ACU:'U'`), idempotently, refusing the overflow — except for a free-exempt
+tenancy, which is not seat-capped. It derives the tenant's entitlement
+(`GET /v1/billing/addons/entitlement`, a door on the Grid Connection screen with seat
+assign/release for the enterprise admin). `requireModuleSeat` enforces the full A01 check —
+active grant AND billing that permits new use AND a held seat (a free-exempt tenancy
+needs only the allocation) — and the grid *delivery* write routes are gated on it behind
+`GRID_CONNECTION_ENFORCE_SEATS` (off by default so a deployment provisions and assigns
+seats before enforcement bites; the machinery is always live). A provisioning decrease that
+would strand an assigned seat is refused (A05). Proven by `tests/addonstore.test.ts`
+(15 cases, including the free-exemption account and its reversion to chargeable when the
+term ends) and `tests/addon.test.ts` (the free-exempt override in the pure contract). The
+grant/status are recorded from verified provisioning or reconciliation, **never from a
+client** and never from a manual write standing in for a verified payment.
 
 **Still to build (named, not pretended):** only the **live provider (Stripe) webhook
 reconciliation** that would set the provider status automatically from a verified

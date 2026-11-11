@@ -47,6 +47,28 @@ describe('effective entitlement (spec §2 — grant AND provider)', () => {
     assert.equal(effectiveEntitlement(true, 'CANCEL_AT_PERIOD_END'), 'ENDING');
   });
 
+  it('is free and ACTIVE for a free-exempt tenancy that holds the grant — no provider in the loop', () => {
+    // The add-on is fully priced and whoever is allocated it must pay, EXCEPT a
+    // tenancy on a free-of-charge package (the operator's exemption): the grant
+    // alone makes it ACTIVE, whatever the provider says or does not say.
+    assert.equal(effectiveEntitlement(true, 'PENDING', { freeExempt: true }), 'ACTIVE');
+    assert.equal(effectiveEntitlement(true, 'SUSPENDED', { freeExempt: true }), 'ACTIVE');
+    assert.equal(effectiveEntitlement(true, 'EXPIRED', { freeExempt: true }), 'ACTIVE');
+  });
+
+  it('still needs the grant even when exempt — an exemption covers the charge, not the allocation', () => {
+    assert.equal(effectiveEntitlement(false, 'ACTIVE', { freeExempt: true }), 'LOCKED');
+  });
+
+  it('falls straight back to the paid machine once the exemption is not in force (its term ended)', () => {
+    // `freeExempt` is resolved from the subscription with its term already
+    // applied, so the day after the exemption ends this reads false and the
+    // add-on is chargeable exactly as for everyone else.
+    assert.equal(effectiveEntitlement(true, 'PENDING', { freeExempt: false }), 'LOCKED');
+    assert.equal(effectiveEntitlement(true, 'ACTIVE', { freeExempt: false }), 'ACTIVE');
+    assert.equal(effectiveEntitlement(true, 'ACTIVE'), 'ACTIVE'); // omitted opts == not exempt
+  });
+
   it('permits new module use only when ACTIVE or ENDING; grace and stopped are read-only; locked reads nothing', () => {
     assert.equal(moduleUsable('ACTIVE'), true);
     assert.equal(moduleUsable('ENDING'), true);
