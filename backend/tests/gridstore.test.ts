@@ -3,7 +3,7 @@ import { before, describe, it } from 'node:test';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
 import type { EngineContext } from '../src/engines/context.ts';
-import { decideGate, gridWorkboard, openGridEngagement, recordTrigger, runStep, stepExecutionBrief, updateStep } from '../src/domain/grid/store.ts';
+import { archiveGridEngagement, decideGate, gridWorkboard, listGridEngagements, openGridEngagement, recordTrigger, runStep, stepExecutionBrief, updateStep } from '../src/domain/grid/store.ts';
 import { stepsOfGate } from '../src/domain/grid/playbook.ts';
 
 /**
@@ -127,5 +127,25 @@ describe('agent execution and reappraisal triggers', () => {
     const { engagementId } = openGridEngagement(ctx(), { connection: 'c', route: 'DISTRIBUTION' });
     assert.throws(() => recordTrigger(ctx(), engagementId, { event: 'x', affectedSteps: ['99'] }), (e) => (e as { code?: string }).code === 'UNKNOWN_STEP');
     assert.throws(() => recordTrigger(ctx(), engagementId, { event: 'x', affectedGates: ['G9' as never] }), (e) => (e as { code?: string }).code === 'UNKNOWN_GATE');
+  });
+});
+
+describe('archiving an engagement (the delete that keeps the record)', () => {
+  it('takes it off the active list but keeps its record on the ledger, idempotently', () => {
+    const { engagementId, reference } = openGridEngagement(ctx(), { connection: 'TEST — Oxfordshire DC', route: 'DIRECT_TRANSMISSION' });
+    assert.ok(listGridEngagements(ctx()).some((e) => e.engagementId === engagementId), 'listed before archive');
+
+    archiveGridEngagement(ctx(), engagementId, { reason: 'a test engagement created while trying the module' });
+    assert.ok(!listGridEngagements(ctx()).some((e) => e.engagementId === engagementId), 'gone from the active list after archive');
+
+    // Not a delete: the append-only record still reads, with who archived it and why.
+    const board = gridWorkboard(ctx(), engagementId);
+    assert.equal(board.engagement.reference, reference);
+    assert.equal(board.engagement.archivedBy, seed.users.qaqc!.id);
+    assert.match(String(board.engagement.archiveReason), /test engagement/);
+
+    // Idempotent — archiving again changes nothing and does not throw.
+    archiveGridEngagement(ctx(), engagementId);
+    assert.ok(!listGridEngagements(ctx()).some((e) => e.engagementId === engagementId));
   });
 });

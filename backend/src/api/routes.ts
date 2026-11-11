@@ -4533,6 +4533,14 @@ export const ROUTES: Route[] = [
       gridstore.recordTrigger(gridWriteContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/projects/:projectId/grid/engagements/:engagementId/archive',
+    description: 'Grid Connection AI — archive an engagement (e.g. a finished or test connection) so it is no longer offered in the picker. Not a delete: the append-only Golden Thread record and everything filed against it stay readable.',
+    schema: { type: 'object', properties: { reason: { type: 'string', maxLength: 300 } } },
+    handler: (platform, ctx) =>
+      gridstore.archiveGridEngagement(gridWriteContext(platform, ctx), ctx.params.engagementId as string, body(ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/projects/:projectId/grid/engagements',
     description: 'Grid Connection AI — the grid-connection engagements on this project, each with its verified digital coverage.',

@@ -81,6 +81,16 @@ export async function grid(root) {
     catch (error) { board = null; toast('Workboard unavailable', error.message, 'err'); }
   };
 
+  const archiveEngagement = async () => {
+    if (!engagementId) return;
+    try {
+      await api.post(`/v1/projects/${projectId}/grid/engagements/${engagementId}/archive`, {});
+      toast('Connection archived', 'It is off the list; its record stays on the ledger', 'ok');
+      engagementId = null; board = null;
+      await loadList(); draw();
+    } catch (error) { toast('Could not archive', `${error.code ? `${error.code} — ` : ''}${error.message}`, 'warn'); }
+  };
+
   const openEngagement = async (form) => {
     try {
       const res = await api.post(`/v1/projects/${projectId}/grid/engagements`, {
@@ -212,6 +222,7 @@ export async function grid(root) {
           <b>${board.engagement.reference}</b> ${badge(board.engagement.route, 'neutral')}
           <span>${board.engagement.connection}${board.engagement.pointOfConnection ? ` · ${board.engagement.pointOfConnection}` : ''}</span>
           <span style="margin-left:auto">Verified digital coverage ${c.validated}/${c.requiredDigital} (${c.percent}%)</span>
+          ${canWrite ? html`<button class="btn quiet sm danger" id="archive-eng" title="Take this connection off the list (its record is kept)">Archive</button>` : ''}
         </div>
         <div style="height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px"><div style="height:100%;width:${c.percent}%;background:var(--ok)"></div></div>
         ${board.nextActions.length ? html`<div class="notice" style="margin-top:10px"><b>Next:</b> ${board.nextActions[0]}</div>` : ''}
@@ -260,12 +271,32 @@ export async function grid(root) {
           })}
         </div>`);
       }
+
+      // Agent outputs — what each run actually produced, so a run is visible work,
+      // not just a state change. A step shows its grounded result; a step awaiting
+      // a provider shows why it is parked.
+      const produced = board.steps.filter((s) => s.lastRun && s.lastRun.summary);
+      const parked = board.steps.filter((s) => s.runState === 'WAITING_EVIDENCE' && s.blocker);
+      if (produced.length || parked.length) {
+        parts.push(html`<div class="card pad0" style="margin-top:14px">
+          <h2 style="padding:14px 16px 0;margin:0">Agent outputs</h2>
+          <div style="padding:8px 16px 14px">
+            ${produced.map((s) => html`<details style="margin-top:8px">
+              <summary style="cursor:pointer;font-size:12.5px"><b>${s.id} · ${s.capability}</b> — ${s.executes} ${badge(s.validated ? 'VALIDATED' : s.runState, runTone(s.runState))}</summary>
+              <div style="white-space:pre-wrap;font-size:12.5px;margin-top:6px;padding:8px 10px;background:var(--line);border-radius:6px;max-height:340px;overflow:auto">${s.lastRun.summary}</div>
+            </details>`)}
+            ${parked.map((s) => html`<p class="muted" style="margin:8px 0 0;font-size:12px"><b>${s.id} · ${s.capability}</b> — ${s.blocker}</p>`)}
+          </div>
+        </div>`);
+      }
     }
 
     render(root, html`${parts}`);
 
     const pick = root.querySelector('#eng-pick');
     if (pick) pick.addEventListener('change', async () => { engagementId = pick.value || null; await loadBoard(); draw(); });
+    const arch = root.querySelector('#archive-eng');
+    if (arch) arch.addEventListener('click', archiveEngagement);
     const of = root.querySelector('#open-form');
     if (of) of.addEventListener('submit', (ev) => { ev.preventDefault(); openEngagement(Object.fromEntries(new FormData(of).entries())); });
     root.querySelectorAll('[data-run]').forEach((b) => b.addEventListener('click', () => runStep(b.dataset.run)));

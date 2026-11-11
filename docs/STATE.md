@@ -1236,7 +1236,15 @@ are accepted in any phase, so the browser must not apply the generic
 `QUALITY_COMMISSIONING` phase gate (CONSTRUCTION/COMMISSIONING/HANDOVER) and hide
 an "Open engagement" the API would accept — a grid connection runs G0→G7 across
 the whole lifecycle, including a project still at tender. `blockedReason` gained a
-`phaseExempt` option for exactly this (frontend/backend drift fix).
+`phaseExempt` option for exactly this (frontend/backend drift fix). The workboard
+also **shows each agent's output** — `gridWorkboard` now returns each step's
+`lastRun`, and the screen renders an **Agent outputs** panel (the grounded result,
+or why a step is parked) so a run is visible work, not just a state badge. An
+engagement can be **archived** (`archiveGridEngagement`, `POST …/archive`, an
+**Archive** button on the board) to take a finished or test connection off the
+picker — **not a delete**: it sets an `archivedAt` marker and `listGridEngagements`
+filters it out, but the append-only record and everything filed against it stay
+readable (who archived it and why are recorded). Proven in `gridstore.test.ts`.
 
 **Slice 4 — agent execution and reappraisal triggers (done).** Reusing the
 consultancy task-execution pattern: `stepExecutionBrief` (pure, provider-free)

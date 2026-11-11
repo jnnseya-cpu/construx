@@ -85,6 +85,15 @@ export type GridEngagementState = {
   gates: Partial<Record<GateId, GateRecord>>;
   openedAt: string;
   openedBy: string;
+  /**
+   * When this engagement was archived, and by whom — set to take a finished or
+   * mistaken (e.g. a test) engagement off the active list. This is not a delete:
+   * the Golden Thread is append-only, so the record and everything filed against
+   * it stay readable; archiving only hides it from the picker.
+   */
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
 };
 
 /** A step is playbook-VALIDATED only when independently validated; BLOCKED when blocked. */
@@ -309,15 +318,37 @@ export function recordTrigger(
 /** The grid engagements on a project, for the picker, each with its headline coverage. */
 export function listGridEngagements(ctx: EngineContext): Array<{ engagementId: string; reference: string; connection: string; route: string; percent: number }> {
   authorise(ctx, 'QUALITY_COMMISSIONING', 'R');
-  return ctx.ledger.list(ctx.projectId, 'GridEngagement').map((r) => {
-    const s = r.state as GridEngagementState;
-    return { engagementId: s.id, reference: s.reference, connection: s.connection, route: s.route, percent: coverage(statusMap(s)).percent };
-  });
+  return ctx.ledger
+    .list(ctx.projectId, 'GridEngagement')
+    .map((r) => r.state as GridEngagementState)
+    // Archived engagements are off the active list — still on the ledger, just not offered.
+    .filter((s) => !s.archivedAt)
+    .map((s) => ({ engagementId: s.id, reference: s.reference, connection: s.connection, route: s.route, percent: coverage(statusMap(s)).percent }));
+}
+
+/**
+ * Take an engagement off the active list — for a finished one, or a test created
+ * while trying the module out. Not a delete: the record and everything filed
+ * against it remain on the append-only Golden Thread; this sets an `archivedAt`
+ * marker so the picker no longer offers it. Idempotent.
+ */
+export function archiveGridEngagement(ctx: EngineContext, engagementId: string, input: { reason?: string } = {}): GridEngagementState {
+  authorise(ctx, 'QUALITY_COMMISSIONING', 'U');
+  const state = require(ctx, engagementId);
+  if (state.archivedAt) return state; // already archived — nothing to do
+  const updated: GridEngagementState = {
+    ...state,
+    archivedAt: new Date().toISOString(),
+    archivedBy: ctx.auth.actorId,
+    ...(input.reason && input.reason.trim() ? { archiveReason: input.reason.trim() } : {}),
+  };
+  write(ctx, { eventType: 'GRID_ENGAGEMENT_UPDATED', entity: { refType: 'GridEngagement', refId: engagementId }, nextState: updated });
+  return updated;
 }
 
 export type GridWorkboard = {
   engagement: GridEngagementState;
-  steps: Array<GridStep & { runState: GridRunState; validated: boolean; owner?: string; blocker?: string }>;
+  steps: Array<GridStep & { runState: GridRunState; validated: boolean; owner?: string; blocker?: string; lastRun?: { at: string; summary: string; acuConsumed: number } }>;
   gates: Array<{ id: GateId; title: string; electricalAuthority: boolean; state: GateState }>;
   coverage: { requiredDigital: number; validated: number; percent: number };
   nextActions: string[];
@@ -331,7 +362,7 @@ export function gridWorkboard(ctx: EngineContext, engagementId: string): GridWor
 
   const steps = GRID_STEPS.map((s) => {
     const rec = state.steps[s.id];
-    return { ...s, runState: rec?.runState ?? 'PLANNED', validated: rec?.validated ?? false, owner: rec?.owner, blocker: rec?.blocker };
+    return { ...s, runState: rec?.runState ?? 'PLANNED', validated: rec?.validated ?? false, owner: rec?.owner, blocker: rec?.blocker, lastRun: rec?.lastRun };
   });
 
   const gates = GATE_IDS.map((g) => {
