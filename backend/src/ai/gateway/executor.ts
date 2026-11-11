@@ -24,6 +24,7 @@ import type { Engine } from '../orchestrator.ts';
 import type { ProviderCapability } from '../providers/types.ts';
 import { WIRED_PROVIDERS, type ConfidenceBand, type GatewayProvider, type TaskProfile } from './contract.ts';
 import { ROUTE_POLICY } from './taxonomy.ts';
+import { validateOutput, type ValidatableOutput } from './validators.ts';
 import type { ExecutorResult, GatewayExecutor } from './service.ts';
 
 /** Which CONSTRUX engine's provider pool a task profile draws on (capability comes from modality). */
@@ -73,6 +74,48 @@ function toEntityRef(ref: string): EntityRef {
 }
 
 /**
+ * Lift the structured fields a well-formed provider reply carries into the shape
+ * the validators inspect. Each is optional — a provider that omits one simply
+ * leaves the floor that needs it unmet, which fails closed, rather than having a
+ * value invented for it here.
+ */
+function readFindings(value: unknown): Array<{ statement: string; clause?: string }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((f) => {
+    const o = (f ?? {}) as Record<string, unknown>;
+    const clause = typeof o.clause === 'string' ? o.clause : undefined;
+    return { statement: String(o.statement ?? o.text ?? ''), ...(clause ? { clause } : {}) };
+  });
+}
+
+function readCalc(value: unknown): ValidatableOutput['calc'] | undefined {
+  const o = (value ?? {}) as Record<string, unknown>;
+  const ops = ['sum', 'subtract', 'multiply', 'divide'] as const;
+  if (!ops.includes(o.op as (typeof ops)[number]) || !Array.isArray(o.operands) || typeof o.result !== 'number') return undefined;
+  if (!o.operands.every((n) => typeof n === 'number')) return undefined;
+  return { op: o.op as (typeof ops)[number], operands: o.operands as number[], result: o.result };
+}
+
+function readPostconditions(value: unknown): ValidatableOutput['postconditions'] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((p) => {
+    const o = (p ?? {}) as Record<string, unknown>;
+    return { name: String(o.name ?? ''), met: o.met === true };
+  });
+}
+
+function readEvidence(value: unknown): Array<{ sourceId: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((e) => {
+      const o = (e ?? {}) as Record<string, unknown>;
+      const sourceId = o.sourceId ?? o.source ?? o.ref;
+      return typeof sourceId === 'string' ? { sourceId } : null;
+    })
+    .filter((e): e is { sourceId: string } => e !== null);
+}
+
+/**
  * Build a gateway executor bound to a project context. It runs the gateway's
  * chosen provider through the orchestrator and settles the ACU hold on success.
  */
@@ -108,22 +151,42 @@ export function orchestratorExecutor(ctx: EngineContext): GatewayExecutor {
     // output refs. Settlement debits the real provider cost.
     const execution = run.settle([]);
     const resp = run.response;
-    const out = resp.output as { narrative?: unknown; text?: unknown; summary?: unknown };
+    const out = resp.output as Record<string, unknown>;
     const summary = String(out.narrative ?? out.text ?? out.summary ?? '').trim().slice(0, 8000);
+    const findings = readFindings(out.findings);
+    const calc = readCalc(out.calc);
+    const postconditions = readPostconditions(out.postconditions);
+    const disclaimer = typeof out.disclaimer === 'string' ? out.disclaimer : undefined;
+
+    // The input refs anchor the reading material; any evidence the model itself
+    // cited is merged in beside them.
+    const evidence = [...request.inputRefs.map((sourceId) => ({ sourceId })), ...readEvidence(out.evidence)];
+
+    // The normalised view the quality floors are checked against (spec §12).
+    const validatable: ValidatableOutput = {
+      summary,
+      evidence,
+      ...(resp.confidence !== undefined ? { confidence: resp.confidence } : {}),
+      ...(findings ? { findings } : {}),
+      ...(calc ? { calc } : {}),
+      ...(postconditions ? { postconditions } : {}),
+      ...(disclaimer ? { disclaimer } : {}),
+    };
+    const validation = validateOutput(policy.validations, validatable, { inputRefs: request.inputRefs });
 
     return {
       provider: resp.provider,
       model: resp.modelClass,
       result: {
         summary,
-        findings: [],
-        evidence: request.inputRefs.map((sourceId) => ({ sourceId })),
+        findings: (findings ?? []).map((f) => f.statement).filter((s) => s.length > 0),
+        evidence,
         limitations: resp.synthetic === true ? ['Produced by the deterministic stand-in — not model reasoning.'] : [],
         confidenceBand: confidenceBand(resp.confidence),
       },
       usage: { rawCostMinor: resp.rawCostMinor, latencyMs: resp.latencyMs, acuConsumed: execution.acuConsumed },
       costMinor: resp.rawCostMinor,
-      validation: {}, // Increment 4 installs the canonical validators
+      validation,
     };
   };
   return executor;

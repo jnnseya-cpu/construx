@@ -33225,9 +33225,32 @@ a synthetic stand-in labelled; and an input of unknown provenance failing closed
 fabricated body). Validation is deliberately left empty by the executor — an honest "not yet
 checked", not a faked pass — until Inc.4 installs the canonical validators.
 
-**Still to build (the spec's later increments, named not pretended):** evidence/confidence
-fail-closed validators and the context builder that resolves and redacts input refs by real
-sensitivity (Inc.4), the approval service as a persisted gateway state with the read-back and
+**Increment 4 — the output validators (done).** `gateway/validators.ts`'s `validateOutput`
+is the one place a task's quality floors (`ROUTE_POLICY[profile].validations`, spec §12) are
+checked, and it is **fail-closed by construction**: a floor returns `PASS` only on positive
+evidence it is met and `FAIL` otherwise — including when the output does not carry the artifact
+the floor needs. The ten checks are real and internal (they verify the output, not an
+unprovable external claim): `COMPLETENESS` (a non-empty answer), `SOURCE_ANCHORS` /
+`EVIDENCE_COVERAGE` (every anchor names a source and supplied inputs are drawn on),
+`CONFIDENCE_FLOOR` (an *explicitly* low confidence fails; an absent one does not),
+`CLAUSE_CITATIONS` (a cited clause), `OBSERVATION_ONLY_LANGUAGE` (site evidence observes, it
+does not prescribe), `LEGAL_DISCLAIMER` (a claims reading carries its disclaimer),
+`DETERMINISTIC_CALC_MATCH` (**the arithmetic the output states recomputes to the figure it
+reports** — a CVR whose numbers do not add up is refused, never shown), `TOOL_POSTCONDITION`
+(an agent action met the postconditions it asserts) and `SCHEMA`. The executor lifts the
+structured fields a well-formed provider reply carries (findings, calc, postconditions,
+disclaimer, evidence) into the validators' view and runs the required floors; a FAIL on any
+required floor makes `runGatewayTask` refuse with `AI_QUALITY_FLOOR_UNMET` and no result body.
+Covered by the Inc.4 unit tests (each floor) and end-to-end tests in `tests/aigateway.test.ts`
+(a CVR whose calc does not recompute, or carries no verifiable calc, fails closed; one that
+recomputes completes). **Input-ref clearance is not a parallel context builder** — the
+orchestrator's existing sensitivity resolution already classifies every input ref and refuses
+a provider not cleared for it (fail-closed, proven by the unknown-provenance test), and the
+gateway rides on that single source rather than duplicating it (rule 2). What a later pass
+adds here is redaction of the resolved refs into a provider-safe view.
+
+**Still to build (the spec's later increments, named not pretended):** the approval service as
+a persisted gateway state with the read-back and
 approve endpoints (Inc.5), the `construx.ai.*` event set written onto the Golden Thread +
 ACU/audit alignment so the user-safe ACU figures reflect settled actuals (Inc.6),
 resilience/circuit-breaker surfacing (Inc.7), and the migration that blocks direct provider

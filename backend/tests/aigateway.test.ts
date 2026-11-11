@@ -384,3 +384,98 @@ describe('executor — a real orchestrator run through the gateway (Inc.3b)', ()
     assert.equal(user.result, undefined, 'no result body on a fail-closed refusal');
   });
 });
+
+/**
+ * Increment 4 — the output validators (spec §12).
+ *
+ * The quality floors each task owes, checked for real and fail-closed: a floor
+ * passes only on positive evidence it is met, and a required floor that cannot be
+ * shown to hold refuses the output rather than letting it through.
+ */
+import { validateOutput, type ValidatableOutput } from '../src/ai/gateway/validators.ts';
+
+const baseOut = (over: Partial<ValidatableOutput> = {}): ValidatableOutput => ({
+  summary: 'An answer that says something.', evidence: [{ sourceId: 'doc1' }], ...over,
+});
+
+describe('validators — each floor passes only on positive evidence (Inc.4)', () => {
+  it('COMPLETENESS fails on an empty answer', () => {
+    assert.equal(validateOutput(['COMPLETENESS'], baseOut({ summary: '   ' }), { inputRefs: [] }).COMPLETENESS, 'FAIL');
+    assert.equal(validateOutput(['COMPLETENESS'], baseOut(), { inputRefs: [] }).COMPLETENESS, 'PASS');
+  });
+  it('SOURCE_ANCHORS needs an anchor when inputs were supplied', () => {
+    assert.equal(validateOutput(['SOURCE_ANCHORS'], baseOut({ evidence: [] }), { inputRefs: ['doc1'] }).SOURCE_ANCHORS, 'FAIL');
+    assert.equal(validateOutput(['SOURCE_ANCHORS'], baseOut({ evidence: [] }), { inputRefs: [] }).SOURCE_ANCHORS, 'PASS');
+    assert.equal(validateOutput(['SOURCE_ANCHORS'], baseOut({ evidence: [{ sourceId: ' ' }] }), { inputRefs: [] }).SOURCE_ANCHORS, 'FAIL');
+  });
+  it('CONFIDENCE_FLOOR fails only on an explicitly low confidence', () => {
+    assert.equal(validateOutput(['CONFIDENCE_FLOOR'], baseOut({ confidence: 0.2 }), { inputRefs: [] }).CONFIDENCE_FLOOR, 'FAIL');
+    assert.equal(validateOutput(['CONFIDENCE_FLOOR'], baseOut({ confidence: 0.9 }), { inputRefs: [] }).CONFIDENCE_FLOOR, 'PASS');
+    assert.equal(validateOutput(['CONFIDENCE_FLOOR'], baseOut(), { inputRefs: [] }).CONFIDENCE_FLOOR, 'PASS');
+  });
+  it('DETERMINISTIC_CALC_MATCH recomputes, and fails on a mismatch or a missing calc', () => {
+    assert.equal(validateOutput(['DETERMINISTIC_CALC_MATCH'], baseOut({ calc: { op: 'sum', operands: [2, 3], result: 5 } }), { inputRefs: [] }).DETERMINISTIC_CALC_MATCH, 'PASS');
+    assert.equal(validateOutput(['DETERMINISTIC_CALC_MATCH'], baseOut({ calc: { op: 'sum', operands: [2, 3], result: 6 } }), { inputRefs: [] }).DETERMINISTIC_CALC_MATCH, 'FAIL');
+    assert.equal(validateOutput(['DETERMINISTIC_CALC_MATCH'], baseOut(), { inputRefs: [] }).DETERMINISTIC_CALC_MATCH, 'FAIL');
+    assert.equal(validateOutput(['DETERMINISTIC_CALC_MATCH'], baseOut({ calc: { op: 'divide', operands: [10, 0], result: 0 } }), { inputRefs: [] }).DETERMINISTIC_CALC_MATCH, 'FAIL');
+  });
+  it('CLAUSE_CITATIONS needs a cited clause', () => {
+    assert.equal(validateOutput(['CLAUSE_CITATIONS'], baseOut({ summary: 'See clause 14.2 of the contract.' }), { inputRefs: [] }).CLAUSE_CITATIONS, 'PASS');
+    assert.equal(validateOutput(['CLAUSE_CITATIONS'], baseOut({ findings: [{ statement: 'x', clause: '14.2' }] }), { inputRefs: [] }).CLAUSE_CITATIONS, 'PASS');
+    assert.equal(validateOutput(['CLAUSE_CITATIONS'], baseOut({ summary: 'No reference at all.' }), { inputRefs: [] }).CLAUSE_CITATIONS, 'FAIL');
+  });
+  it('OBSERVATION_ONLY_LANGUAGE rejects prescriptive language', () => {
+    assert.equal(validateOutput(['OBSERVATION_ONLY_LANGUAGE'], baseOut({ summary: 'Crack visible to the north face.' }), { inputRefs: [] }).OBSERVATION_ONLY_LANGUAGE, 'PASS');
+    assert.equal(validateOutput(['OBSERVATION_ONLY_LANGUAGE'], baseOut({ summary: 'You must replace the beam.' }), { inputRefs: [] }).OBSERVATION_ONLY_LANGUAGE, 'FAIL');
+  });
+  it('LEGAL_DISCLAIMER needs a disclaimer', () => {
+    assert.equal(validateOutput(['LEGAL_DISCLAIMER'], baseOut({ disclaimer: 'This is not legal advice.' }), { inputRefs: [] }).LEGAL_DISCLAIMER, 'PASS');
+    assert.equal(validateOutput(['LEGAL_DISCLAIMER'], baseOut({ summary: 'An entitlement, subject to legal review.' }), { inputRefs: [] }).LEGAL_DISCLAIMER, 'PASS');
+    assert.equal(validateOutput(['LEGAL_DISCLAIMER'], baseOut(), { inputRefs: [] }).LEGAL_DISCLAIMER, 'FAIL');
+  });
+  it('TOOL_POSTCONDITION needs every asserted postcondition met', () => {
+    assert.equal(validateOutput(['TOOL_POSTCONDITION'], baseOut({ postconditions: [{ name: 'order-raised', met: true }] }), { inputRefs: [] }).TOOL_POSTCONDITION, 'PASS');
+    assert.equal(validateOutput(['TOOL_POSTCONDITION'], baseOut({ postconditions: [{ name: 'order-raised', met: false }] }), { inputRefs: [] }).TOOL_POSTCONDITION, 'FAIL');
+    assert.equal(validateOutput(['TOOL_POSTCONDITION'], baseOut(), { inputRefs: [] }).TOOL_POSTCONDITION, 'FAIL');
+  });
+});
+
+/** A reasoning provider that returns a fixed structured output, like a real adapter would. */
+function structuredProvider(output: Record<string, unknown>): AIProviderAdapter {
+  const p: AIProviderAdapter = {
+    name: 'OPENAI', capability: 'REASONING', multimodal: false, transmits: true,
+    estimateCostMinor: () => 100, costAtTokensMinor: () => 100, healthy: () => true,
+    async execute(request: ProviderRequest): Promise<ProviderResponse> {
+      return { provider: 'OPENAI', modelClass: request.modelClass ?? 'default', output, rawCostMinor: 100, latencyMs: 9, confidence: 0.9 };
+    },
+  } as AIProviderAdapter;
+  return p;
+}
+
+describe('executor — a required floor failing refuses the whole task (Inc.4 end to end)', () => {
+  const run = async (output: Record<string, unknown>) => {
+    const wallet = new ACUWallet('tenant-1');
+    wallet.grantTrialCredit(10_000);
+    const orchestrator = new AIOrchestrator({ reasoning: structuredProvider(output), perception: structuredProvider(output) });
+    const ctx = gatewayContext(orchestrator, wallet);
+    return runGatewayTask({
+      request: req({ taskProfile: 'commercial.cvr_analysis', instruction: 'Reconcile the cost/value report', inputRefs: [] }),
+      availability: everyWiredUp, execute: orchestratorExecutor(ctx), requestId: 'cvr', reserveAcu: () => ({ ok: true, reserved: 12 }),
+    });
+  };
+
+  it('a CVR whose arithmetic does not recompute is refused, not shown', async () => {
+    const { user } = await run({ narrative: 'Forecast final cost reconciled.', calc: { op: 'sum', operands: [100, 200], result: 999 } });
+    assert.equal(user.status, 'FAILED');
+    assert.equal(user.result, undefined);
+  });
+  it('a CVR with no verifiable calculation fails closed (never an unverified number)', async () => {
+    const { user } = await run({ narrative: 'Forecast final cost reconciled.' });
+    assert.equal(user.status, 'FAILED');
+  });
+  it('a CVR whose arithmetic recomputes completes and is returned', async () => {
+    const { user } = await run({ narrative: 'Forecast final cost reconciled.', calc: { op: 'sum', operands: [100, 200], result: 300 } });
+    assert.equal(user.status, 'COMPLETED');
+    assert.match(user.result?.summary ?? '', /reconciled/);
+  });
+});
