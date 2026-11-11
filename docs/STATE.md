@@ -33157,3 +33157,45 @@ Two fixes to the retire-lines flow found in real use:
   in the panel; it reuses the `retire-items` endpoint with the zero-quantity set
   computed in the browser. The general "Retire specific lines" checklist stays for
   the non-zero cases.
+
+## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
+
+Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral
+boundary ("CONSTRUX AI") where business modules name a **task**, never a vendor, and
+the gateway picks the provider from a versioned policy. Users never see OpenAI, Gemini,
+Claude or Vertex; provider identity, routing and cost stay administrative. It **reuses**
+the existing orchestrator (adapters, health/circuit-breaker, data-sensitivity clearance,
+ACU funding, Golden-Thread provenance) rather than replacing it.
+
+**Increment 1–2 — canonical contract + versioned routing policy (done).** New module
+`backend/src/ai/gateway/`:
+- `contract.ts` — the canonical, provider-neutral types: the **14 task profiles** (spec
+  §5), `AITaskRequest`, the **user-safe** response (findings, evidence, limitations and a
+  confidence *band* — and, by construction, **no provider, model or raw cost**), the
+  separate **admin route record** (which does name them), the request **state machine**
+  (§6.1) and the error catalogue (Appendix A). `GatewayProvider` includes `VERTEX` so the
+  policy is complete; `providerIsWired` marks it deferred (OpenAI/Anthropic/Gemini are the
+  wired trio).
+- `taxonomy.ts` — the **versioned** (`POLICY_VERSION`) routing matrix: each task profile's
+  primary provider, **task-specific fallback** chain (not one universal sequence, spec §10),
+  modality, risk tier and required validations, plus the provider-role policy (Gemini sees,
+  Claude reasons, OpenAI acts, Vertex governs).
+- `router.ts` — builds the route plan primary-first, keeping only **wired, healthy and
+  cleared** providers and **recording why each other was skipped** (P08 no silent fallback);
+  an empty plan means **fail closed** and refer to a human (P07) rather than fabricate.
+- `policy.ts` — §11 human approval and prohibited actions: `assertGrantAllowed` refuses a
+  tool grant naming a consequential capability (approve/certify/sign/pay/issue/award/alter
+  baseline/delete ledger); `screenInstruction` flags an instruction that asks the gateway to
+  *perform* one; `approvalRequirement` makes a human gate mandatory for consequential tasks
+  (and material ones that opt in), reusing the platform permission matrix for the approver's
+  authority.
+Proven by `tests/aigateway.test.ts` (routing per the spec's AT-01/02/04/05/06, Vertex
+skipped cleanly, the state machine, approval classification).
+
+**Still to build (the spec's later increments, named not pretended):** the canonical
+`POST /v1/ai/requests` endpoint + execution wiring over the orchestrator (Inc.3), evidence/
+confidence fail-closed validators and the context builder (Inc.4), the approval service as a
+persisted gateway state (Inc.5), the `construx.ai.*` event set + ACU/audit alignment (Inc.6),
+resilience/circuit-breaker surfacing (Inc.7), and the migration that blocks direct provider
+egress (Inc.8). **Vertex AI** is named in policy but not wired — it awaits Google Cloud
+credentials; the router already skips it as `NOT_WIRED`.
