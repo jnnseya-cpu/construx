@@ -33158,6 +33158,33 @@ Two fixes to the retire-lines flow found in real use:
   computed in the browser. The general "Retire specific lines" checklist stays for
   the non-zero cases.
 
+## 2026-11 a fee bid with no drawings can be priced — the guide no longer dead-ends
+
+Reported live as **"I cannot see how to price"** on a professional-consultancy DPS.
+The bid flow's pricing road (`backend/src/domain/bidflow.ts`) is modelled as *file
+drawings → measure them → price the bill*, and its `MEASURED` step was hard-gated
+on a drawing: with none filed it went `BLOCKED` with no door and the message "a
+drawing has to be filed before anything can be measured off it". A fee or services
+bid — a consultancy tender, a schedule of rates, a lump sum — has **no drawings at
+all** and is priced entirely by hand, so the whole pricing road was unreachable.
+
+The manual take-off already exists ("Enter measured quantities" on the procurement
+screen, `BOQ_TAKEOFF:C`, free-form `description | unit | quantity` lines — a single
+`Fee | item | 1` line is a valid bill). The flow was simply never offering its door
+without a drawing. Now, when there are no drawings but the job is real (an invitation
+is recorded or files are filed), `MEASURED` is `READY` and its door is "Enter
+measured quantities" → `measured-takeoff` on `procurement`; entering a bill lights up
+`ESTIMATED` ("Price the bill") as before. A genuinely empty project (nothing filed,
+no invitation) still waits at `BLOCKED` for the pack to be filed first, so the clean
+"start here" narrative is unchanged. Covered by a new `bidrun.test.ts` case (invitation
+recorded, no drawings → `MEASURED` ready with the by-hand door) and the existing
+empty-project case (still blocked).
+
+Not in scope of this fix, recorded as still-open: for a submission-road tender with
+files but no drawings, `PACK_FILED` stays `READY` ("re-read for a drawing") rather
+than advancing, so the *headline* next-step can still point back at the pack while the
+pricing door sits open in the strip below it — reachable, but not yet the headline.
+
 ## 2026-11 CONSTRUX AI Gateway — provider-neutral routing (IN PROGRESS)
 
 Built to the *CONSTRUX AI Provider Gateway* developer spec v1.0: one provider-neutral

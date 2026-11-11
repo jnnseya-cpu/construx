@@ -887,6 +887,48 @@ describe('where the job is, and the one thing to do next', () => {
     assert.equal(flow.steps.find((step) => step.id === 'MEASURED')!.state, 'BLOCKED');
   });
 
+  it('offers the by-hand pricing door on a real job with no drawings, not a dead end', () => {
+    // A consultancy / fee bid has no drawings at all and is priced entirely by
+    // hand. Reported as "I cannot see how to price": the pricing road was
+    // blocked with no door, because the manual take-off was only ever offered
+    // beside a drawing. On a job that is actually being worked (an invitation is
+    // recorded), the step is now ready and points at the by-hand take-off.
+    const admin = seed.users.admin!.auth;
+    const portfolioId = platform.ledger.listByTenant(seed.tenantId, 'Portfolio')[0]!.refId;
+    const tender = structure.createProject(platform.context(admin, `${seed.tenantId}-governance`), {
+      portfolioId,
+      name: 'A consultancy fee bid with no drawings',
+      sectorType: 'RMI',
+      assetType: 'Professional services',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'Spalding' },
+      contractValueMinor: 33_000_000,
+      currency: 'GBP',
+      plannedStart: '2026-12-01',
+      plannedCompletion: '2027-02-01',
+    }).projectId;
+    const ctx = platform.context(seed.users.qs!.auth, tender, { source: 'WEB' });
+
+    // An invitation recorded directly on the project, with no drawing anywhere.
+    ctx.ledger.commit({
+      tenantId: ctx.tenantId, projectId: tender, actor: { refType: 'User', refId: ctx.auth.actorId },
+      source: 'WEB', correlationId: ctx.correlationId, eventType: 'TENDER_RECEIVED',
+      entity: { refType: 'TenderInvitation', refId: `inv-${tender.slice(-6)}` },
+      nextState: {
+        id: `inv-${tender.slice(-6)}`, reference: 'TWC000009', clientName: 'the Council',
+        opportunityId: `opp-${tender.slice(-6)}`, requirementsExtracted: true,
+        deliverables: [
+          { reference: 'D1', title: 'Fee proposal', mandatory: true, owner: 'OWNER', internalDueBy: '2026-11-09', source: { document: 'Invitation to tender TWC000009' } },
+        ],
+      },
+    });
+
+    const measured = bidFlow(platform, ctx).steps.find((s) => s.id === 'MEASURED')!;
+    assert.equal(measured.state, 'READY', 'a fee bid with no drawings can still be priced by hand');
+    assert.equal(measured.door, 'Enter measured quantities');
+    assert.equal(measured.command, 'measured-takeoff');
+    assert.equal(measured.screen, 'procurement');
+  });
+
   it('treats a tender with a compliance matrix as a submission, even before the return register is filed', () => {
     /*
      * Reported on SHDC 000189, a 60/5/35 tender: the panel classed it as a

@@ -260,18 +260,39 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           detail: `${boqItems.length} measured item${boqItems.length === 1 ? '' : 's'} in the bill.`,
           screen: 'procurement',
         }
-      : {
-          id: 'MEASURED',
-          title: 'Measure the drawings',
-          state: drawings.length > 0 ? 'READY' : 'BLOCKED',
-          detail: 'Nothing is measured yet, so there is nothing to price.',
-          next:
-            drawings.length > 0
-              ? 'It reads every sheet, measures it, and proposes a rate for each line from your own past estimates — and accepting it does the pricing and the quotation in the same act. "Enter measured quantities", beside it, is the door for a take-off you did with a scale rule.'
-              : 'A drawing has to be filed before anything can be measured off it.',
-          ...(drawings.length > 0 ? { door: 'Read and price the pack', command: 'price-pack' } : {}),
-          screen: 'procurement',
-        },
+      : (() => {
+          // A bill can always be entered by hand, so "no drawing" is never a
+          // dead end on a job that is actually being worked: a fee or services
+          // bid — a consultancy tender, a schedule of rates, a lump sum — has no
+          // drawings at all and is priced entirely by hand. The manual take-off
+          // door was only ever offered beside a drawing, which left such a bid
+          // with its pricing road blocked and no way in; the person reported it
+          // as "I cannot see how to price". On a truly empty project (nothing
+          // filed, no invitation) the step still waits for the pack to be filed
+          // first, so the clean "start here" narrative is unchanged.
+          const canEnterByHand = invitation !== undefined || files.length > 0;
+          return {
+            id: 'MEASURED',
+            title: drawings.length > 0 ? 'Measure the drawings' : 'Enter the quantities to price',
+            state: drawings.length > 0 || canEnterByHand ? 'READY' : 'BLOCKED',
+            detail:
+              drawings.length > 0 || !canEnterByHand
+                ? 'Nothing is measured yet, so there is nothing to price.'
+                : 'No drawing is filed — but a bill can still be entered by hand, which is how a fee or services bid is priced.',
+            next:
+              drawings.length > 0
+                ? 'It reads every sheet, measures it, and proposes a rate for each line from your own past estimates — and accepting it does the pricing and the quotation in the same act. "Enter measured quantities", beside it, is the door for a take-off you did with a scale rule.'
+                : canEnterByHand
+                  ? '"Enter measured quantities" files the bill from a take-off you did yourself — by the metre, the item, the day, or as a single lump sum for a fee — and "Price the bill" builds the money from it. No drawing is needed to price this way.'
+                  : 'A drawing has to be filed before anything can be measured off it.',
+            ...(drawings.length > 0
+              ? { door: 'Read and price the pack', command: 'price-pack' }
+              : canEnterByHand
+                ? { door: 'Enter measured quantities', command: 'measured-takeoff' }
+                : {}),
+            screen: 'procurement',
+          };
+        })(),
   );
 
   steps.push(
