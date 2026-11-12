@@ -1461,6 +1461,22 @@ export async function pipeline(root) {
     (o) => o.stage === 'BID' && !o.projectId && o.outcome?.outcome !== 'LOST',
   );
 
+  /*
+   * Every opportunity picker on this screen obeys the focus the board and the
+   * table already obey. Under focus it defaults to the one tender in focus
+   * rather than to whatever happens to sit first in the tenancy list — the
+   * report that drove this was "Record how a bid ended" opening with a
+   * different council than the one on screen, which, against a write-once
+   * outcome, is how a loss lands on the wrong bid. `focusDefault` returns the
+   * focused pursuit's id for a picker to pre-select, or '' (no forced default,
+   * browser picks the first option) when nothing is in focus or the focused
+   * pursuit is not eligible for that action. With nothing in focus every picker
+   * behaves exactly as before.
+   */
+  const focusDefault = (eligible) =>
+    focused ? (shownOpportunities.find(eligible)?.id ?? '') : '';
+  const outcomePending = (o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome;
+
   render(
     root,
     html`
@@ -3069,6 +3085,7 @@ export async function pipeline(root) {
       submitLabel: 'Score',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => o.stage !== 'CONVERTED' && o.stage !== 'NO_BID'),
           options: scorable.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.clientName}${o.qualification ? ` · scored ${o.qualification.score}` : ''}`,
@@ -3105,6 +3122,7 @@ export async function pipeline(root) {
       submitLabel: 'Record the decision',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => Boolean(o.qualification)),
           options: decidable.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.qualification.score} · ${BAND_LABEL[o.qualification.recommendation] ?? o.qualification.recommendation}`,
@@ -3186,6 +3204,7 @@ export async function pipeline(root) {
       submitLabel: 'Create the project',
       fields: [
         { name: 'opportunityId', label: 'Which pursuit', type: 'select',
+          value: focusDefault((o) => o.stage === 'BID' && !o.projectId && o.outcome?.outcome !== 'LOST'),
           options: convertible.map((o) => ({
             value: o.id,
             label: `${o.title} · ${o.clientName}${o.outcome?.outcome === 'WON' ? ' · recorded as won' : ' · no outcome recorded yet'}`,
@@ -3235,12 +3254,16 @@ export async function pipeline(root) {
       submitLabel: 'Record',
       fields: [
         { name: 'opportunityId', label: 'Opportunity', type: 'select',
-          options: opportunities
-            .filter((o) => (o.stage === 'BID' || o.stage === 'CONVERTED') && !o.outcome)
+          value: focusDefault(outcomePending),
+          options: (focused ? shownOpportunities : opportunities)
+            .filter(outcomePending)
             .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName}` })),
-          emptyHint:
-            'This records the outcome of a bid that reached a decision to bid and has none yet. If the list is empty, ' +
-            'every such bid already has its outcome on record — an outcome is written once and not rewritten.' },
+          emptyHint: focused
+            ? 'The tender in focus has no bid outcome left to record — it either carries one already (an outcome is ' +
+              'written once and not rewritten) or has not reached a decision to bid. Show all tenders to record ' +
+              'another pursuit’s outcome.'
+            : 'This records the outcome of a bid that reached a decision to bid and has none yet. If the list is empty, ' +
+              'every such bid already has its outcome on record — an outcome is written once and not rewritten.' },
         { name: 'outcome', label: 'How it ended', type: 'select',
           options: [{ value: 'WON', label: 'Won' }, { value: 'LOST', label: 'Lost' }] },
         { name: 'decidedOn', label: 'Decided on', type: 'date' },

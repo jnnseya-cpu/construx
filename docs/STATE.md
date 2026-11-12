@@ -33608,3 +33608,23 @@ it, the only next-step candidate is "Record how it ended": a submitted bid point
 at recording the outcome, and a settled one (won/lost/withdrawn) shows nothing
 outstanding. The steps still render with their real states; they are just no
 longer the headline a closed bid is told to do next. Covered by journey.test.ts.
+
+## 2026-11 a bid picker under focus defaults to the tender on screen
+
+Working one tender (South Holland) in focus, "Record how a bid ended" opened with
+a different council (Telford and Wrekin) pre-selected in its Opportunity picker:
+the board and the pipeline table already narrow to the tender in focus, but the
+command pickers did not, so a select with no default fell on whichever tenancy
+pursuit sat first. Against a write-once outcome that is how a loss lands on the
+wrong bid. Every opportunity picker on Pipeline & Bids now defaults to the tender
+in focus via `focusDefault(...)`: score, decide and convert pre-select it while
+still offering the whole tenancy, and "Record how a bid ended" both narrows its
+list to the focus and defaults to it (its empty hint gained a focus-aware line
+pointing at "Show all tenders" to record another pursuit). With nothing in focus
+every picker behaves exactly as before. Frontend-only (`frontend/pages/pipeline.js`),
+which the Node test harness does not load; verified by typecheck, a parse check
+and the full suite's no-regression (8442 green), and by the renderer contract in
+`frontend/lib/command.js` that pre-selects the option matching `field.value`.
+Note: an outcome already recorded against the wrong opportunity cannot be rewritten
+from the UI (outcomes are write-once) — if South Holland was mis-recorded as lost
+by the old default, that row needs a data correction, not a UI change.
