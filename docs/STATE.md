@@ -33517,3 +33517,19 @@ logo must be PNG or JPEG — the two formats a PDF can embed on a page — and a
 the store is touched, rather than rendering with the mark silently missing.
 Covered by branding-authority.test.ts. The data-URI field is kept for the rare
 caller who wants it; its hint now points at the button.
+
+## 2026-11 the document identity is set company-wide, in one place
+
+The only door to a tenancy's document identity was the per-project "client
+identity" on Site Documents, so a business that issues everything under one name
+re-entered it on every tender — and the account-wide default (set from the
+registered name at signup) carried through anywhere a project had not. Added a
+"Company brand" command and an "Upload a logo" control to Enterprise & Portfolio
+(the enterprise administrator's screen), backed by a new `GET /v1/branding` so
+the form shows what is set. It writes the tenancy identity through the existing
+`PUT /v1/branding` and `POST /v1/branding/logo`: the trading name as the issuer
+on every document, the registered company and insurance detail in the legal
+footer, the colour, the reference prefix and the logo — set once, inherited by
+every quotation, bid pack and schedule unless a project deliberately overrides
+it for a specific client. ENTERPRISE_STRUCTURE authority, the same the identity
+has always taken. Covered by branding-authority.test.ts.

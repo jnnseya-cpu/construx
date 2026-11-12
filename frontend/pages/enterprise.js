@@ -219,7 +219,7 @@ export async function enterprise(root) {
   const estateVisible = can('ENTERPRISE_STRUCTURE', 'R');
   const refusedLocally = { refused: { message: blockedReason('ENTERPRISE_STRUCTURE', 'R') } };
 
-  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company, clients] = await Promise.all([
+  const [position, portfolios, enterprises, gates, ownership, changes, forecast, people, invitations, register, members, sponsorships, company, clients, brand] = await Promise.all([
     // Caught rather than thrown. A project-level role is *correctly* refused
     // the estate-wide commercial position — and for every role below
     // enterprise level the refusal once took the whole screen down and
@@ -264,6 +264,12 @@ export async function enterprise(root) {
     // form can offer an existing client rather than a free-typed name that
     // splits one client into several near-identical strings.
     api.get('/v1/clients').catch(() => ({ clients: [] })),
+    // The company's own document identity — the trading name, colour, legal
+    // detail and logo every document inherits unless a project overrides it.
+    // Set here once rather than re-entered on each tender's Site Documents
+    // screen, which is where the only door to it used to be. Null where the
+    // reader may not administer the tenancy; the brand card then stays shut.
+    api.get('/v1/branding').catch(() => null),
   ]);
 
   // What somebody without enterprise authority can still see: where the
@@ -355,6 +361,17 @@ export async function enterprise(root) {
                 : blockedReason('ENTERPRISE_STRUCTURE', 'U'),
             },
             {
+              // The company's own document identity — trading name, colour,
+              // legal detail — set once here rather than per tender on Site
+              // Documents. The logo goes up through the file control beside the
+              // actions, because a command form cannot take a file.
+              id: 'brand',
+              label: 'Company brand',
+              tone: '',
+              permitted: can('ENTERPRISE_STRUCTURE', 'U'),
+              reason: blockedReason('ENTERPRISE_STRUCTURE', 'U'),
+            },
+            {
               /*
                * Correcting a project, which nothing could do.
                *
@@ -392,6 +409,16 @@ export async function enterprise(root) {
             },
           ]))}
         </div>
+        ${can('ENTERPRISE_STRUCTURE', 'U')
+          ? html`<div class="metric-sub" style="margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span>Documents are issued as <b>${brand ? (brand.issuingEntity || brand.clientName || 'not set') : 'not set'}</b>${brand?.logoRef ? ' · logo set' : ' · no logo'}. "Company brand" sets the name and legal detail; the logo uploads here.</span>
+              <label class="btn quiet sm" style="cursor:pointer">
+                Upload a logo
+                <input type="file" accept="image/png,image/jpeg" id="brand-logo-file" style="display:none" />
+              </label>
+              <span class="cmd-error" id="brand-logo-error" style="display:none"></span>
+            </div>`
+          : ''}
       </div>
 
       <div class="grid g4" style="margin-bottom:14px">
@@ -859,6 +886,50 @@ export async function enterprise(root) {
    * stores.
    */
   const COMMANDS = {
+    brand: {
+      title: 'The company identity on every document',
+      intent:
+        'What every document this business issues — quotations, bid packs, pricing schedules — says about who issued it, ' +
+        'unless a project sets a client identity of its own. The trading name and logo are the brand; the legal detail ' +
+        'names the registered company the contract and the insurance are under. Set here once rather than on each tender.',
+      path: '/v1/branding',
+      method: 'PUT',
+      submitLabel: 'Apply to every document',
+      fields: [
+        {
+          name: 'issuingEntity',
+          label: 'Trading name (issued by)',
+          value: brand?.issuingEntity ?? brand?.clientName,
+          hint: 'The name on the cover and page header of every document — your brand. A trading name shows the ' +
+            'registered company in brackets, e.g. "JNseya Construction Consultant (a trading name of JNN Global Ltd)".',
+        },
+        {
+          name: 'clientName',
+          label: 'Registered company name',
+          value: brand?.clientName,
+          hint: 'The legal entity the contract and insurance are under. Used as the issuer where no trading name is set.',
+        },
+        {
+          name: 'legalFooter',
+          label: 'Legal detail',
+          value: brand?.legalFooter,
+          hint: 'Goes on the cover and the foot of every page. Registered number, registered office, and — for a tender — ' +
+            'that the insurances are held in the registered company’s name, so an evaluator sees the cover matches the certificates.',
+        },
+        {
+          name: 'primaryColour',
+          label: 'Brand colour',
+          value: brand?.primaryColour ?? '#e2571e',
+          hint: 'Hex, as #rrggbb. The cover band and the rules take it.',
+        },
+        {
+          name: 'documentReferencePrefix',
+          label: 'Reference prefix',
+          value: brand?.documentReferencePrefix,
+          hint: 'Every document reference starts with this — what a page pulled out of a bundle is identified by.',
+        },
+      ],
+    },
     check: {
       title: 'Check the licence before inviting',
       intent:
@@ -1531,6 +1602,9 @@ export async function enterprise(root) {
         );
       }
     }
+    if (button.dataset.command === 'brand') {
+      toast('Company identity applied', `Every document is issued as ${result.issuingEntity || result.clientName}. Upload a logo beside the actions to complete it.`, 'ok');
+    }
     // A new project changes what the estate holds, so the whole console has to
     // learn about it — the picker in the bar above most of all. Everything else
     // on this screen is a local redraw.
@@ -1539,6 +1613,30 @@ export async function enterprise(root) {
       return;
     }
     await draw();
+  });
+
+  // The logo cannot ride in the command form — a form posts JSON, a logo is
+  // bytes — so it has its own file control beside the actions, posting to the
+  // tenancy-level upload the brand inherits from everywhere.
+  document.getElementById('brand-logo-file')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const errorBox = document.getElementById('brand-logo-error');
+    if (errorBox) {
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+    }
+    try {
+      const stored = await api.upload('/v1/branding/logo', file);
+      toast('Logo set', `${Math.round(stored.bytes / 1024)}KB · ${stored.contentType} — on every document from here`, 'ok');
+      await draw();
+    } catch (error) {
+      if (errorBox) {
+        errorBox.style.display = '';
+        errorBox.textContent = `${error.code ? `${error.code} — ` : ''}${error.message}`;
+      }
+      event.target.value = '';
+    }
   });
   }
 }

@@ -89,6 +89,17 @@ describe("the identity a tenancy's documents carry", () => {
     assert.equal(body.clientName, 'Meridian Infrastructure Group Ltd');
   });
 
+  it('shows the enterprise administrator the identity to brand from', async () => {
+    // The company brand screen reads this before it offers the form, so the
+    // administrator edits what is set rather than typing blind over it.
+    const response = await fetch(`${base}/v1/branding`, {
+      headers: { authorization: `Bearer ${tokenFor(seed.users.admin!.id)}` },
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { clientName?: string };
+    assert.equal(body.clientName, 'Meridian Infrastructure Group Ltd');
+  });
+
   it('survives a restart, because it is in the record rather than in a map', () => {
     // It was a map, and the failure was the same shape as the landing-page
     // pictures: configure a tenancy, redeploy, and every document reverts to

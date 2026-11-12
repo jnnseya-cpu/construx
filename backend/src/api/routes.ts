@@ -26434,6 +26434,18 @@ export const ROUTES: Route[] = [
     },
   },
   {
+    method: 'GET',
+    pattern: '/v1/branding',
+    readOnly: true,
+    description:
+      "The tenancy's own document identity — the name, colour, legal detail and logo every document inherits where a " +
+      'project sets none of its own. Read so the company brand screen can show what is set rather than asking blind.',
+    handler: (platform, ctx) => {
+      const actor = authoriseTenant(ctx, 'ENTERPRISE_STRUCTURE', 'R');
+      return platform.exports.branding(actor.tenantId);
+    },
+  },
+  {
     method: 'PUT',
     pattern: '/v1/branding',
     description: "Configure the tenancy's own identity, used where a project has no client branding of its own",
