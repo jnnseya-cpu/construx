@@ -107,6 +107,7 @@ import { recordModelReading } from '../evidence/pipeline.ts';
 export type PerceptionTask =
   | 'TITLE_BLOCK'
   | 'DRAWING_TAKEOFF'
+  | 'PRICE_LIST_BOQ'
   | 'ITT_REQUIREMENTS'
   | 'VOICE_NOTE'
   | 'PROGRESS_FROM_IMAGES'
@@ -376,6 +377,67 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
     },
     usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
     absent: 'measurable items',
+  },
+
+  /**
+   * Read the buyer's own bill of quantities / pricing schedule into the bill.
+   *
+   * The take-off above measures the drawings. But a civils tender — MMHW, CESMM —
+   * arrives with a priced schedule the buyer has already written: every work item,
+   * its unit and its quantity, waiting for a rate. Measuring the drawing for a job
+   * like that is the wrong source and reads as dimensions, not quantities; the
+   * right source is the schedule itself. This reads it, so the estimator does not
+   * retype sixty lines by hand.
+   *
+   * **It reads quantities, never money.** The schema carries no rate and no price,
+   * and the prompt forbids inventing one, because a generic rate against a civils
+   * item is exactly how a bid is won at a loss. The model structures the BoQ; the
+   * estimator and their subcontractors price it. The confirmed items land in the
+   * bill unpriced, ready for "Price the bill".
+   */
+  PRICE_LIST_BOQ: {
+    engine: 'TENDER',
+    taskType: 'boq_price_list_extraction',
+    area: 'BOQ_TAKEOFF',
+    // What `runTakeoff` requires.
+    code: 'C',
+    label: 'Read a pricing schedule (Bill of Quantities)',
+    accepts: IMAGE_OR_PDF,
+    acceptsLabel: 'the buyer’s pricing schedule as a PDF or scan',
+    // A pricing schedule is words and numbers; most arrive as a Word or PDF the
+    // platform has already ingested, or pasted out of a portal.
+    acceptsText: true,
+    prompt:
+      'Read this bill of quantities or pricing schedule. List every priced work item exactly as the document states ' +
+      'it: its item number or reference, its full description, its unit of measurement, and its quantity. Keep the ' +
+      'section or work-group heading each item sits under as `section`, and any note on what the item covers as ' +
+      '`coverage`. Quote the document; do not summarise, reorder or merge items, and omit nothing it states — list ' +
+      'what you omitted and why. Report the quantity and the unit only. NEVER report, infer, carry forward or invent ' +
+      'a rate, a price, a total or any money figure of any kind — pricing is the estimator’s, not yours.',
+    responseSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              reference: { type: ['string', 'null'] },
+              description: { type: 'string' },
+              unit: { type: 'string' },
+              quantity: { type: 'number' },
+              section: { type: ['string', 'null'] },
+              coverage: { type: ['string', 'null'] },
+            },
+            required: ['description', 'unit', 'quantity'],
+          },
+        },
+        omitted: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['items'],
+    },
+    usable: (extraction) => Array.isArray(extraction.items) && extraction.items.length > 0,
+    absent: 'bill of quantities items',
   },
 
   /**
@@ -1415,6 +1477,41 @@ export async function confirm(
       // confirmation. The confirmed quantity carries the confidence of the
       // reading it came from; a person accepting a machine's measurement does
       // not make the machine surer of it.
+      measuredBy: 'MODEL_CONFIRMED',
+      ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+    });
+    result = { takeoffId: takeoff.takeoffId, boqItemIds: takeoff.boqItemIds };
+  } else if (draft.task === 'PRICE_LIST_BOQ') {
+    if (!input.packageId || !input.costCodePrefix) {
+      throw new DomainError(
+        'PERCEPTION_TARGET_REQUIRED',
+        'A confirmed bill of quantities has to be filed against a package, under a cost code prefix.',
+      );
+    }
+    const items = (extraction.items as Array<Record<string, unknown>>).map((item) => ({
+      // The buyer's item reference is kept at the front of the description, so the
+      // bill maps back to the Price List line for line when it is priced and
+      // transcribed into the buyer's own schedule. Unit and quantity are the
+      // buyer's, untouched. No rate is read — the schema carries none.
+      description: [item.reference ? String(item.reference).trim() : '', String(item.description ?? '').trim()]
+        .filter(Boolean)
+        .join(' — ') || String(item.description ?? ''),
+      unit: String(item.unit ?? ''),
+      quantity: Number(item.quantity ?? 0),
+      // The section the item sits under on the schedule, kept as the "sheet" it
+      // was read from — a BoQ has no drawing, and this is its traceable origin.
+      sourceSheet: item.section ? String(item.section).trim() : undefined,
+    }));
+    const takeoff = await runTakeoff(ctx, {
+      packageId: input.packageId,
+      sources: [
+        {
+          discipline: 'BILL_OF_QUANTITIES',
+          ...(draft.evidenceHash ? { sheetId: draft.evidenceHash } : {}),
+        },
+      ],
+      items,
+      costCodePrefix: input.costCodePrefix,
       measuredBy: 'MODEL_CONFIRMED',
       ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
     });

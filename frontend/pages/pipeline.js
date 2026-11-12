@@ -210,7 +210,9 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
    * somebody has checked them nothing downstream can price anything — the same
    * rule the requirements reading follows.
    */
-  const takeoffDrafts = (perception?.drafts ?? []).filter((d) => d.task === 'DRAWING_TAKEOFF' && d.status === 'DRAFT');
+  const takeoffDrafts = (perception?.drafts ?? []).filter(
+    (d) => (d.task === 'DRAWING_TAKEOFF' || d.task === 'PRICE_LIST_BOQ') && d.status === 'DRAFT',
+  );
   const readable = heldTenderFiles(evidence, ingestion);
 
   return html`
@@ -348,6 +350,19 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                       : ''
                 }
                 ${
+                  // The civils door: read the buyer's priced Bill of Quantities
+                  // straight into the bill. Offered on any readable tender
+                  // document, because the pricing schedule arrives as a Word
+                  // file, a PDF or a scan and the person holding it is on this
+                  // screen. Quantities only — the reader returns no rate.
+                  file && (road === 'TEXT' || road === 'LOOK' || String(file.kind ?? '') === 'DRAWING')
+                    ? html`<button class="btn quiet sm" data-read-boq="${entry.hash}"
+                        title="Read this as the buyer's priced Bill of Quantities — the AI extracts every item, unit and quantity into the bill for you to price. It reads quantities only, never a rate.">
+                          Read as a pricing schedule
+                        </button>`
+                    : ''
+                }
+                ${
                   /*
                    * Read it again, under the rules as they are now.
                    *
@@ -464,18 +479,20 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
         takeoffDrafts.length > 0
           ? html`<div class="card pad0" style="margin-bottom:14px">
               <div style="padding:15px 17px">
-                <h2>Quantities measured off the drawings, awaiting a person</h2>
+                <h2>Quantities measured off the drawings, or read from a pricing schedule, awaiting a person</h2>
                 <p class="metric-sub" style="margin-bottom:10px">
-                  Check them against the sheet before confirming. Every line carries the sheet it was measured from and
-                  the rule it was measured under; confirming writes them into the bill, which is what an estimate is
-                  priced from. Nothing here is a price — a quantity is not a rate.
+                  Check them against the source before confirming — the drawing a quantity was measured off, or the
+                  buyer’s Bill of Quantities it was read from. Confirming writes them into the bill, which is what an
+                  estimate is priced from. Nothing here is a price — a quantity is not a rate, and the reader never
+                  returns one.
                 </p>
                 ${takeoffDrafts.map((draft) => {
                   const items = draft.extraction?.items ?? [];
                   const omitted = draft.extraction?.omitted ?? [];
+                  const fromSchedule = draft.task === 'PRICE_LIST_BOQ';
                   return html`<div class="card" style="margin-bottom:10px">
                     <div class="metric-sub" style="margin-bottom:8px">
-                      ${items.length} item${items.length === 1 ? '' : 's'} measured${
+                      ${items.length} item${items.length === 1 ? '' : 's'} ${fromSchedule ? 'read from the buyer’s schedule' : 'measured'}${
                         draft.extraction?.scale ? html` · scale ${draft.extraction.scale}` : ''
                       }${draft.confidence !== undefined ? html` · confidence ${Math.round(Number(draft.confidence) * 100)}%` : ''}
                     </div>
@@ -488,7 +505,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                             item.unit,
                             Number(item.quantity).toLocaleString('en-GB'),
                             item.sourceSheet ?? '—',
-                            item.measurementRule ?? 'NRM2',
+                            item.measurementRule ?? (fromSchedule ? 'As scheduled' : 'NRM2'),
                           ]),
                         })
                       : html`<div class="notice warn"><div>
@@ -4077,6 +4094,31 @@ export async function pipeline(root) {
         );
         readIt.disabled = false;
         readIt.textContent = 'Read it with a model that can see';
+      }
+      return;
+    }
+
+    const readBoq = event.target.closest('[data-read-boq]');
+    if (readBoq) {
+      readBoq.disabled = true;
+      readBoq.textContent = 'Reading the schedule…';
+      try {
+        await api.post(`/v1/projects/${projectId}/perception/price-list-boq`, { hash: readBoq.dataset.readBoq });
+        toast(
+          'Read',
+          'The bill of quantities is below, awaiting a person. Confirm it to write the bill — the reader returns ' +
+            'quantities only, never a rate, so every line is yours to price.',
+          'ok',
+        );
+        await draw();
+      } catch (error) {
+        toast(
+          error.code === 'PERCEPTION_NOT_LEGIBLE' ? 'No priceable items in this file' : 'Not read',
+          error.message,
+          error.code === 'PERCEPTION_NOT_LEGIBLE' || error.code === 'PERCEPTION_PROVIDER_UNAVAILABLE' ? 'warn' : 'err',
+        );
+        readBoq.disabled = false;
+        readBoq.textContent = 'Read as a pricing schedule';
       }
       return;
     }

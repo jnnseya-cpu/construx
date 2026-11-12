@@ -677,3 +677,65 @@ function registerEvidenceFor(ctx: EngineContext, hash: string, type: string): vo
     },
   });
 }
+
+describe('reading a buyer pricing schedule into the bill', () => {
+  // The stub is deliberately made to return a rate and a price it must not —
+  // the whole safety property is that the bill takes the quantities and leaves
+  // the money, because a generic rate against a civils item loses the bid.
+  const BOQ_OUTPUT = {
+    items: [
+      { reference: '601.2', description: 'Boring raking holes not exceeding 10m depth', unit: 'm', quantity: 400, section: 'CC 601 Earthworks', rate: 147, price: 58800 },
+      { reference: '491.1', description: 'Random rubble stone cladding in M6 mortar', unit: 'm3', quantity: 15, section: 'CC 491 Masonry', rate: 770 },
+    ],
+    omitted: [],
+  };
+  const SCHEDULE = Buffer.from('%PDF-1.4 pricing schedule bytes', 'utf8');
+  const SCHEDULE_HASH = hashBytes(SCHEDULE);
+
+  before(async () => {
+    await buildFixture(multimodalStub(BOQ_OUTPUT));
+    registerEvidenceFor(ctxFor('qs'), SCHEDULE_HASH, 'CORRESPONDENCE');
+    store.put(seed.tenantId, SCHEDULE_HASH, SCHEDULE, 'application/pdf');
+  });
+
+  it('reads the schedule as items a person confirms, and writes nothing to the bill until they do', async () => {
+    const before = platform.ledger.list(projectId, 'BoQItem').length;
+    const result = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    assert.equal(result.task, 'PRICE_LIST_BOQ');
+    assert.equal((result.extraction.items as unknown[]).length, 2);
+    assert.equal(
+      platform.ledger.list(projectId, 'BoQItem').length,
+      before,
+      'a reading reached the bill without a person confirming it',
+    );
+  });
+
+  it('confirming writes the buyer items into the bill, reference-tagged — and never the rate the model returned', async () => {
+    const { draftId } = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    const pkg = platform.ledger.list(projectId, 'ScopePackage')[0]!;
+    const confirmed = await perception.confirm(ctxFor('qs'), {
+      draftId,
+      packageId: String(pkg.refId),
+      costCodePrefix: 'BOQ',
+    });
+    const boqItemIds = (confirmed.result as { boqItemIds: string[] }).boqItemIds;
+    assert.equal(boqItemIds.length, 2, 'the confirmed schedule did not become two measured items');
+
+    const items = platform.ledger.list(projectId, 'BoQItem').map((r) => r.state);
+    const boring = items.find((i) => String(i.description ?? '').includes('601.2'));
+    assert.ok(boring, 'the buyer item reference was not kept on the bill line');
+    assert.equal(boring!.quantity, 400);
+    assert.equal(boring!.unit, 'm');
+    // The money the model returned must not have reached the bill.
+    assert.ok(!/"(rate|price|sellMinor|priceMinor)"/i.test(JSON.stringify(boring)), 'a rate the model returned reached the bill');
+  });
+
+  it('is a civil-engineering reading task in the catalogue, carrying no money in its schema', () => {
+    const def = (perception.PERCEPTION_TASKS as Record<string, { responseSchema: unknown }>).PRICE_LIST_BOQ;
+    assert.ok(def, 'PRICE_LIST_BOQ is not registered');
+    assert.ok(
+      !/"(rate|price|amount|total|cost|minor)"/i.test(JSON.stringify(def.responseSchema)),
+      'the BoQ reading schema invites a money figure',
+    );
+  });
+});

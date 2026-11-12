@@ -33738,3 +33738,33 @@ submission is; one external submission per tender (a resubmission is a new recor
 A "Record a portal submission" command on Pipeline & Bids, shown when a tender is
 in focus. Covered by award.test.ts; the submitted-detection path it feeds is the
 one journey.test.ts already proves advances the guide past pre-submission steps.
+
+## 2026-11 the AI reads a buyer's Bill of Quantities into the bill (quantities, never a rate)
+
+A civils tender (MMHW/CESMM) arrives with a priced schedule the buyer has already
+written — every item, unit and quantity, waiting for a rate. The platform could
+measure the drawings (and on a civils GA drawing produced dimensions, not
+quantities), but it could not read the schedule the buyer actually wants priced,
+so a one-person firm retyped sixty lines by hand. New perception task
+`PRICE_LIST_BOQ` (`backend/src/engines/perception.ts`) mirrors `ITT_REQUIREMENTS`:
+it reads the buyer's pricing schedule — Word, PDF or scan — into a confirmable
+draft of item · reference · unit · quantity · section · coverage, and on confirm
+writes the measured bill through the same `runTakeoff` the drawing take-off uses.
+
+The safety boundary is in the schema and the confirm, not just the prompt: the
+`responseSchema` carries **no rate, price or money field of any kind**, the prompt
+forbids returning one, and the confirm maps only description/unit/quantity — so a
+rate a model returns anyway (tested) never reaches the bill. This is deliberate:
+a generic rate against a civils item is exactly how a bid is won at a loss (a real
+case this session priced a soil-nail wall at £290k against the estimator's £515k).
+The AI structures the BoQ; the estimator and their subcontractors price it.
+
+Door on Pipeline & Bids: "Read as a pricing schedule" on any held tender document,
+the draft shown beside the drawing take-offs with the same confirm (which collects
+the work package and cost-code prefix). Route auto-generated at
+`/v1/projects/:projectId/perception/price-list-boq`; the doors invariant
+(`doors.test.ts`) enforces the button exists. Covered by perception.test.ts
+(reads two items, writes nothing until confirmed, confirming writes them
+reference-tagged and strips the rate the model returned, catalogue schema carries
+no money). The AI's extraction quality on a live document is validated by the
+confirming person, by design — there is no live provider in the test harness.
