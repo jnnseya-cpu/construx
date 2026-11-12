@@ -156,6 +156,96 @@ export function recordSubmission(
   return { packId, contentHash, receivedAt: receipt.receivedAt };
 }
 
+/**
+ * Record a bid submitted on the buyer's own portal, not assembled in the platform.
+ *
+ * The in-house path — compile a pack, lock a content hash, record a receipt that
+ * names that hash — proves exactly what was submitted and when. A one-person firm
+ * that writes its answers straight onto In-Tend has none of that, and without a
+ * pack on the record the whole bid flow reads the tender as still in preparation:
+ * the guide nags "assign returns" and "write the submission" on a bid that went in
+ * a week ago, and no outcome can be recorded against it.
+ *
+ * This is the bridge. It records the fact the bid was submitted — the date and the
+ * portal's reference — as a `BidSubmissionPack` already in `SUBMITTED`, flagged
+ * `externallySubmitted` so nothing downstream mistakes it for a pack the platform
+ * compiled and checked. The flow then reads the tender as submitted (the guide
+ * points at recording the outcome), and the award view shows it awaiting a result.
+ *
+ * It makes no claim it cannot stand behind: there is no content hash over a
+ * document the platform never held, so the hash is taken over the recorded facts
+ * themselves, and the receipt names the portal reference the firm was given.
+ */
+export function recordExternalSubmission(
+  ctx: EngineContext,
+  input: { submittedOn: string; portalReference: string; channel?: SubmissionChannel },
+): { packId: string; submittedOn: string; reference: string } {
+  authorise(ctx, 'PROCUREMENT_AWARD', 'I', { lifecyclePhase: currentPhase(ctx), dataSensitivity: 'COMMERCIAL_L3' });
+
+  const project = ctx.ledger.require({ refType: 'Project', refId: ctx.projectId });
+  const clientName = String(project.state.clientName ?? project.state.name ?? '');
+
+  const reference = String(input.portalReference ?? '').trim();
+  if (reference.length < 2) {
+    throw new DomainError(
+      'PORTAL_REFERENCE_REQUIRED',
+      'A submission needs the reference the portal gave back when the bid went in. "Submitted" on its own is not a record.',
+      422,
+      [{ field: 'portalReference', message: 'The reference the portal returned' }],
+    );
+  }
+  const submittedOn = String(input.submittedOn ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(submittedOn)) {
+    throw new DomainError('SUBMISSION_DATE_REQUIRED', 'A submission needs the date it was sent.', 422, [
+      { field: 'submittedOn', message: 'The date it was submitted' },
+    ]);
+  }
+
+  // One external submission per tender. A re-submission is a new record, not a
+  // second note on this one — the same rule recordSubmission holds.
+  const existing = ctx.ledger
+    .list(ctx.projectId, 'BidSubmissionPack')
+    .find((record) => record.state.externallySubmitted === true);
+  if (existing) {
+    const prior = (existing.state.submission as { reference?: string; receivedAt?: string } | undefined) ?? {};
+    throw new DomainError(
+      'ALREADY_SUBMITTED',
+      `This tender was already recorded as submitted on ${String(prior.receivedAt ?? '')} (${String(prior.reference ?? '')}). ` +
+        'A resubmission is a new record, not a second note on this one.',
+      409,
+    );
+  }
+
+  const packId = ulid();
+  // No document was held, so the hash is taken over the recorded facts rather than
+  // over content that does not exist — honest about what it stands for.
+  const contentHash = hashEvidence(JSON.stringify({ project: ctx.projectId, reference, submittedOn, externally: true }));
+  const pack = {
+    id: packId,
+    clientName,
+    status: 'SUBMITTED' as const,
+    externallySubmitted: true,
+    contentHash,
+    submission: {
+      reference,
+      receivedAt: submittedOn,
+      channel: input.channel ?? 'PORTAL',
+      externally: true,
+      submittedPackHash: contentHash,
+    },
+    submittedAt: new Date().toISOString(),
+    submittedBy: ctx.auth.actorId,
+  };
+
+  write(ctx, {
+    eventType: 'BID_SUBMITTED_EXTERNALLY',
+    entity: { refType: 'BidSubmissionPack', refId: packId },
+    nextState: pack as unknown as Record<string, unknown>,
+  });
+
+  return { packId, submittedOn, reference };
+}
+
 // --- Award -------------------------------------------------------------------
 
 export const AWARD_OUTCOME = ['WON', 'LOST', 'WITHDRAWN'] as const;

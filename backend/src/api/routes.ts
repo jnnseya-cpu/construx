@@ -26259,6 +26259,23 @@ export const ROUTES: Route[] = [
   },
   {
     method: 'POST',
+    pattern: '/v1/projects/:projectId/bid/external-submission',
+    description:
+      'Record a bid submitted on the buyer’s own portal, not assembled in the platform — the date and the portal reference — so the tender reads as submitted and awaiting its outcome instead of still in preparation',
+    schema: {
+      type: 'object',
+      required: ['submittedOn', 'portalReference'],
+      properties: {
+        submittedOn: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}' },
+        portalReference: stringField,
+        channel: { type: 'string', enum: [...award.SUBMISSION_CHANNEL] },
+      },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) => award.recordExternalSubmission(projectContext(platform, ctx), body(ctx)),
+  },
+  {
+    method: 'POST',
     pattern: '/v1/projects/:projectId/bid-packs/:packId/award',
     description: 'Record the client’s award and compute what departs from what was bid',
     schema: {

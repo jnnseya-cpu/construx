@@ -33713,3 +33713,28 @@ programme field now carries an `emptyHint` that names the actual prerequisite in
 order — "Score an opportunity", then "Decide bid or no bid" and record the decision
 to bid — so the refusal points at the next action instead of leaving the user
 stuck. Frontend-only (`frontend/pages/pipeline.js`); the backend gate is unchanged.
+
+## 2026-11 a bid submitted on the buyer's portal can be recorded as submitted
+
+The flow only ever counted a bid "submitted" if a BidSubmissionPack existed, and
+that pack is only created by compiling and issuing the submission inside the
+platform (BID_PACK_COMPILED → BID_PACK_LOCKED → TENDER_SUBMITTED with a receipt
+naming the pack hash). A one-person firm that writes its answers on the buyer's
+own portal (In-Tend, PSPS) has none of that, so every tender it submitted read as
+still in preparation for ever: the guide kept nagging "assign returns / write the
+submission" on bids that went in a week earlier, and no outcome could be recorded.
+
+`award.recordExternalSubmission(ctx, { submittedOn, portalReference, channel? })`
+and `POST /v1/projects/:projectId/bid/external-submission` bridge it: they record
+the date and the portal's reference as a BidSubmissionPack already in SUBMITTED,
+flagged `externallySubmitted`, with a content hash taken over the recorded facts
+(there is no document the platform held, and it claims none). The bid flow then
+reads the tender as submitted through the same `BidSubmissionPack` signal the
+in-house path feeds (bidflow.ts:556), so the guide points at recording the outcome
+and the award view shows it awaiting a result. New human-only PROCUREMENT-group
+`BID_SUBMITTED_EXTERNALLY` catalogue event (CREATE, no evidence required — date and
+reference only); PROCUREMENT_AWARD 'I', gated to the TENDER phase, as the in-house
+submission is; one external submission per tender (a resubmission is a new record).
+A "Record a portal submission" command on Pipeline & Bids, shown when a tender is
+in focus. Covered by award.test.ts; the submitted-detection path it feeds is the
+one journey.test.ts already proves advances the guide past pre-submission steps.

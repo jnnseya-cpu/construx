@@ -549,3 +549,64 @@ describe('award · the event catalogue', () => {
     assert.equal(lookupEventType('BID_CONVERTED_TO_CONTRACT')!.requiresEvidence, true);
   });
 });
+
+// ── A bid submitted on the buyer's own portal ───────────────────────────────
+
+describe('award · recording a bid submitted on the portal', () => {
+  // Its own project at the tender phase, where PROCUREMENT_AWARD writes are gated.
+  let p: Platform;
+  let s: SeedResult;
+  const owner = () => p.context(s.users.owner!.auth, s.projectId, { source: 'WEB' });
+
+  before(async () => {
+    p = new Platform();
+    s = await seedDemoProject(p);
+    structure.transitionPhase(p.context(s.users.owner!.auth, s.projectId, { source: 'WEB' }), {
+      to: 'TENDER',
+      justification: 'Bidding this tender on the buyer portal',
+    });
+  });
+
+  it('records a portal submission as a submitted pack, flagged, with no built pack', () => {
+    const result = award.recordExternalSubmission(owner(), {
+      submittedOn: '2026-11-10',
+      portalReference: 'IN-TEND/TWC000012/SUB/55',
+    });
+    assert.equal(result.reference, 'IN-TEND/TWC000012/SUB/55');
+
+    const pack = p.ledger.get({ refType: 'BidSubmissionPack', refId: result.packId })!.state as Record<string, any>;
+    assert.equal(pack.status, 'SUBMITTED', 'an external submission must read as submitted so the flow stops preparing it');
+    assert.equal(pack.externallySubmitted, true, 'the pack is not flagged as externally submitted');
+    assert.equal(pack.submission.reference, 'IN-TEND/TWC000012/SUB/55');
+    assert.equal(pack.submission.receivedAt, '2026-11-10');
+    assert.equal(pack.submission.channel, 'PORTAL');
+    // The hash is over the recorded facts, not over content the platform never held.
+    assert.ok(String(pack.contentHash).length > 0, 'the external pack carries no content hash');
+    assert.equal(pack.submission.submittedPackHash, pack.contentHash);
+  });
+
+  it('needs the portal reference and a real date', () => {
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: '2026-11-10', portalReference: '  ' }),
+      'PORTAL_REFERENCE_REQUIRED',
+    );
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: 'soon', portalReference: 'REF-1' }),
+      'SUBMISSION_DATE_REQUIRED',
+    );
+  });
+
+  it('records one submission, not two — a resubmission is a new record', () => {
+    // One is already on the record from the first test; a second is refused.
+    throwsCode(
+      () => award.recordExternalSubmission(owner(), { submittedOn: '2026-11-11', portalReference: 'SECOND-ATTEMPT' }),
+      'ALREADY_SUBMITTED',
+    );
+  });
+
+  it('is a human-only create event in the catalogue', () => {
+    const def = lookupEventType('BID_SUBMITTED_EXTERNALLY');
+    assert.ok(def, 'BID_SUBMITTED_EXTERNALLY is not in the catalogue');
+    assert.equal(def!.aiAllowed, false, 'recording a submission must never be an agent action');
+  });
+});

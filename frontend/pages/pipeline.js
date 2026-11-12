@@ -1540,6 +1540,11 @@ export async function pipeline(root) {
                 permitted: can('ESTIMATE_TENDER', 'U', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'U', TENANT) },
               { id: 'programme', label: 'Build tender programme',
                 permitted: can('ESTIMATE_TENDER', 'C', TENANT), reason: blockedReason('ESTIMATE_TENDER', 'C', TENANT) },
+              { id: 'record-external-submission', label: 'Record a portal submission', tone: 'quiet',
+                permitted: Boolean(projectId) && can('PROCUREMENT_AWARD', 'I'),
+                reason: !projectId
+                  ? 'Open one tender first (focus it), then record that it was submitted on the buyer’s portal.'
+                  : blockedReason('PROCUREMENT_AWARD', 'I') },
             ]),
           )}
         </div>
@@ -3808,6 +3813,35 @@ export async function pipeline(root) {
             : 'No tender has a recorded decision to bid yet, and a programme follows that decision. On this screen: "Score an opportunity", then "Decide bid or no bid" for the tender you want a programme for, and record the decision to bid.' },
       ],
       transform: () => ({}),
+    },
+    'record-external-submission': {
+      title: 'Record a submission made on the portal',
+      intent:
+        'For a bid you submitted on the buyer’s own portal (In-Tend, PSPS, a council site) rather than assembling it in ' +
+        'here. Give the date it went in and the reference the portal returned, and the tender reads as submitted and ' +
+        'awaiting its outcome — the guide stops asking you to prepare a bid that is already in. It records only that the ' +
+        'bid was submitted; it makes no claim the platform built or checked it.',
+      path: `/v1/projects/${projectId}/bid/external-submission`,
+      submitLabel: 'Record it',
+      fields: [
+        { name: 'submittedOn', label: 'Date it was submitted', type: 'date',
+          hint: 'The day the bid went in on the portal.' },
+        { name: 'portalReference', label: 'Portal reference', type: 'text',
+          placeholder: 'e.g. the In-Tend submission ID or receipt number',
+          hint: 'The reference the portal gave back when you submitted. It is what proves the bid was in.' },
+        { name: 'channel', label: 'Where it went', type: 'select', required: false, value: 'PORTAL',
+          options: [
+            { value: 'PORTAL', label: 'A tender portal (In-Tend, PSPS, a council site)' },
+            { value: 'EMAIL', label: 'By email' },
+            { value: 'PHYSICAL', label: 'Posted / courier' },
+            { value: 'HAND_DELIVERY', label: 'Hand delivered' },
+          ] },
+      ],
+      transform: (v) => ({
+        submittedOn: String(v.submittedOn ?? '').trim(),
+        portalReference: String(v.portalReference ?? '').trim(),
+        ...(v.channel ? { channel: v.channel } : {}),
+      }),
     },
   };
 

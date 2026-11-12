@@ -1009,6 +1009,15 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // hash: a record saying "a bid went in at 11:52" proves you sent something,
   // and the argument after a disqualification is always about which bytes.
   def('TENDER_SUBMITTED', 'BidSubmissionPack', 'ISSUE', 'PROCUREMENT', { requiresEvidence: true }),
+  // A bid submitted on the buyer's own portal, not assembled and issued inside
+  // the platform. The in-house path compiles a pack, locks a content hash and
+  // records a receipt against it; a one-person firm that writes its answers on
+  // In-Tend has none of that, so without this its submitted tenders read as still
+  // being prepared for ever. This records the fact it went in — the date and the
+  // portal's reference — as a submitted pack flagged `externallySubmitted`, which
+  // is honest about what it is and is not: a note that the bid was submitted, with
+  // no claim the platform compiled or checked it. `aiAllowed: false` by default.
+  def('BID_SUBMITTED_EXTERNALLY', 'BidSubmissionPack', 'CREATE', 'PROCUREMENT'),
   def('AWARD_RECEIVED', 'BidSubmissionPack', 'UPDATE', 'PROCUREMENT'),
   // What the client awarded that is not what was bid. Computed rather than
   // typed: a departure somebody noticed is not the one that costs money.
