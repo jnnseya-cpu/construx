@@ -1850,6 +1850,14 @@ export const EVENT_TYPES: EventTypeDefinition[] = [
   // the moment an unverified output would become institutional truth, and it
   // carries an approver for the same reason no mandate exceeds propose.
   def('BID_OUTCOME_RECORDED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
+  // A recorded outcome is write-once, because the calibration cannot rely on a
+  // result that can be rewritten. But a result recorded in error — a loss filed
+  // against the wrong tender — has to have a way back, or the record is wrong for
+  // ever. This is that way: a privileged, reasoned reversal that leaves the
+  // original BID_OUTCOME_RECORDED event untouched on the chain and appends the
+  // correction beside it. `aiAllowed: false` by the catalogue's default — reversing
+  // institutional truth is a director's act, never an agent's.
+  def('BID_OUTCOME_CORRECTED', 'Opportunity', 'UPDATE', 'BUSINESS_DEVELOPMENT'),
   def('CALIBRATION_LESSON_PROPOSED', 'CalibrationLesson', 'CREATE', 'BUSINESS_DEVELOPMENT', { creates: true, aiAllowed: true }),
   def('CALIBRATION_LESSON_PROMOTED', 'CalibrationLesson', 'APPROVE', 'BUSINESS_DEVELOPMENT'),
   def('CALIBRATION_LESSON_REJECTED', 'CalibrationLesson', 'UPDATE', 'BUSINESS_DEVELOPMENT'),

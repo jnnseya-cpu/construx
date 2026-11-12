@@ -225,6 +225,13 @@ type OpportunityState = {
   qualification?: { scores?: Record<string, number> };
   outcome?: RecordedOutcome;
   /**
+   * The outcomes reversed in error on this pursuit, oldest first. Append-only: a
+   * correction never deletes the reversed outcome, it keeps it here with who
+   * reversed it, when and why — so the record shows an error was corrected, not a
+   * result quietly rewritten.
+   */
+  corrections?: OutcomeCorrection[];
+  /**
    * Read for the win-rate position's segments. Both are already written by
    * `business.ts` at registration; neither is new, and neither is required —
    * an opportunity logged before somebody filled them in still counts in the
@@ -232,6 +239,16 @@ type OpportunityState = {
    */
   sectorType?: string;
   source?: string;
+};
+
+/** One outcome reversed in error, kept on the record with its reason and its author. */
+export type OutcomeCorrection = {
+  /** The full outcome that was removed — exactly what the chain said before the correction. */
+  reversed: RecordedOutcome;
+  /** Why it was wrong. Required; it is what tells an auditor this was a corrected error. */
+  reason: string;
+  correctedAt: string;
+  correctedBy: string;
 };
 
 /**
@@ -578,6 +595,87 @@ export function recordBidOutcome(
   });
 
   return outcome;
+}
+
+/**
+ * Reverse a bid outcome recorded in error.
+ *
+ * Recording an outcome is write-once on purpose — a result that can be rewritten
+ * is one the calibration cannot trust. But a result recorded against the wrong
+ * tender (the picker that used to default to a different pursuit is exactly how)
+ * leaves a live bid showing as lost, and there has to be a way back that does not
+ * weaken the write-once rule for everyone else.
+ *
+ * This is that way, and it is deliberately heavier than recording:
+ *
+ *  - It needs `BUSINESS_DEVELOPMENT` **'A'**, not 'U'. Recording an outcome is
+ *    routine; reversing one already on the calibration is a director's decision.
+ *  - It needs a reason, kept on the record. The reason is what tells an auditor
+ *    an error was corrected rather than a result quietly changed.
+ *  - It never deletes the reversed outcome. The original `BID_OUTCOME_RECORDED`
+ *    event stays on the append-only chain, and the reversed outcome is kept in
+ *    `corrections` with who reversed it and when.
+ *
+ * After it, the pursuit is live again (no `outcome`), a LOST having returned the
+ * stage to BID, so the *true* outcome can be recorded once more through the
+ * normal gate — which is write-once again from here, as it should be.
+ */
+export function correctBidOutcome(
+  ctx: EngineContext,
+  opportunityId: string,
+  input: { reason: string },
+): { reversed: RecordedOutcome; stage: OpportunityStage; corrections: number } {
+  authorise(ctx, 'BUSINESS_DEVELOPMENT', 'A');
+
+  const record = ctx.ledger.get({ refType: 'Opportunity', refId: opportunityId });
+  if (!record || record.tenantId !== ctx.tenantId) {
+    throw new DomainError('OPPORTUNITY_NOT_FOUND', `No opportunity ${opportunityId}`, 404);
+  }
+  const state = record.state as unknown as OpportunityState;
+
+  if (!state.outcome) {
+    throw new DomainError(
+      'NO_OUTCOME_TO_CORRECT',
+      `${state.title} carries no recorded outcome, so there is nothing to correct.`,
+      409,
+    );
+  }
+
+  const reason = String(input.reason ?? '').trim();
+  if (reason.length < 4) {
+    throw new DomainError(
+      'CORRECTION_REASON_REQUIRED',
+      'A correction has to say why. The original outcome stays on the record; the reason is what tells an auditor this ' +
+        'was an error corrected, not a result quietly rewritten.',
+      422,
+      [{ field: 'reason', message: 'Say why the recorded outcome was wrong' }],
+    );
+  }
+
+  const reversed = state.outcome;
+  // Recording a LOST moved the pursuit to the LOST stage, so reversing it returns
+  // the pursuit to BID — it had been decided to bid and is live again, waiting on
+  // its true outcome. A WON never moved the stage (conversion does that), so there
+  // is nothing to restore.
+  const restoredStage: OpportunityStage = reversed.outcome === 'LOST' ? 'BID' : state.stage;
+  const corrections: OutcomeCorrection[] = [
+    ...(state.corrections ?? []),
+    { reversed, reason, correctedAt: new Date().toISOString(), correctedBy: ctx.auth.actorId },
+  ];
+
+  // The outcome key is removed, not set undefined, so the write-once guard reads
+  // the pursuit as live again and the true outcome can be recorded once more.
+  const nextState: Record<string, unknown> = { ...record.state, stage: restoredStage, corrections };
+  delete nextState.outcome;
+
+  write(ctx, {
+    projectId: record.projectId,
+    eventType: 'BID_OUTCOME_CORRECTED',
+    entity: { refType: 'Opportunity', refId: opportunityId },
+    nextState,
+  });
+
+  return { reversed, stage: restoredStage, corrections: corrections.length };
 }
 
 // --- Calibration signals — §4.10.2 --------------------------------------------------

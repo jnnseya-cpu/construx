@@ -2698,6 +2698,10 @@ export async function pipeline(root) {
             { id: 'bid-outcome', label: 'Record how a bid ended',
               permitted: can('BUSINESS_DEVELOPMENT', 'U') && opportunities.some((o) => o.stage === 'BID' || o.stage === 'CONVERTED'),
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'U') ?? 'Nothing has reached a decision to bid' },
+            { id: 'correct-outcome', label: 'Correct an outcome', tone: 'quiet',
+              permitted: can('BUSINESS_DEVELOPMENT', 'A') && opportunities.some((o) => o.outcome),
+              reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
+                ?? 'No recorded outcome to correct. A correction reverses an outcome filed in error — a director-level act.' },
             { id: 'convert', label: 'Turn a win into a project',
               permitted: can('BUSINESS_DEVELOPMENT', 'A') && convertible.length > 0 && portfolios.length > 0,
               reason: blockedReason('BUSINESS_DEVELOPMENT', 'A')
@@ -3301,6 +3305,26 @@ export async function pipeline(root) {
         ...(reasonClass ? { reasonClass } : {}),
         feedback: String(feedback ?? '').split('\n').map((line) => line.trim()).filter(Boolean),
       }),
+    },
+    'correct-outcome': {
+      title: 'Correct an outcome recorded in error',
+      intent:
+        'Reverses a bid outcome that was recorded against the wrong tender or by mistake — the one way back from a ' +
+        'write-once result. The original stays on the record (this is a logged correction, not a quiet rewrite), and ' +
+        'the pursuit returns to live so its true outcome can be recorded. A director-level act, kept with its reason.',
+      path: (v) => `/v1/pipeline/opportunities/${v.opportunityId}/outcome/correction`,
+      submitLabel: 'Correct it',
+      fields: [
+        { name: 'opportunityId', label: 'Opportunity', type: 'select',
+          value: focusDefault((o) => Boolean(o.outcome)),
+          options: (focused ? shownOpportunities : opportunities)
+            .filter((o) => o.outcome)
+            .map((o) => ({ value: o.id, label: `${o.title} · ${o.clientName} · recorded ${String(o.outcome.outcome).toLowerCase()}` })),
+          emptyHint: 'No opportunity carries a recorded outcome to correct.' },
+        { name: 'reason', label: 'Why the recorded outcome was wrong', type: 'textarea', rows: 2,
+          hint: 'Kept on the record for the auditor. e.g. "Recorded as lost against the wrong tender — this bid is live and awaiting the result."' },
+      ],
+      transform: ({ opportunityId: _opportunityId, reason }) => ({ reason: String(reason ?? '').trim() }),
     },
     opportunity: {
       /*

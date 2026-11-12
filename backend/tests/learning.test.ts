@@ -274,6 +274,87 @@ describe('a loss had nowhere to go', () => {
   });
 });
 
+describe('correcting a bid outcome recorded in error', () => {
+  // Its own platform, so settling losses here does not move the tenancy counts
+  // the win-rate tests assert over.
+  let p: Platform;
+  let s: SeedResult;
+  const bd = () => p.context(s.users.qs!.auth, `${s.tenantId}-governance`, { source: 'WEB' });
+  const owner = () => p.context(s.users.owner!.auth, `${s.tenantId}-governance`, { source: 'WEB' });
+  const allThrees = (): business.QualificationScores =>
+    Object.fromEntries(business.QUALIFICATION_CRITERIA.map((c) => [c.key, 3])) as business.QualificationScores;
+
+  before(async () => {
+    p = new Platform();
+    s = await seedDemoProject(p);
+  });
+
+  // A pursuit decided-to-bid and then recorded LOST — the exact state a bid shows
+  // when the outcome was filed against the wrong tender.
+  const lost = (title: string): string => {
+    const { opportunityId } = business.registerOpportunity(bd(), {
+      title, clientName: 'South Holland District Council', sectorType: 'RMI',
+      estimatedValueMinor: 50_000_000, source: 'In-Tend',
+    });
+    business.qualifyOpportunity(bd(), opportunityId, allThrees());
+    business.decideBidNoBid(owner(), opportunityId, { bid: true, rationale: 'Pursued for the test' });
+    learning.recordBidOutcome(bd(), opportunityId, { outcome: 'LOST', decidedOn: '2027-04-01' });
+    return opportunityId;
+  };
+
+  it('reverses a wrong loss: the pursuit returns to live and its true outcome can be recorded', () => {
+    const opportunityId = lost('Wrongly lost, actually live');
+    const result = learning.correctBidOutcome(owner(), opportunityId, {
+      reason: 'Recorded as lost against the wrong tender — this bid is live and awaiting the result.',
+    });
+    assert.equal(result.reversed.outcome, 'LOST');
+    assert.equal(result.stage, 'BID', 'a reversed loss did not return the pursuit to the live BID stage');
+
+    const state = owner().ledger.get({ refType: 'Opportunity', refId: opportunityId })!.state as Record<string, unknown>;
+    assert.equal(state.outcome, undefined, 'the corrected outcome was not cleared');
+    assert.equal(state.stage, 'BID');
+    // The original is kept, never deleted — the audit shows an error corrected.
+    const corrections = state.corrections as Array<Record<string, any>>;
+    assert.equal(corrections.length, 1);
+    assert.equal(corrections[0]!.reversed.outcome, 'LOST');
+    assert.match(String(corrections[0]!.reason), /wrong tender/);
+
+    // Live again, so the true outcome records once more — and is write-once from here.
+    assert.doesNotThrow(() =>
+      learning.recordBidOutcome(bd(), opportunityId, { outcome: 'LOST', decidedOn: '2027-05-01' }),
+    );
+    throwsCode(
+      () => learning.recordBidOutcome(bd(), opportunityId, { outcome: 'LOST', decidedOn: '2027-06-01' }),
+      'OUTCOME_ALREADY_RECORDED',
+    );
+  });
+
+  it('is a director-level act — the role that records an outcome cannot reverse one', () => {
+    const opportunityId = lost('Needs authority');
+    // The QS records outcomes (BUSINESS_DEVELOPMENT U) but may not reverse one (A).
+    throwsCode(() => learning.correctBidOutcome(bd(), opportunityId, { reason: 'I want it back' }), 'ACCESS_DENIED');
+  });
+
+  it('will not reverse without a reason', () => {
+    const opportunityId = lost('Needs a reason');
+    throwsCode(() => learning.correctBidOutcome(owner(), opportunityId, { reason: '   ' }), 'CORRECTION_REASON_REQUIRED');
+  });
+
+  it('refuses when there is no outcome to correct', () => {
+    const { opportunityId } = business.registerOpportunity(bd(), {
+      title: 'No outcome yet', clientName: 'Fenland District Council', sectorType: 'RMI',
+      estimatedValueMinor: 10_000_000, source: 'Portal',
+    });
+    throwsCode(() => learning.correctBidOutcome(owner(), opportunityId, { reason: 'nothing to undo' }), 'NO_OUTCOME_TO_CORRECT');
+  });
+
+  it('is a human-only governance event in the catalogue', () => {
+    const def = lookupEventType('BID_OUTCOME_CORRECTED');
+    assert.ok(def, 'BID_OUTCOME_CORRECTED is not in the catalogue');
+    assert.equal(def!.aiAllowed, false, 'reversing an outcome must never be an agent action');
+  });
+});
+
 describe('what the record says about how this business bids', () => {
   before(() => {
     // Two more losses with a disclosed winning price, so the price signal has

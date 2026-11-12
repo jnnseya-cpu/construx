@@ -14564,6 +14564,20 @@ export const ROUTES: Route[] = [
       learning.recordBidOutcome(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
   },
   {
+    method: 'POST',
+    pattern: '/v1/pipeline/opportunities/:opportunityId/outcome/correction',
+    description:
+      'Reverse a bid outcome recorded in error — a privileged, reasoned correction that keeps the original on the record and returns the pursuit to live so its true outcome can be recorded.',
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: { reason: stringField },
+      additionalProperties: false,
+    },
+    handler: (platform, ctx) =>
+      learning.correctBidOutcome(tenantContext(platform, ctx), ctx.params.opportunityId as string, body(ctx)),
+  },
+  {
     method: 'GET',
     pattern: '/v1/calibration',
     readOnly: true,

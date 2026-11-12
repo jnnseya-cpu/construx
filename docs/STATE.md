@@ -33669,3 +33669,35 @@ list); this change makes the guide send the user to it. Covered by journey.test.
 (RETURN_REGISTER door/command on a tender with bare unassigned returns). No data
 change: a tender already recorded continues from where it is — press the button
 the guide now names and the gate clears.
+
+## 2026-11 an outcome recorded in error can be corrected — by a director, with a reason, keeping the original
+
+A bid outcome is write-once on purpose: a result the calibration reads cannot be
+one anybody can rewrite. But the wrong-tender picker (fixed separately) could file
+a loss against a live bid — South Holland showed LOST while open and awaiting the
+result — and write-once left no way back. There is now a correction path that does
+not weaken the rule for everyone else:
+
+- `learning.correctBidOutcome(ctx, opportunityId, { reason })` and
+  `POST /v1/pipeline/opportunities/:opportunityId/outcome/correction`.
+- Needs `BUSINESS_DEVELOPMENT` **'A'**, not the 'U' that records one: reversing a
+  result already on the calibration is a director's act, and the role that records
+  an outcome (QS) cannot reverse it.
+- Needs a reason, kept on the record. A blank reason is refused
+  (`CORRECTION_REASON_REQUIRED`).
+- Never deletes the reversed outcome. The original `BID_OUTCOME_RECORDED` event
+  stays on the append-only chain; a new `BID_OUTCOME_CORRECTED` event (added to the
+  catalogue, `aiAllowed: false`) appends the reversal, and the reversed outcome is
+  kept in the opportunity's `corrections` audit with who reversed it, when and why.
+- After it the pursuit is live again (a LOST returns the stage to BID), so the
+  *true* outcome records once more through the normal gate — write-once again from
+  there.
+
+Frontend: a "Correct an outcome" command on Pipeline & Bids, shown only to a holder
+of 'A' when an opportunity carries an outcome, defaulting to the tender in focus.
+Covered by learning.test.ts (reversal + re-record + re-lock, the 'A' gate, the
+reason requirement, the no-outcome refusal, and the catalogue entry). Scope: this
+corrects the **opportunity** outcome (the one the "Record how a bid ended" modal
+writes, and the one South Holland showed). A project-level `tenderOutcome`
+(recordTenderOutcome) has its own write-once path and is not corrected here — no
+case has needed it; it would follow the same pattern if one does.
