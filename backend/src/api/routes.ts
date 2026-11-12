@@ -14148,8 +14148,9 @@ export const ROUTES: Route[] = [
         },
         quotation: {
           type: 'object',
-          required: ['clientName', 'validUntil'],
+          required: ['validUntil'],
           properties: {
+            // Optional: blank addresses the offer to the tender's buyer.
             clientName: { type: 'string', minLength: 2, maxLength: 200 },
             validUntil: stringField,
             paymentTerms: { type: 'string', maxLength: 500 },
@@ -14501,8 +14502,10 @@ export const ROUTES: Route[] = [
       'any other instrument',
     schema: {
       type: 'object',
-      required: ['clientName', 'validUntil'],
+      required: ['validUntil'],
       properties: {
+        // Optional: left blank, the offer is addressed to the tender's buyer —
+        // the client on the opportunity this project is pursuing.
         clientName: { type: 'string', minLength: 2, maxLength: 200 },
         validUntil: stringField,
         paymentTerms: { type: 'string', maxLength: 500 },

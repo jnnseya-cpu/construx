@@ -501,11 +501,19 @@ export function issuedDocumentModel(platform: Platform, document: LifecycleDocum
     // An actor no longer on the directory still has a traceable id; a blank
     // would be worse than the id, so the field simply falls back to it.
   }
+  // "Prepared for" on the cover is who the document is *for*, which for a
+  // quotation is the client named in its own body — not the tenancy's own name,
+  // which the branding default carries and which read as "prepared for JNN
+  // Global Ltd" on an offer to a council. Falls back to the branding default
+  // when the body names no client (an internal report, a certificate).
+  const bodyClient = manifest.body.Client;
+  const preparedFor =
+    typeof bodyClient === 'string' && bodyClient.trim().length > 0 ? bodyClient.trim() : branding.clientName;
   return {
     id: issuance.id,
     reference: issuance.number,
     title: document.title,
-    branding: { ...branding, issuingEntity: issuer.registeredName, legalFooter: issuer.footerLegalText || branding.legalFooter },
+    branding: { ...branding, clientName: preparedFor, issuingEntity: issuer.registeredName, legalFooter: issuer.footerLegalText || branding.legalFooter },
     issuer: { companyId: document.tenantId, profileVersion: issuance.issuerProfileVersion, documentType: 'report' },
     audience: 'CLIENT',
     format: 'PDF',

@@ -33553,3 +33553,17 @@ user sent out:
   transform over the frozen body, so the content hash the instrument verifies
   against does not move and a re-download of an already-issued quotation picks up
   the table. Covered by quotation.test.ts.
+
+## 2026-11 a quotation is addressed to the buyer, not the issuer
+
+"Prepared for" on an issued quotation read as the issuing business's own name
+(the branding default's clientName), so an offer to a council said "prepared for
+JNN Global Ltd". Two changes: the issued-document render now takes "Prepared
+for" from the document's own `Client` field where it has one (issuance.ts), so
+the cover names whoever the offer is addressed to; and `quoteFromEstimate`'s
+`clientName` is now optional — left blank it defaults to the tender's buyer, the
+client on the opportunity this project is pursuing (matched by projectId /
+convertedProjectId), and refuses with `QUOTATION_NO_CLIENT` only when there is no
+buyer on record to borrow. The draw-up and accept routes drop `clientName` from
+required; the "Quoted to" field is optional with a hint. Covered by
+quotation.test.ts.

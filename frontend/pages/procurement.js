@@ -2435,7 +2435,7 @@ export async function procurement(root) {
           value: (packRun?.headsToSettle ?? []).length > 0 ? 'Not included in this offer' : '',
           hint: 'It travels into the quotation as a stated qualification, so the customer reads it rather than assuming it.',
         },
-        { name: 'clientName', label: 'Quoted to', type: 'text', hint: 'The client this offer is made to.' },
+        { name: 'clientName', label: 'Quoted to', type: 'text', required: false, hint: 'The client this offer is made to. Leave blank and it goes to the tender’s buyer.' },
         { name: 'validUntil', label: 'Valid until', type: 'date', min: today(), hint: 'A quotation without a lapse date is a standing offer.' },
         { name: 'paymentTerms', label: 'Payment terms', type: 'text', required: false, placeholder: '30 days from invoice' },
         /*

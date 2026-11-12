@@ -48,8 +48,13 @@ import { formatMoney } from './locale.ts';
 /** What a person has to say that the estimate cannot. */
 export type QuotationInput = {
   estimateId: string;
-  /** Who the offer is made to. Not derivable: an estimate has no addressee. */
-  clientName: string;
+  /**
+   * Who the offer is made to. Defaults to the tender's buyer — the client on the
+   * opportunity this project is pursuing — when left blank, so a quotation to a
+   * council is addressed to the council and not, by the branding default, to the
+   * business issuing it.
+   */
+  clientName?: string;
   /** The day the offer lapses. A quotation without one is a standing offer. */
   validUntil: string;
   /** Terms of payment, where the company states them on its quotations. */
@@ -141,6 +146,26 @@ export function quoteFromEstimate(
   const currency = String(project?.state.currency ?? 'GBP');
   const projectName = String(project?.state.name ?? ctx.projectId);
 
+  // Who the offer is addressed to. Where the caller named nobody, default to the
+  // tender's buyer — the client on the opportunity this project is pursuing — so
+  // a quotation reads "prepared for Telford and Wrekin Council", not the issuing
+  // business's own name that the branding default would otherwise supply.
+  const linkedBuyer = platform.ledger
+    .list(`${ctx.tenantId}-governance`, 'Opportunity')
+    .map((record) => record.state)
+    .find(
+      (state) =>
+        String(state.projectId ?? '') === ctx.projectId || String(state.convertedProjectId ?? '') === ctx.projectId,
+    )?.clientName;
+  const clientName = (input.clientName?.trim() || String(linkedBuyer ?? '').trim()).trim();
+  if (clientName.length < 2) {
+    throw new DomainError(
+      'QUOTATION_NO_CLIENT',
+      'Name who this offer is made to — no buyer is on record for this tender to default to.',
+      422,
+    );
+  }
+
   const assumptions = ((estimate.assumptions as string[] | undefined) ?? []).filter(Boolean);
   const exclusions = (estimate.exclusions as Array<{ label?: string; head?: string; reason?: string }> | undefined) ?? [];
 
@@ -162,7 +187,7 @@ export function quoteFromEstimate(
   }
 
   const body: DocumentBody = {
-    Client: input.clientName,
+    Client: clientName,
     Project: projectName,
     'Work package': String(estimate.packageId ?? '—'),
     'Our reference': input.estimateId,

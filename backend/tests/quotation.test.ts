@@ -73,6 +73,19 @@ const QUOTE = {
 };
 
 describe('a priced estimate becomes a quotation', () => {
+  it('refuses when no addressee is given and the project has no buyer on record to default to', () => {
+    // "Quoted to" is optional so a tender quotation defaults to its buyer, but a
+    // project with no opportunity behind it has no buyer to borrow — so rather
+    // than address the offer to the issuing business by the branding default, it
+    // is refused and names what to supply. (A pursuit-linked project defaults
+    // silently; this demo project is a delivery job with no opportunity.)
+    const estimate = completeEstimate();
+    throwsCode(
+      () => quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, validUntil: QUOTE.validUntil }),
+      'QUOTATION_NO_CLIENT',
+    );
+  });
+
   it('composes the offer from the estimate rather than from anybody’s memory of it', () => {
     const estimate = completeEstimate();
     const quoted = quoteFromEstimate(platform, qsCtx(), seed.users.qs!.auth, { estimateId: estimate.estimateId, ...QUOTE });
