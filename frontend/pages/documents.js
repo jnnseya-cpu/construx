@@ -1360,7 +1360,12 @@ async function issuerPanels(host) {
             path: '/v1/documents/lifecycle',
             submitLabel: 'Open the superseding draft',
             fields: [
-              { name: 'title', label: 'Title', value: `${doc.title} (revised)` },
+              // The client's copy carries no "(revised)" — the supersession is
+              // recorded against the document (supersedes: doc.id) and shown in
+              // its own history, not stamped on the title the buyer reads. Any
+              // "(revised)" already stacked onto an earlier title is stripped, so
+              // a second supersession does not read "(revised) (revised)".
+              { name: 'title', label: 'Title', value: String(doc.title ?? '').replace(/(\s*\(revised\))+\s*$/i, '') },
               { name: 'body', label: 'Rows', type: 'textarea', value: Object.entries(doc.body ?? {}).map(([k, v]) => `${k}: ${v}`).join('\n') },
             ],
             transform: (v) => ({ documentType: doc.documentType, title: v.title, body: parseRows(v.body), supersedes: doc.id, ...(doc.source ? { source: doc.source } : {}) }),

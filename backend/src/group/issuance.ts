@@ -396,6 +396,67 @@ function fallbackBranding(issuer: IssuerBlock): ClientBranding {
   };
 }
 
+/**
+ * A frozen document body as blocks, with its priced line items drawn as a table.
+ *
+ * A quotation writes its priced lines as body rows keyed `Item 1`, `Item 2`, …
+ * each holding "<description> — <quantity> <unit> — <amount>" (a fixed sum has
+ * no quantity). Rendered as a flat key/value list they read as a cramped
+ * data dump; lifted into a table they read as the priced schedule they are. The
+ * header rows (Client, Period, Basis) above them and the summary rows (Total,
+ * Payment terms, exclusions) below stay key/value, in their original order.
+ *
+ * The body is not touched — only how it is drawn — so the content hash the
+ * instrument is verified against does not move, and a document with no `Item N`
+ * rows (an invoice, a certificate) renders exactly as it did before.
+ */
+export function bodyBlocks(body: Record<string, unknown>): DocumentBlock[] {
+  const blocks: DocumentBlock[] = [];
+  let pairs: Array<{ label: string; value: string }> = [];
+  let items: string[][] = [];
+  const flushPairs = (): void => {
+    if (pairs.length > 0) {
+      blocks.push({ kind: 'KEY_VALUES', rows: pairs });
+      pairs = [];
+    }
+  };
+  const flushItems = (): void => {
+    if (items.length > 0) {
+      blocks.push({ kind: 'TABLE', headers: ['#', 'Description', 'Quantity', 'Amount'], rows: items });
+      items = [];
+    }
+  };
+
+  for (const [label, raw] of Object.entries(body)) {
+    const value = String(raw);
+    const item = /^Item (\d+)$/.exec(label);
+    if (!item) {
+      flushItems();
+      pairs.push({ label, value });
+      continue;
+    }
+    flushPairs();
+    // "<description> — <qty> <unit> — <amount>", where the description may itself
+    // contain " — "; the greedy first group keeps it whole and the quantity is
+    // the "<number> <unit>" run just before the amount.
+    const priced = /^(.*) — ([0-9][0-9.,]*\s+[^—]+?) — (.+)$/.exec(value);
+    if (priced) {
+      items.push([item[1]!, priced[1]!.trim(), priced[2]!.trim(), priced[3]!.trim()]);
+      continue;
+    }
+    // A fixed sum, or a line carried into one sum: "<label> — <amount>" with no
+    // quantity, or no amount at all. Split off a trailing amount where there is
+    // one, otherwise the whole value is the description.
+    const cut = value.lastIndexOf(' — ');
+    const tail = cut >= 0 ? value.slice(cut + 3).trim() : '';
+    const isAmount = cut >= 0 && /^[£$€]?[0-9(]/.test(tail);
+    items.push([item[1]!, (isAmount ? value.slice(0, cut) : value).trim(), '', isAmount ? tail : '']);
+  }
+  flushItems();
+  flushPairs();
+  return blocks;
+}
+
 /** The numbered document, as blocks, from the frozen manifest and nothing else. */
 export function issuedDocumentModel(platform: Platform, document: LifecycleDocument, issuance: Issuance): ExportDocument {
   const revision = document.revisions.find((held) => held.revision === issuance.revision)!;
@@ -418,8 +479,11 @@ export function issuedDocumentModel(platform: Platform, document: LifecycleDocum
         { label: 'Issuer profile', value: `version ${issuance.issuerProfileVersion}` },
       ],
     },
-    { kind: 'KEY_VALUES', rows: Object.entries(manifest.body).map(([label, value]) => ({ label, value: String(value) })) },
-    ...(document.supersedes ? [{ kind: 'PARAGRAPH' as const, text: `Supersedes document ${document.supersedes}.` }] : []),
+    ...bodyBlocks(manifest.body),
+    // The supersession is recorded against the document (`document.supersedes`)
+    // and shown in its own history — not printed on the copy the client reads.
+    // A buyer does not need to be told their offer is a revised one, and the
+    // raw document id told them nothing anyway.
     ...(issuer.footerLegalText ? [{ kind: 'PARAGRAPH' as const, text: issuer.footerLegalText }] : []),
   ];
   const contentHash = issuance.hash;

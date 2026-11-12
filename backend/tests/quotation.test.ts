@@ -5,7 +5,7 @@ import { quoteFromEstimate } from '../src/domain/quotation.ts';
 import { priceEstimate } from '../src/engines/maths/costModel.ts';
 import * as structure from '../src/domain/structure.ts';
 import * as tender from '../src/engines/tender.ts';
-import { approveDocument, documentOf, generateRevision, issueDocument, submitForApproval } from '../src/group/issuance.ts';
+import { approveDocument, bodyBlocks, documentOf, generateRevision, issueDocument, submitForApproval } from '../src/group/issuance.ts';
 import { setIssuerProfile } from '../src/group/profile.ts';
 import { Platform } from '../src/platform.ts';
 import { seedDemoProject, type SeedResult } from '../src/seed.ts';
@@ -350,5 +350,44 @@ describe('a take-off a surveyor did by hand', () => {
     // did not happen, and the estimator reads this field to decide how far to
     // trust the quantity.
     assert.equal(item.state.confidenceScore, null);
+  });
+});
+
+// ── The issued quotation reads as a priced schedule, not a data dump ──────────
+describe('a quotation body renders its priced lines as a table', () => {
+  it('lifts the "Item N" rows into a table and keeps the rest as key/values, in order', () => {
+    const blocks = bodyBlocks({
+      Client: 'Telford and Wrekin Council',
+      'Period on site': '1 week',
+      'Item 1': 'Senior Project Manager — Review brief, confirm deliverables, lead mobilisation — 1.5 person-day — £1,087.50',
+      'Item 2': 'Project Director — Review final submission before issue — 0.5 person-day — £437.50',
+      'Item 3': 'Travel — £250.00',
+      'Total, excluding VAT': '£10,750.00',
+      'Payment terms': '28 days from the invoice',
+    });
+
+    // Header, then the item table, then the summary — three blocks, in order.
+    assert.equal(blocks.length, 3);
+    assert.equal(blocks[0]!.kind, 'KEY_VALUES');
+    assert.equal(blocks[1]!.kind, 'TABLE');
+    assert.equal(blocks[2]!.kind, 'KEY_VALUES');
+
+    const table = blocks[1] as { kind: 'TABLE'; headers: string[]; rows: string[][] };
+    assert.deepEqual(table.headers, ['#', 'Description', 'Quantity', 'Amount']);
+    // The description keeps its own em-dash; quantity and amount split off the end.
+    assert.deepEqual(table.rows[0], ['1', 'Senior Project Manager — Review brief, confirm deliverables, lead mobilisation', '1.5 person-day', '£1,087.50']);
+    assert.deepEqual(table.rows[1], ['2', 'Project Director — Review final submission before issue', '0.5 person-day', '£437.50']);
+    // A fixed sum with no quantity still lands in the table, quantity column empty.
+    assert.deepEqual(table.rows[2], ['3', 'Travel', '', '£250.00']);
+
+    // The summary rows the client reads below the table.
+    const summary = blocks[2] as { kind: 'KEY_VALUES'; rows: Array<{ label: string; value: string }> };
+    assert.ok(summary.rows.some((r) => r.label === 'Total, excluding VAT' && r.value === '£10,750.00'));
+  });
+
+  it('leaves a body with no priced lines exactly as it was — one key/value block', () => {
+    const blocks = bodyBlocks({ Client: 'Acme', Reference: 'INV-1', Amount: '£100.00' });
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0]!.kind, 'KEY_VALUES');
   });
 });
