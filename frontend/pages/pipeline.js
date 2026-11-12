@@ -3845,7 +3845,7 @@ export async function pipeline(root) {
       if (!filed) return;
       toast(
         'Filed',
-        `${filed.description}. The files are being stored — refresh in a moment and they can be looked at.`,
+        `${filed.description}. Each file is being stored in the background and appears as it finishes — a refresh will not lose any of them.`,
         'ok',
       );
       await draw();

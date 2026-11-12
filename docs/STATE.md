@@ -33628,3 +33628,24 @@ and the full suite's no-regression (8442 green), and by the renderer contract in
 Note: an outcome already recorded against the wrong opportunity cannot be rewritten
 from the UI (outcomes are write-once) — if South Holland was mis-recorded as lost
 by the old default, that row needs a data correction, not a UI change.
+
+## 2026-11 uploading ten tender documents no longer stores only some
+
+Selecting ten files on "Upload a tender document" filed ten records but often
+stored only the first few bytes — "I uploaded ten and four appeared". The upload
+of the bytes runs in the background after the modal closes (deliberately: a file
+follows its record and never blocks the command), and the toast told the operator
+to refresh — but a refresh aborts the in-flight `api.upload`, which does not throw,
+so `storeEvidence`'s loop simply stopped and every file it had not yet reached was
+dropped: the ledger record stood, the bytes vanished, and nothing retried them,
+because the direct-upload path only fell back to the durable outbox on a thrown
+error. `storeEvidence` now writes each file to the outbox (IndexedDB) *first*, then
+sends it directly and clears it from the outbox on success; anything a refresh or a
+closed tab interrupts is already persisted and is stored by `drainOutbox()` on the
+next load (app.js already drains on load and on reconnect). Reuses the existing
+outbox primitives (`queueFile`/`discardFile`/`flushFiles`); no new mechanism. The
+upload toast no longer implies instant availability. Frontend-only
+(`frontend/lib/command.js`, `frontend/pages/pipeline.js`), which the Node test
+harness does not load; verified by typecheck, a parse check and the full suite's
+no-regression (8442 green). A browser-level test of the queue-first path is not
+possible in this harness (IndexedDB/fetch), so it is not claimed.

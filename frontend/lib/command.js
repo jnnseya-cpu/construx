@@ -1,7 +1,7 @@
 import { api, ApiError, hashFile, isRoleDenial } from './api.js';
 import { recordVoice, voiceSupport } from './voice.js';
 import { forEvidence } from './capture.js';
-import { queueFile, uploadInParts } from './outbox.js';
+import { queueFile, discardFile, uploadInParts } from './outbox.js';
 import { esc, exact, toast } from './ui.js';
 
 /**
@@ -52,6 +52,28 @@ const PARTS_ABOVE_BYTES = 64 * 1_048_576;
 async function storeEvidence(files) {
   const carried = [];
   for (const { hash, file } of files) {
+    /*
+     * Durable before the direct send — a refresh must never lose the bytes.
+     *
+     * The record is already filed, so the hash is on the chain and the upload is
+     * permitted. This used to send the bytes directly and *only* queue them if
+     * that send threw. But the send is fired after the modal closes, with a
+     * toast telling the operator to refresh — and a refresh aborts an in-flight
+     * `api.upload`, which does not throw, so the loop simply stops and the files
+     * it had not yet reached were dropped: the record stood, the bytes vanished,
+     * and nothing retried them. "I uploaded ten and four appeared" is exactly
+     * that race. So each file is written to the outbox first; the direct send
+     * then clears it on success, and anything a refresh interrupts is still on
+     * the device for `drainOutbox()` to store on the next load.
+     */
+    let queued = false;
+    try {
+      await queueFile(file);
+      queued = true;
+    } catch {
+      // No IndexedDB — a private window, or storage refused. The direct send
+      // below is then the only path; it is no less durable than it ever was.
+    }
     try {
       const path = `/v1/evidence/${encodeURIComponent(hash)}`;
       /*
@@ -69,15 +91,21 @@ async function storeEvidence(files) {
       } else {
         await api.upload(path, file);
       }
-    } catch {
-      try {
-        await queueFile(file);
-        carried.push(file.name);
-      } catch {
-        // No IndexedDB — a private window, or storage refused. The record and
-        // its hash still stand; the file does not follow it.
-        carried.push(file.name);
+      // Stored on the platform now, so it need not wait in the outbox. A failure
+      // to clear it is harmless: the next flush re-sends bytes the platform
+      // already holds and clears the row then.
+      if (queued) {
+        try {
+          await discardFile(hash);
+        } catch {
+          /* left for the next flush to resolve */
+        }
       }
+    } catch {
+      // The direct send failed. If it is in the outbox it is safe and the next
+      // flush will carry it, silently. Only a file we could not even queue is
+      // worth telling the operator about.
+      if (!queued) carried.push(file.name);
     }
   }
   if (carried.length > 0) {
