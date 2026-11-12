@@ -33701,3 +33701,15 @@ corrects the **opportunity** outcome (the one the "Record how a bid ended" modal
 writes, and the one South Holland showed). A project-level `tenderOutcome`
 (recordTenderOutcome) has its own write-once path and is not corrected here — no
 case has needed it; it would follow the same pattern if one does.
+
+## 2026-11 "Build tender programme" dead-end now names the step that unblocks it
+
+Pressing "Build tender programme" on a tender whose bid decision had not been
+recorded showed "Nothing to act on yet … There is none here yet. The tender in
+focus has not been decided as a bid yet" — accurate (the backend gates a programme
+on a recorded decision to bid, AC-T-WF-01-03) but a dead-end: the reading and the
+matrix do not decide the bid, and nothing told the user that or what to press. The
+programme field now carries an `emptyHint` that names the actual prerequisite in
+order — "Score an opportunity", then "Decide bid or no bid" and record the decision
+to bid — so the refusal points at the next action instead of leaving the user
+stuck. Frontend-only (`frontend/pages/pipeline.js`); the backend gate is unchanged.

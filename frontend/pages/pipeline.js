@@ -3802,9 +3802,10 @@ export async function pipeline(root) {
       submitLabel: 'Build',
       fields: [
         { name: 'invitationId', label: 'Invitation', type: 'select', options: scopedBiddableOptions,
-          hint: scopedBiddableOptions.length === 0
-            ? (focused ? 'The tender in focus has not been decided as a bid yet' : 'Nothing has been decided as a bid yet')
-            : 'Only invitations decided as a bid appear here' },
+          hint: 'Only tenders you have recorded a decision to bid on appear here — a programme is back-planned from that decision.',
+          emptyHint: focused
+            ? 'This tender has no recorded decision to bid yet, and a programme follows that decision (not the reading or the matrix — those do not decide the bid). On this screen: "Score an opportunity", then "Decide bid or no bid" and record the decision to bid. The programme then builds against it.'
+            : 'No tender has a recorded decision to bid yet, and a programme follows that decision. On this screen: "Score an opportunity", then "Decide bid or no bid" for the tender you want a programme for, and record the decision to bid.' },
       ],
       transform: () => ({}),
     },
