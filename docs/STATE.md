@@ -33596,3 +33596,15 @@ reported symptom and the flow suite's no-regression; a dedicated ingestion-level
 test is deferred — the test scanner quarantines a freshly ingested file, which
 bid-flow correctly excludes, so the fixture fights the assertion rather than the
 fix.
+
+## 2026-11 a submitted bid stops looping back to pre-submission steps
+
+Three tenders a user reported — each submitted, one lost, one awaiting the
+result — still headlined "Record what has to go back", sending the guide back to
+assign returns on a bid that had already gone out. The next-step picker treated
+RETURN_REGISTER (and the other pre-submission steps) as live even after the
+submission. Now, once a submission pack is on the record or an outcome is against
+it, the only next-step candidate is "Record how it ended": a submitted bid points
+at recording the outcome, and a settled one (won/lost/withdrawn) shows nothing
+outstanding. The steps still render with their real states; they are just no
+longer the headline a closed bid is told to do next. Covered by journey.test.ts.

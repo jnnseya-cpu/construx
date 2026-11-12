@@ -180,6 +180,77 @@ describe('the guided journey', () => {
     assert.notEqual(regB.state, 'DONE', 'job B still has an unassigned mandatory return and must not read as done');
   });
 
+  it('once a submission is in, stops pointing back at pre-submission steps and points at the outcome', () => {
+    // Three real tenders a user reported: each submitted — one lost, one awaiting
+    // the result — and each still headlined "Record what has to go back", looping
+    // the guide back to assigning returns on a bid that had already gone out. Once
+    // a submission is on the record, the pre-submission steps are behind the
+    // bidder; the one live step is recording how it ended.
+    const w = workspace();
+    setCompanyProfile(w.governance, PROFILE);
+    const enterpriseId = String(w.platform.ledger.listByTenant(w.tenantId, 'Enterprise')[0]?.state.id ?? '');
+    const { portfolioId } = structure.createPortfolio(w.governance, {
+      name: 'Hayward portfolio', enterpriseId, governanceModel: 'Sole director', continentCode: 'EU', city: 'London',
+    });
+    const { projectId } = structure.createProject(w.governance, {
+      portfolioId, name: 'Hayward Architects bid', sectorType: 'RMI', assetType: 'Dwelling',
+      location: { continentCode: 'EU', countryCode: 'GB', city: 'London' },
+      contractValueMinor: 5_000_000, currency: 'GBP', plannedStart: '2026-12-01', plannedCompletion: '2027-03-31',
+    });
+    const ctx = w.platform.context(w.auth, projectId, { source: 'WEB' });
+    const { opportunityId } = business.registerOpportunity(w.governance, {
+      clientName: 'Hayward Architects Limited', sectorType: 'RMI', estimatedValueMinor: 5_000_000, source: 'In-Tend', projectId,
+    });
+    const { invitationId } = tenderintake.recordInvitation(w.governance, opportunityId, {
+      reference: 'ITT.2398.GD', issuedAt: '2026-10-01T09:00:00.000Z', returnLocal: '2026-11-20T12:00',
+      timeZone: 'Europe/London', timeZoneStated: true, channel: 'PORTAL',
+    });
+    tenderintake.extractRequirements(w.governance, invitationId, {
+      deliverables: [
+        { reference: 'R-1', title: 'Questionnaire', mandatory: true },
+        { reference: 'R-2', title: 'Declaration', mandatory: true },
+      ],
+      analysisId: `an-${invitationId}`,
+    });
+
+    // Before anything is submitted the guide points at a pre-submission step
+    // (the returns are unassigned), never at the outcome.
+    const before = bidFlow(w.platform, ctx);
+    assert.ok(before.nowDo, 'expected a next step before submitting');
+    assert.notEqual(before.nowDo!.id, 'AWARD', 'should not point at the outcome before anything is submitted');
+
+    // A submission goes in — recorded against a piece of evidence, as the real
+    // flow records the submitted bytes.
+    w.platform.ledger.commit({
+      tenantId: w.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: w.auth.actorId },
+      source: 'SYSTEM',
+      correlationId: 'submit-test',
+      eventType: 'EVIDENCE_REGISTERED',
+      entity: { refType: 'EvidenceItem', refId: 'ev-sub' },
+      nextState: {
+        id: 'ev-sub', type: 'EXPORTED_DOCUMENT', hash: 'sha256:deadbeef',
+        description: 'submission', capturedAt: new Date().toISOString(), capturedBy: w.auth.actorId, linkedEntities: [],
+      },
+    });
+    w.platform.ledger.commit({
+      tenantId: w.tenantId,
+      projectId,
+      actor: { refType: 'User', refId: w.auth.actorId },
+      source: 'SYSTEM',
+      correlationId: 'submit-test',
+      eventType: 'BID_PACK_COMPILED',
+      entity: { refType: 'BidSubmissionPack', refId: 'sub-hayward' },
+      nextState: { id: 'sub-hayward' },
+      evidenceRefs: [{ refType: 'EvidenceItem', refId: 'ev-sub' }],
+    });
+
+    const after = bidFlow(w.platform, ctx);
+    assert.notEqual(after.nowDo?.id, 'RETURN_REGISTER', 'still looping back to returns after the submission is in');
+    assert.equal(after.nowDo?.id, 'AWARD', `a submitted bid should point at recording the outcome, got: ${after.nowDo?.id ?? 'null'}`);
+  });
+
   it('when a job’s flow cannot be read, still guides setup rather than failing', () => {
     const w = workspace();
     setCompanyProfile(w.governance, PROFILE);

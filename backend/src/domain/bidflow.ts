@@ -602,9 +602,21 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
   // they are shown and clickable but never the headline, so they cannot displace
   // the pricing or submission step a bidder is told to do next.
   const ADVISORY_STEP_IDS = new Set(['RISK', 'SETTLE', 'AWARD']);
-  const actionable = steps.filter(
-    (step) => (step.state === 'READY' || step.state === 'BLOCKED') && !ADVISORY_STEP_IDS.has(step.id),
-  );
+  // Once a submission has gone in — a submission pack is on the record, or an
+  // outcome is already against it — every pre-submission step is behind the
+  // bidder, including one left incomplete. The pack has gone; sending them back
+  // to "assign a return" or "open the settlement" on a bid that is submitted,
+  // and sometimes already won or lost, is the guide looping on work the
+  // submission closed. The three tenders a user reported this on were each
+  // submitted — one lost, one awaiting the result — and each still headlined
+  // "record what has to go back". When submitted, the only live step is
+  // recording how it ended, so that is the only nowDo candidate.
+  const submitted = submissionPacks.length > 0 || Boolean(awarded);
+  const actionable = submitted
+    ? steps.filter((step) => step.id === 'AWARD' && (step.state === 'READY' || step.state === 'BLOCKED'))
+    : steps.filter(
+        (step) => (step.state === 'READY' || step.state === 'BLOCKED') && !ADVISORY_STEP_IDS.has(step.id),
+      );
   /*
    * The headline next step. On a submission the pricing road and the submission
    * road run in parallel, and the pricing road is listed first — so the first
