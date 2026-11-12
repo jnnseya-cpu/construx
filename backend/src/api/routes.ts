@@ -14034,6 +14034,10 @@ export const ROUTES: Route[] = [
         audience: 'CLIENT',
         format: chosen,
         correlationId: ctx.correlationId,
+        // Prepared for the buyer this submission answers, not the issuing
+        // business — a tender to a council that reads "prepared for" the bidder
+        // is addressed to the wrong party.
+        preparedFor: pack.clientName,
       });
       return renderAndCharge(
         platform.spendingWalletFor(actor, projectId).wallet,

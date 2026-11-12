@@ -495,13 +495,23 @@ export class ExportService {
       redactionNotice?: string;
       correlationId: string;
       suppressHeader?: boolean;
+      preparedFor?: string;
     },
   ): ExportDocument {
     // The backstop. Every route into a document passes through here, so a new
     // export method inherits the gate without anybody remembering to add it.
     this.#assertEntitled(auth);
 
-    const branding = this.branding(auth.tenantId, projectId);
+    // "Prepared for" is who the document is addressed to. For most reports that
+    // is the tenancy's own branding client, but a document produced *for* a buyer
+    // — a tender submission to a council — says so, rather than carrying the
+    // issuing business's own name there. The caller names the recipient; the
+    // rest of the branding (issuer, logo, colour, legal footer) is unchanged.
+    const configured = this.branding(auth.tenantId, projectId);
+    const branding =
+      input.preparedFor && input.preparedFor.trim().length > 0
+        ? { ...configured, clientName: input.preparedFor.trim() }
+        : configured;
     this.#sequence += 1;
 
     const blocks = input.suppressHeader
@@ -616,6 +626,8 @@ export class ExportService {
        * both put "Prepared for" on the page twice.
        */
       suppressHeader?: boolean;
+      /** Who the document is addressed to, where that is not the tenancy itself. */
+      preparedFor?: string;
     },
   ): ExportDocument {
     return this.#finalise(auth, projectId, {
@@ -626,6 +638,7 @@ export class ExportService {
       blocks: input.blocks,
       correlationId: input.correlationId,
       suppressHeader: input.suppressHeader,
+      preparedFor: input.preparedFor,
     });
   }
 

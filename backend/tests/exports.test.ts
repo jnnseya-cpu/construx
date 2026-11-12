@@ -287,3 +287,33 @@ describe('what a trial does not include', () => {
     assert.equal(PACKAGES.ENTERPRISE.export, true);
   });
 });
+
+describe('a document prepared for a buyer, not the tenancy', () => {
+  it('addresses "Prepared for" to the named recipient and leaves the rest of the branding alone', () => {
+    const configured = platform.exports.branding(seed.tenantId);
+    const doc = platform.exports.document(seed.users.pm!.auth, seed.projectId, {
+      title: 'Tender Submission — the Council',
+      blocks: [{ kind: 'PARAGRAPH', text: 'The submission body.' }],
+      audience: 'CLIENT',
+      correlationId: 'prepared-for-buyer',
+      preparedFor: 'Telford and Wrekin Council',
+    });
+    // The cover is addressed to the buyer, not the issuing business.
+    assert.equal(doc.branding.clientName, 'Telford and Wrekin Council');
+    assert.ok(textOf(doc).includes('Telford and Wrekin Council'), 'the recipient is not on the page');
+    // Only the addressee changed — the issuer and legal footer are the tenancy's.
+    assert.equal(doc.branding.issuingEntity, configured.issuingEntity);
+    assert.equal(doc.branding.legalFooter, configured.legalFooter);
+  });
+
+  it('keeps the tenancy’s own branding client when no recipient is named', () => {
+    const configured = platform.exports.branding(seed.tenantId);
+    const doc = platform.exports.document(seed.users.pm!.auth, seed.projectId, {
+      title: 'Internal note',
+      blocks: [{ kind: 'PARAGRAPH', text: 'x' }],
+      audience: 'CLIENT',
+      correlationId: 'no-recipient',
+    });
+    assert.equal(doc.branding.clientName, configured.clientName);
+  });
+});

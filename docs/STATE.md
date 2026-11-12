@@ -33567,3 +33567,15 @@ convertedProjectId), and refuses with `QUOTATION_NO_CLIENT` only when there is n
 buyer on record to borrow. The draw-up and accept routes drop `clientName` from
 required; the "Quoted to" field is optional with a hint. Covered by
 quotation.test.ts.
+
+## 2026-11 "Prepared for" on a submission names the buyer, not the issuer
+
+The quotation fix (above) addressed the issued-instrument render; the tender
+submission and other reports go through a different path — `exports.document` —
+whose cover still printed the tenancy's own branding client as "Prepared for",
+so a submission to a council read "Prepared for JNN Global Ltd". `#finalise` and
+`document()` now take an optional `preparedFor`, which overrides only the cover's
+addressee (the issuer, logo, colour and legal footer are untouched); the bid
+submission route passes the pack's buyer. Covered by exports.test.ts. The
+pricing-schedule document does not yet carry a buyer to pass, so it still shows
+the tenancy default — noted for a follow-up.
