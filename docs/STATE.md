@@ -33649,3 +33649,23 @@ upload toast no longer implies instant availability. Frontend-only
 harness does not load; verified by typecheck, a parse check and the full suite's
 no-regression (8442 green). A browser-level test of the queue-first path is not
 possible in this harness (IndexedDB/fetch), so it is not claimed.
+
+## 2026-11 the returns gate now guides to the button that clears it
+
+The universal "the gate never passes" symptom had a specific cause in the guide
+itself: the RETURN_REGISTER step's door pointed at "Assign a return" (the single
+`assign-deliverable` command, whose owner/date/source fields are all optional, so
+a return submitted blank does not clear and still blocks). The button that
+actually clears the gate — "Clear all N blocking returns" (`assign-all-returns`),
+which defaults the owner to the director, takes one internal date and fills the
+source from the invitation, clearing every mandatory return in one act — was on
+the page but never the one the guide named. So the guide steered every tender to
+the control that did not work. The RETURN_REGISTER door is now "Clear all blocking
+returns" / command `assign-all-returns`, and the next-step text spells out the
+one-press bulk action (and notes "Assign a return" is for hand-assigning a single
+return to a different owner/date). The bulk clear was already correct and tested
+(`tenderintake.test.ts` proves it fills owner+date+source and empties the blocker
+list); this change makes the guide send the user to it. Covered by journey.test.ts
+(RETURN_REGISTER door/command on a tender with bare unassigned returns). No data
+change: a tender already recorded continues from where it is — press the button
+the guide now names and the gate clears.

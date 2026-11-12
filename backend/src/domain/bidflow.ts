@@ -433,12 +433,12 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
       next: registerDone
         ? undefined
         : registerRecorded
-          ? 'A mandatory return with no owner, no source or no date blocks the submission (not the decision to bid — that is a commercial call you make from the score). Assign a return, and set who owns it and by when.'
+          ? 'A mandatory return with no owner, no source or no date blocks the submission (not the decision to bid — that is a commercial call you make from the score). In the "Returnables" section, press "Clear all blocking returns": set your internal date once and every one of them clears in a single act — the owner defaults to you and the source fills from the invitation they were read from. (The "Assign a return" button above is for giving one return a different owner or date by hand.)'
           : invitation
             ? 'For an enquiry that arrived as a letter, that is the whole of it. "Add a deliverable", beside it, files one item at a time where a formal invitation asks for several — and reading the invitation with AI files the whole register at once.'
             : 'Record the invitation first.',
-      door: registerRecorded ? 'Assign a return' : invitation ? 'It only asks for a price' : 'Record an ITT',
-      ...(registerRecorded ? { command: 'assign-deliverable' } : invitation ? { command: 'quote-only' } : {}),
+      door: registerRecorded ? 'Clear all blocking returns' : invitation ? 'It only asks for a price' : 'Record an ITT',
+      ...(registerRecorded ? { command: 'assign-all-returns' } : invitation ? { command: 'quote-only' } : {}),
       screen: 'pipeline',
     }),
   );

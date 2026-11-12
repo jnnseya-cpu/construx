@@ -178,6 +178,12 @@ describe('the guided journey', () => {
     // Job B still shows its own blocking return, so the fix did not simply hide the block.
     const regB = bidFlow(w.platform, b.ctx).steps.find((s) => s.id === 'RETURN_REGISTER')!;
     assert.notEqual(regB.state, 'DONE', 'job B still has an unassigned mandatory return and must not read as done');
+    // And the guide points at the button that actually clears the gate in one act
+    // — the bulk "Clear all blocking returns", not the single "Assign a return"
+    // that lets the fields go blank and never clears. This was the universal
+    // blocker: the guide steered every tender to the control that did not work.
+    assert.equal(regB.door, 'Clear all blocking returns', `the returns gate guides to "${regB.door}", not the one-press bulk clear`);
+    assert.equal((regB as Record<string, unknown>).command, 'assign-all-returns', 'the returns gate does not open the bulk-clear command');
   });
 
   it('once a submission is in, stops pointing back at pre-submission steps and points at the outcome', () => {
