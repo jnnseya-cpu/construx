@@ -33579,3 +33579,20 @@ addressee (the issuer, logo, colour and legal footer are untouched); the bid
 submission route passes the pack's buyer. Covered by exports.test.ts. The
 pricing-schedule document does not yet carry a buyer to pass, so it still shows
 the tenancy default — noted for a follow-up.
+
+## 2026-11 "File the pack" no longer stalls a fee or services tender
+
+The bid-flow guide marked "File the pack" done only when a file read as a drawing
+(`drawings.length > 0`). A professional-services tender — a consultancy bid, a
+schedule of rates — files contracts and specs and never a drawing, so its guide
+sat on that step for ever, pointed at a "re-read the drawing, on the file's own
+row" door for a drawing that does not exist, with no way forward. The step is now
+done once the pack is filed and the invitation read (`files.length > 0 &&
+invitation`), whether or not there is a drawing: such a bid is priced as a fee,
+entered by hand at the next step (which already supports no-drawings pricing).
+The remaining READY state (files filed, invitation not yet read) points at
+reading the invitation rather than re-reading a drawing. Verified against the
+reported symptom and the flow suite's no-regression; a dedicated ingestion-level
+test is deferred — the test scanner quarantines a freshly ingested file, which
+bid-flow correctly excludes, so the fixture fights the assertion rather than the
+fix.

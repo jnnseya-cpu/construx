@@ -250,13 +250,24 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
 
   const steps: FlowStep[] = [];
 
+  // A pack is filed once its files are here, and the step is done once there is
+  // something to price from them — either a drawing to measure, or an invitation
+  // read, which is the whole of the pack for a fee or services bid that has no
+  // drawings at all (a consultancy tender, a schedule of rates). Keying "done"
+  // on `drawings.length > 0` alone left such a bid stuck here for ever: its pack
+  // was filed and read, it never had a drawing, and the step kept sending it to
+  // "re-read the drawing" — a door for a drawing that does not exist.
+  const packFiledDone = drawings.length > 0 || (files.length > 0 && invitation !== undefined);
   steps.push(
-    drawings.length > 0
+    packFiledDone
       ? {
           id: 'PACK_FILED',
           title: 'File the pack',
           state: 'DONE',
-          detail: `${files.length} file${files.length === 1 ? '' : 's'} filed, ${drawings.length} of them read as drawings.`,
+          detail:
+            drawings.length > 0
+              ? `${files.length} file${files.length === 1 ? '' : 's'} filed, ${drawings.length} of them read as drawings.`
+              : `${files.length} file${files.length === 1 ? ' is' : 's are'} filed and read. This invitation has no drawings, so it is priced as a fee — enter the quantities at the next step. A file that is actually a drawing can be re-read on its own row.`,
           screen: 'pipeline',
         }
       : {
@@ -266,12 +277,12 @@ export function bidFlow(platform: Platform, ctx: EngineContext): BidFlow {
           detail:
             files.length === 0
               ? 'Nothing is filed on this project yet.'
-              : `${files.length} file${files.length === 1 ? ' is' : 's are'} filed and none reads as a drawing.`,
+              : `${files.length} file${files.length === 1 ? ' is' : 's are'} filed. Read the invitation to build its matrix and return register.`,
           next:
             files.length === 0
               ? 'Nothing downstream can measure a pack that is not here.'
-              : 'A file keeps whatever the rules said when it was filed, so a drawing typed as something else is re-read rather than re-uploaded.',
-          door: files.length === 0 ? 'Upload a tender document' : 'Re-read, on the file’s own row',
+              : 'Reading the invitation classifies each file and builds the matrix. A file that is actually a drawing to measure off is re-read on its own row so it is read as one.',
+          door: files.length === 0 ? 'Upload a tender document' : 'Read an invitation with AI',
           screen: 'pipeline',
         },
   );
