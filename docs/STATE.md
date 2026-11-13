@@ -33786,3 +33786,28 @@ the schedule's. Applies to both take-off paths (drawing and pricing schedule).
 Covered by perception.test.ts (the MMHW read reaches the line, a person's
 CESMM4 override wins, the normaliser recognises the standard methods and invents
 none). Confirm route accepts `measurementRule`.
+
+## 2026-11 a project's documents carry that project's reference, not the company prefix
+
+Every export took its cover/header/footer reference from one tenancy-wide value —
+the company reference prefix, which also seeds the company numbering rule. A
+project name once typed into it ("RFX1000209 - EPC Assessments") was then printed
+as the reference on every other project's documents, a Conwy retaining-wall
+tender submission included. `ExportService.#finalise` now builds a project
+document's reference from the project itself (`#projectReference`): a prefix set
+on that project's own client identity stands; otherwise the project's registered
+name, led by the buyer's tender reference where an invitation is recorded against
+the job (filed on the project, or on the opportunity linked to it by id — never a
+wording match). The company serial still numbers the document
+(`allocateReference` now returns `{ number, seq, authored }`), so references stay
+unique across the company. A numbering rule the company *chose* (one that differs
+from the default made from its branding prefix — `isAuthoredRule` in
+`group/profile.ts`, e.g. ETABLIX's `ETX-R-{seq:6}`) is its document control and
+stands unchanged; saving a profile carries the default forward, so the record
+existing is not the test, the rule differing is. Documents that belong to no project keep the company
+numbering. The company-prefix hints on the settings forms now say so. The
+filename fix (render.ts) was already in; this is the reference itself. Covered by
+exports.test.ts (each project names itself with the leaked prefix set, a recorded
+tender reference leads, a project's own prefix stands) and grouptenancy.test.ts
+(an authored rule still numbers the report). A document already
+downloaded keeps the reference it was printed with — regenerate it.

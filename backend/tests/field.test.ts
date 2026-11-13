@@ -193,7 +193,10 @@ describe('branded exports', () => {
       correlationId: 'corr-export-1',
     });
     assert.equal(document.branding.clientName, 'Meridian Infrastructure Group Ltd');
-    assert.ok(document.reference.startsWith('MIG'));
+    // A project's document names that project — the company prefix (MIG) numbers
+    // only documents that belong to no project, unless the company set its own rule.
+    assert.ok(document.reference.includes(seed.projectName), document.reference);
+    assert.match(document.reference, /-\d{5}$/);
     assert.match(document.contentHash, /^sha256:[0-9a-f]{64}$/);
   });
 

@@ -315,7 +315,8 @@ describe('through the platform', () => {
 
     assert.ok(bytes.byteLength > 2000);
     const text = latin1(bytes);
-    assert.ok(text.includes(`(${document.reference}) Tj`));
+    // The reference names the project, em dash and all, in the PDF's own encoding.
+    assert.ok(text.includes(`(${document.reference.replace(/—/g, '\\227')}) Tj`), 'the reference is not printed');
     assert.ok(text.includes('(Ashworth Water Treatment Works \\227 Phase 2) Tj'), 'the em dash survives');
   });
 

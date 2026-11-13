@@ -2,7 +2,7 @@ import { AIOrchestrator } from './ai/orchestrator.ts';
 import { EvidenceStore } from './evidence/store.ts';
 import { SigningAuthority } from './signing/signature.ts';
 import { ExportService } from './export/exporter.ts';
-import { allocateDocumentNumber, issuerProfile } from './group/profile.ts';
+import { allocateDocumentNumber, isAuthoredRule, issuerProfile } from './group/profile.ts';
 import { groupOf, groupOfTenant } from './group/directory.ts';
 import { primaryCompanyOf } from './group/onboarding.ts';
 import { SyncEngine } from './field/sync.ts';
@@ -439,8 +439,12 @@ export class Platform {
     // §8.3). The profile lives in the group module; the exporter only asks.
     this.exports.useIssuerProfiles({
       profileVersionOf: (tenantId) => issuerProfile(this, tenantId).version,
-      allocateReference: (auth, documentType) =>
-        issuerProfile(this, auth.tenantId).numberingRules[documentType] ? allocateDocumentNumber(this, auth, documentType).number : undefined,
+      allocateReference: (auth, documentType) => {
+        const rule = issuerProfile(this, auth.tenantId).numberingRules[documentType];
+        if (!rule) return undefined;
+        const { number, seq } = allocateDocumentNumber(this, auth, documentType);
+        return { number, seq, authored: isAuthoredRule(rule, this.exports.brandingIfConfigured(auth.tenantId)) };
+      },
     });
       return position.mayExport
         ? { permitted: true }

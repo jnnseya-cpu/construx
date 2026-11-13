@@ -150,6 +150,24 @@ function emptyIssuer(): IssuerBlock {
  * carried before profiles existed, so nothing changes until somebody
  * changes it.
  */
+/** The report numbering a company has before it sets its own: its branding prefix and five digits. */
+function defaultReportRule(brand: ClientBranding): NumberingRule {
+  return { prefix: `${brand.documentReferencePrefix}-`, pattern: '{seq:5}', seqScope: 'all' };
+}
+
+/**
+ * Whether this rule is one the company chose, rather than the default made from
+ * its branding prefix. A saved profile carries the default forward unchanged, so
+ * the record existing proves nothing; the rule differing from the default does.
+ * A project's documents take the company's number only where the company chose
+ * one — the default is a prefix, and a prefix is not a project's reference.
+ */
+export function isAuthoredRule(rule: NumberingRule, brand: ClientBranding | undefined): boolean {
+  if (!brand) return true;
+  const fallback = defaultReportRule(brand);
+  return rule.prefix !== fallback.prefix || rule.pattern !== fallback.pattern;
+}
+
 export function issuerProfile(platform: Platform, tenantId: string): IssuerProfile {
   const record = platform.ledger.get({ refType: 'IssuerProfile', refId: tenantId });
   if (record) return record.state as unknown as IssuerProfile;
@@ -166,7 +184,7 @@ export function issuerProfile(platform: Platform, tenantId: string): IssuerProfi
       registeredAddress: { line1: '', line2: '', city: '', postcode: '', country: tenant.jurisdiction },
       footerLegalText: brand?.legalFooter ?? '',
     },
-    numberingRules: brand ? { report: { prefix: `${brand.documentReferencePrefix}-`, pattern: '{seq:5}', seqScope: 'all' } } : {},
+    numberingRules: brand ? { report: defaultReportRule(brand) } : {},
     signatories: [],
     brand,
     legal: { state: 'UNVERIFIED', note: 'Display name from onboarding; registered details not yet entered' },

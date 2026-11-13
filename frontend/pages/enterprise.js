@@ -926,7 +926,7 @@ export async function enterprise(root) {
           name: 'documentReferencePrefix',
           label: 'Reference prefix',
           value: brand?.documentReferencePrefix,
-          hint: 'Every document reference starts with this — what a page pulled out of a bundle is identified by.',
+          hint: 'A short company code, e.g. JNSEYA, for documents that belong to no project. A project’s documents carry that project’s own reference and name instead.',
         },
       ],
     },

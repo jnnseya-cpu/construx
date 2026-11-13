@@ -279,7 +279,14 @@ export type ExportEntitlement = { permitted: boolean; reason?: string };
 /** The issuing company's profile, as the platform provides it to the exporter. */
 export type IssuerProfiles = {
   profileVersionOf: (tenantId: string) => number;
-  allocateReference: (auth: AuthContext, documentType: string) => string | undefined;
+  /**
+   * The company's next document number, the serial inside it, and whether the
+   * rule is one the company chose rather than the default made from its prefix.
+   */
+  allocateReference: (
+    auth: AuthContext,
+    documentType: string,
+  ) => { number: string; seq: number; authored: boolean } | undefined;
 };
 
 export class ExportService {
@@ -387,6 +394,52 @@ export class ExportService {
       restored += 1;
     }
     return restored;
+  }
+
+  /**
+   * The reference registered against a project, for its documents.
+   *
+   * A prefix set on the project's own client identity was set for that project
+   * and stands. Otherwise it is the project's registered name, led by the
+   * buyer's tender reference where one is recorded against the job and the
+   * name does not already carry it. Only links on the record count — the
+   * invitation filed on the project, or on the opportunity this job is — never
+   * a match by similar wording: a document reference is not a guess.
+   *
+   * Nothing for a stream that is not a project of this tenancy (governance,
+   * tenant-level reports), which keep the company numbering.
+   */
+  #projectReference(tenantId: string, projectId: string): string | undefined {
+    const project = this.#ledger.get({ refType: 'Project', refId: projectId });
+    if (!project || String(project.state.tenantId ?? '') !== tenantId) return undefined;
+
+    const own = this.#brandingByProject.get(`${tenantId}:${projectId}`)?.documentReferencePrefix?.trim();
+    if (own) return own;
+
+    const name = String(project.state.name ?? '').trim();
+    const governance = `${tenantId}-governance`;
+    const opportunityIds = new Set(
+      this.#ledger
+        .list(governance, 'Opportunity')
+        .map((record) => record.state)
+        .filter((state) => String(state.projectId ?? '') === projectId || String(state.convertedProjectId ?? '') === projectId)
+        .map((state) => String(state.id)),
+    );
+    const origin = String(project.state.originOpportunityId ?? '');
+    if (origin) opportunityIds.add(origin);
+    const invitation =
+      this.#ledger.list(projectId, 'TenderInvitation').map((record) => record.state).at(-1) ??
+      this.#ledger
+        .list(governance, 'TenderInvitation')
+        .map((record) => record.state)
+        .filter((state) => opportunityIds.has(String(state.opportunityId ?? '')))
+        .at(-1);
+    const tenderReference = String(invitation?.reference ?? '').trim();
+
+    if (tenderReference && !name.toLowerCase().includes(tenderReference.toLowerCase())) {
+      return name ? `${tenderReference} - ${name}` : tenderReference;
+    }
+    return name || undefined;
   }
 
   /** Whether this project has its own client identity, distinct from the tenancy's. */
@@ -524,7 +577,17 @@ export class ExportService {
 
     const id = ulid();
     const allocated = this.#issuerProfiles?.allocateReference(auth, 'report');
-    const reference = allocated ?? `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`;
+    // A project's document is identified by that project. The company prefix is
+    // one value for the whole tenancy, so a project name once typed into it —
+    // "RFX1000209 - EPC Assessments" — was printed as the reference on every
+    // other project's submission. The company serial still numbers the document,
+    // so it stays unique across the company; only the identity is the project's.
+    // A numbering rule the company chose for itself is its document control and
+    // stands as it is.
+    const projectPrefix = allocated?.authored ? undefined : this.#projectReference(auth.tenantId, projectId);
+    const reference = projectPrefix
+      ? `${projectPrefix}-${String(allocated?.seq ?? this.#sequence).padStart(5, '0')}`
+      : (allocated?.number ?? `${branding.documentReferencePrefix}-${String(this.#sequence).padStart(5, '0')}`);
     const issuer = { companyId: auth.tenantId, profileVersion: this.#issuerProfiles?.profileVersionOf(auth.tenantId) ?? 0, documentType: 'report' as const };
     const contentHash = hashEvidence(JSON.stringify({ branding, issuer, blocks }));
 

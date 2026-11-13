@@ -317,3 +317,65 @@ describe('a document prepared for a buyer, not the tenancy', () => {
     assert.equal(doc.branding.clientName, configured.clientName);
   });
 });
+
+describe('a project document carries the reference registered against that project', () => {
+  // The company prefix is one value for the whole tenancy. A project name typed
+  // into it once — "RFX1000209 - EPC Assessments" — was printed as the reference
+  // on every other project's tender submission, a Conwy retaining-wall bid
+  // included. The reference must name the project the document belongs to.
+  let own: Platform;
+  let mine: SeedResult;
+  const LEAKED = 'RFX1000209 - EPC Assessments';
+
+  before(async () => {
+    own = new Platform();
+    mine = await seedDemoProject(own);
+    own.exports.setBranding(mine.tenantId, { ...own.exports.branding(mine.tenantId), documentReferencePrefix: LEAKED });
+  });
+
+  const exportFor = (projectId: string, tag: string): ExportDocument =>
+    own.exports.document(mine.users.pm!.auth, projectId, {
+      title: 'Tender Submission — the Council',
+      blocks: [{ kind: 'PARAGRAPH', text: 'body' }],
+      audience: 'CLIENT',
+      correlationId: tag,
+    });
+
+  it('uses each project’s own registered name, never another project’s', () => {
+    const projects = [{ projectId: mine.projectId, name: mine.projectName }, ...mine.workingProjects];
+    assert.ok(projects.length >= 2, 'the fixture needs two projects to prove one does not borrow the other’s name');
+    for (const project of projects) {
+      if (own.exports.projectBranding(mine.tenantId, project.projectId)) continue;
+      const doc = exportFor(project.projectId, `ref-${project.projectId}`);
+      assert.ok(doc.reference.startsWith(`${project.name}-`), `${doc.reference} does not name ${project.name}`);
+      assert.ok(!doc.reference.includes('RFX1000209'), `${project.name} carried another project’s reference`);
+      assert.match(doc.reference, /-\d{5}$/, 'the company serial no longer numbers the document');
+    }
+  });
+
+  it('leads with the buyer’s tender reference recorded against the project', () => {
+    const project = mine.workingProjects.find((p) => !own.exports.projectBranding(mine.tenantId, p.projectId))!;
+    own.ledger.commit({
+      tenantId: mine.tenantId,
+      projectId: project.projectId,
+      actor: { refType: 'User', refId: mine.users.pm!.auth.actorId },
+      source: 'SYSTEM',
+      correlationId: 'tender-ref',
+      eventType: 'TENDER_RECEIVED',
+      entity: { refType: 'TenderInvitation', refId: 'inv-ercf' },
+      nextState: { id: 'inv-ercf', tenantId: mine.tenantId, reference: 'ERCF2509N 05' },
+    });
+    const doc = exportFor(project.projectId, 'ref-tender');
+    assert.ok(doc.reference.startsWith(`ERCF2509N 05 - ${project.name}-`), doc.reference);
+  });
+
+  it('keeps a prefix set on the project’s own client identity', () => {
+    const project = mine.workingProjects.at(-1)!;
+    own.exports.setBranding(
+      mine.tenantId,
+      { ...own.exports.branding(mine.tenantId), documentReferencePrefix: 'WCRW' },
+      project.projectId,
+    );
+    assert.ok(exportFor(project.projectId, 'ref-own').reference.startsWith('WCRW-'));
+  });
+});
