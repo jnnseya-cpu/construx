@@ -519,7 +519,7 @@ function ittReadingPanel({ perception, evidence, ingestion, projectId, projectNa
                         </div>`
                       : ''}
                     <div class="actions" style="margin-top:11px">
-                      <button class="btn" data-confirm-takeoff="${draft.id}" ${raw(items.length === 0 ? 'disabled' : '')}>
+                      <button class="btn" data-confirm-takeoff="${draft.id}" data-method="${draft.extraction?.methodOfMeasurement ?? ''}" ${raw(items.length === 0 ? 'disabled' : '')}>
                         Confirm and write the bill
                       </button>
                       <button class="btn quiet" data-reject-itt="${draft.id}">Reject this measurement</button>
@@ -4133,6 +4133,29 @@ export async function pipeline(root) {
      */
     const confirmTakeoff = event.target.closest('[data-confirm-takeoff]');
     if (confirmTakeoff) {
+      // The method of measurement the bill is drawn to. NRM2 is the building
+      // default; a civils bill measured to the Highway Works method or CESMM is
+      // tagged as such rather than mislabelled NRM2. The reader quotes what the
+      // document states — pre-selected below — and the person confirms or
+      // changes it. The backend normalises whatever is sent to a short tag.
+      const METHODS = [
+        { value: 'NRM2', label: 'NRM2 — building work (RICS)' },
+        { value: 'MMHW', label: 'MMHW — Method of Measurement for Highway Works (civils)' },
+        { value: 'CESMM4', label: 'CESMM4 — civil engineering' },
+        { value: 'CESMM3', label: 'CESMM3 — civil engineering' },
+        { value: 'SMM7', label: 'SMM7 — building work (superseded)' },
+        { value: 'POM(I)', label: 'POM(I) — Principles of Measurement (International)' },
+      ];
+      const stated = (confirmTakeoff.dataset.method || '').trim();
+      const matched = METHODS.find((m) => m.value.toLowerCase() === stated.toLowerCase());
+      const methodOptions = [...METHODS];
+      let methodValue = 'NRM2';
+      if (stated && !matched) {
+        methodOptions.unshift({ value: stated, label: `${stated} — as the document states it` });
+        methodValue = stated;
+      } else if (matched) {
+        methodValue = matched.value;
+      }
       const filed = await command({
         title: 'Confirm the measured quantities',
         intent:
@@ -4152,6 +4175,17 @@ export async function pipeline(root) {
             label: 'Cost code prefix',
             placeholder: 'E20',
             hint: 'Items are numbered from it — E20.001, E20.002. Your own numbering; the platform invents none.',
+          },
+          {
+            name: 'measurementRule',
+            label: 'Method of measurement',
+            type: 'select',
+            options: methodOptions,
+            value: methodValue,
+            hint:
+              stated
+                ? `The document names “${stated}”. Confirm it, or choose the method the bill is actually drawn to.`
+                : 'The rule the bill is drawn to. NRM2 is building work; a civils bill measured to the Highway Works method (MMHW) or CESMM is tagged as such.',
           },
         ],
       });

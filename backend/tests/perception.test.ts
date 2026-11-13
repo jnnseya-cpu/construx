@@ -683,6 +683,9 @@ describe('reading a buyer pricing schedule into the bill', () => {
   // the whole safety property is that the bill takes the quantities and leaves
   // the money, because a generic rate against a civils item loses the bid.
   const BOQ_OUTPUT = {
+    // The buyer names the method of measurement; the reader quotes it and must
+    // not let a civils bill fall through to the NRM2 building default.
+    methodOfMeasurement: 'Method of Measurement for Highway Works',
     items: [
       { reference: '601.2', description: 'Boring raking holes not exceeding 10m depth', unit: 'm', quantity: 400, section: 'CC 601 Earthworks', rate: 147, price: 58800 },
       { reference: '491.1', description: 'Random rubble stone cladding in M6 mortar', unit: 'm3', quantity: 15, section: 'CC 491 Masonry', rate: 770 },
@@ -726,8 +729,46 @@ describe('reading a buyer pricing schedule into the bill', () => {
     assert.ok(boring, 'the buyer item reference was not kept on the bill line');
     assert.equal(boring!.quantity, 400);
     assert.equal(boring!.unit, 'm');
+    // The civils method of measurement the document named reaches the line as a
+    // short tag — not the NRM2 building default.
+    assert.equal(boring!.measurementRule, 'MMHW', 'a civils bill was left tagged with the NRM2 default');
     // The money the model returned must not have reached the bill.
     assert.ok(!/"(rate|price|sellMinor|priceMinor)"/i.test(JSON.stringify(boring)), 'a rate the model returned reached the bill');
+  });
+
+  it('a person can override the method of measurement the reader quoted', async () => {
+    const { draftId } = await perception.extract(ctxFor('qs'), store, { hash: SCHEDULE_HASH, task: 'PRICE_LIST_BOQ' });
+    const pkg = platform.ledger.list(projectId, 'ScopePackage')[0]!;
+    const confirmed = await perception.confirm(ctxFor('qs'), {
+      draftId,
+      packageId: String(pkg.refId),
+      costCodePrefix: 'CES',
+      measurementRule: 'CESMM4',
+    });
+    const ids = new Set((confirmed.result as { boqItemIds: string[] }).boqItemIds);
+    const written = platform.ledger
+      .list(projectId, 'BoQItem')
+      .map((r) => r.state)
+      .filter((i) => ids.has(String(i.id)));
+    assert.ok(written.length > 0, 'the override confirmation wrote nothing');
+    assert.ok(
+      written.every((i) => i.measurementRule === 'CESMM4'),
+      'the method the person chose did not win over the one the reader read',
+    );
+  });
+
+  it('normalises the standard UK methods and never guesses one', () => {
+    assert.equal(perception.normaliseMethodOfMeasurement('Method of Measurement for Highway Works'), 'MMHW');
+    assert.equal(perception.normaliseMethodOfMeasurement('MMHW Series 600'), 'MMHW');
+    assert.equal(perception.normaliseMethodOfMeasurement('CESMM4'), 'CESMM4');
+    assert.equal(perception.normaliseMethodOfMeasurement('CESMM 3'), 'CESMM3');
+    assert.equal(perception.normaliseMethodOfMeasurement('cesmm'), 'CESMM');
+    assert.equal(perception.normaliseMethodOfMeasurement('NRM2'), 'NRM2');
+    // Nothing stated is nothing invented — the take-off keeps its own default.
+    assert.equal(perception.normaliseMethodOfMeasurement(null), undefined);
+    assert.equal(perception.normaliseMethodOfMeasurement('  '), undefined);
+    // A method the platform has no tag for is honoured, not discarded.
+    assert.equal(perception.normaliseMethodOfMeasurement('Bespoke schedule of rates'), 'Bespoke schedule of rates');
   });
 
   it('is a civil-engineering reading task in the catalogue, carrying no money in its schema', () => {

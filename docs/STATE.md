@@ -33768,3 +33768,21 @@ the work package and cost-code prefix). Route auto-generated at
 reference-tagged and strips the rate the model returned, catalogue schema carries
 no money). The AI's extraction quality on a live document is validated by the
 confirming person, by design — there is no live provider in the test harness.
+
+### The method of measurement is read, not defaulted (civils bills)
+
+A take-off wrote every measured line with `measurementRule` `'NRM2'` when the
+field was left blank — the right default for building work, wrong on a civils
+bill drawn to the Method of Measurement for Highway Works (MMHW) or CESMM. The
+PRICE_LIST_BOQ reader now reports the method the document *names*
+(`methodOfMeasurement`, null if it does not — never inferred from item numbering
+like `601.2`), the person confirms or overrides it on the confirm dialog
+(select of the standard UK methods, pre-selecting what the reader quoted), and it
+tags every line. `normaliseMethodOfMeasurement` maps the stated wording onto a
+short tag (MMHW, CESMM3/4, NRM2, SMM7, POM(I)); a method it has no tag for is
+carried through trimmed rather than discarded or guessed; absent, `runTakeoff`
+keeps the NRM2 default. A per-item rule the reader put on a line still wins over
+the schedule's. Applies to both take-off paths (drawing and pricing schedule).
+Covered by perception.test.ts (the MMHW read reaches the line, a person's
+CESMM4 override wins, the normaliser recognises the standard methods and invents
+none). Confirm route accepts `measurementRule`.

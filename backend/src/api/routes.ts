@@ -28810,6 +28810,10 @@ export const ROUTES: Route[] = [
         corrections: { type: 'object' },
         packageId: stringField,
         costCodePrefix: stringField,
+        // DRAWING_TAKEOFF / PRICE_LIST_BOQ — the method of measurement the
+        // person confirms the bill is drawn to, so a civils schedule is tagged
+        // MMHW/CESMM rather than taking the NRM2 building default.
+        measurementRule: stringField,
         /*
          * ITT_REQUIREMENTS — the invitation the reading is filed against, and
          * the three commercial figures no invitation states about the bidder.

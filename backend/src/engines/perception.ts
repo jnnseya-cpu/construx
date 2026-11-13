@@ -413,10 +413,14 @@ export const PERCEPTION_TASKS: Record<PerceptionTask, TaskDefinition> = {
       'section or work-group heading each item sits under as `section`, and any note on what the item covers as ' +
       '`coverage`. Quote the document; do not summarise, reorder or merge items, and omit nothing it states — list ' +
       'what you omitted and why. Report the quantity and the unit only. NEVER report, infer, carry forward or invent ' +
-      'a rate, a price, a total or any money figure of any kind — pricing is the estimator’s, not yours.',
+      'a rate, a price, a total or any money figure of any kind — pricing is the estimator’s, not yours. ' +
+      'State the method of measurement the document names for the bill — for example "NRM2", "CESMM4", or the ' +
+      '"Method of Measurement for Highway Works" — as `methodOfMeasurement`, exactly as the document writes it. ' +
+      'If the document does not name one, return null. Do not infer it from the item numbering or the kind of work.',
     responseSchema: {
       type: 'object',
       properties: {
+        methodOfMeasurement: { type: ['string', 'null'] },
         items: {
           type: 'array',
           items: {
@@ -1388,9 +1392,18 @@ function requireDraft(ctx: EngineContext, draftId: string): PerceptionDraft {
 export type ConfirmInput = {
   draftId: string;
   corrections?: Record<string, unknown>;
-  /** DRAWING_TAKEOFF. */
+  /** DRAWING_TAKEOFF, PRICE_LIST_BOQ. */
   packageId?: string;
   costCodePrefix?: string;
+  /**
+   * The method of measurement this take-off or bill is drawn to — the person's
+   * confirmation of what the document stated (or their own, where it stated
+   * nothing). NRM2 is the platform default for building work; a civils bill
+   * measured to CESMM or the Highway Works method must carry its own method
+   * rather than be mislabelled by the default. Supplied per-item rules win over
+   * it; where neither is given the platform default stands.
+   */
+  measurementRule?: string;
   /**
    * ITT_REQUIREMENTS — the invitation this reading belongs to, and the two
    * commercial figures no invitation states about the bidder.
@@ -1422,6 +1435,35 @@ export type ConfirmInput = {
   inspectionId?: string;
 };
 
+/**
+ * The method of measurement a bill is drawn to is a label the buyer states, not
+ * one the platform may infer. NRM2 is the building default; a civils bill
+ * measured to the Highway Works method (MMHW) or to CESMM must not be
+ * mislabelled NRM2 because the take-off left the field blank. This maps the
+ * method a reader quoted — or a person chose — onto the short tag the bill
+ * carries, and recognises only the standard UK methods. A method the document
+ * actually names but this does not have a tag for is carried through trimmed,
+ * not discarded and not guessed at; an empty or absent value returns nothing,
+ * so the take-off keeps the platform default.
+ */
+export function normaliseMethodOfMeasurement(stated: string | null | undefined): string | undefined {
+  if (stated == null) return undefined;
+  const text = String(stated).trim();
+  if (!text) return undefined;
+  const compact = text.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (compact.includes('highwayworks') || compact.includes('mmhw') || compact.includes('mchw')) return 'MMHW';
+  if (compact.includes('cesmm') || compact.includes('civilengineeringstandardmethod')) {
+    const edition = text.match(/cesmm\s*([34])/i)?.[1];
+    return edition ? `CESMM${edition}` : 'CESMM';
+  }
+  if (compact.includes('nrm2') || compact.includes('newrulesofmeasurement2')) return 'NRM2';
+  if (compact.includes('smm7')) return 'SMM7';
+  if (compact.includes('pomi') || compact.includes('principlesofmeasurement')) return 'POM(I)';
+  // The document named a method the platform has no short tag for. Honour what
+  // it said rather than guess — trimmed and capped so it reads as a line tag.
+  return text.length > 40 ? text.slice(0, 40).trim() : text;
+}
+
 export async function confirm(
   ctx: EngineContext,
   input: ConfirmInput,
@@ -1432,6 +1474,12 @@ export async function confirm(
   authorise(ctx, definition.area, definition.code, { lifecyclePhase: currentPhase(ctx) });
 
   const extraction = { ...draft.extraction, ...(input.corrections ?? {}) };
+  // The method of measurement the person confirmed, or failing that the one the
+  // reader quoted from the document. It tags each measured line; where it
+  // resolves to nothing, `runTakeoff` keeps the platform default (NRM2).
+  const scheduleRule = normaliseMethodOfMeasurement(
+    input.measurementRule ?? (extraction.methodOfMeasurement as string | null | undefined),
+  );
   let result: Record<string, unknown>;
 
   if (draft.task === 'TITLE_BLOCK') {
@@ -1461,7 +1509,9 @@ export async function confirm(
       unit: String(item.unit ?? ''),
       quantity: Number(item.quantity ?? 0),
       sourceSheet: item.sourceSheet ? String(item.sourceSheet) : undefined,
-      measurementRule: item.measurementRule ? String(item.measurementRule) : undefined,
+      // A rule the reader put on the item itself wins; the schedule's method is
+      // the fallback, so a civils take-off is not left tagged NRM2 by default.
+      measurementRule: item.measurementRule ? String(item.measurementRule) : scheduleRule,
     }));
     const takeoff = await runTakeoff(ctx, {
       packageId: input.packageId,
@@ -1501,6 +1551,10 @@ export async function confirm(
       // The section the item sits under on the schedule, kept as the "sheet" it
       // was read from — a BoQ has no drawing, and this is its traceable origin.
       sourceSheet: item.section ? String(item.section).trim() : undefined,
+      // The method of measurement the bill is drawn to, so a civils schedule is
+      // tagged MMHW/CESMM rather than taking the building default. Absent, the
+      // take-off keeps NRM2.
+      ...(scheduleRule ? { measurementRule: scheduleRule } : {}),
     }));
     const takeoff = await runTakeoff(ctx, {
       packageId: input.packageId,
